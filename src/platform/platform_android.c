@@ -120,7 +120,16 @@ typedef struct {
     bool    fire_held;
     bool    pad_fire;
     float   pending_yaw, pending_pitch;
+
+    /* Java HUD (GameActivity). When ready, touch move/jump/fire/look
+     * come from JNI instead of hot-corners. */
+    bool    hud_ready;
+    float   hud_move[2];
+    bool    hud_jump, hud_fire;
 } hta_android;
+
+static hta_android *g_android;
+static bool         g_hud_wanted;
 
 /* ---------------------------- asset loading ---------------------------- */
 
@@ -414,6 +423,9 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
 
         size_t count = AMotionEvent_getPointerCount(event);
 
+        /* Visible HUD owns all finger input so look doesn't fight the buttons. */
+        if (s->hud_ready) return 1;
+
         if (code == AMOTION_EVENT_ACTION_DOWN || code == AMOTION_EVENT_ACTION_POINTER_DOWN) {
             if ((size_t)pindex < count) {
                 int32_t id = AMotionEvent_getPointerId(event, (size_t)pindex);
@@ -486,8 +498,11 @@ static void gather_input(hta_android *s, hta_player_input *in, float dt)
 {
     memset(in, 0, sizeof(*in));
 
-    /* touch stick */
-    if (s->move_pointer >= 0 && s->app->window) {
+    /* Java HUD stick, or fallback invisible left-half stick */
+    if (s->hud_ready) {
+        in->move_right   += s->hud_move[0];
+        in->move_forward += s->hud_move[1];
+    } else if (s->move_pointer >= 0 && s->app->window) {
         float w = (float)ANativeWindow_getWidth(s->app->window);
         float h = (float)ANativeWindow_getHeight(s->app->window);
         float shorter = w < h ? w : h;
@@ -517,8 +532,8 @@ static void gather_input(hta_android *s, hta_player_input *in, float dt)
     if (in->move_right   >  1.0f) in->move_right   =  1.0f;
     if (in->move_right   < -1.0f) in->move_right   = -1.0f;
 
-    in->jump = s->jump_held;
-    in->fire = s->fire_held || s->pad_fire;
+    in->jump = s->jump_held || s->hud_jump;
+    in->fire = s->fire_held || s->pad_fire || s->hud_fire;
 }
 
 /* ------------------------------ lifecycle ------------------------------ */
@@ -639,12 +654,54 @@ static void on_cmd(struct android_app *app, int32_t cmd)
     }
 }
 
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudReady(JNIEnv *env, jclass cls, jboolean ready)
+{
+    (void)env; (void)cls;
+    g_hud_wanted = ready ? true : false;
+    if (g_android) g_android->hud_ready = g_hud_wanted;
+}
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudMove(JNIEnv *env, jclass cls, jfloat x, jfloat y)
+{
+    (void)env; (void)cls;
+    if (!g_android) return;
+    g_android->hud_move[0] = x;
+    g_android->hud_move[1] = y;
+}
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudLook(JNIEnv *env, jclass cls, jfloat dx, jfloat dy)
+{
+    (void)env; (void)cls;
+    if (!g_android) return;
+    g_android->pending_yaw   += -dx * LOOK_SENSITIVITY;
+    g_android->pending_pitch += -dy * LOOK_SENSITIVITY;
+}
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudJump(JNIEnv *env, jclass cls, jboolean down)
+{
+    (void)env; (void)cls;
+    if (g_android) g_android->hud_jump = down ? true : false;
+}
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudFire(JNIEnv *env, jclass cls, jboolean down)
+{
+    (void)env; (void)cls;
+    if (g_android) g_android->hud_fire = down ? true : false;
+}
+
 void android_main(struct android_app *app)
 {
     static hta_android state;
     memset(&state, 0, sizeof(state));
     state.app = app;
     state.move_pointer = state.look_pointer = -1;
+    g_android = &state;
+    state.hud_ready = g_hud_wanted;
 
     app->userData     = &state;
     app->onAppCmd     = on_cmd;

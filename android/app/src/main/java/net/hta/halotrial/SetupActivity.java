@@ -1,7 +1,6 @@
 package net.hta.halotrial;
 
 import android.app.Activity;
-import android.app.NativeActivity;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.graphics.Color;
@@ -201,7 +200,7 @@ public class SetupActivity extends Activity {
             status.setText("Pick a map first.");
             return;
         }
-        Intent i = new Intent(this, NativeActivity.class);
+        Intent i = new Intent(this, GameActivity.class);
         startActivity(i);
         finish();
     }

@@ -32,14 +32,12 @@
         </activity>
 
         <activity
-            android:name="android.app.NativeActivity"
+            android:name=".GameActivity"
             android:exported="false"
             android:label="Halo Trial PoC"
             android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|uiMode|density"
             android:screenOrientation="sensorLandscape"
             android:launchMode="singleTask">
-
-            <!-- tells NativeActivity which .so to load -->
             <meta-data android:name="android.app.lib_name" android:value="hta_native" />
         </activity>
     </application>
