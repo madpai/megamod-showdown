@@ -113,16 +113,21 @@ static bool file_exists(const char *p)
     return stat(p, &st) == 0 && S_ISREG(st.st_mode);
 }
 
-/* Looks for the user's map. Preference order:
- *   1. <externalDataPath>/maps/bloodgulch.map
- *   2. <externalDataPath>/bloodgulch.map
- *   3. the first *.map found in either directory
+/* Looks for the user's map.
+ *
+ * Android 11+ hides <externalDataPath> (/sdcard/Android/data/<pkg>/files) from
+ * file managers, so we cannot rely on the user putting files there without adb.
+ * We therefore also search ordinary, reachable locations like Download/.
+ * Reading those needs "All files access", granted once in
+ *   Settings -> Apps -> Halo Trial PoC -> Permissions -> Files and media.
+ *
  * A hta_data.txt file in externalDataPath can override the directory entirely. */
+#define HTA_MAX_SEARCH_DIRS 12
 static bool find_map(hta_android *s)
 {
     const char *ext = s->app->activity->externalDataPath;
     const char *intn = s->app->activity->internalDataPath;
-    char dirs[4][400];
+    char dirs[HTA_MAX_SEARCH_DIRS][400];
     int ndirs = 0;
 
     /* optional override file: one line containing a directory path */
@@ -141,8 +146,23 @@ static bool find_map(hta_android *s)
             fclose(f);
         }
     }
+    /* app-private (works without any permission, but hard to write to) */
     if (ext)  { snprintf(dirs[ndirs++], 400, "%s/maps", ext); snprintf(dirs[ndirs++], 400, "%s", ext); }
-    if (intn && ndirs < 4) snprintf(dirs[ndirs++], 400, "%s", intn);
+    if (intn) snprintf(dirs[ndirs++], 400, "%s", intn);
+
+    /* ordinary user-reachable locations (need All-files access) */
+    static const char *public_dirs[] = {
+        "/sdcard/halo-trial/maps",
+        "/sdcard/halo-trial",
+        "/sdcard/Download/halo-trial",
+        "/sdcard/Download",
+        "/sdcard/Documents",
+        "/storage/emulated/0/Download",
+        "/sdcard",
+    };
+    for (unsigned i = 0; i < sizeof(public_dirs)/sizeof(public_dirs[0]) &&
+                         ndirs < HTA_MAX_SEARCH_DIRS; i++)
+        snprintf(dirs[ndirs++], 400, "%s", public_dirs[i]);
 
     for (int i = 0; i < ndirs; i++) {
         char cand[520];
@@ -168,10 +188,18 @@ static bool find_map(hta_android *s)
         closedir(d);
     }
 
-    snprintf(s->status, sizeof(s->status),
-             "No .map found. Copy bloodgulch.map to %s", ext ? ext : "(external dir)");
-    hta_log("[assets] %s", s->status);
-    for (int i = 0; i < ndirs; i++) hta_log("[assets]   searched: %s", dirs[i]);
+    snprintf(s->status, sizeof(s->status), "no .map found in any search path");
+    hta_log("[assets] ============================================================");
+    hta_log("[assets] NO MAP FOUND. Put your own bloodgulch.map in ONE of these:");
+    for (int i = 0; i < ndirs; i++) {
+        DIR *probe = opendir(dirs[i]);
+        hta_log("[assets]   %s  (%s)", dirs[i], probe ? "readable" : "not readable");
+        if (probe) closedir(probe);
+    }
+    hta_log("[assets] Easiest: /sdcard/Download/bloodgulch.map, then grant");
+    hta_log("[assets]   Settings > Apps > Halo Trial PoC > Permissions >");
+    hta_log("[assets]   Files and media > Allow management of all files");
+    hta_log("[assets] ============================================================");
     return false;
 }
 
@@ -436,7 +464,14 @@ static void on_cmd(struct android_app *app, int32_t cmd)
                 s->probe_done = true;
             }
             if (!s->map_loaded) {
-                if (!load_map(s)) hta_log("[app] running without map data: %s", s->status);
+                if (!load_map(s)) {
+                    hta_log("[app] running without map data: %s", s->status);
+                    /* Unmistakable on-screen signal: magenta means "no data".
+                     * Sky blue means the map loaded. No text renderer yet. */
+                    s->scene.clear[0] = 0.55f;
+                    s->scene.clear[1] = 0.05f;
+                    s->scene.clear[2] = 0.45f;
+                }
             }
             start_gfx(s);
         }
