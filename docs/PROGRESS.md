@@ -134,6 +134,6 @@ recognisable but flat-shaded. This is the next milestone, not a defect.
 | Player + collision | `./build-host/test_player` | ✅ 27/27 |
 | Real Trial data parse + extract | `HTA_MAP=... scripts/verify.sh` | ✅ 5/5 |
 | Offscreen render draws geometry | `scripts/verify.sh` | ✅ |
-| **Full suite** | `HTA_MAP=... scripts/verify.sh` | ✅ **24/24** |
+| **Full suite** | `HTA_MAP=... scripts/verify.sh` | ✅ **27/27** |
 | APK installs / launches / Vulkan presents | S24+ sideload 2026-09-18 | ✅ magenta frame |
 | APK loads map / walks Blood Gulch / exits | picker build, pending retest | 🟡 |
