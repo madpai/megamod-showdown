@@ -15,6 +15,7 @@
 #include "../engine/engine.h"
 #include "../engine/camera.h"
 #include "../engine/player.h"
+#include "../engine/gun.h"
 #include "../asset/cache.h"
 #include "../asset/bsp.h"
 #include "../asset/bitmap.h"
@@ -97,8 +98,10 @@ typedef struct {
     hta_gfx      *gfx;
     hta_gfx_mesh *gpu_mesh;
     hta_gfx_mesh *gpu_sky;
+    hta_gfx_mesh *gpu_fx;
     hta_camera    cam;
     hta_player    player;
+    hta_gun       gun;
     hta_scene     scene;
     bool          has_window;
     int32_t       win_w, win_h;  /* window size the current swapchain was built for */
@@ -114,6 +117,8 @@ typedef struct {
     float   look_last[2];
     float   pad_move[2], pad_look[2];
     bool    jump_held;
+    bool    fire_held;
+    bool    pad_fire;
     float   pending_yaw, pending_pitch;
 } hta_android;
 
@@ -391,6 +396,10 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
             s->pad_move[1] = fabsf(ly) > DEAD ? ly : 0.0f;
             s->pad_look[0] = fabsf(rx) > DEAD ? rx : 0.0f;
             s->pad_look[1] = fabsf(ry) > DEAD ? ry : 0.0f;
+            {
+                float rt = AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_RTRIGGER, 0);
+                s->pad_fire = rt > 0.35f;
+            }
             return 1;
         }
 
@@ -417,6 +426,7 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
                 } else if (x >= w * 0.5f) {
                     /* bottom-right corner acts as jump */
                     if (x > w * 0.82f && y > h * 0.72f) { s->jump_held = true; }
+                    else if (x > w * 0.64f && y > h * 0.72f) { s->fire_held = true; }
                     else if (s->look_pointer < 0) {
                         s->look_pointer = id;
                         s->look_last[0] = x; s->look_last[1] = y;
@@ -441,10 +451,12 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
             if (code == AMOTION_EVENT_ACTION_CANCEL) {
                 s->move_pointer = s->look_pointer = -1;
                 s->jump_held = false;
+                s->fire_held = false;
             } else {
                 if (id == s->move_pointer) s->move_pointer = -1;
                 if (id == s->look_pointer) s->look_pointer = -1;
                 s->jump_held = false;
+                s->fire_held = false;
             }
         }
         return 1;
@@ -458,6 +470,8 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
             return 1;
         }
         if (code == AKEYCODE_BUTTON_A || code == AKEYCODE_SPACE) { s->jump_held = down; return 1; }
+        if (code == AKEYCODE_BUTTON_R1 || code == AKEYCODE_BUTTON_R2 ||
+            code == AKEYCODE_BUTTON_X) { s->fire_held = down; return 1; }
         if (code == AKEYCODE_BUTTON_B && down) {
             s->player.noclip = !s->player.noclip;
             hta_log("[input] noclip %s", s->player.noclip ? "ON" : "OFF");
@@ -504,6 +518,7 @@ static void gather_input(hta_android *s, hta_player_input *in, float dt)
     if (in->move_right   < -1.0f) in->move_right   = -1.0f;
 
     in->jump = s->jump_held;
+    in->fire = s->fire_held || s->pad_fire;
 }
 
 /* ------------------------------ lifecycle ------------------------------ */
@@ -534,6 +549,10 @@ static void start_gfx(hta_android *s)
             s->gpu_sky = hta_gfx_mesh_upload(s->gfx, &s->sky, err, sizeof(err));
             if (!s->gpu_sky) hta_log("[gfx] sky upload FAILED: %s", err);
         }
+        if (s->gun.n) {
+            hta_gun_build_mesh(&s->gun);
+            s->gpu_fx = hta_gfx_mesh_upload(s->gfx, &s->gun.mesh, err, sizeof(err));
+        }
         float span = s->mesh.bounds_max[0] - s->mesh.bounds_min[0];
         if (span < 1.0f) span = 1.0f;
         s->cam.zfar  = span * 6.0f;
@@ -543,6 +562,7 @@ static void start_gfx(hta_android *s)
 
 static void stop_gfx(hta_android *s)
 {
+    if (s->gpu_fx) { hta_gfx_mesh_free(s->gfx, s->gpu_fx); s->gpu_fx = NULL; }
     if (s->gpu_sky) { hta_gfx_mesh_free(s->gfx, s->gpu_sky); s->gpu_sky = NULL; }
     if (s->gpu_mesh) { hta_gfx_mesh_free(s->gfx, s->gpu_mesh); s->gpu_mesh = NULL; }
     if (s->gfx) { hta_gfx_destroy(s->gfx); s->gfx = NULL; }
@@ -632,6 +652,7 @@ void android_main(struct android_app *app)
 
     hta_camera_init(&state.cam);
     hta_player_init(&state.player);
+    hta_gun_init(&state.gun);
     state.last_time = hta_time_seconds();
 
     hta_log("[app] android_main; pointer size %zu bytes", sizeof(void *));
@@ -657,11 +678,20 @@ void android_main(struct android_app *app)
         gather_input(&state, &in, dt);
         hta_player_update(&state.player, &state.cam,
                           state.col.built ? &state.col : NULL, &in, dt);
+        hta_gun_update(&state.gun, dt);
+        if (in.fire) hta_gun_fire(&state.gun, state.col.built ? &state.col : NULL, &state.cam);
+        if (state.gun.dirty && state.gfx) {
+            char err[HTA_ERRLEN];
+            hta_gun_build_mesh(&state.gun);
+            if (state.gpu_fx) { hta_gfx_mesh_free(state.gfx, state.gpu_fx); state.gpu_fx = NULL; }
+            if (state.gun.mesh.index_count)
+                state.gpu_fx = hta_gfx_mesh_upload(state.gfx, &state.gun.mesh, err, sizeof(err));
+        }
 
         if (state.has_window && state.gfx) {
             rebuild_gfx_if_size_changed(&state);
             if (!state.gfx) continue;
-            if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh, state.gpu_sky)) {
+            if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh, state.gpu_sky, state.gpu_fx)) {
                 hta_log("[app] surface lost; rebuilding renderer");
                 stop_gfx(&state);
                 if (app->window) start_gfx(&state);
@@ -685,6 +715,7 @@ done:
     hta_log("[app] shutting down after %llu frames", (unsigned long long)state.frames);
     stop_gfx(&state);
     hta_collision_free(&state.col);
+    hta_gun_free(&state.gun);
     hta_bsp_free(&state.mesh);
     hta_bsp_free(&state.sky);
     if (state.map_data) munmap(state.map_data, state.map_size);

@@ -194,7 +194,7 @@ int main(int argc, char **argv)
         cam.pitch = atan2f(dz, sqrtf(dx*dx + dy*dy));
 
         double r0 = hta_time_seconds();
-        bool ok = hta_gfx_draw(g, &cam, &scene, gm, gs);
+        bool ok = hta_gfx_draw(g, &cam, &scene, gm, gs, NULL);
         double r1 = hta_time_seconds();
         if (!ok) { fprintf(stderr, "draw failed on shot %u\n", s); break; }
         total_render += (r1 - r0);

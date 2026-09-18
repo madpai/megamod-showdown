@@ -40,6 +40,12 @@ void hta_collision_rebind(hta_collision *c, const hta_vertex *verts,
 bool hta_collision_ground(const hta_collision *c, float x, float y, float z_from,
                           float *out_z);
 
+/* First-hit ray vs the collision mesh. `dir` need not be unit length.
+ * Writes hit point, surface normal, and t along dir. */
+bool hta_collision_ray(const hta_collision *c,
+                       const float orig[3], const float dir[3], float max_t,
+                       float *out_t, float hit[3], float nrm[3]);
+
 typedef struct {
     float pos[3];        /* feet position */
     float velocity[3];
@@ -58,6 +64,7 @@ typedef struct {
     float look_yaw;      /* radians this frame */
     float look_pitch;
     bool  jump;
+    bool  fire;
 } hta_player_input;
 
 void hta_player_init(hta_player *p);

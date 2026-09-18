@@ -125,6 +125,17 @@ int main(void)
     for (int i = 0; i < 120; i++) hta_player_update(&p, &cam, &col, &in, 1.0f/60.0f);
     CHECK(!p.on_ground && isfinite(p.pos[2]), "outside the world the player falls without NaN");
 
+    printf("\n[hitscan]\n");
+    {
+        float orig[3] = { 40.0f, 40.0f, 20.0f };
+        float dir[3]  = { 0.0f, 0.0f, -1.0f };
+        float t = 0, hit[3], nrm[3];
+        CHECK(hta_collision_ray(&col, orig, dir, 100.0f, &t, hit, nrm),
+              "downward ray hits the grid");
+        CHECK(t > 10.0f && t < 30.0f, "hit distance is between camera and below-ground");
+        CHECK(fabsf(nrm[2]) > 0.3f, "hit normal has a Z component");
+    }
+
     printf("\n[rebind after realloc]\n");
     {
         uint32_t nv = mesh.vertex_count, ni = mesh.index_count;

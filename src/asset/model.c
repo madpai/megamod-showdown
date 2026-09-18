@@ -62,19 +62,62 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
     if (!hta_cache_ptr_to_offset(c, gptr, &garr)) return false;
     if (scount) hta_cache_ptr_to_offset(c, sptr, &sarr);
 
-    /* highest-detail geometry is index 0 */
-    uint32_t pcount=0, pptr=0;
-    if (!hta_read_reflexive(c, garr + HTA_GEOM_PARTS, &pcount, &pptr) || pcount == 0)
-        return false;
-    if (pcount > 64) pcount = 64;
-    uint32_t parr;
-    if (!hta_cache_ptr_to_offset(c, pptr, &parr)) return false;
+    /* Regions compose the model (hull + gun + tires). Geometry 0 is often
+     * just the gun, which is why barrels were floating in the sky. */
+    uint32_t geom_ids[32];
+    uint32_t ngeom = 0;
+    uint32_t rcount = 0, rptr = 0;
+    if (hta_read_reflexive(c, moff + HTA_MOD2_REGIONS, &rcount, &rptr) &&
+        rcount > 0 && rcount <= 32) {
+        uint32_t rarr;
+        if (hta_cache_ptr_to_offset(c, rptr, &rarr)) {
+            for (uint32_t ri = 0; ri < rcount; ri++) {
+                uint32_t pc = 0, pp = 0;
+                if (!hta_read_reflexive(c, rarr + ri * HTA_REGION_SIZE + HTA_REGION_PERMS,
+                                        &pc, &pp) || pc == 0 || pc > 16)
+                    continue;
+                uint32_t parr_p;
+                if (!hta_cache_ptr_to_offset(c, pp, &parr_p)) continue;
+                for (uint32_t k = 0; k < pc; k++) {
+                    char pname[32];
+                    memset(pname, 0, sizeof(pname));
+                    hta_rd_bytes(c, parr_p + k * HTA_PERM_SIZE, pname, 31);
+                    if (pname[0] == '~') continue; /* blur / damaged */
+                    uint16_t cand[5];
+                    uint32_t po = parr_p + k * HTA_PERM_SIZE;
+                    hta_rd_u16(c, po + 72, &cand[0]); /* super high */
+                    hta_rd_u16(c, po + 70, &cand[1]);
+                    hta_rd_u16(c, po + 68, &cand[2]);
+                    hta_rd_u16(c, po + 66, &cand[3]);
+                    hta_rd_u16(c, po + 64, &cand[4]);
+                    uint16_t gi = 0xFFFFu;
+                    for (int t = 0; t < 5; t++)
+                        if (cand[t] != 0xFFFFu && cand[t] < gcount) { gi = cand[t]; break; }
+                    if (gi == 0xFFFFu) continue;
+                    int dup = 0;
+                    for (uint32_t d = 0; d < ngeom; d++) if (geom_ids[d] == gi) dup = 1;
+                    if (!dup && ngeom < 32) geom_ids[ngeom++] = gi;
+                    break;
+                }
+            }
+        }
+    }
+    if (ngeom == 0) geom_ids[ngeom++] = 0;
 
     uint32_t vcap = dst->vertex_count, icap = dst->index_count, scap = dst->submesh_count;
     /* not true caps — we stored exact counts. Track separately via realloc from current. */
     vcap = dst->vertex_count;
     icap = dst->index_count;
     scap = dst->submesh_count;
+
+    for (uint32_t gii = 0; gii < ngeom; gii++) {
+    uint32_t pcount=0, pptr=0;
+    if (!hta_read_reflexive(c, garr + geom_ids[gii] * HTA_GEOM_SIZE + HTA_GEOM_PARTS,
+                            &pcount, &pptr) || pcount == 0)
+        continue;
+    if (pcount > 64) pcount = 64;
+    uint32_t parr;
+    if (!hta_cache_ptr_to_offset(c, pptr, &parr)) continue;
 
     for (uint32_t pi = 0; pi < pcount; pi++) {
         uint32_t pe = parr + pi * HTA_PART_SIZE;
@@ -192,6 +235,7 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
         dst->index_count += emitted;
         dst->submesh_count++;
     }
+    } /* gii */
     return dst->submesh_count > 0 || dst->vertex_count > 0;
 }
 

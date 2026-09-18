@@ -15,10 +15,15 @@
 #define HTA_SCENARIO_VEHICLE_PAL   0x24Cu
 
 #define HTA_OBJECT_MODEL_ID        0x34u  /* Object.model TagDependency.tag_id */
+#define HTA_MOD2_REGIONS           0x0C4u
 #define HTA_MOD2_GEOMETRIES        0x0D0u
 #define HTA_MOD2_SHADERS           0x0DCu
 #define HTA_GEOM_PARTS             0x24u  /* +36 inside GBXModelGeometry */
 #define HTA_GEOM_SIZE              0x30u
+#define HTA_REGION_SIZE            76u
+#define HTA_REGION_PERMS           64u
+#define HTA_PERM_SIZE              88u
+#define HTA_PERM_SUPER_HIGH        72u
 #define HTA_PART_SIZE              132u
 #define HTA_PART_SHADER            4u
 #define HTA_PART_TRI_BUF           68u  /* TriangleBufferType: 0 list, 1 strip */

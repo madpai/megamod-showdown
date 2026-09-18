@@ -157,6 +157,62 @@ bool hta_collision_ground(const hta_collision *c, float x, float y, float z_from
     return found;
 }
 
+bool hta_collision_ray(const hta_collision *c,
+                       const float orig[3], const float dir[3], float max_t,
+                       float *out_t, float hit[3], float nrm[3])
+{
+    if (!c || !c->built || !orig || !dir) return false;
+    float best = max_t;
+    int found = 0;
+    float bn[3] = {0, 0, 1};
+    const float EPS = 1e-7f;
+    for (uint32_t t = 0; t < c->tri_count; t++) {
+        const float *v0 = c->verts[c->indices[t * 3 + 0]].pos;
+        const float *v1 = c->verts[c->indices[t * 3 + 1]].pos;
+        const float *v2 = c->verts[c->indices[t * 3 + 2]].pos;
+        float e1[3] = { v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2] };
+        float e2[3] = { v2[0]-v0[0], v2[1]-v0[1], v2[2]-v0[2] };
+        float pvec[3] = {
+            dir[1]*e2[2] - dir[2]*e2[1],
+            dir[2]*e2[0] - dir[0]*e2[2],
+            dir[0]*e2[1] - dir[1]*e2[0]
+        };
+        float det = e1[0]*pvec[0] + e1[1]*pvec[1] + e1[2]*pvec[2];
+        if (det > -EPS && det < EPS) continue;
+        float inv = 1.0f / det;
+        float tvec[3] = { orig[0]-v0[0], orig[1]-v0[1], orig[2]-v0[2] };
+        float u = (tvec[0]*pvec[0] + tvec[1]*pvec[1] + tvec[2]*pvec[2]) * inv;
+        if (u < 0.0f || u > 1.0f) continue;
+        float qvec[3] = {
+            tvec[1]*e1[2] - tvec[2]*e1[1],
+            tvec[2]*e1[0] - tvec[0]*e1[2],
+            tvec[0]*e1[1] - tvec[1]*e1[0]
+        };
+        float v = (dir[0]*qvec[0] + dir[1]*qvec[1] + dir[2]*qvec[2]) * inv;
+        if (v < 0.0f || u + v > 1.0f) continue;
+        float tt = (e2[0]*qvec[0] + e2[1]*qvec[1] + e2[2]*qvec[2]) * inv;
+        if (tt <= EPS || tt >= best) continue;
+        best = tt;
+        found = 1;
+        float nx = e1[1]*e2[2] - e1[2]*e2[1];
+        float ny = e1[2]*e2[0] - e1[0]*e2[2];
+        float nz = e1[0]*e2[1] - e1[1]*e2[0];
+        float nl = sqrtf(nx*nx + ny*ny + nz*nz);
+        if (nl > 1e-8f) { nx /= nl; ny /= nl; nz /= nl; }
+        if (nx*dir[0] + ny*dir[1] + nz*dir[2] > 0) { nx = -nx; ny = -ny; nz = -nz; }
+        bn[0] = nx; bn[1] = ny; bn[2] = nz;
+    }
+    if (!found) return false;
+    if (out_t) *out_t = best;
+    if (hit) {
+        hit[0] = orig[0] + dir[0] * best;
+        hit[1] = orig[1] + dir[1] * best;
+        hit[2] = orig[2] + dir[2] * best;
+    }
+    if (nrm) { nrm[0] = bn[0]; nrm[1] = bn[1]; nrm[2] = bn[2]; }
+    return true;
+}
+
 /* ------------------------------ player ------------------------------ */
 
 void hta_player_init(hta_player *p)

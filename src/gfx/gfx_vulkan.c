@@ -1012,7 +1012,7 @@ static void fill_push(uint8_t *p, const hta_camera *cam, const hta_scene *s)
 }
 
 bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
-                  hta_gfx_mesh *mesh, hta_gfx_mesh *sky)
+                  hta_gfx_mesh *mesh, hta_gfx_mesh *sky, hta_gfx_mesh *fx)
 {
     if (!g || !g->ready || !cam || !scene) return false;
 
@@ -1100,6 +1100,19 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                 } else if (p == 0) {
                     vkCmdDrawIndexed(cb, mesh->index_count, 1, 0, 0, 0);
                 }
+            }
+        }
+
+        if (fx && fx->index_count) {
+            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline);
+            vkCmdBindVertexBuffers(cb, 0, 1, &fx->vbuf, &zero);
+            vkCmdBindIndexBuffer(cb, fx->ibuf, 0, VK_INDEX_TYPE_UINT32);
+            for (uint32_t i = 0; i < fx->submesh_count; i++) {
+                if (!fx->submeshes[i].index_count) continue;
+                vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
+                                        0, 1, &fx->submeshes[i].set, 0, NULL);
+                vkCmdDrawIndexed(cb, fx->submeshes[i].index_count, 1,
+                                 fx->submeshes[i].first_index, 0, 0);
             }
         }
     }
