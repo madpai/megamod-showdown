@@ -20,6 +20,7 @@
 #include "../asset/bsp.h"
 #include "../asset/bitmap.h"
 #include "../asset/biped.h"
+#include "../asset/weapon.h"
 #include "../asset/model.h"
 #include "../gfx/gfx.h"
 #include "../engine/scene_light.h"
@@ -91,15 +92,21 @@ typedef struct {
     hta_cache     cache;
     hta_bsp_mesh  mesh;
     hta_bsp_mesh  sky;
+    hta_bsp_mesh  coll_mesh;
+    hta_bsp_mesh  fp_mesh;
     hta_collision col;
     bool          have_mesh;
     bool          have_sky;
+    bool          have_coll;
+    bool          have_fp;
+    hta_weapon_def weap;
 
     /* runtime */
     hta_gfx      *gfx;
     hta_gfx_mesh *gpu_mesh;
     hta_gfx_mesh *gpu_sky;
     hta_gfx_mesh *gpu_fx;
+    hta_gfx_mesh *gpu_fp;
     hta_camera    cam;
     hta_player    player;
     hta_gun       gun;
@@ -332,17 +339,36 @@ static bool load_map(hta_android *s)
     else
         hta_log("[assets] textures: %u unique (albedos+lightmaps)", s->mesh.texture_count);
 
-    if (!hta_collision_build(&s->col, &s->mesh))
-        hta_log("[assets] collision grid failed to build; player will free-fly");
-    else
-        hta_log("[assets] collision grid %ux%u cells", s->col.nx, s->col.ny);
+    if (hta_bsp_load_collision(&s->cache, &s->coll_mesh, err, sizeof(err))) {
+        s->have_coll = true;
+        if (!hta_collision_build(&s->col, &s->coll_mesh))
+            hta_log("[assets] collision BSP grid failed; %s", err);
+        else
+            hta_log("[assets] collision BSP %u verts / %u tris, grid %ux%u",
+                    s->coll_mesh.vertex_count, s->coll_mesh.index_count / 3,
+                    s->col.nx, s->col.ny);
+    } else {
+        hta_log("[assets] collision BSP: %s — using render mesh", err);
+        if (!hta_collision_build(&s->col, &s->mesh))
+            hta_log("[assets] collision grid failed to build; player will free-fly");
+        else
+            hta_log("[assets] collision grid %ux%u cells (render mesh)", s->col.nx, s->col.ny);
+    }
 
     if (hta_scenario_add_objects(&s->mesh, &s->cache, rm.data ? &rm : NULL, err, sizeof(err)))
         hta_log("[assets] %s  (now %u verts / %u submeshes)", err,
                 s->mesh.vertex_count, s->mesh.submesh_count);
-    /* add_objects reallocs verts/indices; collision still points at the old
-     * buffers unless we rebind. That is what made spawn fall through the floor. */
-    hta_collision_rebind(&s->col, s->mesh.vertices, s->mesh.indices);
+    if (!s->have_coll)
+        hta_collision_rebind(&s->col, s->mesh.vertices, s->mesh.indices);
+
+    if (hta_weapon_load_default(&s->cache, rm.data ? &rm : NULL, &s->weap, &s->fp_mesh, err, sizeof(err))) {
+        s->gun.fire_interval = s->weap.cooldown;
+        s->have_fp = s->fp_mesh.vertex_count > 0;
+        hta_log("[weapon] %s  ROF %.1f/s  fp verts %u", s->weap.path, s->weap.rof,
+                s->fp_mesh.vertex_count);
+    } else {
+        hta_log("[weapon] %s", err);
+    }
     if (hta_sky_load(&s->sky, &s->cache, rm.data ? &rm : NULL, err, sizeof(err))) {
         s->have_sky = true;
         hta_log("[assets] sky %u verts / %u submeshes", s->sky.vertex_count, s->sky.submesh_count);
@@ -583,6 +609,10 @@ static void start_gfx(hta_android *s)
             hta_gun_build_mesh(&s->gun);
             s->gpu_fx = hta_gfx_mesh_upload(s->gfx, &s->gun.mesh, err, sizeof(err));
         }
+        if (s->have_fp) {
+            s->gpu_fp = hta_gfx_mesh_upload(s->gfx, &s->fp_mesh, err, sizeof(err));
+            if (!s->gpu_fp) hta_log("[gfx] fp weapon upload FAILED: %s", err);
+        }
         float span = s->mesh.bounds_max[0] - s->mesh.bounds_min[0];
         if (span < 1.0f) span = 1.0f;
         s->cam.zfar  = span * 6.0f;
@@ -592,6 +622,7 @@ static void start_gfx(hta_android *s)
 
 static void stop_gfx(hta_android *s)
 {
+    if (s->gpu_fp) { hta_gfx_mesh_free(s->gfx, s->gpu_fp); s->gpu_fp = NULL; }
     if (s->gpu_fx) { hta_gfx_mesh_free(s->gfx, s->gpu_fx); s->gpu_fx = NULL; }
     if (s->gpu_sky) { hta_gfx_mesh_free(s->gfx, s->gpu_sky); s->gpu_sky = NULL; }
     if (s->gpu_mesh) { hta_gfx_mesh_free(s->gfx, s->gpu_mesh); s->gpu_mesh = NULL; }
@@ -770,7 +801,8 @@ void android_main(struct android_app *app)
         if (state.has_window && state.gfx) {
             rebuild_gfx_if_size_changed(&state);
             if (!state.gfx) continue;
-            if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh, state.gpu_sky, state.gpu_fx)) {
+            if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh, state.gpu_sky, state.gpu_fx,
+                              state.gpu_fp, state.weap.fp_offset)) {
                 hta_log("[app] surface lost; rebuilding renderer");
                 stop_gfx(&state);
                 if (app->window) start_gfx(&state);
@@ -797,6 +829,8 @@ done:
     hta_gun_free(&state.gun);
     hta_bsp_free(&state.mesh);
     hta_bsp_free(&state.sky);
+    hta_bsp_free(&state.coll_mesh);
+    hta_bsp_free(&state.fp_mesh);
     if (state.map_data) munmap(state.map_data, state.map_size);
     if (state.bitmaps_data) munmap(state.bitmaps_data, state.bitmaps_size);
 }

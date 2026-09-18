@@ -7,6 +7,7 @@ void hta_gun_init(hta_gun *g)
 {
     if (!g) return;
     memset(g, 0, sizeof(*g));
+    g->fire_interval = HTA_GUN_COOLDOWN;
 }
 
 void hta_gun_free(hta_gun *g)
@@ -28,7 +29,7 @@ int hta_gun_fire(hta_gun *g, const hta_collision *col, const hta_camera *cam)
 {
     if (!g || !cam) return 0;
     if (g->cooldown > 0.0f) return 0;
-    g->cooldown = HTA_GUN_COOLDOWN;
+    g->cooldown = (g->fire_interval > 0.02f) ? g->fire_interval : HTA_GUN_COOLDOWN;
     float dir[3];
     hta_camera_forward(cam, dir);
     float hit[3], nrm[3], t;

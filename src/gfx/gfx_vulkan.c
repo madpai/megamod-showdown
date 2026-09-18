@@ -1012,7 +1012,8 @@ static void fill_push(uint8_t *p, const hta_camera *cam, const hta_scene *s)
 }
 
 bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
-                  hta_gfx_mesh *mesh, hta_gfx_mesh *sky, hta_gfx_mesh *fx)
+                  hta_gfx_mesh *mesh, hta_gfx_mesh *sky, hta_gfx_mesh *fx,
+                  hta_gfx_mesh *viewmodel, const float vm_offset[3])
 {
     if (!g || !g->ready || !cam || !scene) return false;
 
@@ -1100,6 +1101,45 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                 } else if (p == 0) {
                     vkCmdDrawIndexed(cb, mesh->index_count, 1, 0, 0, 0);
                 }
+            }
+        }
+
+        if (viewmodel && viewmodel->index_count) {
+            float fwd[3], right[3], up[3];
+            hta_camera_forward(cam, fwd);
+            hta_camera_right(cam, right);
+            hta_camera_up(cam, up);
+            float ox = vm_offset ? vm_offset[0] : 0.18f;
+            float oy = vm_offset ? vm_offset[1] : 0.08f;
+            float oz = vm_offset ? vm_offset[2] : -0.12f;
+            /* Halo FP offset: +X forward, +Y left, +Z up. */
+            float gp[3] = {
+                cam->pos[0] + fwd[0]*ox - right[0]*oy + up[0]*oz,
+                cam->pos[1] + fwd[1]*ox - right[1]*oy + up[1]*oz,
+                cam->pos[2] + fwd[2]*ox - right[2]*oy + up[2]*oz
+            };
+            hta_mat4 model = hta_mat4_identity();
+            /* columns: +X=forward, +Y=left(-right), +Z=up */
+            model.m[0] = fwd[0];   model.m[1] = fwd[1];   model.m[2] = fwd[2];
+            model.m[4] = -right[0]; model.m[5] = -right[1]; model.m[6] = -right[2];
+            model.m[8] = up[0];    model.m[9] = up[1];    model.m[10] = up[2];
+            model.m[12] = gp[0];   model.m[13] = gp[1];   model.m[14] = gp[2];
+            hta_mat4 vp = hta_camera_view_proj(cam);
+            hta_mat4 mvp = hta_mat4_mul(&vp, &model);
+            memcpy(push, mvp.m, 64);
+            vkCmdPushConstants(cb, g->layout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, PUSH_SIZE, push);
+            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline);
+            vkCmdBindVertexBuffers(cb, 0, 1, &viewmodel->vbuf, &zero);
+            vkCmdBindIndexBuffer(cb, viewmodel->ibuf, 0, VK_INDEX_TYPE_UINT32);
+            for (uint32_t i = 0; i < viewmodel->submesh_count; i++) {
+                if (!viewmodel->submeshes[i].index_count) continue;
+                if (viewmodel->submeshes[i].draw_mode == HTA_DRAW_SKIP) continue;
+                vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
+                                        0, 1, &viewmodel->submeshes[i].set, 0, NULL);
+                vkCmdDrawIndexed(cb, viewmodel->submeshes[i].index_count, 1,
+                                 viewmodel->submeshes[i].first_index, 0, 0);
             }
         }
 

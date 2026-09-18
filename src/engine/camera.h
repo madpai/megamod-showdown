@@ -27,6 +27,7 @@ void hta_camera_init(hta_camera *c);
 /* Unit vectors derived from yaw/pitch. */
 void hta_camera_forward(const hta_camera *c, float out[3]);
 void hta_camera_right(const hta_camera *c, float out[3]);
+void hta_camera_up(const hta_camera *c, float out[3]);
 
 /* Applies a look delta in radians, clamping pitch. */
 void hta_camera_look(hta_camera *c, float dyaw, float dpitch);

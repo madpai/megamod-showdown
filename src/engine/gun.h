@@ -19,6 +19,7 @@ typedef struct {
     hta_hitmark hits[HTA_GUN_MAX_HITS];
     uint32_t    n, next;
     float       cooldown;
+    float       fire_interval; /* seconds; from weap ROF */
     int         dirty;
     hta_bsp_mesh mesh;
 } hta_gun;

@@ -1,6 +1,6 @@
 # Progress
 
-Last updated: **2026-09-18** (Phase 3 textures)
+Last updated: **2026-09-18** (Phase 4 pawn + FP AR + collision BSP)
 
 Legend: ✅ done & verified · 🟡 built but not verified on device · ⬜ not started · 🚫 blocked
 
@@ -56,8 +56,8 @@ Run `scripts/device_test.sh` with the S24+ connected to convert remaining 🟡.
 ## Phase 4 — Gameplay
 
 - ✅ Pawn physics from Trial tags (`matg` player info + `cyborg_mp`): run 2.25, accel, jump 0.07/tick, camera 0.62, radius 0.2, 45° slope
-- 🟡 Collision still height-query on the **render** mesh (real collision BSP later)
-- 🟡 Weapons: hitscan + scorches; no FP arms / projectiles yet
+- ✅ Structure **collision BSP** for walking/hitscan (~5940 tris vs render mesh)
+- 🟡 Weapons: FP assault rifle mesh + tag ROF 15/s; still hitscan (no projectile objects / ammo UI)
 - ✅ Touch HUD: stick, fire, jump, crouch
 
 ## Phase 5 — Multiplayer (the product)

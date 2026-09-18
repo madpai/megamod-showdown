@@ -31,6 +31,16 @@ void hta_camera_right(const hta_camera *c, float out[3])
     out[2] =  0.0f;
 }
 
+void hta_camera_up(const hta_camera *c, float out[3])
+{
+    float f[3], r[3];
+    hta_camera_forward(c, f);
+    hta_camera_right(c, r);
+    out[0] = r[1]*f[2] - r[2]*f[1];
+    out[1] = r[2]*f[0] - r[0]*f[2];
+    out[2] = r[0]*f[1] - r[1]*f[0];
+}
+
 void hta_camera_look(hta_camera *c, float dyaw, float dpitch)
 {
     c->yaw += dyaw;

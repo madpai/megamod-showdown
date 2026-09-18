@@ -131,6 +131,12 @@ bool hta_bsp_load_first(const hta_cache *c, hta_bsp_mesh *out,
                         char *err, size_t errlen);
 void hta_bsp_free(hta_bsp_mesh *m);
 
+/* Flatten the structure collision BSP into a triangle mesh for the pawn.
+ * Falls back to false if the collision BSP is missing; caller should keep
+ * the render mesh. */
+bool hta_bsp_load_collision(const hta_cache *c, hta_bsp_mesh *out,
+                            char *err, size_t errlen);
+
 /* Reads up to max player spawn points from the scenario. Returns count read. */
 uint32_t hta_scenario_spawns(const hta_cache *c, hta_spawn_point *out, uint32_t max);
 

@@ -390,3 +390,120 @@ bool hta_bsp_load_first(const hta_cache *c, hta_bsp_mesh *out,
     }
     return true;
 }
+
+#define HTA_COLL_SURF_SIZE 12u
+#define HTA_COLL_EDGE_SIZE 24u
+#define HTA_COLL_VERT_SIZE 16u
+
+bool hta_bsp_load_collision(const hta_cache *c, hta_bsp_mesh *out,
+                            char *err, size_t errlen)
+{
+    if (!c || !out) { fail(err, errlen, "bad arguments"); return false; }
+    memset(out, 0, sizeof(*out));
+
+    int32_t si = hta_cache_find_tag_by_id(c, c->scenario_tag_id);
+    if (si < 0) si = hta_cache_find_tag_by_class(c, HTA_TAG_SCNR);
+    if (si < 0) { fail(err, errlen, "no scenario"); return false; }
+    hta_tag_entry st;
+    if (!hta_cache_tag(c, (uint32_t)si, &st)) return false;
+    uint32_t scn_off;
+    if (!hta_cache_ptr_to_offset(c, st.tag_data_ptr, &scn_off)) return false;
+    uint32_t bsp_count, bsp_ptr_addr;
+    if (!hta_read_reflexive(c, scn_off + HTA_SCENARIO_STRUCTURE_BSPS_OFF, &bsp_count, &bsp_ptr_addr)
+        || bsp_count == 0) {
+        fail(err, errlen, "no structure BSP"); return false;
+    }
+    uint32_t bsp_arr_off;
+    if (!hta_cache_ptr_to_offset(c, bsp_ptr_addr, &bsp_arr_off)) return false;
+    bsp_region reg;
+    if (!hta_rd_u32(c, bsp_arr_off + 0x00, &reg.start) ||
+        !hta_rd_u32(c, bsp_arr_off + 0x04, &reg.size)  ||
+        !hta_rd_u32(c, bsp_arr_off + 0x08, &reg.address)) return false;
+    uint32_t hdr_ptr = 0, sbsp_off = 0;
+    if (!hta_rd_u32(c, reg.start, &hdr_ptr) || !bsp_ptr(&reg, hdr_ptr, &sbsp_off)) {
+        fail(err, errlen, "sbsp header"); return false;
+    }
+
+    uint32_t cb_count = 0, cb_ptr = 0;
+    if (!hta_read_reflexive(c, sbsp_off + HTA_SBSP_COLLISION_BSP, &cb_count, &cb_ptr) || cb_count == 0) {
+        fail(err, errlen, "no collision BSP"); return false;
+    }
+    uint32_t cb_off;
+    if (!bsp_ptr(&reg, cb_ptr, &cb_off)) { fail(err, errlen, "collision BSP ptr"); return false; }
+
+    uint32_t scount=0, sptr=0, ecount=0, eptr=0, vcount=0, vptr=0;
+    if (!hta_read_reflexive(c, cb_off + 60, &scount, &sptr) ||
+        !hta_read_reflexive(c, cb_off + 72, &ecount, &eptr) ||
+        !hta_read_reflexive(c, cb_off + 84, &vcount, &vptr)) {
+        fail(err, errlen, "collision reflexives"); return false;
+    }
+    uint32_t soff, eoff, voff;
+    if (!bsp_ptr(&reg, sptr, &soff) || !bsp_ptr(&reg, eptr, &eoff) || !bsp_ptr(&reg, vptr, &voff)) {
+        fail(err, errlen, "collision arrays"); return false;
+    }
+    if (vcount == 0 || scount == 0 || ecount == 0 || vcount > 200000 || scount > 200000) {
+        fail(err, errlen, "implausible collision counts v=%u s=%u e=%u", vcount, scount, ecount);
+        return false;
+    }
+
+    out->vertices = (hta_vertex *)calloc(vcount, sizeof(hta_vertex));
+    out->indices  = (uint32_t *)calloc((size_t)scount * 12u, sizeof(uint32_t));
+    if (!out->vertices || !out->indices) { hta_bsp_free(out); return false; }
+    out->vertex_count = vcount;
+    for (uint32_t i = 0; i < vcount; i++) {
+        hta_rd_f32(c, voff + i * HTA_COLL_VERT_SIZE + 0, &out->vertices[i].pos[0]);
+        hta_rd_f32(c, voff + i * HTA_COLL_VERT_SIZE + 4, &out->vertices[i].pos[1]);
+        hta_rd_f32(c, voff + i * HTA_COLL_VERT_SIZE + 8, &out->vertices[i].pos[2]);
+        if (i == 0) {
+            out->bounds_min[0] = out->bounds_max[0] = out->vertices[i].pos[0];
+            out->bounds_min[1] = out->bounds_max[1] = out->vertices[i].pos[1];
+            out->bounds_min[2] = out->bounds_max[2] = out->vertices[i].pos[2];
+        } else {
+            for (int k = 0; k < 3; k++) {
+                float v = out->vertices[i].pos[k];
+                if (v < out->bounds_min[k]) out->bounds_min[k] = v;
+                if (v > out->bounds_max[k]) out->bounds_max[k] = v;
+            }
+        }
+    }
+
+    uint32_t nidx = 0;
+    uint32_t loop[64];
+    for (uint32_t s = 0; s < scount; s++) {
+        uint32_t first = 0;
+        hta_rd_u32(c, soff + s * HTA_COLL_SURF_SIZE + 4, &first);
+        if (first >= ecount) continue;
+        uint32_t e = first, nv = 0;
+        for (uint32_t guard = 0; guard < 32 && nv < 64; guard++) {
+            uint32_t start=0, end=0, fwd=0, rev=0, left=0, right=0;
+            uint32_t eo = eoff + e * HTA_COLL_EDGE_SIZE;
+            hta_rd_u32(c, eo + 0, &start);
+            hta_rd_u32(c, eo + 4, &end);
+            hta_rd_u32(c, eo + 8, &fwd);
+            hta_rd_u32(c, eo + 12, &rev);
+            hta_rd_u32(c, eo + 16, &left);
+            hta_rd_u32(c, eo + 20, &right);
+            uint32_t vert, next;
+            if (left == s) { vert = start; next = fwd; }
+            else           { vert = end;   next = rev; }
+            if (vert >= vcount) break;
+            loop[nv++] = vert;
+            e = next;
+            if (e == first || e >= ecount) break;
+        }
+        if (nv < 3) continue;
+        for (uint32_t i = 1; i + 1 < nv; i++) {
+            if (nidx + 3 > scount * 12u) break;
+            out->indices[nidx++] = loop[0];
+            out->indices[nidx++] = loop[i];
+            out->indices[nidx++] = loop[i + 1];
+        }
+    }
+    out->index_count = nidx;
+    if (nidx < 3) {
+        fail(err, errlen, "collision BSP produced no triangles");
+        hta_bsp_free(out);
+        return false;
+    }
+    return true;
+}

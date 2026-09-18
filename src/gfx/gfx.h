@@ -41,7 +41,8 @@ void hta_gfx_mesh_free(hta_gfx *g, hta_gfx_mesh *m);
 /* Renders one frame. In swapchain mode this also presents. Returns false if the
  * surface needs rebuilding (caller should recreate). */
 bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
-                  hta_gfx_mesh *mesh, hta_gfx_mesh *sky, hta_gfx_mesh *fx);
+                  hta_gfx_mesh *mesh, hta_gfx_mesh *sky, hta_gfx_mesh *fx,
+                  hta_gfx_mesh *viewmodel, const float vm_offset[3]);
 
 /* Offscreen only: copies the last rendered frame out as tightly packed RGBA8.
  * `dst` must hold w*h*4 bytes. */

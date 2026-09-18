@@ -1,6 +1,8 @@
 /* Parses Trial globals + cyborg_mp. Requires a real .map path as argv[1]. */
 #include "asset/cache.h"
 #include "asset/biped.h"
+#include "asset/bsp.h"
+#include "asset/weapon.h"
 #include "engine/player.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -75,6 +77,23 @@ int main(int argc, char **argv)
     }
     float v1 = sqrtf(p.velocity[0]*p.velocity[0] + p.velocity[1]*p.velocity[1]);
     CHECK(fabsf(v1 - phys.run_forward) < 0.1f, "reaches run-forward speed in ~1.5s");
+
+    printf("\n[collision BSP]\n");
+    hta_bsp_mesh coll;
+    CHECK(hta_bsp_load_collision(&c, &coll, err, sizeof(err)), "collision BSP extracts");
+    CHECK(coll.vertex_count > 100 && coll.index_count > 300, "collision mesh is non-trivial");
+    printf("  collision %u verts %u tris\n", coll.vertex_count, coll.index_count / 3);
+    hta_collision col;
+    CHECK(hta_collision_build(&col, &coll), "collision grid from BSP");
+    hta_collision_free(&col);
+    hta_bsp_free(&coll);
+
+    printf("\n[weapon]\n");
+    hta_weapon_def wdef;
+    CHECK(hta_weapon_load_default(&c, NULL, &wdef, NULL, err, sizeof(err)), "default weap loads");
+    printf("  %s ROF %.2f cooldown %.3f fp_model=0x%X\n", wdef.path, wdef.rof, wdef.cooldown, wdef.fp_model_id);
+    CHECK(wdef.rof > 1.0f && wdef.rof < 20.0f, "ROF is in a Halo range");
+    CHECK(wdef.fp_model_id != 0, "has first-person model tag");
 
     printf("\n%d checks, %d failures\n", checks, failures);
     free(data);
