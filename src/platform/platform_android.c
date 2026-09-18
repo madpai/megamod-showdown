@@ -23,6 +23,7 @@
 #include <android/log.h>
 #include <android/input.h>
 #include <android_native_app_glue.h>
+#include <jni.h>
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -92,6 +93,7 @@ typedef struct {
     hta_player    player;
     hta_scene     scene;
     bool          has_window;
+    int32_t       win_w, win_h;  /* window size the current swapchain was built for */
     double        last_time;
     uint64_t      frames;
     double        fps_accum;
@@ -422,6 +424,8 @@ static void start_gfx(hta_android *s)
     s->gfx = hta_gfx_create_window(s->app->window, err, sizeof(err));
     if (!s->gfx) { hta_log("[gfx] init FAILED: %s", err); s->has_window = false; return; }
     s->has_window = true;
+    s->win_w = ANativeWindow_getWidth(s->app->window);
+    s->win_h = ANativeWindow_getHeight(s->app->window);
 
     uint32_t w, h;
     hta_gfx_extent(s->gfx, &w, &h);
@@ -449,6 +453,36 @@ static void stop_gfx(hta_android *s)
     if (s->gpu_mesh) { hta_gfx_mesh_free(s->gfx, s->gpu_mesh); s->gpu_mesh = NULL; }
     if (s->gfx) { hta_gfx_destroy(s->gfx); s->gfx = NULL; }
     s->has_window = false;
+}
+
+/* SCREEN_ORIENTATION_SENSOR_LANDSCAPE = 6. SetupActivity is already locked;
+ * NativeActivity must request it too or Samsung can keep the portrait window
+ * that INIT_WINDOW first sees. */
+static void request_landscape(struct android_app *app)
+{
+    JavaVM *vm = app->activity->vm;
+    JNIEnv *env = NULL;
+    if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK || !env) return;
+    jclass cls = (*env)->GetObjectClass(env, app->activity->clazz);
+    if (!cls) return;
+    jmethodID mid = (*env)->GetMethodID(env, cls, "setRequestedOrientation", "(I)V");
+    if (mid) {
+        (*env)->CallVoidMethod(env, app->activity->clazz, mid, 6);
+        hta_log("[app] requested SENSOR_LANDSCAPE");
+    }
+    (*env)->DeleteLocalRef(env, cls);
+}
+
+static void rebuild_gfx_if_size_changed(hta_android *s)
+{
+    if (!s->app->window) return;
+    int w = ANativeWindow_getWidth(s->app->window);
+    int h = ANativeWindow_getHeight(s->app->window);
+    if (w <= 0 || h <= 0) return;
+    if (s->gfx && s->win_w == w && s->win_h == h) return;
+    hta_log("[app] window %dx%d (was %dx%d) -> rebuild", w, h, s->win_w, s->win_h);
+    stop_gfx(s);
+    start_gfx(s);
 }
 
 static void on_cmd(struct android_app *app, int32_t cmd)
@@ -479,6 +513,12 @@ static void on_cmd(struct android_app *app, int32_t cmd)
         }
         break;
     case APP_CMD_TERM_WINDOW: hta_log("[app] TERM_WINDOW"); stop_gfx(s); break;
+    case APP_CMD_WINDOW_RESIZED:
+    case APP_CMD_CONTENT_RECT_CHANGED:
+    case APP_CMD_CONFIG_CHANGED:
+        hta_log("[app] size/config cmd %d", (int)cmd);
+        rebuild_gfx_if_size_changed(s);
+        break;
     case APP_CMD_GAINED_FOCUS: hta_log("[app] focus gained"); break;
     case APP_CMD_LOST_FOCUS:   hta_log("[app] focus lost");   break;
     default: break;
@@ -503,6 +543,7 @@ void android_main(struct android_app *app)
     hta_log("[app] android_main; pointer size %zu bytes", sizeof(void *));
     hta_log("[app] external data path: %s",
             app->activity->externalDataPath ? app->activity->externalDataPath : "(null)");
+    request_landscape(app);
 
     while (1) {
         int events;
@@ -524,6 +565,8 @@ void android_main(struct android_app *app)
                           state.col.built ? &state.col : NULL, &in, dt);
 
         if (state.has_window && state.gfx) {
+            rebuild_gfx_if_size_changed(&state);
+            if (!state.gfx) continue;
             if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh)) {
                 hta_log("[app] surface lost; rebuilding renderer");
                 stop_gfx(&state);

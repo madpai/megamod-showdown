@@ -23,6 +23,7 @@
             android:name=".SetupActivity"
             android:exported="true"
             android:label="Halo Trial PoC"
+            android:screenOrientation="sensorLandscape"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -35,7 +36,7 @@
             android:exported="false"
             android:label="Halo Trial PoC"
             android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|uiMode|density"
-            android:screenOrientation="landscape"
+            android:screenOrientation="sensorLandscape"
             android:launchMode="singleTask">
 
             <!-- tells NativeActivity which .so to load -->

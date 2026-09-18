@@ -11,6 +11,7 @@
 
 #if defined(__ANDROID__)
 #  define VK_USE_PLATFORM_ANDROID_KHR 1
+#  include <android/native_window.h>
 #endif
 #include <vulkan/vulkan.h>
 
@@ -313,6 +314,23 @@ static bool create_targets(hta_gfx *g, uint32_t w, uint32_t h, char *err, size_t
             return false;
         }
 
+        /* Prefer IDENTITY so the compositor rotates. Using currentTransform
+         * (often ROTATE_90 on phones) without also swapping extent / rotating
+         * the projection makes the world look portrait while touch coords
+         * stay landscape. */
+        VkSurfaceTransformFlagBitsKHR pre = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+        if (!(caps.supportedTransforms & pre)) pre = caps.currentTransform;
+        if (pre == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR ||
+            pre == VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR) {
+            uint32_t tmp = g->extent.width;
+            g->extent.width = g->extent.height;
+            g->extent.height = tmp;
+        }
+        hta_log("[gfx] surface %ux%u currentT=0x%x usedT=0x%x supported=0x%x",
+                g->extent.width, g->extent.height,
+                (unsigned)caps.currentTransform, (unsigned)pre,
+                (unsigned)caps.supportedTransforms);
+
         uint32_t want = caps.minImageCount + 1;
         if (caps.maxImageCount && want > caps.maxImageCount) want = caps.maxImageCount;
         if (want > MAX_IMAGES) want = MAX_IMAGES;
@@ -326,7 +344,7 @@ static bool create_targets(hta_gfx *g, uint32_t w, uint32_t h, char *err, size_t
         sci.imageArrayLayers = 1;
         sci.imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        sci.preTransform     = caps.currentTransform;
+        sci.preTransform     = pre;
         sci.compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
         sci.presentMode      = VK_PRESENT_MODE_FIFO_KHR;
         sci.clipped          = VK_TRUE;
@@ -576,7 +594,17 @@ hta_gfx *hta_gfx_create_window(void *native_window, char *err, size_t errlen)
     hta_gfx_destroy(g);
     return NULL;
 #endif
-    return finish(g, 1280, 720, err, errlen);
+    {
+        uint32_t ww = 1280, hh = 720;
+#if defined(__ANDROID__)
+        if (native_window) {
+            int32_t nw = ANativeWindow_getWidth((struct ANativeWindow *)native_window);
+            int32_t nh = ANativeWindow_getHeight((struct ANativeWindow *)native_window);
+            if (nw > 0 && nh > 0) { ww = (uint32_t)nw; hh = (uint32_t)nh; }
+        }
+#endif
+        return finish(g, ww, hh, err, errlen);
+    }
 }
 
 const char *hta_gfx_device_name(const hta_gfx *g) { return g ? g->device_name : "(none)"; }
