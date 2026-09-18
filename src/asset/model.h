@@ -21,11 +21,13 @@
 #define HTA_GEOM_SIZE              0x30u
 #define HTA_PART_SIZE              132u
 #define HTA_PART_SHADER            4u
-#define HTA_PART_TRI_COUNT         72u
+#define HTA_PART_TRI_BUF           68u  /* TriangleBufferType: 0 list, 1 strip */
+#define HTA_PART_TRI_COUNT         72u  /* list: triangles; strip: index count */
 #define HTA_PART_TRI_OFFSET        76u
-#define HTA_PART_VTYPE             86u
+#define HTA_PART_VTYPE             84u  /* 4 = model uncompressed */
 #define HTA_PART_VCOUNT            88u
 #define HTA_PART_VOFFSET           100u
+#define HTA_VTYPE_MODEL_UNCOMP     4u
 #define HTA_MODEL_VTX_SIZE         68u
 #define HTA_SCENERY_ENTRY_SIZE     72u
 #define HTA_VEHICLE_ENTRY_SIZE     120u

@@ -78,24 +78,29 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
 
     for (uint32_t pi = 0; pi < pcount; pi++) {
         uint32_t pe = parr + pi * HTA_PART_SIZE;
-        uint16_t sh = 0, vtype = 0;
+        uint16_t sh = 0, vtype = 0, tbuf = 0;
         uint32_t tcount = 0, toff = 0, vcount = 0, voff = 0;
         hta_rd_u16(c, pe + HTA_PART_SHADER, &sh);
+        hta_rd_u16(c, pe + HTA_PART_TRI_BUF, &tbuf);
         hta_rd_u32(c, pe + HTA_PART_TRI_COUNT, &tcount);
         hta_rd_u32(c, pe + HTA_PART_TRI_OFFSET, &toff);
         hta_rd_u16(c, pe + HTA_PART_VTYPE, &vtype);
         hta_rd_u32(c, pe + HTA_PART_VCOUNT, &vcount);
         hta_rd_u32(c, pe + HTA_PART_VOFFSET, &voff);
-        if (vtype != 0 || vcount == 0 || tcount == 0 || vcount > 20000 || tcount > 40000)
+        /* vtype 4 = model uncompressed (68-byte). tbuf 1 = triangle strip. */
+        if (vtype != HTA_VTYPE_MODEL_UNCOMP || vcount == 0 || tcount == 0 ||
+            vcount > 20000 || tcount > 80000)
             continue;
 
         uint32_t vfile = c->model_data_file_offset + voff;
         uint32_t tfile = c->model_data_file_offset + c->vertex_size + toff;
+        int strip = (tbuf == 1);
+        uint32_t index_words = strip ? tcount : tcount * 3u;
         if ((uint64_t)vfile + (uint64_t)vcount * HTA_MODEL_VTX_SIZE > c->size) continue;
-        if ((uint64_t)tfile + (uint64_t)tcount * 6u > c->size) continue;
+        if ((uint64_t)tfile + (uint64_t)index_words * 2u > c->size) continue;
 
         uint32_t need_v = dst->vertex_count + vcount;
-        uint32_t need_i = dst->index_count + tcount * 3u;
+        uint32_t need_i = dst->index_count + index_words * 3u;
         uint32_t need_s = dst->submesh_count + 1;
         if (!grow((void **)&dst->vertices, &vcap, need_v, sizeof(hta_vertex))) return false;
         if (!grow((void **)&dst->indices, &icap, need_i, sizeof(uint32_t))) return false;
@@ -123,16 +128,46 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
         }
 
         uint32_t first = dst->index_count, emitted = 0;
-        for (uint32_t t = 0; t < tcount; t++) {
-            uint16_t a,b,d;
-            uint32_t to = tfile + t * 6u;
-            if (!hta_rd_u16(c, to+0, &a) || !hta_rd_u16(c, to+2, &b) ||
-                !hta_rd_u16(c, to+4, &d)) break;
-            if (a >= vcount || b >= vcount || d >= vcount) continue;
-            dst->indices[first + emitted + 0] = base + a;
-            dst->indices[first + emitted + 1] = base + b;
-            dst->indices[first + emitted + 2] = base + d;
-            emitted += 3;
+        if (!strip) {
+            for (uint32_t t = 0; t < tcount; t++) {
+                uint16_t a,b,d;
+                uint32_t to = tfile + t * 6u;
+                if (!hta_rd_u16(c, to+0, &a) || !hta_rd_u16(c, to+2, &b) ||
+                    !hta_rd_u16(c, to+4, &d)) break;
+                if (a >= vcount || b >= vcount || d >= vcount) continue;
+                dst->indices[first + emitted + 0] = base + a;
+                dst->indices[first + emitted + 1] = base + b;
+                dst->indices[first + emitted + 2] = base + d;
+                emitted += 3;
+            }
+        } else {
+            /* Gearbox stores a triangle strip. tcount is the number of u16
+             * indices. 0xFFFF restarts; duplicated verts are degenerates. */
+            uint16_t prev0 = 0, prev1 = 0;
+            int have = 0, odd = 0;
+            for (uint32_t i = 0; i < tcount; i++) {
+                uint16_t ix = 0;
+                if (!hta_rd_u16(c, tfile + i * 2u, &ix)) break;
+                if (ix == 0xFFFFu) { have = 0; odd = 0; continue; }
+                if (ix >= vcount) { have = 0; odd = 0; continue; }
+                if (have < 2) {
+                    if (have == 0) prev0 = ix;
+                    else prev1 = ix;
+                    have++;
+                    continue;
+                }
+                uint16_t a = prev0, b = prev1, d = ix;
+                if (a != b && b != d && a != d) {
+                    if (odd) { uint16_t tmp = a; a = b; b = tmp; }
+                    dst->indices[first + emitted + 0] = base + a;
+                    dst->indices[first + emitted + 1] = base + b;
+                    dst->indices[first + emitted + 2] = base + d;
+                    emitted += 3;
+                }
+                prev0 = prev1;
+                prev1 = ix;
+                odd ^= 1;
+            }
         }
         if (emitted == 0) continue;
 
