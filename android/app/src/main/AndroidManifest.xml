@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Vulkan 1.1 is required; the S24+ far exceeds this. -->
+    <uses-feature android:name="android.hardware.vulkan.version"
+                  android:version="0x00401000" android:required="true" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+
+    <!-- hasCode=false: there is no Java/Kotlin in this app at all. -->
+    <application
+        android:label="Halo Trial PoC"
+        android:hasCode="false"
+        android:allowBackup="false">
+
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:label="Halo Trial PoC"
+            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|uiMode|density"
+            android:screenOrientation="landscape"
+            android:launchMode="singleTask">
+
+            <!-- tells NativeActivity which .so to load -->
+            <meta-data android:name="android.app.lib_name" android:value="hta_native" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
