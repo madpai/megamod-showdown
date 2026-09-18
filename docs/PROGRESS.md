@@ -50,7 +50,7 @@ Run `scripts/device_test.sh` with the S24+ connected to convert remaining 🟡.
 ## Phase 3 — Renderer
 
 - ✅ Blood Gulch BSP geometry on device (untextured slice, then textured)
-- ✅ Textures + lightmaps — `bitm` decode from `bitmaps.map`, `senv` base map, 2× lightmap multiply. Host `htaview` shows orange canyon + sand. Pending S24+ retest.
+- ✅ Textures + lightmaps — `bitm` decode from `bitmaps.map`, `senv` base map, 2× lightmap multiply. Host `htaview` and S24+ (2026-09-18) both show orange canyon, sand, red-base markings.
 - 🟡 Shader/material translation — senv base map + generic first-`bitm` for schi/scex; no detail/bump/glass yet
 
 ## Phase 4 — Gameplay
@@ -105,11 +105,12 @@ The owner supplied their own `HaloTrialSetup.exe`. Extracted to
 `~/halo-trial-data/` — **outside the repository**. `.gitignore` prevents any
 game data from being committed; the APK bundles nothing.
 
-### 7. ~~Textures are not sampled yet~~ — **RESOLVED 2026-09-18 (host)**
+### 7. ~~Textures are not sampled yet~~ — **RESOLVED 2026-09-18 (host + S24+)**
 Pixel bytes live in `bitmaps.map` (BitmapData `external` flag), not in
 `bloodgulch.map`. Decoder covers DXT1/3/5 and the 16/32-bit formats the Trial
-uses. Host render of real Blood Gulch shows canyon rock + sand. Device retest
-needs the user to also copy `bitmaps.map` (79 MB).
+uses. S24+ screenshots: red base, canyon rock, sand paths, lightmaps. Remaining
+holes in the base interior are untranslated sky/transparent shaders, not missing
+geometry.
 
 ---
 
@@ -139,4 +140,4 @@ needs the user to also copy `bitmaps.map` (79 MB).
 | APK installs / launches / Vulkan presents | S24+ sideload 2026-09-18 | ✅ |
 | APK loads map / walks Blood Gulch | S24+ 2026-09-18 | ✅ untextured, then landscape-fixed |
 | Host textured Blood Gulch (`htaview` + bitmaps.map) | 2026-09-18 | ✅ 31 unique textures |
-| Device textured Blood Gulch | pending `bitmaps.map` on phone | 🟡 |
+| Device textured Blood Gulch | S24+ screenshots 2026-09-18 | ✅ |
