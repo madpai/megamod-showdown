@@ -16,6 +16,16 @@ echo "== 1. host engine build + unit tests =="
 cmake -B build-host -S . -G Ninja >/dev/null 2>&1 || true
 if cmake --build build-host >/dev/null 2>&1; then ok "host build"; else bad "host build"; fi
 if ./build-host/test_engine >/dev/null 2>&1; then ok "engine unit tests"; else bad "engine unit tests"; fi
+if ./build-host/test_cache  >/dev/null 2>&1; then ok "cache parser tests";  else bad "cache parser tests"; fi
+if ./build-host/test_bsp    >/dev/null 2>&1; then ok "bsp extraction tests"; else bad "bsp extraction tests"; fi
+
+echo "== 1b. end-to-end CLI on a synthetic fixture =="
+FIX=$(mktemp -d)/fix.map
+if ./build-host/mkfixture "$FIX" 256 80 8 >/dev/null 2>&1; then ok "fixture generated"; else bad "fixture generated"; fi
+if ./build-host/htainfo "$FIX" --bsp --spawns >/dev/null 2>&1; then ok "htainfo parses fixture (header+tags+bsp+spawns)"; else bad "htainfo parses fixture"; fi
+if ./build-host/htainfo "$FIX" | grep -q 'DEMO/Trial'; then ok "htainfo detects Trial header layout"; else bad "htainfo detects Trial header layout"; fi
+if ./build-host/htainfo /dev/null >/dev/null 2>&1; then bad "htainfo rejects junk input"; else ok "htainfo rejects junk input"; fi
+rm -rf "$(dirname "$FIX")"
 
 echo "== 2. android APK build =="
 if (cd android && $GRADLE --no-daemon -q :app:assembleDebug >/dev/null 2>&1); then
