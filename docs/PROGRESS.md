@@ -1,6 +1,6 @@
 # Progress
 
-Last updated: **2026-09-18** (Phase 4 pawn + FP AR + collision BSP)
+Last updated: **2026-09-18** (Phase 4 pawn + FP AR + collision BSP + wall pill)
 
 Legend: ✅ done & verified · 🟡 built but not verified on device · ⬜ not started · 🚫 blocked
 
@@ -57,6 +57,7 @@ Run `scripts/device_test.sh` with the S24+ connected to convert remaining 🟡.
 
 - ✅ Pawn physics from Trial tags (`matg` player info + `cyborg_mp`): run 2.25, accel, jump 0.07/tick, camera 0.62, radius 0.2, 45° slope
 - ✅ Structure **collision BSP** for walking/hitscan (~5940 tris vs render mesh)
+- 🟡 Pill depenetration vs steep BSP faces (radius 0.2 cylinder + inbound-velocity cancel). Host tests cover a synthetic wall; S24+ confirm pending. Rocks/vehicles still ghost.
 - 🟡 Weapons: FP assault rifle mesh + tag ROF 15/s; still hitscan (no projectile objects / ammo UI)
 - ✅ Touch HUD: stick, fire, jump, crouch
 
@@ -135,10 +136,10 @@ geometry.
 | APK arm64-only, correct exports, links Vulkan | `scripts/verify.sh` | ✅ 10/10 |
 | Demon cross-build (reference) | mingw32 toolchain | ✅ 44/44 |
 | Camera/projection math | `./build-host/test_camera` | ✅ 23/23 |
-| Player + collision | `./build-host/test_player` | ✅ 27/27 |
+| Player + collision | `./build-host/test_player` | ✅ 41/41 (includes wall pill) |
 | Real Trial data parse + extract | `HTA_MAP=... scripts/verify.sh` | ✅ 5/5 |
 | Offscreen render draws geometry | `scripts/verify.sh` | ✅ |
-| **Full suite** | `HTA_MAP=... scripts/verify.sh` | ✅ **28/28** |
+| **Full suite** | `HTA_MAP=... scripts/verify.sh` | ✅ **29/29** |
 | APK installs / launches / Vulkan presents | S24+ sideload 2026-09-18 | ✅ |
 | APK loads map / walks Blood Gulch | S24+ 2026-09-18 | ✅ untextured, then landscape-fixed |
 | Host textured Blood Gulch (`htaview` + bitmaps.map) | 2026-09-18 | ✅ 31 unique textures |

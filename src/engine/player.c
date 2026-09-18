@@ -168,6 +168,128 @@ bool hta_collision_ground(const hta_collision *c, float x, float y, float z_from
     return found;
 }
 
+static void closest_on_tri(const float a[3], const float b[3], const float c[3],
+                           const float p[3], float q[3])
+{
+    float ab[3] = { b[0]-a[0], b[1]-a[1], b[2]-a[2] };
+    float ac[3] = { c[0]-a[0], c[1]-a[1], c[2]-a[2] };
+    float ap[3] = { p[0]-a[0], p[1]-a[1], p[2]-a[2] };
+    float d1 = ab[0]*ap[0]+ab[1]*ap[1]+ab[2]*ap[2];
+    float d2 = ac[0]*ap[0]+ac[1]*ap[1]+ac[2]*ap[2];
+    if (d1 <= 0.0f && d2 <= 0.0f) { q[0]=a[0]; q[1]=a[1]; q[2]=a[2]; return; }
+    float bp[3] = { p[0]-b[0], p[1]-b[1], p[2]-b[2] };
+    float d3 = ab[0]*bp[0]+ab[1]*bp[1]+ab[2]*bp[2];
+    float d4 = ac[0]*bp[0]+ac[1]*bp[1]+ac[2]*bp[2];
+    if (d3 >= 0.0f && d4 <= d3) { q[0]=b[0]; q[1]=b[1]; q[2]=b[2]; return; }
+    float vc = d1*d4 - d3*d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
+        float v = d1 / (d1 - d3);
+        q[0]=a[0]+ab[0]*v; q[1]=a[1]+ab[1]*v; q[2]=a[2]+ab[2]*v; return;
+    }
+    float cp[3] = { p[0]-c[0], p[1]-c[1], p[2]-c[2] };
+    float d5 = ab[0]*cp[0]+ab[1]*cp[1]+ab[2]*cp[2];
+    float d6 = ac[0]*cp[0]+ac[1]*cp[1]+ac[2]*cp[2];
+    if (d6 >= 0.0f && d5 <= d6) { q[0]=c[0]; q[1]=c[1]; q[2]=c[2]; return; }
+    float vb = d5*d2 - d1*d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
+        float w = d2 / (d2 - d6);
+        q[0]=a[0]+ac[0]*w; q[1]=a[1]+ac[1]*w; q[2]=a[2]+ac[2]*w; return;
+    }
+    float va = d3*d6 - d5*d4;
+    if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f) {
+        float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        q[0]=b[0]+(c[0]-b[0])*w; q[1]=b[1]+(c[1]-b[1])*w; q[2]=b[2]+(c[2]-b[2])*w; return;
+    }
+    float denom = 1.0f / (va + vb + vc);
+    float v = vb * denom, w = vc * denom;
+    q[0]=a[0]+ab[0]*v+ac[0]*w; q[1]=a[1]+ab[1]*v+ac[1]*w; q[2]=a[2]+ab[2]*v+ac[2]*w;
+}
+
+void hta_collision_depenetrate(const hta_collision *c,
+                               float *x, float *y, float z_feet,
+                               float height, float radius)
+{
+    if (!c || !c->built || !x || !y || radius <= 0.0f) return;
+    float walk = (c->walkable_nz > 0.1f) ? c->walkable_nz : 0.50f;
+    float z0 = z_feet;
+    float z1 = z_feet + (height > 1e-4f ? height : 0.7f);
+    float zc = 0.5f * (z0 + z1);
+    float r = radius;
+    float r2 = r * r;
+    /* Deepest penetration per pass so a triangle listed in several grid
+     * cells cannot shove the pawn several times in one frame. */
+    for (int iter = 0; iter < 3; iter++) {
+        int cx0 = (int)((*x - r - c->min[0]) / c->cell);
+        int cx1 = (int)((*x + r - c->min[0]) / c->cell);
+        int cy0 = (int)((*y - r - c->min[1]) / c->cell);
+        int cy1 = (int)((*y + r - c->min[1]) / c->cell);
+        if (cx0 < 0) cx0 = 0;
+        if (cy0 < 0) cy0 = 0;
+        if (cx1 >= (int)c->nx) cx1 = (int)c->nx - 1;
+        if (cy1 >= (int)c->ny) cy1 = (int)c->ny - 1;
+        float px = *x, py = *y;
+        float best_push = 0.0f, best_hx = 0.0f, best_hy = 0.0f;
+        for (int cy = cy0; cy <= cy1; cy++)
+        for (int cx = cx0; cx <= cx1; cx++) {
+            uint32_t ci = (uint32_t)cy * c->nx + (uint32_t)cx;
+            uint32_t s = c->cell_start[ci], e = c->cell_start[ci + 1u];
+            for (uint32_t k = s; k < e; k++) {
+                uint32_t t = c->tri_index[k];
+                const float *a = c->verts[c->indices[t*3+0]].pos;
+                const float *b = c->verts[c->indices[t*3+1]].pos;
+                const float *d = c->verts[c->indices[t*3+2]].pos;
+                float e1x=b[0]-a[0], e1y=b[1]-a[1], e1z=b[2]-a[2];
+                float e2x=d[0]-a[0], e2y=d[1]-a[1], e2z=d[2]-a[2];
+                float nx=e1y*e2z-e1z*e2y, ny=e1z*e2x-e1x*e2z, nz=e1x*e2y-e1y*e2x;
+                float nlen = sqrtf(nx*nx+ny*ny+nz*nz);
+                if (nlen < 1e-8f) continue;
+                if (fabsf(nz) / nlen >= walk) continue; /* floor/ceiling */
+                float q[3], p[3] = { px, py, zc };
+                closest_on_tri(a, b, d, p, q);
+                float az = q[2];
+                if (az < z0) az = z0;
+                if (az > z1) az = z1;
+                float dx = px - q[0], dy = py - q[1], dz = az - q[2];
+                float xy2 = dx * dx + dy * dy;
+                float dist2 = (fabsf(dz) < 1e-4f) ? xy2 : (xy2 + dz * dz);
+                if (dist2 >= r2) continue;
+                float hx, hy, hl, push;
+                if (dist2 < 1e-12f) {
+                    hx = nx / nlen;
+                    hy = ny / nlen;
+                    hl = sqrtf(hx * hx + hy * hy);
+                    if (hl < 1e-5f) continue;
+                    hx /= hl;
+                    hy /= hl;
+                    push = r;
+                } else {
+                    float dist = sqrtf(dist2);
+                    push = r - dist;
+                    hx = dx;
+                    hy = dy;
+                    hl = sqrtf(hx * hx + hy * hy);
+                    if (hl < 1e-5f) {
+                        hx = nx / nlen;
+                        hy = ny / nlen;
+                        hl = sqrtf(hx * hx + hy * hy);
+                    }
+                    if (hl < 1e-5f) continue;
+                    hx /= hl;
+                    hy /= hl;
+                }
+                if (push > best_push) {
+                    best_push = push;
+                    best_hx = hx;
+                    best_hy = hy;
+                }
+            }
+        }
+        if (best_push < 1e-5f) break;
+        *x = px + best_hx * best_push;
+        *y = py + best_hy * best_push;
+    }
+}
+
 bool hta_collision_ray(const hta_collision *c,
                        const float orig[3], const float dir[3], float max_t,
                        float *out_t, float hit[3], float nrm[3])
@@ -348,6 +470,23 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
                     hta_collision_ground(col, ox, oy, probe_z, &gz);
                 }
             }
+            float ph = p->phys.coll_stand + (p->phys.coll_crouch - p->phys.coll_stand) * p->crouch_t;
+            float bx = p->pos[0], by = p->pos[1];
+            hta_collision_depenetrate(col, &p->pos[0], &p->pos[1], p->pos[2], ph, p->radius);
+            /* Cancel velocity into the wall or the next frame sinks back in. */
+            float pdx = p->pos[0] - bx, pdy = p->pos[1] - by;
+            float plen2 = pdx * pdx + pdy * pdy;
+            if (plen2 > 1e-12f) {
+                float inv = 1.0f / sqrtf(plen2);
+                pdx *= inv;
+                pdy *= inv;
+                float vn = p->velocity[0] * pdx + p->velocity[1] * pdy;
+                if (vn < 0.0f) {
+                    p->velocity[0] -= vn * pdx;
+                    p->velocity[1] -= vn * pdy;
+                }
+            }
+
             if (hta_collision_ground(col, p->pos[0], p->pos[1], probe_z, &gz)) {
                 if (p->pos[2] <= gz) {
                     p->pos[2] = gz;

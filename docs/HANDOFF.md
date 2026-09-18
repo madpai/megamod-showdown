@@ -48,11 +48,12 @@ Then copy a new APK over `halo-trial-poc.apk` and refresh `SHA256SUMS`.
 - No walking up walls (upward faces + slide)
 - **Pawn physics from Trial tags:** `matg` player info + `cyborg_mp`  
   run 2.25 wu/s, accel, jump 0.07/tick, cam 0.62, radius 0.2, 45° slope
-- **This drop (stop-before-MP):**
-  - First-person assault rifle model (`weapons\assault rifle\fp\fp`) glued to the camera
-  - Fire rate from the weap trigger (AR **15 shots/s**)
-  - Hitscan scorches still used (no projectile objects yet)
-  - **Structure collision BSP** (~2830 verts / 5940 tris) for walking instead of the pretty mesh
+- **Previous drop:** FP assault rifle (`weapons\assault rifle\fp\fp`), weap ROF 15/s, structure collision BSP (~2830 verts / 5940 tris)
+- **This drop (pill vs BSP walls):**
+  - Standing cylinder (radius 0.2, tag height) depenetrates steep collision faces
+  - Deepest-hit per pass so a triangle in several grid cells cannot over-push
+  - Inbound XY velocity is cancelled after a push — that was the “slight clip” (point query + sinking back in next frame)
+  - Scenery/vehicles still have no colliders (walk through rocks and warthogs)
 
 ---
 
@@ -62,15 +63,16 @@ Then copy a new APK over `halo-trial-poc.apk` and refresh `SHA256SUMS`.
 - No real **projectiles** / tracers / ammo UI (hitscan + cooldown only)
 - No weapon pickup; you spawn with the AR
 - Vehicle `shader_model` textures still weak; some attachments may sit wrong
+- Rocks/vehicles are **not** solid (only structure collision BSP)
 - Multiplayer not started (by request)
 
 ---
 
 ## Suggested next session (after you test)
 
-1. Screenshot: FP gun orientation/scale, AR fire rate, walking into pylons on collision BSP
-2. If the gun is huge/backwards, tweak `weap.fp_offset` and the viewmodel basis in `gfx_vulkan.c`
-3. Then: projectile tags, ammo, or netcode (Phase 5)
+1. Walk into a **base wall / pylon** — you should stop at ~0.2 wu, not sink. Rocks and warthogs still ghost.
+2. FP AR sits a bit low-left and untextured — tweak `weap.fp_offset` / viewmodel basis if needed
+3. Then: scenery/vehicle colliders, projectile tags, ammo, or netcode (Phase 5)
 
 ---
 

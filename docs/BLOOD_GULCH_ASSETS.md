@@ -145,7 +145,7 @@ S24+; the renderer will be bound by texture and lightmap work, not geometry.
 |---|---|
 | `bitm` (448 tags) incl. the lightmap atlas | **sampled** from `bitmaps.map` (external pixel store) |
 | `senv`/`soso`/`schi` shaders (176 tags) | not interpreted; submesh shader tag ids are recorded but unused |
-| `collision bsp` (1 block) | not used; ground collision currently ray-casts the render mesh |
+| `collision bsp` (1 block) | used: `hta_bsp_load_collision` flattens ~5940 tris for ground + pill walls |
 | `mod2` models (70) | no bases, weapons, vehicles, or characters |
 | `scen`/`eqip`/`weap`/`vehi` placements | ignored |
 | `snd!` (333), `effe` (350), `DeLa` UI (324) | out of scope for Phase 2 |

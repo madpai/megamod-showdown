@@ -67,6 +67,12 @@ int main(void)
     for (int i = 0; i < 600; i++) hta_player_update(&p, &cam, &col, &in, 1.0f/60.0f);
     CHECK(p.on_ground, "player falls and lands");
     CHECK(p.pos[2] > -8.0f && p.pos[2] < 8.0f, "lands on the terrain, not through it");
+    {
+        float x = p.pos[0], y = p.pos[1];
+        hta_collision_depenetrate(&col, &p.pos[0], &p.pos[1], p.pos[2], 0.7f, 0.2f);
+        CHECK(fabsf(p.pos[0] - x) < 0.05f && fabsf(p.pos[1] - y) < 0.05f,
+              "depenetrate on a floor does not shove the player");
+    }
     CHECK(fabsf(p.velocity[2]) < 0.001f, "vertical velocity zeroed on landing");
     CHECK(fabsf(cam.pos[2] - (p.pos[2] + p.eye_height)) < 1e-4f, "camera sits at eye height above feet");
 
@@ -134,6 +140,67 @@ int main(void)
               "downward ray hits the grid");
         CHECK(t > 10.0f && t < 30.0f, "hit distance is between camera and below-ground");
         CHECK(fabsf(nrm[2]) > 0.3f, "hit normal has a Z component");
+    }
+
+    printf("\n[wall pill]\n");
+    {
+        /* Floor 0..10 plus a vertical wall at x=5, y=0..10, z=0..3. */
+        static hta_vertex wv[8];
+        static uint32_t wi[12];
+        memset(wv, 0, sizeof(wv));
+        float pts[8][3] = {
+            {0,0,0},{10,0,0},{10,10,0},{0,10,0},
+            {5,0,0},{5,10,0},{5,10,3},{5,0,3}
+        };
+        for (int i = 0; i < 8; i++) {
+            wv[i].pos[0] = pts[i][0];
+            wv[i].pos[1] = pts[i][1];
+            wv[i].pos[2] = pts[i][2];
+            wv[i].normal[2] = 1.0f;
+        }
+        uint32_t tris[12] = { 0,1,2, 0,2,3, 4,5,6, 4,6,7 };
+        memcpy(wi, tris, sizeof(tris));
+        hta_bsp_mesh wallm;
+        memset(&wallm, 0, sizeof(wallm));
+        wallm.vertices = wv;
+        wallm.vertex_count = 8;
+        wallm.indices = wi;
+        wallm.index_count = 12;
+        wallm.bounds_min[0] = 0; wallm.bounds_min[1] = 0; wallm.bounds_min[2] = 0;
+        wallm.bounds_max[0] = 10; wallm.bounds_max[1] = 10; wallm.bounds_max[2] = 3;
+
+        hta_collision wcol;
+        CHECK(hta_collision_build(&wcol, &wallm), "wall-room collision builds");
+        float gz = -1.0f;
+        CHECK(hta_collision_ground(&wcol, 2.0f, 5.0f, 2.0f, &gz) && fabsf(gz) < 0.05f,
+              "floor still resolves on the west side of the wall");
+
+        float wx = 4.95f, wy = 5.0f;
+        hta_collision_depenetrate(&wcol, &wx, &wy, 0.0f, 0.7f, 0.2f);
+        CHECK(wx < 5.0f - 0.19f && wx > 5.0f - 0.25f,
+              "pill overlapping a wall is pushed out to radius");
+        CHECK(fabsf(wy - 5.0f) < 0.02f, "wall push is along the face normal (no Y drift)");
+
+        hta_player wp;
+        hta_camera wcam;
+        hta_player_init(&wp);
+        hta_camera_init(&wcam);
+        wp.phys.radius = 0.2f;
+        wp.radius = 0.2f;
+        wp.pos[0] = 2.0f; wp.pos[1] = 5.0f; wp.pos[2] = 0.0f;
+        wp.on_ground = true;
+        wcam.yaw = 0.0f; /* face +X, into the wall */
+        hta_player_input win;
+        memset(&win, 0, sizeof(win));
+        win.move_forward = 1.0f;
+        for (int i = 0; i < 180; i++)
+            hta_player_update(&wp, &wcam, &wcol, &win, 1.0f / 60.0f);
+        CHECK(wp.pos[0] < 5.0f - 0.15f, "walking into a wall stops before the surface");
+        CHECK(wp.pos[0] > 2.5f, "walking into a wall still reaches it");
+        CHECK(fabsf(wp.pos[1] - 5.0f) < 0.3f, "wall slide does not throw the pawn sideways");
+        float vwall = wp.velocity[0];
+        CHECK(vwall < 0.3f, "inbound velocity is cancelled after the wall push");
+        hta_collision_free(&wcol);
     }
 
     printf("\n[rebind after realloc]\n");

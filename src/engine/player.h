@@ -1,5 +1,6 @@
 /* First-person pawn driven by Trial tag physics (globals + cyborg_mp).
- * Collision is still a height query on the render mesh (collision BSP is later).
+ * Ground is a height query on the structure collision BSP (render mesh
+ * fallback). Walls use a standing-cylinder depenetration pass.
  */
 #ifndef HTA_PLAYER_H
 #define HTA_PLAYER_H
@@ -33,6 +34,12 @@ void hta_collision_rebind(hta_collision *c, const hta_vertex *verts,
 /* Highest triangle surface at or below (x,y,z_from). Returns false if none. */
 bool hta_collision_ground(const hta_collision *c, float x, float y, float z_from,
                           float *out_z);
+
+/* Push a standing pill (radius, [z_feet, z_feet+height]) out of steep faces.
+ * Floors are ignored — those stay a ground snap. */
+void hta_collision_depenetrate(const hta_collision *c,
+                               float *x, float *y, float z_feet,
+                               float height, float radius);
 
 /* First-hit ray vs the collision mesh. `dir` need not be unit length.
  * Writes hit point, surface normal, and t along dir. */
