@@ -95,6 +95,14 @@ bool hta_collision_build(hta_collision *c, const hta_bsp_mesh *mesh)
     return true;
 }
 
+void hta_collision_rebind(hta_collision *c, const hta_vertex *verts,
+                          const uint32_t *indices)
+{
+    if (!c || !c->built) return;
+    if (verts) c->verts = verts;
+    if (indices) c->indices = indices;
+}
+
 /* Barycentric point-in-triangle in XY, then interpolate Z. */
 static bool tri_height(const float a[3], const float b[3], const float c3[3],
                        float x, float y, float *out_z)

@@ -31,6 +31,10 @@ typedef struct {
 
 bool hta_collision_build(hta_collision *c, const hta_bsp_mesh *mesh);
 void hta_collision_free(hta_collision *c);
+/* Call after the mesh vertex/index arrays have been realloc'd (e.g. scenery
+ * append). The grid still refers to the original triangle range. */
+void hta_collision_rebind(hta_collision *c, const hta_vertex *verts,
+                          const uint32_t *indices);
 
 /* Highest triangle surface at or below (x,y,z_from). Returns false if none. */
 bool hta_collision_ground(const hta_collision *c, float x, float y, float z_from,

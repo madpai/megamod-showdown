@@ -325,6 +325,9 @@ static bool load_map(hta_android *s)
     if (hta_scenario_add_objects(&s->mesh, &s->cache, rm.data ? &rm : NULL, err, sizeof(err)))
         hta_log("[assets] %s  (now %u verts / %u submeshes)", err,
                 s->mesh.vertex_count, s->mesh.submesh_count);
+    /* add_objects reallocs verts/indices; collision still points at the old
+     * buffers unless we rebind. That is what made spawn fall through the floor. */
+    hta_collision_rebind(&s->col, s->mesh.vertices, s->mesh.indices);
     if (hta_sky_load(&s->sky, &s->cache, rm.data ? &rm : NULL, err, sizeof(err))) {
         s->have_sky = true;
         hta_log("[assets] sky %u verts / %u submeshes", s->sky.vertex_count, s->sky.submesh_count);
@@ -338,8 +341,16 @@ static bool load_map(hta_android *s)
     hta_player_init(&s->player);
     if (nsp > 0) {
         hta_player_spawn(&s->player, &sp[0]);
+        float gz;
+        if (s->col.built &&
+            hta_collision_ground(&s->col, s->player.pos[0], s->player.pos[1],
+                                 s->player.pos[2] + 8.0f, &gz)) {
+            s->player.pos[2] = gz;
+            s->player.on_ground = true;
+            hta_log("[assets] snapped spawn to ground z=%.2f", gz);
+        }
         hta_log("[assets] %u spawn points; spawning at (%.2f %.2f %.2f)",
-                nsp, sp[0].position[0], sp[0].position[1], sp[0].position[2]);
+                nsp, s->player.pos[0], s->player.pos[1], s->player.pos[2]);
         s->cam.yaw = sp[0].facing;
     } else {
         s->player.pos[0] = 0.5f * (s->mesh.bounds_min[0] + s->mesh.bounds_max[0]);

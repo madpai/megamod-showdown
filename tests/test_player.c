@@ -4,6 +4,7 @@
 #include "asset/bsp.h"
 #include "fixture.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
@@ -123,6 +124,20 @@ int main(void)
     p.pos[0] = 10000.0f; p.pos[1] = 10000.0f; p.pos[2] = 5.0f;
     for (int i = 0; i < 120; i++) hta_player_update(&p, &cam, &col, &in, 1.0f/60.0f);
     CHECK(!p.on_ground && isfinite(p.pos[2]), "outside the world the player falls without NaN");
+
+    printf("\n[rebind after realloc]\n");
+    {
+        uint32_t nv = mesh.vertex_count, ni = mesh.index_count;
+        hta_vertex *nvtx = (hta_vertex *)realloc(mesh.vertices, (nv + 8) * sizeof(hta_vertex));
+        uint32_t *nidx = (uint32_t *)realloc(mesh.indices, (ni + 8) * sizeof(uint32_t));
+        CHECK(nvtx && nidx, "realloc mesh arrays (simulates scenery append)");
+        if (nvtx) mesh.vertices = nvtx;
+        if (nidx) mesh.indices = nidx;
+        hta_collision_rebind(&col, mesh.vertices, mesh.indices);
+        float gz = 0.0f;
+        CHECK(hta_collision_ground(&col, 40.0f, 40.0f, 100.0f, &gz),
+              "ground query still works after realloc+rebind");
+    }
 
     hta_collision_free(&col);
     CHECK(col.tri_index == NULL, "collision free clears state");
