@@ -31,21 +31,21 @@ Legend: ✅ done & verified · 🟡 built but not verified on device · ⬜ not 
 - ✅ Touch + gamepad + BACK routed through the platform boundary into the engine
 - ✅ Gradle build producing arm64-v8a-only APK (61 KB)
 - ✅ `scripts/verify.sh` — 10 automated build/artifact checks, all passing
-- 🟡 **APK installs on device** — *not yet run: no device attached to this host*
-- 🟡 **APK launches / Vulkan initializes on S24+** — *pending device*
-- 🟡 **Touch changes render state on device** — *pending device*
-- 🟡 **Gamepad input on device** — *pending device*
-- 🟡 **Clean exit via BACK** — *pending device*
-- 🟡 **Stage-2 `mmap(0x40440000)` probe result** — *pending device; code is in the APK and logs its answer*
+- ✅ **APK installs on device** — sideloaded on S24+ over Tailscale, 2026-09-18
+- ✅ **APK launches / Vulkan initializes on S24+** — magenta frame presented; Adreno swapchain/present works
+- 🟡 **Touch changes render state on device** — *pending: needs a loaded map*
+- 🟡 **Gamepad input on device** — *pending: needs a loaded map*
+- 🟡 **Clean exit via BACK** — *pending retest after picker build*
+- 🟡 **Stage-2 `mmap(0x40440000)` probe result** — *pending: logcat from our own process only*
 
-Run `scripts/device_test.sh` with the S24+ connected to convert all 🟡 above.
+Run `scripts/device_test.sh` with the S24+ connected to convert remaining 🟡.
 
 ## Phase 2 — Asset pipeline
 
-- ⬜ Build Invader on CachyOS
-- ⬜ Verify Invader round-trips a user-supplied Trial `bloodgulch.map` (`CACHE_FILE_DEMO`)
-- ⬜ On-device asset import flow (user supplies their own Trial copy)
-- ⬜ Parse tag table on device; log tag count; compare against desktop Invader
+- ✅ Host-side Trial cache parser + BSP extractor (`htainfo`) against real `bloodgulch.map`
+- ✅ Host renderer draws Blood Gulch geometry (`htaview`)
+- ✅ On-device import: `SetupActivity` document picker copies the user's map into app-private storage (no All-files access required)
+- 🟡 Parse tag table on device and render Blood Gulch — *blocked on first on-device map load; desktop path verified*
 
 ## Phase 3 — Renderer
 
@@ -92,11 +92,13 @@ No licence file = all rights reserved. Usable as documentation only, never as co
 `halo_cache_symbols.exe` comes from the Dec 2024 unauthorised Digsite leak.
 Use `demon-old`'s legitimate Trial targeting and Demon's public struct definitions instead.
 
-### 5. No device attached to the build host — **THE MAIN REMAINING GAP**
-Everything on the desktop is verified; nothing on Android is. The APK builds and
-is structurally correct, but no frame has ever been presented on real hardware.
-Run `HTA_MAP=~/halo-trial-data/extract/maps/bloodgulch.map scripts/device_test.sh`
-with the S24+ attached to close this.
+### 5. First on-device map load — **THE MAIN REMAINING GAP**
+Vulkan on the S24+ is proven (magenta frame, 2026-09-18). The first APK could
+not see `bloodgulch.map` in Downloads: `MANAGE_EXTERNAL_STORAGE` is a special
+setting, not "Files and media", and Termux cannot read another app's logcat.
+Fix: `SetupActivity` uses the system document picker and copies the map into
+app-private storage. Retest: install the new APK, Pick map, Play. Sky blue +
+terrain = success; magenta = picker copy didn't land where native looks.
 
 ### 6. ~~No Trial assets present~~ — **RESOLVED 2026-09-18**
 The owner supplied their own `HaloTrialSetup.exe`. Extracted to
@@ -133,4 +135,5 @@ recognisable but flat-shaded. This is the next milestone, not a defect.
 | Real Trial data parse + extract | `HTA_MAP=... scripts/verify.sh` | ✅ 5/5 |
 | Offscreen render draws geometry | `scripts/verify.sh` | ✅ |
 | **Full suite** | `HTA_MAP=... scripts/verify.sh` | ✅ **24/24** |
-| APK installs / launches / renders / walks / exits | `HTA_MAP=... scripts/device_test.sh` | 🟡 pending device |
+| APK installs / launches / Vulkan presents | S24+ sideload 2026-09-18 | ✅ magenta frame |
+| APK loads map / walks Blood Gulch / exits | picker build, pending retest | 🟡 |

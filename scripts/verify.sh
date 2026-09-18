@@ -71,6 +71,19 @@ APK=android/app/build/outputs/apk/debug/app-debug.apk
 echo "== 3. APK contents =="
 unzip -l "$APK" | grep -q 'lib/arm64-v8a/libhta_native.so' && ok "arm64-v8a native lib present" || bad "arm64-v8a native lib present"
 unzip -l "$APK" | grep -q 'lib/armeabi-v7a\|lib/x86' && bad "no unwanted ABIs" || ok "no unwanted ABIs"
+unzip -l "$APK" | grep -qE 'classes[0-9]*\.dex' && ok "DEX present" || bad "DEX present"
+AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt 2>/dev/null | tail -1)
+DEXDUMP=$(ls "$ANDROID_HOME"/build-tools/*/dexdump 2>/dev/null | tail -1)
+if [ -n "$AAPT" ] && "$AAPT" dump badging "$APK" | grep -q "launchable-activity: name='net.hta.halotrial.SetupActivity'"; then
+  ok "launcher is SetupActivity"
+else
+  bad "launcher is SetupActivity"
+fi
+if [ -n "$DEXDUMP" ] && "$DEXDUMP" "$APK" 2>/dev/null | grep -q "Lnet/hta/halotrial/SetupActivity;"; then
+  ok "SetupActivity in DEX"
+else
+  bad "SetupActivity in DEX"
+fi
 
 rm -rf build-apkcheck && mkdir -p build-apkcheck
 unzip -q -o "$APK" -d build-apkcheck

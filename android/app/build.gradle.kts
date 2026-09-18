@@ -35,6 +35,10 @@ android {
         debug   { isJniDebuggable = true }
     }
 
-    // No Java/Kotlin source at all: pure NativeActivity.
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
     sourceSets["main"].manifest.srcFile("src/main/AndroidManifest.xml")
 }

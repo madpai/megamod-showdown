@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Reading the user's OWN game data from shared storage.
-         Android 11+ hides Android/data/ from file managers, so a sideloaded
-         test build needs All-files access for the user to supply their map.
-         The app never downloads, bundles, or transmits game data. -->
+    <!-- Optional fallback: native code still searches Download/ if the user
+         grants All-files access. The primary path is the document picker in
+         SetupActivity, which needs no extra permission. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
                      android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
@@ -15,16 +14,25 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
 
-    <!-- hasCode=false: there is no Java/Kotlin in this app at all. -->
     <application
         android:label="Halo Trial PoC"
-        android:hasCode="false"
         android:allowBackup="false"
         android:requestLegacyExternalStorage="true">
 
         <activity
-            android:name="android.app.NativeActivity"
+            android:name=".SetupActivity"
             android:exported="true"
+            android:label="Halo Trial PoC"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="false"
             android:label="Halo Trial PoC"
             android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|uiMode|density"
             android:screenOrientation="landscape"
@@ -32,11 +40,6 @@
 
             <!-- tells NativeActivity which .so to load -->
             <meta-data android:name="android.app.lib_name" android:value="hta_native" />
-
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
         </activity>
     </application>
 </manifest>

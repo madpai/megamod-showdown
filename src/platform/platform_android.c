@@ -1,13 +1,15 @@
-/* Android platform layer — the only file that touches Android APIs.
+/* Android platform layer — the only native file that touches Android APIs.
  *
  * Responsibilities: NativeActivity lifecycle, locating the user's own Halo
  * Trial data, translating touch/gamepad into engine input, driving the
  * renderer. All game logic lives in src/engine and src/asset.
  *
- * DATA: nothing proprietary ships in this APK. The user copies their own
- * legally obtained Trial maps to the app's external files directory:
+ * DATA: nothing proprietary ships in this APK. SetupActivity (Java) lets the
+ * user pick their own legally obtained Trial map via the system document
+ * picker and copies it into the app-private external files directory:
  *   /sdcard/Android/data/net.hta.halotrial/files/
- * which needs no runtime permission and no root.
+ * which needs no runtime permission and no root. Native still also searches
+ * Download/ etc. if All-files access happens to be granted.
  */
 #include "platform.h"
 #include "../engine/engine.h"
