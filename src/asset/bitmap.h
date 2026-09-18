@@ -69,6 +69,13 @@ uint32_t hta_shader_base_bitmap(const hta_cache *c, uint32_t shader_tag_id);
 bool hta_bsp_load_textures(const hta_cache *c, const hta_resource_map *bitmaps,
                            hta_bsp_mesh *mesh, char *err, size_t errlen);
 
+/* Intern a decoded bitmap into mesh->textures. Returns slot or ~0u. */
+uint32_t hta_mesh_intern_bitmap(hta_bsp_mesh *mesh, const hta_cache *c,
+                                const hta_resource_map *bitmaps,
+                                uint32_t tag_id, uint32_t index);
+
+uint8_t hta_shader_draw_mode(const hta_cache *c, uint32_t shader_tag_id);
+
 /* Decode a raw pixel blob (used by unit tests; no cache involved). */
 bool hta_bitmap_decode_pixels(uint16_t format, uint32_t w, uint32_t h,
                               const uint8_t *src, uint32_t src_len,

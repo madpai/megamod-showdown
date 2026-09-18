@@ -376,6 +376,7 @@ bool hta_bsp_load_first(const hta_cache *c, hta_bsp_mesh *out,
             out->submeshes[out->submesh_count].lightmap_index = lm_bitmap;
             out->submeshes[out->submesh_count].albedo_tex     = ~0u;
             out->submeshes[out->submesh_count].lightmap_tex   = ~0u;
+            out->submeshes[out->submesh_count].draw_mode      = HTA_DRAW_OPAQUE;
             out->submesh_count++;
         }
     }

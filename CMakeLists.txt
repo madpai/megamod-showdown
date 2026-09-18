@@ -12,6 +12,7 @@ if(ANDROID)
         src/asset/cache.c
         src/asset/bsp.c
         src/asset/bitmap.c
+        src/asset/model.c
         src/gfx/gfx_vulkan.c
         src/platform/platform_android.c
         ${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c
@@ -28,7 +29,7 @@ if(ANDROID)
 else()
     # Host build: the portable engine only, plus its tests.
     add_library(hta_engine STATIC src/engine/engine.c src/engine/camera.c src/engine/player.c
-        src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c)
+        src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c src/asset/model.c)
     target_include_directories(hta_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(hta_engine PRIVATE -Wall -Wextra)
 

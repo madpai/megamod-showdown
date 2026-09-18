@@ -18,6 +18,7 @@
 #include "../asset/cache.h"
 #include "../asset/bsp.h"
 #include "../asset/bitmap.h"
+#include "../asset/model.h"
 #include "../gfx/gfx.h"
 #include "../engine/scene_light.h"
 
@@ -87,12 +88,15 @@ typedef struct {
 
     hta_cache     cache;
     hta_bsp_mesh  mesh;
+    hta_bsp_mesh  sky;
     hta_collision col;
     bool          have_mesh;
+    bool          have_sky;
 
     /* runtime */
     hta_gfx      *gfx;
     hta_gfx_mesh *gpu_mesh;
+    hta_gfx_mesh *gpu_sky;
     hta_camera    cam;
     hta_player    player;
     hta_scene     scene;
@@ -318,6 +322,16 @@ static bool load_map(hta_android *s)
     else
         hta_log("[assets] collision grid %ux%u cells", s->col.nx, s->col.ny);
 
+    if (hta_scenario_add_objects(&s->mesh, &s->cache, rm.data ? &rm : NULL, err, sizeof(err)))
+        hta_log("[assets] %s  (now %u verts / %u submeshes)", err,
+                s->mesh.vertex_count, s->mesh.submesh_count);
+    if (hta_sky_load(&s->sky, &s->cache, rm.data ? &rm : NULL, err, sizeof(err))) {
+        s->have_sky = true;
+        hta_log("[assets] sky %u verts / %u submeshes", s->sky.vertex_count, s->sky.submesh_count);
+    } else {
+        hta_log("[assets] sky: %s", err);
+    }
+
     /* spawn at a real player start if the scenario has one */
     hta_spawn_point sp[64];
     uint32_t nsp = hta_scenario_spawns(&s->cache, sp, 64);
@@ -505,6 +519,10 @@ static void start_gfx(hta_android *s)
                      s->mesh.vertex_count, s->mesh.index_count/3,
                      (hta_time_seconds()-t0)*1000.0,
                      hta_gfx_device_memory_used(s->gfx)/(1024.0*1024.0));
+        if (s->have_sky) {
+            s->gpu_sky = hta_gfx_mesh_upload(s->gfx, &s->sky, err, sizeof(err));
+            if (!s->gpu_sky) hta_log("[gfx] sky upload FAILED: %s", err);
+        }
         float span = s->mesh.bounds_max[0] - s->mesh.bounds_min[0];
         if (span < 1.0f) span = 1.0f;
         s->cam.zfar  = span * 6.0f;
@@ -514,6 +532,7 @@ static void start_gfx(hta_android *s)
 
 static void stop_gfx(hta_android *s)
 {
+    if (s->gpu_sky) { hta_gfx_mesh_free(s->gfx, s->gpu_sky); s->gpu_sky = NULL; }
     if (s->gpu_mesh) { hta_gfx_mesh_free(s->gfx, s->gpu_mesh); s->gpu_mesh = NULL; }
     if (s->gfx) { hta_gfx_destroy(s->gfx); s->gfx = NULL; }
     s->has_window = false;
@@ -631,7 +650,7 @@ void android_main(struct android_app *app)
         if (state.has_window && state.gfx) {
             rebuild_gfx_if_size_changed(&state);
             if (!state.gfx) continue;
-            if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh)) {
+            if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh, state.gpu_sky)) {
                 hta_log("[app] surface lost; rebuilding renderer");
                 stop_gfx(&state);
                 if (app->window) start_gfx(&state);
@@ -656,6 +675,7 @@ done:
     stop_gfx(&state);
     hta_collision_free(&state.col);
     hta_bsp_free(&state.mesh);
+    hta_bsp_free(&state.sky);
     if (state.map_data) munmap(state.map_data, state.map_size);
     if (state.bitmaps_data) munmap(state.bitmaps_data, state.bitmaps_size);
 }

@@ -328,11 +328,31 @@ uint32_t hta_shader_base_bitmap(const hta_cache *c, uint32_t shader_tag_id)
     return 0;
 }
 
-static uint32_t tex_intern(hta_bsp_mesh *mesh, const hta_cache *c,
-                           const hta_resource_map *bitmaps,
-                           uint32_t tag_id, uint32_t index)
+uint8_t hta_shader_draw_mode(const hta_cache *c, uint32_t shader_tag_id)
 {
-    if (!tag_id || tag_id == 0xFFFFFFFFu) return ~0u;
+    if (!c || !shader_tag_id || shader_tag_id == 0xFFFFFFFFu) return HTA_DRAW_OPAQUE;
+    int32_t ti = hta_cache_find_tag_by_id(c, shader_tag_id);
+    if (ti < 0) return HTA_DRAW_OPAQUE;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t)) return HTA_DRAW_OPAQUE;
+    if (t.primary_class == HTA_TAG_SENV) return HTA_DRAW_OPAQUE;
+    char path[192] = {0};
+    hta_cache_tag_path(c, &t, path, sizeof(path));
+    /* Blood Gulch sky portals are chicago shaders named "... light black". */
+    for (char *p = path; *p; p++) if (*p >= 'A' && *p <= 'Z') *p = (char)(*p - 'A' + 'a');
+    if (strstr(path, "black")) return HTA_DRAW_SKIP;
+    if (strstr(path, "light") || strstr(path, "teleporter") || strstr(path, "shield"))
+        return HTA_DRAW_ADD;
+    if (t.primary_class == HTA_TAG_SCHI || t.primary_class == HTA_TAG_SCEX)
+        return HTA_DRAW_ALPHA;
+    return HTA_DRAW_OPAQUE;
+}
+
+uint32_t hta_mesh_intern_bitmap(hta_bsp_mesh *mesh, const hta_cache *c,
+                                const hta_resource_map *bitmaps,
+                                uint32_t tag_id, uint32_t index)
+{
+    if (!tag_id || tag_id == 0xFFFFFFFFu || !mesh || !mesh->textures) return ~0u;
     for (uint32_t i = 0; i < mesh->texture_count; i++) {
         if (mesh->textures[i].tag_id == tag_id &&
             mesh->textures[i].index == index) return i;
@@ -365,10 +385,11 @@ bool hta_bsp_load_textures(const hta_cache *c, const hta_resource_map *bitmaps,
         hta_submesh *sm = &mesh->submeshes[i];
         sm->albedo_tex = ~0u;
         sm->lightmap_tex = ~0u;
+        sm->draw_mode = hta_shader_draw_mode(c, sm->shader_tag_id);
         uint32_t base = hta_shader_base_bitmap(c, sm->shader_tag_id);
-        if (base) sm->albedo_tex = tex_intern(mesh, c, bitmaps, base, 0);
+        if (base) sm->albedo_tex = hta_mesh_intern_bitmap(mesh, c, bitmaps, base, 0);
         if (mesh->lightmaps_bitmap_id && sm->lightmap_index != 0xFFFFu)
-            sm->lightmap_tex = tex_intern(mesh, c, bitmaps,
+            sm->lightmap_tex = hta_mesh_intern_bitmap(mesh, c, bitmaps,
                                           mesh->lightmaps_bitmap_id,
                                           sm->lightmap_index);
     }

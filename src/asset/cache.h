@@ -47,7 +47,13 @@ enum {
 #define HTA_TAG_SBSP HTA_FOURCC('s','b','s','p')
 #define HTA_TAG_BITM HTA_FOURCC('b','i','t','m')
 #define HTA_TAG_SENV HTA_FOURCC('s','e','n','v')
+#define HTA_TAG_SCHI HTA_FOURCC('s','c','h','i')
+#define HTA_TAG_SCEX HTA_FOURCC('s','c','e','x')
 #define HTA_TAG_MOD2 HTA_FOURCC('m','o','d','2')
+#define HTA_TAG_SCEN HTA_FOURCC('s','c','e','n')
+#define HTA_TAG_VEHI HTA_FOURCC('v','e','h','i')
+#define HTA_TAG_WEAP HTA_FOURCC('w','e','a','p')
+#define HTA_TAG_SKY  HTA_FOURCC('s','k','y',' ')
 
 typedef struct {
     uint32_t primary_class, secondary_class, tertiary_class;

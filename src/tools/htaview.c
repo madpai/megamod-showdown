@@ -9,6 +9,7 @@
 #include "asset/cache.h"
 #include "asset/bsp.h"
 #include "asset/bitmap.h"
+#include "asset/model.h"
 #include "engine/camera.h"
 #include "gfx/gfx.h"
 #include "engine/scene_light.h"
@@ -124,6 +125,17 @@ int main(int argc, char **argv)
         printf("textures       failed: %s\n", err);
     else
         printf("textures       %u unique decoded\n", mesh.texture_count);
+    if (hta_scenario_add_objects(&mesh, &c, rm.data ? &rm : NULL, err, sizeof(err)))
+        printf("objects        %s  (%u verts, %u submeshes)\n", err, mesh.vertex_count, mesh.submesh_count);
+    hta_bsp_mesh sky;
+    memset(&sky, 0, sizeof(sky));
+    int have_sky = 0;
+    if (hta_sky_load(&sky, &c, rm.data ? &rm : NULL, err, sizeof(err))) {
+        have_sky = 1;
+        printf("sky            %u verts, %u submeshes\n", sky.vertex_count, sky.submesh_count);
+    } else {
+        printf("sky            %s\n", err);
+    }
 
     t0 = hta_time_seconds();
     hta_gfx *g = hta_gfx_create_offscreen(W, H, err, sizeof(err));
@@ -133,6 +145,11 @@ int main(int argc, char **argv)
 
     t0 = hta_time_seconds();
     hta_gfx_mesh *gm = hta_gfx_mesh_upload(g, &mesh, err, sizeof(err));
+    hta_gfx_mesh *gs = NULL;
+    if (have_sky) {
+        gs = hta_gfx_mesh_upload(g, &sky, err, sizeof(err));
+        if (!gs) fprintf(stderr, "sky upload: %s\n", err);
+    }
     if (!gm) { fprintf(stderr, "upload: %s\n", err); hta_gfx_destroy(g); hta_bsp_free(&mesh); free(data); free(bmdata); return 1; }
     double t_upload = hta_time_seconds() - t0;
     printf("upload         %.1f ms, device memory %.2f MiB\n",
@@ -177,7 +194,7 @@ int main(int argc, char **argv)
         cam.pitch = atan2f(dz, sqrtf(dx*dx + dy*dy));
 
         double r0 = hta_time_seconds();
-        bool ok = hta_gfx_draw(g, &cam, &scene, gm);
+        bool ok = hta_gfx_draw(g, &cam, &scene, gm, gs);
         double r1 = hta_time_seconds();
         if (!ok) { fprintf(stderr, "draw failed on shot %u\n", s); break; }
         total_render += (r1 - r0);
@@ -200,9 +217,11 @@ int main(int argc, char **argv)
     }
 
     free(pixels);
+    if (gs) hta_gfx_mesh_free(g, gs);
     hta_gfx_mesh_free(g, gm);
     hta_gfx_destroy(g);
     hta_bsp_free(&mesh);
+    hta_bsp_free(&sky);
     free(data);
     free(bmdata);
     return drawn ? 0 : 1;

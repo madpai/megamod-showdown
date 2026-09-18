@@ -51,7 +51,7 @@ Run `scripts/device_test.sh` with the S24+ connected to convert remaining 🟡.
 
 - ✅ Blood Gulch BSP geometry on device (untextured slice, then textured)
 - ✅ Textures + lightmaps — `bitm` decode from `bitmaps.map`, `senv` base map, 2× lightmap multiply. Host `htaview` and S24+ (2026-09-18) both show orange canyon, sand, red-base markings.
-- 🟡 Shader/material translation — senv base map + generic first-`bitm` for schi/scex; no detail/bump/glass yet
+- ✅ Shader/material translation (minimal) — skip sky-portal `light black`, additive chicago lights/teleporters, alpha for other transparent; sky model + scenery/vehicles instanced from scenario
 
 ## Phase 4 — Gameplay
 
@@ -141,3 +141,4 @@ geometry.
 | APK loads map / walks Blood Gulch | S24+ 2026-09-18 | ✅ untextured, then landscape-fixed |
 | Host textured Blood Gulch (`htaview` + bitmaps.map) | 2026-09-18 | ✅ 31 unique textures |
 | Device textured Blood Gulch | S24+ screenshots 2026-09-18 | ✅ |
+| Sky + transparent + scenery/vehicles | host spawn view 2026-09-18; device pending | 🟡 |

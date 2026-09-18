@@ -42,6 +42,7 @@ typedef struct {
 typedef struct {
     uint32_t first_index, index_count;
     VkDescriptorSet set;
+    uint8_t  draw_mode;
 } hta_vk_submesh;
 
 struct hta_gfx_mesh {
@@ -93,7 +94,10 @@ struct hta_gfx {
 
     VkRenderPass          pass;
     VkPipelineLayout      layout;
-    VkPipeline            pipeline;
+    VkPipeline            pipeline;       /* opaque */
+    VkPipeline            pipeline_alpha;
+    VkPipeline            pipeline_add;
+    VkPipeline            pipeline_sky;
     VkDescriptorSetLayout set_layout;
     VkSampler             samp_repeat;
     VkSampler             samp_clamp;
@@ -566,10 +570,41 @@ static bool create_pass_pipeline(hta_gfx *g, char *err, size_t errlen)
     gp.pColorBlendState    = &cb;
     gp.layout              = g->layout;
     gp.renderPass          = g->pass;
-    VkResult pr = vkCreateGraphicsPipelines(g->device, VK_NULL_HANDLE, 1, &gp, NULL, &g->pipeline);
+
+    VkPipeline *outs[4] = { &g->pipeline, &g->pipeline_alpha, &g->pipeline_add, &g->pipeline_sky };
+    for (int i = 0; i < 4; i++) {
+        ds.depthWriteEnable = (i == 0) ? VK_TRUE : VK_FALSE;
+        ds.depthCompareOp   = VK_COMPARE_OP_LESS;
+        memset(&cba, 0, sizeof(cba));
+        cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                             VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        if (i == 1) { /* alpha */
+            cba.blendEnable = VK_TRUE;
+            cba.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+            cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            cba.colorBlendOp = VK_BLEND_OP_ADD;
+            cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            cba.alphaBlendOp = VK_BLEND_OP_ADD;
+        } else if (i == 2) { /* additive */
+            cba.blendEnable = VK_TRUE;
+            cba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            cba.colorBlendOp = VK_BLEND_OP_ADD;
+            cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            cba.alphaBlendOp = VK_BLEND_OP_ADD;
+        }
+        VkResult pr = vkCreateGraphicsPipelines(g->device, VK_NULL_HANDLE, 1, &gp, NULL, outs[i]);
+        if (pr != VK_SUCCESS) {
+            vkDestroyShaderModule(g->device, vs, NULL);
+            vkDestroyShaderModule(g->device, fs, NULL);
+            gfail(err, errlen, "vkCreateGraphicsPipelines(%d) -> %d", i, (int)pr);
+            return false;
+        }
+    }
     vkDestroyShaderModule(g->device, vs, NULL);
     vkDestroyShaderModule(g->device, fs, NULL);
-    if (pr != VK_SUCCESS) { gfail(err, errlen, "vkCreateGraphicsPipelines -> %d", (int)pr); return false; }
     return true;
 }
 
@@ -909,14 +944,14 @@ hta_gfx_mesh *hta_gfx_mesh_upload(hta_gfx *g, const hta_bsp_mesh *mesh,
         hta_gfx_mesh_free(g, m);
         return NULL;
     }
-    VkDescriptorSetLayout layouts[256];
-    if (nsm > 256) { gfail(err, errlen, "too many submeshes"); hta_gfx_mesh_free(g, m); return NULL; }
+    VkDescriptorSetLayout layouts[1024];
+    if (nsm > 1024) { gfail(err, errlen, "too many submeshes"); hta_gfx_mesh_free(g, m); return NULL; }
     for (uint32_t i = 0; i < nsm; i++) layouts[i] = g->set_layout;
     VkDescriptorSetAllocateInfo dai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
     dai.descriptorPool = m->desc_pool;
     dai.descriptorSetCount = nsm;
     dai.pSetLayouts = layouts;
-    VkDescriptorSet sets[256];
+    VkDescriptorSet sets[1024];
     if (vkAllocateDescriptorSets(g->device, &dai, sets) != VK_SUCCESS) {
         gfail(err, errlen, "vkAllocateDescriptorSets failed");
         hta_gfx_mesh_free(g, m);
@@ -934,6 +969,8 @@ hta_gfx_mesh *hta_gfx_mesh_upload(hta_gfx *g, const hta_bsp_mesh *mesh,
         m->submeshes[i].first_index = first;
         m->submeshes[i].index_count = count;
         m->submeshes[i].set = sets[i];
+        m->submeshes[i].draw_mode = mesh->submesh_count ? mesh->submeshes[i].draw_mode
+                                                        : HTA_DRAW_OPAQUE;
         VkImageView av = (ai != ~0u && ai < m->tex_count) ? m->tex[ai].view : g->tex_clay.view;
         VkImageView lv = (li != ~0u && li < m->tex_count) ? m->tex[li].view : g->tex_light.view;
         write_set(g, sets[i], av, lv);
@@ -975,7 +1012,7 @@ static void fill_push(uint8_t *p, const hta_camera *cam, const hta_scene *s)
 }
 
 bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
-                  hta_gfx_mesh *mesh)
+                  hta_gfx_mesh *mesh, hta_gfx_mesh *sky)
 {
     if (!g || !g->ready || !cam || !scene) return false;
 
@@ -1015,27 +1052,55 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
     rb.pClearValues    = clears;
     vkCmdBeginRenderPass(cb, &rb, VK_SUBPASS_CONTENTS_INLINE);
 
-    if (mesh && mesh->index_count) {
-        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline);
+    {
         uint8_t push[PUSH_SIZE];
-        memset(push, 0, sizeof(push));
-        fill_push(push, cam, scene);
-        vkCmdPushConstants(cb, g->layout,
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, PUSH_SIZE, push);
         VkDeviceSize zero = 0;
-        vkCmdBindVertexBuffers(cb, 0, 1, &mesh->vbuf, &zero);
-        vkCmdBindIndexBuffer(cb, mesh->ibuf, 0, VK_INDEX_TYPE_UINT32);
-        if (mesh->submesh_count) {
-            for (uint32_t i = 0; i < mesh->submesh_count; i++) {
-                if (!mesh->submeshes[i].index_count) continue;
+
+        if (sky && sky->index_count) {
+            hta_camera scam = *cam;
+            scam.pos[0] = scam.pos[1] = scam.pos[2] = 0.0f;
+            memset(push, 0, sizeof(push));
+            fill_push(push, &scam, scene);
+            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline_sky);
+            vkCmdPushConstants(cb, g->layout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, PUSH_SIZE, push);
+            vkCmdBindVertexBuffers(cb, 0, 1, &sky->vbuf, &zero);
+            vkCmdBindIndexBuffer(cb, sky->ibuf, 0, VK_INDEX_TYPE_UINT32);
+            for (uint32_t i = 0; i < sky->submesh_count; i++) {
+                if (!sky->submeshes[i].index_count) continue;
                 vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
-                                        0, 1, &mesh->submeshes[i].set, 0, NULL);
-                vkCmdDrawIndexed(cb, mesh->submeshes[i].index_count, 1,
-                                 mesh->submeshes[i].first_index, 0, 0);
+                                        0, 1, &sky->submeshes[i].set, 0, NULL);
+                vkCmdDrawIndexed(cb, sky->submeshes[i].index_count, 1,
+                                 sky->submeshes[i].first_index, 0, 0);
             }
-        } else {
-            vkCmdDrawIndexed(cb, mesh->index_count, 1, 0, 0, 0);
+        }
+
+        if (mesh && mesh->index_count) {
+            memset(push, 0, sizeof(push));
+            fill_push(push, cam, scene);
+            vkCmdPushConstants(cb, g->layout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, PUSH_SIZE, push);
+            vkCmdBindVertexBuffers(cb, 0, 1, &mesh->vbuf, &zero);
+            vkCmdBindIndexBuffer(cb, mesh->ibuf, 0, VK_INDEX_TYPE_UINT32);
+            const uint8_t passes[3] = { HTA_DRAW_OPAQUE, HTA_DRAW_ALPHA, HTA_DRAW_ADD };
+            VkPipeline pipes[3] = { g->pipeline, g->pipeline_alpha, g->pipeline_add };
+            for (int p = 0; p < 3; p++) {
+                vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipes[p]);
+                if (mesh->submesh_count) {
+                    for (uint32_t i = 0; i < mesh->submesh_count; i++) {
+                        if (!mesh->submeshes[i].index_count) continue;
+                        if (mesh->submeshes[i].draw_mode != passes[p]) continue;
+                        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
+                                                0, 1, &mesh->submeshes[i].set, 0, NULL);
+                        vkCmdDrawIndexed(cb, mesh->submeshes[i].index_count, 1,
+                                         mesh->submeshes[i].first_index, 0, 0);
+                    }
+                } else if (p == 0) {
+                    vkCmdDrawIndexed(cb, mesh->index_count, 1, 0, 0, 0);
+                }
+            }
         }
     }
 
@@ -1122,7 +1187,10 @@ void hta_gfx_destroy(hta_gfx *g)
         if (g->samp_clamp)  vkDestroySampler(g->device, g->samp_clamp, NULL);
         if (g->set_layout)  vkDestroyDescriptorSetLayout(g->device, g->set_layout, NULL);
         if (g->pool)      vkDestroyCommandPool(g->device, g->pool, NULL);
-        if (g->pipeline)  vkDestroyPipeline(g->device, g->pipeline, NULL);
+        if (g->pipeline)       vkDestroyPipeline(g->device, g->pipeline, NULL);
+        if (g->pipeline_alpha) vkDestroyPipeline(g->device, g->pipeline_alpha, NULL);
+        if (g->pipeline_add)   vkDestroyPipeline(g->device, g->pipeline_add, NULL);
+        if (g->pipeline_sky)   vkDestroyPipeline(g->device, g->pipeline_sky, NULL);
         if (g->layout)    vkDestroyPipelineLayout(g->device, g->layout, NULL);
         if (g->pass)      vkDestroyRenderPass(g->device, g->pass, NULL);
         if (g->swapchain) vkDestroySwapchainKHR(g->device, g->swapchain, NULL);

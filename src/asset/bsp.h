@@ -77,7 +77,13 @@ typedef struct {
     uint32_t lightmap_index;  /* 0xFFFF = none */
     uint32_t albedo_tex;      /* index into hta_bsp_mesh.textures, ~0u = none */
     uint32_t lightmap_tex;
+    uint8_t  draw_mode;       /* HTA_DRAW_* */
 } hta_submesh;
+
+#define HTA_DRAW_OPAQUE 0u
+#define HTA_DRAW_ALPHA  1u
+#define HTA_DRAW_ADD    2u
+#define HTA_DRAW_SKIP   3u  /* sky portals: don't draw, let the sky show through */
 
 typedef struct {
     uint32_t tag_id;
