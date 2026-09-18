@@ -247,7 +247,9 @@ The Halo protocol is **encrypted**: 3DES-CBC for discovery, DES-CBC in-game, Dif
 | **A. Our own clients play each other** (define our own protocol) | **Far cheaper.** Standard UDP + snapshot/delta replication. No RE of encryption. Recommended for the PoC and probably for the product. |
 | **B. Join existing Halo Trial/CE servers** | **Much more expensive.** Requires bit-exact reproduction of the encrypted wire format *and* server-side state replication semantics. Partially documented at best. |
 
-**This needs your decision — it is the largest single swing in project scope.** §12 lists it as the top open question.
+**DECIDED 2026-09-18: option A — our own protocol**, with the transport kept behind
+an interface so option B stays reachable later without rearchitecting. This removes
+the project's single largest scope risk.
 
 ---
 
@@ -375,7 +377,7 @@ Each stage has a concrete pass/fail test. **Stages 0–3 are cheap and de-risk t
 | Unknown | How to determine |
 |---|---|
 | Does `MAP_FIXED` at `0x40440000` work on the S24+? | Stage 2 probe, ~20 lines. Or sidestep with offset-based pointers. |
-| Exact **PC/Trial** wire protocol (vs. documented Xbox System Link) | Capture loopback traffic between two local Trial instances (user-supplied copy) and diff against the hllmn Xbox findings. Only needed for §5.2 option B. |
+| Exact **PC/Trial** wire protocol (vs. documented Xbox System Link) | **No longer on the critical path** — §5.2 resolved to option A. Would only matter if wire-compatibility is revisited; method would be to capture loopback traffic between two local Trial instances and diff against the hllmn Xbox findings. |
 | Whether any community master server still serves Trial clients | Probe with a real Trial client; ask the Open Carnage / Halomaps communities. |
 | Halo Trial EULA's exact redistribution terms | Extract the EULA from the user's own `HaloTrialSetup.exe` and read it. **We are designing to never redistribute, so this is not blocking.** |
 | Whether Invader's `CACHE_FILE_DEMO` path fully round-trips Trial maps | Build Invader here and run `invader-info` against a user-supplied `bloodgulch.map`. Not yet done — no assets present. |
@@ -393,4 +395,5 @@ Each stage has a concrete pass/fail test. **Stages 0–3 are cheap and de-risk t
 
 Proceed with **Stages 1–3** now: they are days of work, they prove out the toolchain, the device, and the asset pipeline, and they answer the two open technical questions (§5.1, and Invader's Trial round-trip) before any large commitment.
 
-**And answer the §5.2 question** — "our own clients only" vs. "join real Halo servers" — because it changes the size of this project more than any other decision.
+**§5.2 is resolved** (our own protocol), so Phase 2 is unblocked and the largest
+scope risk is retired.

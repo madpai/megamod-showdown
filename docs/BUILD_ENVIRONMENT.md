@@ -97,7 +97,8 @@ Nothing else was installed. No unrelated project on this machine was modified.
 
 ## Known environment caveat
 
-The host is **~425 packages behind** on updates. A full `pacman -Syu` was **deliberately not run** — it includes kernel updates on a daily-driver desktop and is out of scope for this task without explicit approval. The one partial-upgrade breakage it caused (`cmake` ↔ `jsoncpp`) was fixed surgically. If further partial-upgrade conflicts appear, a full `-Syu` (with reboot) is the correct Arch-supported fix and should be approved first.
+The host is **~425 packages behind** on updates. A full `pacman -Syu` was **deliberately not run** — it includes kernel updates on a daily-driver desktop and is out of scope for this task without explicit approval. The one partial-upgrade breakage it caused (`cmake` ↔ `jsoncpp`) was fixed surgically. **Decision 2026-09-18: leave the host un-upgraded.** Further partial-upgrade
+conflicts are to be fixed surgically, one package at a time, rather than by a full `-Syu`.
 
 ## Reproducing
 

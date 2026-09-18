@@ -60,7 +60,9 @@ Run `scripts/device_test.sh` with the S24+ connected to convert all 🟡 above.
 
 ## Phase 5 — Multiplayer (the product)
 
-- 🚫 **BLOCKED ON A DECISION** — see Blockers #1
+- ✅ **Scope decided (2026-09-18): our own protocol.** Transport stays behind an
+  interface so wire-compatibility with real Halo servers can be attempted later
+  without rearchitecting. See Decisions.
 - ⬜ Two clients connect
 - ⬜ Players see each other
 - ⬜ Shooting / hit registration over network
@@ -72,12 +74,11 @@ Run `scripts/device_test.sh` with the S24+ connected to convert all 🟡 above.
 
 ## Blockers
 
-### 1. Netcode scope decision — *needs the project owner*
-"Our own clients play each other" vs. "join real Halo Trial servers."
-Option B requires bit-exact reproduction of an encrypted protocol (3DES/DES-CBC,
-Diffie-Hellman, HMAC-SHA1) that is only **partially** documented, and **only for
-Xbox System Link**, not PC. **This is the single largest swing in project scope.**
-Investigation §5.2.
+### 1. ~~Netcode scope decision~~ — **RESOLVED 2026-09-18**
+Decided: **our own protocol** (investigation §5.2 option A), with the transport
+behind an interface so option B remains reachable later. This removes the
+project's largest scope risk: no reproduction of the encrypted Halo wire format
+(3DES/DES-CBC, Diffie-Hellman, HMAC-SHA1) is required.
 
 ### 2. No portable foundation exists — *accepted, design decided*
 Every RE project is a 32-bit x86 binary patcher. Mitigation: write a new engine,
@@ -100,6 +101,15 @@ Phase 2 onward needs the owner's own Trial copy. Nothing proprietary will be
 committed or bundled.
 
 ---
+
+## Decisions
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-09-18 | **Netcode: our own protocol**, transport behind an interface | Avoids bit-exact RE of a partially-documented encrypted protocol (Xbox-only docs). Keeps option B reachable. Investigation §5.2. |
+| 2026-09-18 | **No new engine built on Demon or halo-re** | Both unportable (measured) and halo-re is unlicensed. Investigation §4, §7. |
+| 2026-09-18 | **Vulkan only, no GLES3 path** | Target is the S24+; a second backend doubles renderer work for no gain. Investigation §6. |
+| 2026-09-18 | **Host left un-upgraded** (~425 packages behind) | Avoid a 436-package kernel upgrade on a daily driver. Fix conflicts surgically instead. |
 
 ## Test inventory
 
