@@ -146,8 +146,8 @@ static void wf32(fixture *f, uint32_t off, float v)
 #define SBSP_AMBIENT        0x02Cu
 #define SBSP_L0_COLOR       0x03Cu
 #define SBSP_L0_DIR         0x048u
-#define SBSP_SURFACES       0x0ECu
-#define SBSP_LIGHTMAPS      0x0F8u
+#define SBSP_SURFACES       0x0F8u
+#define SBSP_LIGHTMAPS      0x104u
 #define LIGHTMAP_SIZE       32u
 #define LIGHTMAP_MATERIALS  0x014u
 #define MATERIAL_SIZE       256u
@@ -157,6 +157,7 @@ static void wf32(fixture *f, uint32_t off, float v)
 #define MAT_VTX_TYPE        0x0B0u
 #define MAT_VTX_COUNT       0x0B4u
 #define MAT_VTX_OFFSET      0x0B8u
+#define MAT_UNCOMP_VERTS    0x0D8u   /* TagDataOffset */
 #define VERTEX_SIZE         56u
 
 static void wrefl(fixture *f, uint32_t off, uint32_t count, uint32_t ptr)
@@ -220,7 +221,7 @@ void fixture_build_bsp(bsp_fixture *b, uint32_t nverts, uint32_t ntris, uint32_t
     r = (r + 3u) & ~3u;
     uint32_t lightmaps_rel  = r; r += LIGHTMAP_SIZE;
     uint32_t materials_rel  = r; r += MATERIAL_SIZE;
-    uint32_t vertices_rel   = r; r += (nverts ? nverts * VERTEX_SIZE : VERTEX_SIZE);
+    uint32_t vertices_rel   = r; r += (nverts ? nverts * (VERTEX_SIZE + 20u) : VERTEX_SIZE + 20u);
     uint32_t bsp_size = r + 16u;
 
     b->bsp_start        = bsp_start;
@@ -244,9 +245,10 @@ void fixture_build_bsp(bsp_fixture *b, uint32_t nverts, uint32_t ntris, uint32_t
     /* compiled header at bsp_start */
     w32(f, bsp_start + hdr_rel + 0x00, bsp_address + sbsp_rel);      /* -> sbsp struct */
     w32(f, bsp_start + hdr_rel + 0x04, 1);                            /* material count */
-    w32(f, bsp_start + hdr_rel + 0x08, bsp_address + vertices_rel);   /* -> vertices */
-    w32(f, bsp_start + hdr_rel + 0x0C, 1);
-    w32(f, bsp_start + hdr_rel + 0x10, bsp_address + vertices_rel);
+    /* zero, exactly as real PC/Trial maps have them */
+    w32(f, bsp_start + hdr_rel + 0x08, 0);
+    w32(f, bsp_start + hdr_rel + 0x0C, 0);
+    w32(f, bsp_start + hdr_rel + 0x10, 0);
     w32(f, bsp_start + hdr_rel + 0x14, 0x73627370u);                  /* 'sbsp' signature */
 
     /* sbsp struct */
@@ -282,6 +284,13 @@ void fixture_build_bsp(bsp_fixture *b, uint32_t nverts, uint32_t ntris, uint32_t
     w16(f, bsp_start + materials_rel + MAT_VTX_TYPE, 0);               /* env uncompressed */
     w32(f, bsp_start + materials_rel + MAT_VTX_COUNT, nverts);
     w32(f, bsp_start + materials_rel + MAT_VTX_OFFSET, 0);
+    /* uncompressed_vertices TagDataOffset: size, external, file_offset, pointer.
+     * Real Trial maps locate vertices through this, not the compiled header. */
+    w32(f, bsp_start + materials_rel + MAT_UNCOMP_VERTS + 0x00,
+        nverts * VERTEX_SIZE + nverts * 20u);          /* render + lightmap verts */
+    w32(f, bsp_start + materials_rel + MAT_UNCOMP_VERTS + 0x04, 0);
+    w32(f, bsp_start + materials_rel + MAT_UNCOMP_VERTS + 0x08, 0);
+    w32(f, bsp_start + materials_rel + MAT_UNCOMP_VERTS + 0x0C, bsp_address + vertices_rel);
 
     /* vertices: a deterministic ramp so tests can assert exact values */
     for (uint32_t i = 0; i < nverts; i++) {
@@ -302,4 +311,72 @@ void fixture_build_bsp(bsp_fixture *b, uint32_t nverts, uint32_t ntris, uint32_t
     f->tag_data_size = new_tag_data_size;
     w32(f, 0x2C4, new_tag_data_size);   /* demo tag_data_size */
     w32(f, 0x5E8, total);               /* demo decompressed_file_size */
+}
+
+
+/* ------------------------------------------------------------------ */
+/* heightfield grid fixture (renderable geometry)                      */
+/* ------------------------------------------------------------------ */
+
+#include <math.h>
+
+void fixture_build_grid(bsp_fixture *b, uint32_t nx, uint32_t ny, uint32_t nspawns)
+{
+    if (nx < 2) nx = 2;
+    if (ny < 2) ny = 2;
+    if ((uint64_t)nx * ny > 65535u) {  /* 16-bit per-material indices */
+        while ((uint64_t)nx * ny > 65535u) { if (nx > 2) nx--; if (ny > 2) ny--; }
+    }
+    uint32_t nverts = nx * ny;
+    uint32_t ntris  = (nx - 1) * (ny - 1) * 2;
+
+    /* reuse the standard builder for all the container plumbing, then
+     * overwrite the vertex block and the surface (index) list */
+    fixture_build_bsp(b, nverts, ntris, nspawns);
+    fixture *f = &b->f;
+
+    /* --- vertices: a gently rolling heightfield, 4 world units per cell --- */
+    const float step = 4.0f;
+    for (uint32_t j = 0; j < ny; j++) {
+        for (uint32_t i = 0; i < nx; i++) {
+            uint32_t v = j * nx + i;
+            uint32_t vo = b->vertex_block_off + v * VERTEX_SIZE;
+            float x = (float)i * step;
+            float y = (float)j * step;
+            float z = 6.0f * sinf((float)i * 0.35f) * cosf((float)j * 0.30f);
+            wf32(f, vo + 0,  x);
+            wf32(f, vo + 4,  y);
+            wf32(f, vo + 8,  z);
+            /* approximate normal from the analytic surface */
+            float dzdx = 6.0f * 0.35f * cosf((float)i * 0.35f) * cosf((float)j * 0.30f);
+            float dzdy = -6.0f * 0.30f * sinf((float)i * 0.35f) * sinf((float)j * 0.30f);
+            float nxv = -dzdx, nyv = -dzdy, nzv = 1.0f;
+            float len = sqrtf(nxv*nxv + nyv*nyv + nzv*nzv);
+            if (len < 1e-6f) len = 1.0f;
+            wf32(f, vo + 12, nxv / len);
+            wf32(f, vo + 16, nyv / len);
+            wf32(f, vo + 20, nzv / len);
+            wf32(f, vo + 48, (float)i / (float)nx);
+            wf32(f, vo + 52, (float)j / (float)ny);
+        }
+    }
+
+    /* --- surfaces: two triangles per cell, counter-clockwise --- */
+    uint32_t tri = 0;
+    for (uint32_t j = 0; j + 1 < ny; j++) {
+        for (uint32_t i = 0; i + 1 < nx; i++) {
+            uint16_t v00 = (uint16_t)(j * nx + i);
+            uint16_t v10 = (uint16_t)(j * nx + i + 1);
+            uint16_t v01 = (uint16_t)((j + 1) * nx + i);
+            uint16_t v11 = (uint16_t)((j + 1) * nx + i + 1);
+
+            uint32_t so = b->bsp_start + 0x18u + SBSP_SIZE + tri * 6u;
+            w16(f, so + 0, v00); w16(f, so + 2, v10); w16(f, so + 4, v11);
+            tri++;
+            so = b->bsp_start + 0x18u + SBSP_SIZE + tri * 6u;
+            w16(f, so + 0, v00); w16(f, so + 2, v11); w16(f, so + 4, v01);
+            tri++;
+        }
+    }
+    b->triangle_count = tri;
 }

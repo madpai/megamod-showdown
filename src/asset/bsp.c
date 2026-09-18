@@ -45,6 +45,30 @@ static bool read_rgb(const hta_cache *c, uint32_t off, float out[3])
            hta_rd_f32(c, off + 8, &out[2]);
 }
 
+/* Resolves a material's vertex block: the uncompressed_vertices TagDataOffset
+ * pointer, translated through the BSP's own base. Returns false if absent. */
+static bool material_vertex_block(const hta_cache *c, const bsp_region *r,
+                                  uint32_t material_off, uint32_t vcount,
+                                  uint32_t *out_off)
+{
+    uint32_t blob_size = 0, blob_ptr = 0;
+    if (!hta_rd_u32(c, material_off + HTA_MAT_UNCOMPRESSED_VERTS + HTA_TAGDATAOFFSET_SIZE, &blob_size))
+        return false;
+    if (!hta_rd_u32(c, material_off + HTA_MAT_UNCOMPRESSED_VERTS + HTA_TAGDATAOFFSET_POINTER, &blob_ptr))
+        return false;
+    if (blob_ptr == 0 || blob_size == 0) return false;
+
+    /* the blob must be able to hold vcount render vertices */
+    uint64_t need = (uint64_t)vcount * HTA_VERTEX_ENV_UNCOMPRESSED_SIZE;
+    if (need > (uint64_t)blob_size) return false;
+
+    uint32_t off;
+    if (!bsp_ptr(r, blob_ptr, &off)) return false;
+    if ((uint64_t)off + need > (uint64_t)c->size) return false;
+    *out_off = off;
+    return true;
+}
+
 uint32_t hta_scenario_spawns(const hta_cache *c, hta_spawn_point *out, uint32_t max)
 {
     if (!c || !out || !max) return 0;
@@ -136,24 +160,21 @@ bool hta_bsp_load_first(const hta_cache *c, hta_bsp_mesh *out,
     }
 
     /* ---- compiled header at bsp_start ---- */
-    uint32_t sbsp_ptr = 0, rendered_vertices_ptr = 0, signature = 0;
+    uint32_t sbsp_ptr = 0, signature = 0;
     if (!hta_rd_u32(c, reg.start + 0x00, &sbsp_ptr) ||
-        !hta_rd_u32(c, reg.start + 0x08, &rendered_vertices_ptr) ||
         !hta_rd_u32(c, reg.start + 0x14, &signature)) {
         fail(err, errlen, "BSP compiled header unreadable"); return false;
     }
+    /* Note: the header's rendered/lightmap vertex pointers (+0x08/+0x10) are
+     * zero on PC/Trial. Vertices are found per-material instead. */
     if (signature != HTA_TAG_SBSP) {
         fail(err, errlen, "BSP compiled header signature 0x%08X != 'sbsp'", signature);
         return false;
     }
 
-    uint32_t sbsp_off, vtx_base_off;
+    uint32_t sbsp_off;
     if (!bsp_ptr(&reg, sbsp_ptr, &sbsp_off)) {
         fail(err, errlen, "sbsp struct pointer 0x%08X outside BSP region", sbsp_ptr);
-        return false;
-    }
-    if (!bsp_ptr(&reg, rendered_vertices_ptr, &vtx_base_off)) {
-        fail(err, errlen, "rendered vertices pointer 0x%08X outside BSP region", rendered_vertices_ptr);
         return false;
     }
 
@@ -212,6 +233,8 @@ bool hta_bsp_load_first(const hta_cache *c, hta_bsp_mesh *out,
             if (!hta_rd_u32(c, me + HTA_MAT_SURFACE_COUNT, &scount)) continue;
             if (vtype != HTA_VTX_ENV_UNCOMPRESSED) continue;
             if (vcount == 0 || scount == 0) continue;
+            uint32_t probe;
+            if (!material_vertex_block(c, &reg, me, vcount, &probe)) continue;
             total_v += vcount;
             total_i += (uint64_t)scount * 3u;
             total_m++;
@@ -255,11 +278,10 @@ bool hta_bsp_load_first(const hta_cache *c, hta_bsp_mesh *out,
         for (uint32_t mi = 0; mi < mcount; mi++) {
             uint32_t me = moff + mi * HTA_MATERIAL_ENTRY_SIZE;
             uint16_t vtype = 0xFFFF;
-            uint32_t vcount = 0, voffset = 0, first_surf = 0, scount = 0, shader_id = 0;
+            uint32_t vcount = 0, first_surf = 0, scount = 0, shader_id = 0;
 
             if (!hta_rd_u16(c, me + HTA_MAT_RENDERED_VTX_TYPE, &vtype))    continue;
             if (!hta_rd_u32(c, me + HTA_MAT_RENDERED_VTX_COUNT, &vcount))  continue;
-            if (!hta_rd_u32(c, me + HTA_MAT_RENDERED_VTX_OFFSET, &voffset))continue;
             if (!hta_rd_u32(c, me + HTA_MAT_SURFACES, &first_surf))        continue;
             if (!hta_rd_u32(c, me + HTA_MAT_SURFACE_COUNT, &scount))       continue;
             hta_rd_u32(c, me + HTA_MAT_SHADER + 0x0C, &shader_id);
@@ -274,11 +296,11 @@ bool hta_bsp_load_first(const hta_cache *c, hta_bsp_mesh *out,
                 out->materials_skipped_bad++; continue;
             }
 
-            /* vertex block must be inside the file */
-            uint64_t vstart = (uint64_t)vtx_base_off + (uint64_t)voffset;
-            if (vstart + (uint64_t)vcount * HTA_VERTEX_ENV_UNCOMPRESSED_SIZE > (uint64_t)c->size) {
+            uint32_t vblock = 0;
+            if (!material_vertex_block(c, &reg, me, vcount, &vblock)) {
                 out->materials_skipped_bad++; continue;
             }
+            uint64_t vstart = (uint64_t)vblock;
 
             uint32_t base_vertex = out->vertex_count;
 

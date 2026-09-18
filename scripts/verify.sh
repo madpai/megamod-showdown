@@ -27,6 +27,22 @@ if ./build-host/htainfo "$FIX" | grep -q 'DEMO/Trial'; then ok "htainfo detects 
 if ./build-host/htainfo /dev/null >/dev/null 2>&1; then bad "htainfo rejects junk input"; else ok "htainfo rejects junk input"; fi
 rm -rf "$(dirname "$FIX")"
 
+echo "== 1c. offscreen renderer (needs a host GPU; skipped if absent) =="
+if [ -x ./build-host/htaview ]; then
+  GRID=$(mktemp -d)/grid.map
+  ./build-host/mkfixture "$GRID" --grid 64 64 4 >/dev/null 2>&1
+  OUT=$(cd "$(dirname "$GRID")" && "$OLDPWD/build-host/htaview" "$GRID" --out r --width 320 --height 240 --shots 2 2>&1) || true
+  if echo "$OUT" | grep -q "coverage"; then
+    COV=$(echo "$OUT" | grep coverage | head -1 | sed -E 's/.*coverage +([0-9]+)\..*/\1/')
+    if [ "${COV:-0}" -ge 3 ] 2>/dev/null; then ok "renderer draws geometry (coverage ${COV}%)"; else bad "renderer produced a blank frame (coverage ${COV}%)"; fi
+  else
+    echo "  SKIP  offscreen render (no usable GPU here)"
+  fi
+  rm -rf "$(dirname "$GRID")"
+else
+  echo "  SKIP  htaview not built (host Vulkan missing)"
+fi
+
 echo "== 2. android APK build =="
 if (cd android && $GRADLE --no-daemon -q :app:assembleDebug >/dev/null 2>&1); then
   ok "gradle assembleDebug"

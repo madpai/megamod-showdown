@@ -7,7 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define FIX_MAX (256 * 1024)
+#define FIX_MAX (8 * 1024 * 1024)
 
 typedef struct {
     uint8_t  buf[FIX_MAX];
@@ -53,5 +53,12 @@ typedef struct {
  * `nverts` uncompressed environment vertices and `ntris` triangles, plus
  * `nspawns` player spawn points. */
 void fixture_build_bsp(bsp_fixture *b, uint32_t nverts, uint32_t ntris, uint32_t nspawns);
+
+/* Builds a BSP whose geometry is an nx-by-ny heightfield grid — real,
+ * non-degenerate triangles with area, so it can actually be rasterised.
+ * fixture_build_bsp's ramp is collinear by design (exact values are easy to
+ * assert) and therefore renders nothing; use this one for renderer tests.
+ * Requires nx*ny <= 65535 because per-material indices are 16-bit. */
+void fixture_build_grid(bsp_fixture *b, uint32_t nx, uint32_t ny, uint32_t nspawns);
 
 #endif

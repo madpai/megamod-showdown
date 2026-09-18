@@ -26,9 +26,16 @@
 #define HTA_SBSP_LIGHT0_COLOR       0x03Cu  /* ColorRGB */
 #define HTA_SBSP_LIGHT0_DIRECTION   0x048u  /* Vector3D */
 #define HTA_SBSP_COLLISION_BSP      0x0B0u  /* TagReflexive */
-#define HTA_SBSP_WORLD_BOUNDS_X     0x0C8u
-#define HTA_SBSP_SURFACES           0x0ECu  /* TagReflexive, 6 bytes each */
-#define HTA_SBSP_LIGHTMAPS          0x0F8u  /* TagReflexive, 32 bytes each */
+/* World bounds are three min/max PAIRS (6 floats, 24 bytes), not 3 floats.
+ * Invader's generated definition lists them as three scalars, which is what
+ * made its struct total come out 12 bytes short; verified against real Trial
+ * data, where these read as Blood Gulch's actual extents. Everything after
+ * this point is therefore 12 bytes later than a naive reading suggests. */
+#define HTA_SBSP_WORLD_BOUNDS       0x0C8u  /* float[6]: x0,x1,y0,y1,z0,z1 */
+#define HTA_SBSP_LEAVES             0x0E0u  /* TagReflexive */
+#define HTA_SBSP_LEAF_SURFACES      0x0ECu  /* TagReflexive */
+#define HTA_SBSP_SURFACES           0x0F8u  /* TagReflexive, 6 bytes each */
+#define HTA_SBSP_LIGHTMAPS          0x104u  /* TagReflexive, 32 bytes each */
 
 #define HTA_LIGHTMAP_MATERIALS_OFF  0x014u  /* TagReflexive within lightmap */
 #define HTA_LIGHTMAP_ENTRY_SIZE     0x020u
@@ -40,6 +47,16 @@
 #define HTA_MAT_RENDERED_VTX_TYPE   0x0B0u  /* u16 VertexType */
 #define HTA_MAT_RENDERED_VTX_COUNT  0x0B4u
 #define HTA_MAT_RENDERED_VTX_OFFSET 0x0B8u
+/* On PC/Trial the BSP compiled header's vertex pointers are ZERO and the
+ * material's "rendered vertices offset" is 0 as well. The real location is the
+ * uncompressed_vertices TagDataOffset, whose `pointer` resolves against the
+ * BSP's own base address. The blob holds rendered verts (56 bytes each)
+ * immediately followed by lightmap verts (20 bytes each). Verified against
+ * bloodgulch.map. */
+#define HTA_MAT_UNCOMPRESSED_VERTS  0x0D8u  /* TagDataOffset */
+#define HTA_TAGDATAOFFSET_SIZE      0x00u
+#define HTA_TAGDATAOFFSET_POINTER   0x0Cu
+#define HTA_VERTEX_LIGHTMAP_SIZE    20u
 
 /* VertexType values we accept */
 #define HTA_VTX_ENV_UNCOMPRESSED 0u

@@ -109,16 +109,28 @@ int main(void)
            "rejects bad 'sbsp' signature in compiled header");
     REJECT(fixture_poke_u32(&t.f, t.bsp_start + 0x00, 0x00000010u),
            "rejects sbsp pointer below the BSP base");
-    REJECT(fixture_poke_u32(&t.f, t.bsp_start + 0x08, 0xFFFFFFF0u),
-           "rejects vertex pointer outside the BSP region");
+    REJECT(fixture_poke_u32(&t.f, t.material_off + 0xD8 + 0x0C, 0xFFFFFFF0u),
+           "rejects material vertex pointer outside the BSP region");
+    REJECT(fixture_poke_u32(&t.f, t.material_off + 0xD8 + 0x0C, 0u),
+           "rejects material with no vertex blob pointer");
+    REJECT(fixture_poke_u32(&t.f, t.material_off + 0xD8 + 0x00, 4u),
+           "rejects vertex blob too small for the advertised vertex count");
     REJECT(fixture_poke_u32(&t.f, t.sbsp_struct_off + HTA_SBSP_SURFACES, 0xFFFFFFFFu),
            "rejects absurd surface count");
     REJECT(fixture_poke_u32(&t.f, t.sbsp_struct_off + HTA_SBSP_LIGHTMAPS, 0u),
            "rejects zero lightmaps");
     REJECT(fixture_poke_u32(&t.f, t.material_off + HTA_MAT_RENDERED_VTX_COUNT, 0xFFFFFF00u),
            "rejects absurd vertex count");
-    REJECT(fixture_poke_u32(&t.f, t.material_off + HTA_MAT_RENDERED_VTX_OFFSET, 0xFFFFFF00u),
-           "rejects vertex offset past EOF");
+    /* On PC/Trial rendered_vertices_offset is always 0 and is NOT used to
+     * locate vertices, so corrupting it must change nothing. Guards against
+     * anyone "helpfully" reinstating the Xbox-style lookup. */
+    fixture_build_bsp(&t, 32, 10, 2);
+    fixture_poke_u32(&t.f, t.material_off + HTA_MAT_RENDERED_VTX_OFFSET, 0xFFFFFF00u);
+    if (hta_cache_open(&tc, t.f.buf, t.f.size, err, sizeof(err))) {
+        bool still = hta_bsp_load_first(&tc, &tm, err, sizeof(err));
+        CHECK(still, "rendered_vertices_offset is ignored (PC locates verts via TagDataOffset)");
+        if (still) { CHECK(tm.vertex_count == 32, "vertex count unaffected by that field"); hta_bsp_free(&tm); }
+    }
     REJECT(fixture_poke_u32(&t.f, t.material_off + HTA_MAT_SURFACE_COUNT, 0xFFFFFFFFu),
            "rejects surface slice beyond the surfaces array");
     REJECT(fixture_poke_u32(&t.f, t.f.tag_data_offset + 0x28 + 0x14,
