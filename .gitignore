@@ -1,0 +1,24 @@
+# Upstream clones — reference only, never vendored into our history
+/upstream/
+/scratch/
+
+# Build outputs
+build/
+build-*/
+.gradle/
+.cxx/
+*.o
+*.obj
+*.so
+*.apk
+*.dll
+local.properties
+
+# ===== LEGAL: never commit Halo game data =====
+# The user supplies their own Halo Trial copy. Nothing proprietary
+# enters this repo or any APK. See docs/ANDROID_PORT_INVESTIGATION.md §7
+*.map
+*.exe
+*.7z
+maps/
+assets/halo/
