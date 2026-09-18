@@ -21,6 +21,9 @@ if ./build-host/test_bsp    >/dev/null 2>&1; then ok "bsp extraction tests"; els
 if ./build-host/test_camera >/dev/null 2>&1; then ok "camera/projection tests"; else bad "camera/projection tests"; fi
 if ./build-host/test_player >/dev/null 2>&1; then ok "player/collision tests"; else bad "player/collision tests"; fi
 if ./build-host/test_bitmap >/dev/null 2>&1; then ok "bitmap decode tests"; else bad "bitmap decode tests"; fi
+if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
+  if ./build-host/test_biped "$HTA_MAP" >/dev/null 2>&1; then ok "biped/globals physics from Trial map"; else bad "biped/globals physics from Trial map"; fi
+fi
 
 # Optional: validate against the user's own Trial data if HTA_MAP points at it.
 if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then

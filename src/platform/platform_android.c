@@ -19,6 +19,7 @@
 #include "../asset/cache.h"
 #include "../asset/bsp.h"
 #include "../asset/bitmap.h"
+#include "../asset/biped.h"
 #include "../asset/model.h"
 #include "../gfx/gfx.h"
 #include "../engine/scene_light.h"
@@ -125,7 +126,7 @@ typedef struct {
      * come from JNI instead of hot-corners. */
     bool    hud_ready;
     float   hud_move[2];
-    bool    hud_jump, hud_fire;
+    bool    hud_jump, hud_fire, hud_crouch;
 } hta_android;
 
 static hta_android *g_android;
@@ -353,6 +354,19 @@ static bool load_map(hta_android *s)
     hta_spawn_point sp[64];
     uint32_t nsp = hta_scenario_spawns(&s->cache, sp, 64);
     hta_player_init(&s->player);
+    {
+        hta_player_physics phys;
+        if (hta_player_physics_load(&phys, &s->cache, err, sizeof(err))) {
+            hta_player_apply_physics(&s->player, &phys);
+            s->cam.fov_y = phys.fov_y;
+            s->col.walkable_nz = cosf(phys.max_slope);
+            hta_log("[player] cyborg_mp run %.2f wu/s jump %.2f cam %.2f r %.2f slope %.0f deg",
+                    phys.run_forward, phys.jump_speed, phys.cam_stand, phys.radius,
+                    phys.max_slope * (180.0f / 3.14159265f));
+        } else {
+            hta_log("[player] using fallback physics (%s)", err);
+        }
+    }
     if (nsp > 0) {
         hta_player_spawn(&s->player, &sp[0]);
         float gz;
@@ -534,6 +548,7 @@ static void gather_input(hta_android *s, hta_player_input *in, float dt)
 
     in->jump = s->jump_held || s->hud_jump;
     in->fire = s->fire_held || s->pad_fire || s->hud_fire;
+    in->crouch = s->hud_crouch;
 }
 
 /* ------------------------------ lifecycle ------------------------------ */
@@ -692,6 +707,13 @@ Java_net_hta_halotrial_GameActivity_nativeHudFire(JNIEnv *env, jclass cls, jbool
 {
     (void)env; (void)cls;
     if (g_android) g_android->hud_fire = down ? true : false;
+}
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudCrouch(JNIEnv *env, jclass cls, jboolean down)
+{
+    (void)env; (void)cls;
+    if (g_android) g_android->hud_crouch = down ? true : false;
 }
 
 void android_main(struct android_app *app)

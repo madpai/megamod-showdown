@@ -1,13 +1,5 @@
-/* Simplest useful first-person controller: move, look, jump, gravity, and
- * collision against the world mesh.
- *
- * This is NOT Halo's movement system. It is the minimum that lets you walk
- * around Blood Gulch and judge whether the geometry is right. Halo's actual
- * physics (acceleration curves, crouch, vehicle interaction) is out of scope
- * for Phase 2.
- *
- * Collision uses a downward ray against the rendered triangle mesh, accelerated
- * by a uniform XY grid. The real collision BSP is deferred.
+/* First-person pawn driven by Trial tag physics (globals + cyborg_mp).
+ * Collision is still a height query on the render mesh (collision BSP is later).
  */
 #ifndef HTA_PLAYER_H
 #define HTA_PLAYER_H
@@ -16,6 +8,7 @@
 #include <stdint.h>
 #include "camera.h"
 #include "../asset/bsp.h"
+#include "../asset/biped.h"
 
 typedef struct {
     /* uniform grid over XY; each cell lists triangle indices */
@@ -26,6 +19,7 @@ typedef struct {
     const hta_vertex *verts;
     const uint32_t   *indices;
     uint32_t          tri_count;
+    float             walkable_nz; /* cos(max slope); 0.5 ≈ 60° */
     bool built;
 } hta_collision;
 
@@ -50,12 +44,14 @@ typedef struct {
     float pos[3];        /* feet position */
     float velocity[3];
     bool  on_ground;
-    float eye_height;
+    float eye_height;    /* current, lerped stand/crouch */
+    float crouch_t;      /* 0 stand .. 1 crouch */
     float radius;
-    float walk_speed;
+    float walk_speed;    /* alias of phys.run_forward for older call sites */
     float jump_speed;
     float gravity;
-    bool  noclip;        /* free-fly, for inspecting geometry */
+    bool  noclip;
+    hta_player_physics phys;
 } hta_player;
 
 typedef struct {
@@ -65,9 +61,11 @@ typedef struct {
     float look_pitch;
     bool  jump;
     bool  fire;
+    bool  crouch;
 } hta_player_input;
 
 void hta_player_init(hta_player *p);
+void hta_player_apply_physics(hta_player *p, const hta_player_physics *phys);
 void hta_player_spawn(hta_player *p, const hta_spawn_point *sp);
 /* Advances the player and writes the resulting eye position into `cam`. */
 void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,

@@ -22,6 +22,7 @@ bool hta_collision_build(hta_collision *c, const hta_bsp_mesh *mesh)
     c->verts     = mesh->vertices;
     c->indices   = mesh->indices;
     c->tri_count = mesh->index_count / 3;
+    c->walkable_nz = 0.50f;
 
     float ex = mesh->bounds_max[0] - mesh->bounds_min[0];
     float ey = mesh->bounds_max[1] - mesh->bounds_min[1];
@@ -145,7 +146,7 @@ bool hta_collision_ground(const hta_collision *c, float x, float y, float z_from
     float best = -1e30f;
     /* Only faces that point mostly up are floors. Steep pylon/cliff sides
      * used to count as ground, so walking into a wall launched you over it. */
-    const float WALKABLE_NZ = 0.50f;
+    const float WALKABLE_NZ = (c->walkable_nz > 0.1f) ? c->walkable_nz : 0.50f;
     const float STEP = 0.18f;
     for (uint32_t k = s; k < e; k++) {
         uint32_t t = c->tri_index[k];
@@ -228,14 +229,29 @@ bool hta_collision_ray(const hta_collision *c,
 void hta_player_init(hta_player *p)
 {
     memset(p, 0, sizeof(*p));
-    /* Halo world units: 1 wu == 10 feet == 3.048 m. A ~1.8 m player is ~0.6 wu.
-     * NOTE: this scale is inferred from community documentation and has not
-     * been verified against real Trial data yet. */
-    p->eye_height = 0.60f;
-    p->radius     = 0.12f;
-    p->walk_speed = 1.05f;    /* ~3.2 m/s */
-    p->jump_speed = 1.25f;
-    p->gravity    = 3.5f;
+    hta_player_physics_defaults(&p->phys);
+    hta_player_apply_physics(p, &p->phys);
+}
+
+void hta_player_apply_physics(hta_player *p, const hta_player_physics *phys)
+{
+    if (!p || !phys) return;
+    p->phys = *phys;
+    p->eye_height = phys->cam_stand;
+    p->radius     = phys->radius;
+    p->walk_speed = phys->run_forward;
+    p->jump_speed = phys->jump_speed;
+    p->gravity    = phys->gravity;
+}
+
+static void accel_toward(float *vx, float *vy, float tx, float ty, float a, float dt)
+{
+    float dx = tx - *vx, dy = ty - *vy;
+    float dist = sqrtf(dx * dx + dy * dy);
+    float step = a * dt;
+    if (dist <= step || dist < 1e-6f) { *vx = tx; *vy = ty; return; }
+    *vx += dx / dist * step;
+    *vy += dy / dist * step;
 }
 
 void hta_player_spawn(hta_player *p, const hta_spawn_point *sp)
@@ -256,6 +272,19 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
     if (dt > 0.1f) dt = 0.1f;    /* never let a hitch teleport the player */
 
     hta_camera_look(cam, in->look_yaw, in->look_pitch);
+    cam->fov_y = p->phys.fov_y;
+
+    float target_crouch = in->crouch ? 1.0f : 0.0f;
+    float crate = (p->phys.crouch_time > 1e-3f) ? (dt / p->phys.crouch_time) : 1.0f;
+    if (target_crouch > p->crouch_t) {
+        p->crouch_t += crate;
+        if (p->crouch_t > 1.0f) p->crouch_t = 1.0f;
+    } else {
+        p->crouch_t -= crate;
+        if (p->crouch_t < 0.0f) p->crouch_t = 0.0f;
+    }
+    p->eye_height = p->phys.cam_stand + (p->phys.cam_crouch - p->phys.cam_stand) * p->crouch_t;
+    p->radius = p->phys.radius;
 
     float fwd[3], right[3];
     hta_camera_forward(cam, fwd);
@@ -265,50 +294,61 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
     if (fl > 1e-5f) { fwd[0] /= fl; fwd[1] /= fl; }
     fwd[2] = 0.0f;
 
-    float wish[3];
-    wish[0] = fwd[0]*in->move_forward + right[0]*in->move_right;
-    wish[1] = fwd[1]*in->move_forward + right[1]*in->move_right;
-    wish[2] = 0.0f;
-    float wl = sqrtf(wish[0]*wish[0] + wish[1]*wish[1]);
-    if (wl > 1.0f) { wish[0] /= wl; wish[1] /= wl; }
+    int sneak = in->crouch && p->on_ground;
+    float spd_f = sneak ? p->phys.sneak_forward : p->phys.run_forward;
+    float spd_b = sneak ? p->phys.sneak_back    : p->phys.run_back;
+    float spd_s = sneak ? p->phys.sneak_side    : p->phys.run_side;
+    float accel = sneak ? p->phys.sneak_accel   : p->phys.run_accel;
+    if (!p->on_ground) accel = p->phys.air_accel;
+
+    float mf = in->move_forward, mr = in->move_right;
+    float wishx = fwd[0] * (mf >= 0.0f ? mf * spd_f : mf * spd_b)
+                + right[0] * (mr * spd_s);
+    float wishy = fwd[1] * (mf >= 0.0f ? mf * spd_f : mf * spd_b)
+                + right[1] * (mr * spd_s);
+    float maxspd = spd_f > spd_s ? spd_f : spd_s;
+    float wl = sqrtf(wishx * wishx + wishy * wishy);
+    if (wl > maxspd && wl > 1e-6f) { wishx *= maxspd / wl; wishy *= maxspd / wl; }
 
     if (p->noclip) {
         float f3[3];
         hta_camera_forward(cam, f3);
-        p->pos[0] += (f3[0]*in->move_forward + right[0]*in->move_right) * p->walk_speed * 6.0f * dt;
-        p->pos[1] += (f3[1]*in->move_forward + right[1]*in->move_right) * p->walk_speed * 6.0f * dt;
-        p->pos[2] += (f3[2]*in->move_forward) * p->walk_speed * 6.0f * dt;
-        if (in->jump) p->pos[2] += p->walk_speed * 6.0f * dt;
+        float ns = p->phys.run_forward * 6.0f;
+        p->pos[0] += (f3[0]*in->move_forward + right[0]*in->move_right) * ns * dt;
+        p->pos[1] += (f3[1]*in->move_forward + right[1]*in->move_right) * ns * dt;
+        p->pos[2] += (f3[2]*in->move_forward) * ns * dt;
+        if (in->jump) p->pos[2] += ns * dt;
         p->velocity[0] = p->velocity[1] = p->velocity[2] = 0.0f;
         p->on_ground = false;
     } else {
-        p->velocity[0] = wish[0] * p->walk_speed;
-        p->velocity[1] = wish[1] * p->walk_speed;
+        accel_toward(&p->velocity[0], &p->velocity[1], wishx, wishy, accel, dt);
 
         if (in->jump && p->on_ground) { p->velocity[2] = p->jump_speed; p->on_ground = false; }
         p->velocity[2] -= p->gravity * dt;
         if (p->velocity[2] < -40.0f) p->velocity[2] = -40.0f;
 
-        float ox = p->pos[0], oy = p->pos[1];
+        float ox = p->pos[0], oy = p->pos[1], oz = p->pos[2];
         p->pos[0] += p->velocity[0] * dt;
         p->pos[1] += p->velocity[1] * dt;
         p->pos[2] += p->velocity[2] * dt;
+        /* Probe from the higher of old/new Z so a fast fall cannot skip the floor. */
+        float probe_z = (oz > p->pos[2]) ? oz : p->pos[2];
 
         float gz;
         if (col && col->built) {
             /* Slide along walls instead of riding up their faces. */
-            if (!hta_collision_ground(col, p->pos[0], p->pos[1], p->pos[2], &gz)) {
-                if (hta_collision_ground(col, p->pos[0], oy, p->pos[2], &gz))
+            if (!hta_collision_ground(col, p->pos[0], p->pos[1], probe_z, &gz)) {
+                if (hta_collision_ground(col, p->pos[0], oy, probe_z, &gz))
                     p->pos[1] = oy;
-                else if (hta_collision_ground(col, ox, p->pos[1], p->pos[2], &gz))
+                else if (hta_collision_ground(col, ox, p->pos[1], probe_z, &gz))
                     p->pos[0] = ox;
                 else {
                     p->pos[0] = ox;
                     p->pos[1] = oy;
-                    hta_collision_ground(col, ox, oy, p->pos[2], &gz);
+                    hta_collision_ground(col, ox, oy, probe_z, &gz);
                 }
             }
-            if (hta_collision_ground(col, p->pos[0], p->pos[1], p->pos[2], &gz)) {
+            if (hta_collision_ground(col, p->pos[0], p->pos[1], probe_z, &gz)) {
                 if (p->pos[2] <= gz) {
                     p->pos[2] = gz;
                     if (p->velocity[2] < 0.0f) p->velocity[2] = 0.0f;
@@ -319,9 +359,8 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
             } else {
                 p->on_ground = false;
             }
-        } else {
-            p->on_ground = false;
         }
+        /* no mesh: leave on_ground as-is so tag-physics tests can stay grounded */
     }
 
     cam->pos[0] = p->pos[0];

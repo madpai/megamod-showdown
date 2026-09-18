@@ -55,8 +55,10 @@ Run `scripts/device_test.sh` with the S24+ connected to convert remaining 🟡.
 
 ## Phase 4 — Gameplay
 
-- ⬜ Collision BSP + player movement
-- ⬜ Weapons, projectiles, damage, HUD
+- ✅ Pawn physics from Trial tags (`matg` player info + `cyborg_mp`): run 2.25, accel, jump 0.07/tick, camera 0.62, radius 0.2, 45° slope
+- 🟡 Collision still height-query on the **render** mesh (real collision BSP later)
+- 🟡 Weapons: hitscan + scorches; no FP arms / projectiles yet
+- ✅ Touch HUD: stick, fire, jump, crouch
 
 ## Phase 5 — Multiplayer (the product)
 

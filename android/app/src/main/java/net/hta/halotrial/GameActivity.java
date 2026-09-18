@@ -77,6 +77,7 @@ public class GameActivity extends NativeActivity {
     static native void nativeHudLook(float dx, float dy);
     static native void nativeHudJump(boolean down);
     static native void nativeHudFire(boolean down);
+    static native void nativeHudCrouch(boolean down);
 
     private static final class HudOverlay extends View {
         private final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -84,12 +85,14 @@ public class GameActivity extends NativeActivity {
         private final Paint thumb = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint fireP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint jumpP = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint crouchP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
 
         private float stickCx, stickCy, stickR, stickTx, stickTy;
         private float fireCx, fireCy, fireR;
         private float jumpCx, jumpCy, jumpR;
-        private int stickPtr = -1, firePtr = -1, jumpPtr = -1;
+        private float crouchCx, crouchCy, crouchR;
+        private int stickPtr = -1, firePtr = -1, jumpPtr = -1, crouchPtr = -1;
         private final float[] lastX = new float[16];
         private final float[] lastY = new float[16];
 
@@ -103,6 +106,7 @@ public class GameActivity extends NativeActivity {
             thumb.setColor(0x99FFFFFF);
             fireP.setColor(0xCCE23B3B);
             jumpP.setColor(0xCC2B6CF6);
+            crouchP.setColor(0xCC555C66);
             label.setColor(0xFFFFFFFF);
             label.setTextAlign(Paint.Align.CENTER);
             label.setTypeface(Typeface.DEFAULT_BOLD);
@@ -122,7 +126,10 @@ public class GameActivity extends NativeActivity {
             jumpR = m * 0.07f;
             jumpCx = w * 0.91f;
             jumpCy = h * 0.84f;
-            label.setTextSize(m * 0.035f);
+            crouchR = m * 0.062f;
+            crouchCx = w * 0.78f;
+            crouchCy = h * 0.86f;
+            label.setTextSize(m * 0.032f);
         }
 
         private static boolean in(float x, float y, float cx, float cy, float r) {
@@ -147,6 +154,9 @@ public class GameActivity extends NativeActivity {
                 } else if (in(x, y, jumpCx, jumpCy, jumpR * 1.15f) && jumpPtr < 0) {
                     jumpPtr = id;
                     GameActivity.nativeHudJump(true);
+                } else if (in(x, y, crouchCx, crouchCy, crouchR * 1.15f) && crouchPtr < 0) {
+                    crouchPtr = id;
+                    GameActivity.nativeHudCrouch(true);
                 } else if ((in(x, y, stickCx, stickCy, stickR * 1.4f) || x < getWidth() * 0.38f)
                         && stickPtr < 0) {
                     stickPtr = id;
@@ -176,10 +186,12 @@ public class GameActivity extends NativeActivity {
                     releaseStick();
                     releaseFire();
                     releaseJump();
+                    releaseCrouch();
                 } else {
                     if (id == stickPtr) releaseStick();
                     if (id == firePtr) releaseFire();
                     if (id == jumpPtr) releaseJump();
+                    if (id == crouchPtr) releaseCrouch();
                 }
                 break;
             default:
@@ -231,6 +243,11 @@ public class GameActivity extends NativeActivity {
             GameActivity.nativeHudJump(false);
         }
 
+        private void releaseCrouch() {
+            crouchPtr = -1;
+            GameActivity.nativeHudCrouch(false);
+        }
+
         @Override
         protected void onDraw(Canvas c) {
             c.drawCircle(stickCx, stickCy, stickR, fill);
@@ -244,6 +261,10 @@ public class GameActivity extends NativeActivity {
             c.drawCircle(jumpCx, jumpCy, jumpR, jumpP);
             c.drawCircle(jumpCx, jumpCy, jumpR, ring);
             c.drawText("JUMP", jumpCx, jumpCy + label.getTextSize() * 0.35f, label);
+
+            c.drawCircle(crouchCx, crouchCy, crouchR, crouchP);
+            c.drawCircle(crouchCx, crouchCy, crouchR, ring);
+            c.drawText("CROUCH", crouchCx, crouchCy + label.getTextSize() * 0.35f, label);
         }
     }
 }
