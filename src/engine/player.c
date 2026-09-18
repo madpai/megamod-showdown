@@ -143,15 +143,25 @@ bool hta_collision_ground(const hta_collision *c, float x, float y, float z_from
 
     bool found = false;
     float best = -1e30f;
-    const float HEAD_ROOM = 0.6f;   /* allow stepping slightly up */
+    /* Only faces that point mostly up are floors. Steep pylon/cliff sides
+     * used to count as ground, so walking into a wall launched you over it. */
+    const float WALKABLE_NZ = 0.50f;
+    const float STEP = 0.18f;
     for (uint32_t k = s; k < e; k++) {
         uint32_t t = c->tri_index[k];
         const float *a = c->verts[c->indices[t*3+0]].pos;
         const float *b = c->verts[c->indices[t*3+1]].pos;
         const float *d = c->verts[c->indices[t*3+2]].pos;
+        float e1x = b[0]-a[0], e1y = b[1]-a[1], e1z = b[2]-a[2];
+        float e2x = d[0]-a[0], e2y = d[1]-a[1], e2z = d[2]-a[2];
+        float nx = e1y*e2z - e1z*e2y;
+        float ny = e1z*e2x - e1x*e2z;
+        float nz = e1x*e2y - e1y*e2x;
+        float nlen = sqrtf(nx*nx + ny*ny + nz*nz);
+        if (nlen < 1e-8f || fabsf(nz) / nlen < WALKABLE_NZ) continue;
         float z;
         if (!tri_height(a, b, d, x, y, &z)) continue;
-        if (z <= z_from + HEAD_ROOM && z > best) { best = z; found = true; }
+        if (z <= z_from + STEP && z > best) { best = z; found = true; }
     }
     if (found) *out_z = best;
     return found;
@@ -279,16 +289,33 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
         p->velocity[2] -= p->gravity * dt;
         if (p->velocity[2] < -40.0f) p->velocity[2] = -40.0f;
 
+        float ox = p->pos[0], oy = p->pos[1];
         p->pos[0] += p->velocity[0] * dt;
         p->pos[1] += p->velocity[1] * dt;
         p->pos[2] += p->velocity[2] * dt;
 
         float gz;
-        if (col && col->built && hta_collision_ground(col, p->pos[0], p->pos[1], p->pos[2], &gz)) {
-            if (p->pos[2] <= gz) {
-                p->pos[2] = gz;
-                if (p->velocity[2] < 0.0f) p->velocity[2] = 0.0f;
-                p->on_ground = true;
+        if (col && col->built) {
+            /* Slide along walls instead of riding up their faces. */
+            if (!hta_collision_ground(col, p->pos[0], p->pos[1], p->pos[2], &gz)) {
+                if (hta_collision_ground(col, p->pos[0], oy, p->pos[2], &gz))
+                    p->pos[1] = oy;
+                else if (hta_collision_ground(col, ox, p->pos[1], p->pos[2], &gz))
+                    p->pos[0] = ox;
+                else {
+                    p->pos[0] = ox;
+                    p->pos[1] = oy;
+                    hta_collision_ground(col, ox, oy, p->pos[2], &gz);
+                }
+            }
+            if (hta_collision_ground(col, p->pos[0], p->pos[1], p->pos[2], &gz)) {
+                if (p->pos[2] <= gz) {
+                    p->pos[2] = gz;
+                    if (p->velocity[2] < 0.0f) p->velocity[2] = 0.0f;
+                    p->on_ground = true;
+                } else {
+                    p->on_ground = false;
+                }
             } else {
                 p->on_ground = false;
             }

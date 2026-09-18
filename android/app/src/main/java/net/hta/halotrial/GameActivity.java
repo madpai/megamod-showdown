@@ -89,8 +89,9 @@ public class GameActivity extends NativeActivity {
         private float stickCx, stickCy, stickR, stickTx, stickTy;
         private float fireCx, fireCy, fireR;
         private float jumpCx, jumpCy, jumpR;
-        private int stickPtr = -1, lookPtr = -1, firePtr = -1, jumpPtr = -1;
-        private float lookX, lookY;
+        private int stickPtr = -1, firePtr = -1, jumpPtr = -1;
+        private final float[] lastX = new float[16];
+        private final float[] lastY = new float[16];
 
         HudOverlay(GameActivity a) {
             super(a);
@@ -139,6 +140,7 @@ public class GameActivity extends NativeActivity {
             switch (action) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN:
+                remember(id, x, y);
                 if (in(x, y, fireCx, fireCy, fireR * 1.15f) && firePtr < 0) {
                     firePtr = id;
                     GameActivity.nativeHudFire(true);
@@ -149,10 +151,6 @@ public class GameActivity extends NativeActivity {
                         && stickPtr < 0) {
                     stickPtr = id;
                     updateStick(x, y);
-                } else if (lookPtr < 0) {
-                    lookPtr = id;
-                    lookX = x;
-                    lookY = y;
                 }
                 break;
             case MotionEvent.ACTION_MOVE:
@@ -160,11 +158,15 @@ public class GameActivity extends NativeActivity {
                     int pid = e.getPointerId(i);
                     float px = e.getX(i), py = e.getY(i);
                     if (pid == stickPtr) updateStick(px, py);
-                    else if (pid == lookPtr) {
-                        GameActivity.nativeHudLook(px - lookX, py - lookY);
-                        lookX = px;
-                        lookY = py;
+                    else {
+                        /* Fire, jump, and empty-space drags all look so you
+                         * can aim while holding FIRE (second finger or drag). */
+                        float dx = px - lastOf(pid, true, px);
+                        float dy = py - lastOf(pid, false, py);
+                        if (dx != 0f || dy != 0f)
+                            GameActivity.nativeHudLook(dx, dy);
                     }
+                    remember(pid, px, py);
                 }
                 break;
             case MotionEvent.ACTION_UP:
@@ -174,12 +176,10 @@ public class GameActivity extends NativeActivity {
                     releaseStick();
                     releaseFire();
                     releaseJump();
-                    lookPtr = -1;
                 } else {
                     if (id == stickPtr) releaseStick();
                     if (id == firePtr) releaseFire();
                     if (id == jumpPtr) releaseJump();
-                    if (id == lookPtr) lookPtr = -1;
                 }
                 break;
             default:
@@ -187,6 +187,17 @@ public class GameActivity extends NativeActivity {
             }
             invalidate();
             return true;
+        }
+
+        private void remember(int id, float x, float y) {
+            int i = ((id % 16) + 16) % 16;
+            lastX[i] = x;
+            lastY[i] = y;
+        }
+
+        private float lastOf(int id, boolean x, float fallback) {
+            int i = ((id % 16) + 16) % 16;
+            return x ? lastX[i] : lastY[i];
         }
 
         private void updateStick(float x, float y) {

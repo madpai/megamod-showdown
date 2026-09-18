@@ -80,7 +80,7 @@ void hta_gun_build_mesh(hta_gun *g)
     g->mesh.textures[0].tag_id = 1;
     g->mesh.texture_count = 1;
 
-    const float S = 0.07f;
+    const float S = 0.035f;
     for (uint32_t i = 0; i < n; i++) {
         const float *p = g->hits[i].pos;
         float N[3] = { g->hits[i].nrm[0], g->hits[i].nrm[1], g->hits[i].nrm[2] };
