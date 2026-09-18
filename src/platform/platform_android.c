@@ -423,23 +423,23 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
 
         size_t count = AMotionEvent_getPointerCount(event);
 
-        /* Visible HUD owns all finger input so look doesn't fight the buttons. */
-        if (s->hud_ready) return 1;
-
         if (code == AMOTION_EVENT_ACTION_DOWN || code == AMOTION_EVENT_ACTION_POINTER_DOWN) {
             if ((size_t)pindex < count) {
                 int32_t id = AMotionEvent_getPointerId(event, (size_t)pindex);
                 float x = AMotionEvent_getX(event, (size_t)pindex);
                 float y = AMotionEvent_getY(event, (size_t)pindex);
-                if (x < w * 0.5f && s->move_pointer < 0) {
+                /* If the Java HUD is up it owns stick/fire/jump. Always keep
+                 * native look so a missing overlay cannot freeze the camera. */
+                if (!s->hud_ready && x < w * 0.5f && s->move_pointer < 0) {
                     s->move_pointer = id;
                     s->move_origin[0] = x; s->move_origin[1] = y;
                     s->move_cur[0] = x;    s->move_cur[1] = y;
-                } else if (x >= w * 0.5f) {
-                    /* bottom-right corner acts as jump */
-                    if (x > w * 0.82f && y > h * 0.72f) { s->jump_held = true; }
-                    else if (x > w * 0.64f && y > h * 0.72f) { s->fire_held = true; }
-                    else if (s->look_pointer < 0) {
+                } else if (s->look_pointer < 0) {
+                    if (!s->hud_ready && x > w * 0.82f && y > h * 0.72f)
+                        s->jump_held = true;
+                    else if (!s->hud_ready && x > w * 0.64f && y > h * 0.72f)
+                        s->fire_held = true;
+                    else {
                         s->look_pointer = id;
                         s->look_last[0] = x; s->look_last[1] = y;
                     }

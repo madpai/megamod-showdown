@@ -3,6 +3,7 @@ package net.hta.halotrial;
 import android.app.NativeActivity;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.PixelFormat;
 import android.graphics.Typeface;
 import android.os.Bundle;
 import android.view.MotionEvent;
@@ -30,13 +31,45 @@ public class GameActivity extends NativeActivity {
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus && hud == null) {
-            hud = new HudOverlay(this);
-            addContentView(hud, new ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT));
-            nativeHudReady(true);
+        if (hasFocus) {
+            getWindow().getDecorView().post(this::attachHud);
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        detachHud();
+        super.onDestroy();
+    }
+
+    private void attachHud() {
+        if (hud != null || getWindow() == null || getWindow().getDecorView().getWindowToken() == null)
+            return;
+        hud = new HudOverlay(this);
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_PANEL,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR,
+                PixelFormat.TRANSLUCENT);
+        lp.token = getWindow().getDecorView().getWindowToken();
+        lp.setTitle("hta-hud");
+        try {
+            getWindowManager().addView(hud, lp);
+            nativeHudReady(true);
+        } catch (RuntimeException e) {
+            hud = null;
+            nativeHudReady(false);
+        }
+    }
+
+    private void detachHud() {
+        if (hud == null) return;
+        try { getWindowManager().removeView(hud); } catch (RuntimeException ignored) {}
+        hud = null;
+        nativeHudReady(false);
     }
 
     static native void nativeHudReady(boolean ready);
