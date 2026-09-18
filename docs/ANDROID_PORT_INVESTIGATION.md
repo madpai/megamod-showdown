@@ -294,6 +294,32 @@ Rationale: desktop-first keeps iteration fast (seconds, not an APK cycle) and gi
 - The best-documented preservation copy is the Internet Archive item **[`halo-trial-setup`](https://archive.org/details/halo-trial-setup)** — `HaloTrialSetup.exe`, 131 MB, described as "Official Bungie trial for Halo: Combat Evolved PC. Original .exe installer." Uploaded 2021 by a community member. **This is a preservation archive, not an authorised Microsoft mirror, and carries no rights statement.** It is categorically different from a warez/torrent mirror, but it is not an official source. Flagging that honestly rather than presenting it as authorised.
 - **No DRM is involved**, so nothing here requires or implies circumvention.
 
+### 7.2b What the Trial's own EULA says (read from the user's copy, 2026-09-18)
+
+Extracted from `Eula.rtf` inside `HaloTrialSetup.exe`:
+
+- *"Microsoft does not grant you the right to sell or otherwise distribute files
+  from the SOFTWARE PRODUCT in exchange for value."* — consistent with our rule
+  of never redistributing anything.
+- *"You may not reverse engineer, decompile, or disassemble the SOFTWARE
+  PRODUCT, except and only to the extent that such activity is expressly
+  permitted by applicable law notwithstanding this limitation."*
+
+That second clause deserves a straight answer rather than a shrug. Our project
+**reads the game's data files**; it does not decompile, disassemble, or patch
+`halo.exe`. That distinction is meaningful, and it is another reason the
+architecture chosen in §13 is the right one: **Demon and halo-re both operate by
+disassembling and patching the executable — squarely the activity the clause
+names. Our approach does not.** The clause also carries an explicit carve-out
+for what applicable law permits, which in many jurisdictions covers
+interoperability analysis.
+
+This is a licence term, not legal advice, and I am not your lawyer. If this
+project were ever to be distributed publicly, that clause is the one worth
+having a professional look at. For private use with your own copy, building a
+renderer that reads your own data files is a materially different act from
+patching Microsoft's binary.
+
 ### 7.3 Binding rules for this project
 
 1. **Never commit or bundle Halo assets, executables, or DLLs** into this repository or any APK. Enforced by `.gitignore`.
@@ -380,7 +406,8 @@ Each stage has a concrete pass/fail test. **Stages 0–3 are cheap and de-risk t
 | Exact **PC/Trial** wire protocol (vs. documented Xbox System Link) | **No longer on the critical path** — §5.2 resolved to option A. Would only matter if wire-compatibility is revisited; method would be to capture loopback traffic between two local Trial instances and diff against the hllmn Xbox findings. |
 | Whether any community master server still serves Trial clients | Probe with a real Trial client; ask the Open Carnage / Halomaps communities. |
 | Halo Trial EULA's exact redistribution terms | Extract the EULA from the user's own `HaloTrialSetup.exe` and read it. **We are designing to never redistribute, so this is not blocking.** |
-| Whether Invader's `CACHE_FILE_DEMO` path fully round-trips Trial maps | Build Invader here and run `invader-info` against a user-supplied `bloodgulch.map`. Not yet done — no assets present. |
+| ~~Whether our parser handles real Trial data~~ | **RESOLVED 2026-09-18.** The user supplied their own Trial copy. Our parser reads `bloodgulch.map` correctly: 2410 tags, 72 spawn points, 5503 triangles, 0 materials skipped. See `BLOOD_GULCH_ASSETS.md`. |
+| ~~Whether Blood Gulch needs `bitmaps.map`~~ | **RESOLVED: no.** 0 of 2410 tags are flagged `indexed`. (Proven for tag data; texture pixel data not yet exercised.) |
 | Real S24+ perf headroom for a Vulkan Blood Gulch | Only measurable after Stage 4. |
 | Whether Demon actually runs (we only proved it *builds*) | Requires a Trial install; deliberately not obtained. |
 | Xbox↔PC gameplay/netcode divergence | Cross-reference halo-re notes (as docs) with PC captures. |

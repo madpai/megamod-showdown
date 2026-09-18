@@ -1,6 +1,6 @@
 # Progress
 
-Last updated: **2026-09-18**
+Last updated: **2026-09-18** (Phase 2)
 
 Legend: ✅ done & verified · 🟡 built but not verified on device · ⬜ not started · 🚫 blocked
 
@@ -92,13 +92,21 @@ No licence file = all rights reserved. Usable as documentation only, never as co
 `halo_cache_symbols.exe` comes from the Dec 2024 unauthorised Digsite leak.
 Use `demon-old`'s legitimate Trial targeting and Demon's public struct definitions instead.
 
-### 5. No device attached to the build host
-All on-device milestones are unverifiable here. Not a real blocker — the owner
-has an S24+; `scripts/device_test.sh` is ready.
+### 5. No device attached to the build host — **THE MAIN REMAINING GAP**
+Everything on the desktop is verified; nothing on Android is. The APK builds and
+is structurally correct, but no frame has ever been presented on real hardware.
+Run `HTA_MAP=~/halo-trial-data/extract/maps/bloodgulch.map scripts/device_test.sh`
+with the S24+ attached to close this.
 
-### 6. No Trial assets present (deliberately)
-Phase 2 onward needs the owner's own Trial copy. Nothing proprietary will be
-committed or bundled.
+### 6. ~~No Trial assets present~~ — **RESOLVED 2026-09-18**
+The owner supplied their own `HaloTrialSetup.exe`. Extracted to
+`~/halo-trial-data/` — **outside the repository**. `.gitignore` prevents any
+game data from being committed; the APK bundles nothing.
+
+### 7. Textures are not sampled yet
+The BSP's default ambient/distant lights are all zero (real lighting is in
+lightmaps), so the engine substitutes a fallback key light. Blood Gulch is
+recognisable but flat-shaded. This is the next milestone, not a defect.
 
 ---
 
@@ -120,4 +128,9 @@ committed or bundled.
 | Android Gradle build | `gradle :app:assembleDebug` | ✅ |
 | APK arm64-only, correct exports, links Vulkan | `scripts/verify.sh` | ✅ 10/10 |
 | Demon cross-build (reference) | mingw32 toolchain | ✅ 44/44 |
-| APK installs / launches / renders / input / exits | `scripts/device_test.sh` | 🟡 pending device |
+| Camera/projection math | `./build-host/test_camera` | ✅ 23/23 |
+| Player + collision | `./build-host/test_player` | ✅ 27/27 |
+| Real Trial data parse + extract | `HTA_MAP=... scripts/verify.sh` | ✅ 5/5 |
+| Offscreen render draws geometry | `scripts/verify.sh` | ✅ |
+| **Full suite** | `HTA_MAP=... scripts/verify.sh` | ✅ **24/24** |
+| APK installs / launches / renders / walks / exits | `HTA_MAP=... scripts/device_test.sh` | 🟡 pending device |

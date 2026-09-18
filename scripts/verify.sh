@@ -18,6 +18,21 @@ if cmake --build build-host >/dev/null 2>&1; then ok "host build"; else bad "hos
 if ./build-host/test_engine >/dev/null 2>&1; then ok "engine unit tests"; else bad "engine unit tests"; fi
 if ./build-host/test_cache  >/dev/null 2>&1; then ok "cache parser tests";  else bad "cache parser tests"; fi
 if ./build-host/test_bsp    >/dev/null 2>&1; then ok "bsp extraction tests"; else bad "bsp extraction tests"; fi
+if ./build-host/test_camera >/dev/null 2>&1; then ok "camera/projection tests"; else bad "camera/projection tests"; fi
+if ./build-host/test_player >/dev/null 2>&1; then ok "player/collision tests"; else bad "player/collision tests"; fi
+
+# Optional: validate against the user's own Trial data if HTA_MAP points at it.
+if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
+  echo "== 1a. real Trial data ($HTA_MAP) =="
+  R=$(./build-host/htainfo "$HTA_MAP" --bsp --spawns 2>&1) || true
+  echo "$R" | grep -q "DEMO/Trial"            && ok "detects Trial header" || bad "detects Trial header"
+  echo "$R" | grep -q "engine          6"     && ok "engine == 6"          || bad "engine == 6"
+  echo "$R" | grep -qE "spawn point\(s\)"   && ok "reads spawn points"   || bad "reads spawn points"
+  echo "$R" | grep -q "submeshes"             && ok "extracts BSP geometry"|| bad "extracts BSP geometry"
+  if echo "$R" | grep -q "skipped: 0 compressed, 0 malformed"; then ok "no materials skipped"; else bad "some materials skipped"; fi
+else
+  echo "  SKIP  real-data checks (set HTA_MAP=/path/to/bloodgulch.map to enable)"
+fi
 
 echo "== 1b. end-to-end CLI on a synthetic fixture =="
 FIX=$(mktemp -d)/fix.map
