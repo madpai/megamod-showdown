@@ -8,6 +8,7 @@
  */
 #include "asset/cache.h"
 #include "asset/bsp.h"
+#include "asset/bitmap.h"
 #include "engine/camera.h"
 #include "gfx/gfx.h"
 #include "engine/scene_light.h"
@@ -103,16 +104,36 @@ int main(int argc, char **argv)
            mesh.bounds_min[0], mesh.bounds_min[1], mesh.bounds_min[2],
            mesh.bounds_max[0], mesh.bounds_max[1], mesh.bounds_max[2]);
 
+    /* bitmaps.map lives next to the cache on Gearbox Trial */
+    hta_resource_map rm;
+    memset(&rm, 0, sizeof(rm));
+    uint8_t *bmdata = NULL; size_t bmsz = 0;
+    {
+        char bmpath[1024];
+        snprintf(bmpath, sizeof(bmpath), "%s", argv[1]);
+        char *slash = strrchr(bmpath, '/');
+        if (slash) snprintf(slash + 1, sizeof(bmpath) - (size_t)(slash + 1 - bmpath), "bitmaps.map");
+        else snprintf(bmpath, sizeof(bmpath), "bitmaps.map");
+        bmdata = slurp(bmpath, &bmsz);
+        if (bmdata && hta_resource_open(&rm, bmdata, bmsz, err, sizeof(err)))
+            printf("bitmaps.map    %s (%.1f MiB)\n", bmpath, bmsz / (1024.0 * 1024.0));
+        else
+            printf("bitmaps.map    not found next to cache (untextured)\n");
+    }
+    if (!hta_bsp_load_textures(&c, rm.data ? &rm : NULL, &mesh, err, sizeof(err)))
+        printf("textures       failed: %s\n", err);
+    else
+        printf("textures       %u unique decoded\n", mesh.texture_count);
+
     t0 = hta_time_seconds();
     hta_gfx *g = hta_gfx_create_offscreen(W, H, err, sizeof(err));
-    if (!g) { fprintf(stderr, "vulkan: %s\n", err); hta_bsp_free(&mesh); free(data); return 1; }
+    if (!g) { fprintf(stderr, "vulkan: %s\n", err); hta_bsp_free(&mesh); free(data); free(bmdata); return 1; }
     double t_gfx = hta_time_seconds() - t0;
     printf("gpu            %s (init %.1f ms)\n", hta_gfx_device_name(g), t_gfx * 1000.0);
 
     t0 = hta_time_seconds();
-    hta_gfx_mesh *gm = hta_gfx_mesh_upload(g, mesh.vertices, mesh.vertex_count,
-                                           mesh.indices, mesh.index_count, err, sizeof(err));
-    if (!gm) { fprintf(stderr, "upload: %s\n", err); hta_gfx_destroy(g); hta_bsp_free(&mesh); free(data); return 1; }
+    hta_gfx_mesh *gm = hta_gfx_mesh_upload(g, &mesh, err, sizeof(err));
+    if (!gm) { fprintf(stderr, "upload: %s\n", err); hta_gfx_destroy(g); hta_bsp_free(&mesh); free(data); free(bmdata); return 1; }
     double t_upload = hta_time_seconds() - t0;
     printf("upload         %.1f ms, device memory %.2f MiB\n",
            t_upload * 1000.0, hta_gfx_device_memory_used(g) / (1024.0*1024.0));
@@ -183,5 +204,6 @@ int main(int argc, char **argv)
     hta_gfx_destroy(g);
     hta_bsp_free(&mesh);
     free(data);
+    free(bmdata);
     return drawn ? 0 : 1;
 }

@@ -33,9 +33,8 @@ void     hta_gfx_destroy(hta_gfx *g);
 const char *hta_gfx_device_name(const hta_gfx *g);
 void        hta_gfx_extent(const hta_gfx *g, uint32_t *w, uint32_t *h);
 
-/* Uploads a mesh to device memory. NULL on failure (reason in err). */
-hta_gfx_mesh *hta_gfx_mesh_upload(hta_gfx *g, const hta_vertex *verts, uint32_t nverts,
-                                  const uint32_t *indices, uint32_t nindices,
+/* Uploads BSP geometry plus any decoded textures. NULL on failure. */
+hta_gfx_mesh *hta_gfx_mesh_upload(hta_gfx *g, const hta_bsp_mesh *mesh,
                                   char *err, size_t errlen);
 void hta_gfx_mesh_free(hta_gfx *g, hta_gfx_mesh *m);
 

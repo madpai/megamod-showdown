@@ -30,7 +30,8 @@ import java.io.OutputStream;
  */
 public class SetupActivity extends Activity {
     private static final String TAG = "halo-trial-android";
-    private static final int REQ_PICK = 1;
+    private static final int REQ_PICK_MAP = 1;
+    private static final int REQ_PICK_BITM = 2;
 
     private TextView status;
     private Button play;
@@ -48,7 +49,9 @@ public class SetupActivity extends Activity {
         root.setGravity(Gravity.CENTER_HORIZONTAL);
 
         Button pick = btn("Pick bloodgulch.map", 0xFF2B6CF6);
-        pick.setOnClickListener(v -> pickMap());
+        pick.setOnClickListener(v -> pickFile(REQ_PICK_MAP));
+        Button pickBm = btn("Pick bitmaps.map (textures)", 0xFF2B6CF6);
+        pickBm.setOnClickListener(v -> pickFile(REQ_PICK_BITM));
 
         play = btn("Play", 0xFF2A7A3A);
         play.setOnClickListener(v -> launchGame());
@@ -59,11 +62,14 @@ public class SetupActivity extends Activity {
         root.addView(space(12));
         root.addView(tv(
                 "This app does not bundle any Halo files.\n"
-                        + "Tap Pick, choose the bloodgulch.map you already "
-                        + "downloaded (it's in Downloads), then Play.",
+                        + "Pick bloodgulch.map, then bitmaps.map "
+                        + "(79 MB, from the same Trial maps folder). "
+                        + "Without bitmaps.map the world stays untextured.",
                 15, 0xFF94A0B4, false));
         root.addView(space(24));
         root.addView(pick);
+        root.addView(space(10));
+        root.addView(pickBm);
         root.addView(space(10));
         root.addView(play);
         root.addView(space(16));
@@ -81,11 +87,18 @@ public class SetupActivity extends Activity {
 
     private void refresh() {
         File map = existingMap();
+        File bitm = existingBitmaps();
         if (map != null) {
             play.setEnabled(true);
             play.setAlpha(1f);
-            status.setText("Map ready: " + map.getName() + " ("
-                    + (map.length() / 1024 / 1024) + " MB). Tap Play.");
+            String msg = "Map ready: " + map.getName() + " ("
+                    + (map.length() / 1024 / 1024) + " MB).";
+            if (bitm != null)
+                msg += " Textures: bitmaps.map ("
+                        + (bitm.length() / 1024 / 1024) + " MB). Tap Play.";
+            else
+                msg += " No bitmaps.map — Play is untextured.";
+            status.setText(msg);
         } else {
             play.setEnabled(false);
             play.setAlpha(0.4f);
@@ -108,46 +121,53 @@ public class SetupActivity extends Activity {
             String n = f.getName();
             if (n.length() > 4
                     && n.substring(n.length() - 4).equalsIgnoreCase(".map")
-                    && f.isFile() && f.length() > 0) {
+                    && f.isFile() && f.length() > 0
+                    && !n.equalsIgnoreCase("bitmaps.map")
+                    && !n.equalsIgnoreCase("sounds.map")
+                    && !n.equalsIgnoreCase("ui.map")) {
                 return f;
             }
         }
         return null;
     }
 
-    private void pickMap() {
+    private File existingBitmaps() {
+        File f = new File(destDir(), "bitmaps.map");
+        return (f.isFile() && f.length() > 0) ? f : null;
+    }
+
+    private void pickFile(int req) {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("*/*");
-        startActivityForResult(i, REQ_PICK);
+        startActivityForResult(i, req);
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQ_PICK) return;
+        if (requestCode != REQ_PICK_MAP && requestCode != REQ_PICK_BITM) return;
         if (resultCode != RESULT_OK || data == null || data.getData() == null) {
             status.setText("Pick cancelled.");
             return;
         }
+        String name = (requestCode == REQ_PICK_BITM) ? "bitmaps.map" : "bloodgulch.map";
         Uri uri = data.getData();
-        File dest = new File(destDir(), "bloodgulch.map");
-        File tmp = new File(destDir(), "bloodgulch.map.part");
-        status.setText("Copying into app storage\u2026");
+        File dest = new File(destDir(), name);
+        File tmp = new File(destDir(), name + ".part");
+        status.setText("Copying " + name + "\u2026");
         try {
             destDir().mkdirs();
             copyUri(uri, tmp);
             if (dest.exists() && !dest.delete()) {
-                throw new java.io.IOException("could not replace existing map");
+                throw new java.io.IOException("could not replace existing file");
             }
             if (!tmp.renameTo(dest)) {
-                throw new java.io.IOException("could not finalize map copy");
+                throw new java.io.IOException("could not finalize copy");
             }
-            Log.i(TAG, "[assets] copied map to " + dest.getAbsolutePath()
+            Log.i(TAG, "[assets] copied " + dest.getAbsolutePath()
                     + " (" + dest.length() + " bytes)");
-            status.setText("Copied " + (dest.length() / 1024 / 1024)
-                    + " MB. Launching\u2026");
-            launchGame();
+            refresh();
         } catch (Exception e) {
             //noinspection ResultOfMethodCallIgnored
             tmp.delete();

@@ -33,11 +33,28 @@ _Static_assert(sizeof(kMeshVert) % 4 == 0, "SPIR-V must be a whole number of wor
 #define MAX_IMAGES 8
 #define PUSH_SIZE  112u   /* mat4(64) + 3 * vec4(48) */
 
+typedef struct {
+    VkImage        image;
+    VkDeviceMemory mem;
+    VkImageView    view;
+} hta_vk_tex;
+
+typedef struct {
+    uint32_t first_index, index_count;
+    VkDescriptorSet set;
+} hta_vk_submesh;
+
 struct hta_gfx_mesh {
     VkBuffer       vbuf, ibuf;
     VkDeviceMemory vmem, imem;
     uint32_t       index_count;
     uint64_t       bytes;
+
+    hta_vk_tex     *tex;
+    uint32_t        tex_count;
+    VkDescriptorPool desc_pool;
+    hta_vk_submesh *submeshes;
+    uint32_t        submesh_count;
 };
 
 struct hta_gfx {
@@ -74,9 +91,14 @@ struct hta_gfx {
     VkDeviceMemory depth_mem;
     VkImageView    depth_view;
 
-    VkRenderPass     pass;
-    VkPipelineLayout layout;
-    VkPipeline       pipeline;
+    VkRenderPass          pass;
+    VkPipelineLayout      layout;
+    VkPipeline            pipeline;
+    VkDescriptorSetLayout set_layout;
+    VkSampler             samp_repeat;
+    VkSampler             samp_clamp;
+    hta_vk_tex            tex_clay;
+    hta_vk_tex            tex_light;
 
     VkCommandPool   pool;
     VkCommandBuffer cmd[MAX_IMAGES];
@@ -99,6 +121,9 @@ static void gfail(char *err, size_t n, const char *fmt, ...)
     VkResult _r = (expr); \
     if (_r != VK_SUCCESS) { gfail(err, errlen, "%s failed (VkResult %d)", what, (int)_r); return false; } \
 } while (0)
+
+static bool upload_rgba(hta_gfx *g, const uint8_t *rgba, uint32_t w, uint32_t h,
+                        hta_vk_tex *out, char *err, size_t errlen);
 
 static bool find_mem(const hta_gfx *g, uint32_t type_bits, VkMemoryPropertyFlags want,
                      uint32_t *out)
@@ -375,6 +400,26 @@ static bool create_targets(hta_gfx *g, uint32_t w, uint32_t h, char *err, size_t
 
 static bool create_pass_pipeline(hta_gfx *g, char *err, size_t errlen)
 {
+    VkDescriptorSetLayoutBinding b[2];
+    memset(b, 0, sizeof(b));
+    b[0].binding = 0; b[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    b[0].descriptorCount = 1; b[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    b[1].binding = 1; b[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    b[1].descriptorCount = 1; b[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo sl = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+    sl.bindingCount = 2; sl.pBindings = b;
+    VKREQ(vkCreateDescriptorSetLayout(g->device, &sl, NULL, &g->set_layout),
+          "vkCreateDescriptorSetLayout");
+
+    VkSamplerCreateInfo sci = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+    sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
+    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sci.maxLod = 0.0f;
+    VKREQ(vkCreateSampler(g->device, &sci, NULL, &g->samp_repeat), "vkCreateSampler(repeat)");
+    sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    VKREQ(vkCreateSampler(g->device, &sci, NULL, &g->samp_clamp), "vkCreateSampler(clamp)");
+
     VkAttachmentDescription at[2];
     memset(at, 0, sizeof(at));
     at[0].format         = g->format;
@@ -438,6 +483,8 @@ static bool create_pass_pipeline(hta_gfx *g, char *err, size_t errlen)
     pcr.offset = 0;
     pcr.size   = PUSH_SIZE;
     VkPipelineLayoutCreateInfo pl = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    pl.setLayoutCount         = 1;
+    pl.pSetLayouts            = &g->set_layout;
     pl.pushConstantRangeCount = 1;
     pl.pPushConstantRanges    = &pcr;
     VKREQ(vkCreatePipelineLayout(g->device, &pl, NULL, &g->layout), "vkCreatePipelineLayout");
@@ -461,15 +508,16 @@ static bool create_pass_pipeline(hta_gfx *g, char *err, size_t errlen)
     VkVertexInputBindingDescription vb;
     vb.binding = 0; vb.stride = (uint32_t)sizeof(hta_vertex);
     vb.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    VkVertexInputAttributeDescription va[3];
+    VkVertexInputAttributeDescription va[4];
     va[0].location = 0; va[0].binding = 0; va[0].format = VK_FORMAT_R32G32B32_SFLOAT; va[0].offset = 0;
     va[1].location = 1; va[1].binding = 0; va[1].format = VK_FORMAT_R32G32B32_SFLOAT; va[1].offset = 12;
     va[2].location = 2; va[2].binding = 0; va[2].format = VK_FORMAT_R32G32_SFLOAT;    va[2].offset = 24;
+    va[3].location = 3; va[3].binding = 0; va[3].format = VK_FORMAT_R32G32_SFLOAT;    va[3].offset = 32;
 
     VkPipelineVertexInputStateCreateInfo vin = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
     vin.vertexBindingDescriptionCount   = 1;
     vin.pVertexBindingDescriptions      = &vb;
-    vin.vertexAttributeDescriptionCount = 3;
+    vin.vertexAttributeDescriptionCount = 4;
     vin.pVertexAttributeDescriptions    = va;
 
     VkPipelineInputAssemblyStateCreateInfo ia = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
@@ -556,6 +604,13 @@ static hta_gfx *finish(hta_gfx *g, uint32_t w, uint32_t h, char *err, size_t err
     if (!create_targets(g, w, h, err, errlen))   goto bad;
     if (!create_pass_pipeline(g, err, errlen))   goto bad;
     if (!create_cmd_sync(g, err, errlen))        goto bad;
+
+    {
+        uint8_t clay[4]  = { 158, 153, 140, 255 }; /* former untextured clay */
+        uint8_t light[4] = { 128, 128, 128, 255 }; /* *2 = 1.0, so albedo shows */
+        if (!upload_rgba(g, clay, 1, 1, &g->tex_clay, err, errlen))  goto bad;
+        if (!upload_rgba(g, light, 1, 1, &g->tex_light, err, errlen)) goto bad;
+    }
     g->ready = true;
     return g;
 bad:
@@ -672,19 +727,142 @@ static bool upload_via_staging(hta_gfx *g, VkBuffer dst, const void *src, VkDevi
     return ok;
 }
 
-hta_gfx_mesh *hta_gfx_mesh_upload(hta_gfx *g, const hta_vertex *verts, uint32_t nverts,
-                                  const uint32_t *indices, uint32_t nindices,
+static void destroy_tex(hta_gfx *g, hta_vk_tex *t)
+{
+    if (!g || !t || !g->device) { if (t) memset(t, 0, sizeof(*t)); return; }
+    if (t->view)  vkDestroyImageView(g->device, t->view, NULL);
+    if (t->image) vkDestroyImage(g->device, t->image, NULL);
+    if (t->mem)   vkFreeMemory(g->device, t->mem, NULL);
+    memset(t, 0, sizeof(*t));
+}
+
+static bool upload_rgba(hta_gfx *g, const uint8_t *rgba, uint32_t w, uint32_t h,
+                        hta_vk_tex *out, char *err, size_t errlen)
+{
+    memset(out, 0, sizeof(*out));
+    if (!rgba || w == 0 || h == 0) { gfail(err, errlen, "empty texture"); return false; }
+    if (!make_image(g, w, h, VK_FORMAT_R8G8B8A8_UNORM,
+                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                    VK_IMAGE_ASPECT_COLOR_BIT,
+                    &out->image, &out->mem, &out->view, err, errlen))
+        return false;
+
+    VkDeviceSize size = (VkDeviceSize)w * h * 4u;
+    VkBuffer sb = VK_NULL_HANDLE;
+    VkDeviceMemory sm = VK_NULL_HANDLE;
+    uint64_t before = g->mem_used;
+    if (!make_buffer(g, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                     &sb, &sm, err, errlen)) {
+        destroy_tex(g, out);
+        return false;
+    }
+    void *mapped = NULL;
+    if (vkMapMemory(g->device, sm, 0, size, 0, &mapped) != VK_SUCCESS) {
+        gfail(err, errlen, "vkMapMemory failed for texture staging");
+        vkDestroyBuffer(g->device, sb, NULL); vkFreeMemory(g->device, sm, NULL);
+        destroy_tex(g, out);
+        return false;
+    }
+    memcpy(mapped, rgba, (size_t)size);
+    vkUnmapMemory(g->device, sm);
+
+    VkCommandBufferAllocateInfo ai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    ai.commandPool = g->pool;
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cb = VK_NULL_HANDLE;
+    bool ok = false;
+    if (vkAllocateCommandBuffers(g->device, &ai, &cb) == VK_SUCCESS) {
+        VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(cb, &bi);
+
+        VkImageMemoryBarrier bar = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+        bar.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        bar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        bar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        bar.srcQueueFamilyIndex = bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bar.image = out->image;
+        bar.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        bar.subresourceRange.levelCount = 1;
+        bar.subresourceRange.layerCount = 1;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &bar);
+
+        VkBufferImageCopy copy;
+        memset(&copy, 0, sizeof(copy));
+        copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copy.imageSubresource.layerCount = 1;
+        copy.imageExtent.width = w;
+        copy.imageExtent.height = h;
+        copy.imageExtent.depth = 1;
+        vkCmdCopyBufferToImage(cb, sb, out->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+
+        bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        bar.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &bar);
+        vkEndCommandBuffer(cb);
+
+        VkSubmitInfo su = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+        su.commandBufferCount = 1;
+        su.pCommandBuffers = &cb;
+        if (vkQueueSubmit(g->queue, 1, &su, VK_NULL_HANDLE) == VK_SUCCESS) {
+            vkQueueWaitIdle(g->queue);
+            ok = true;
+        } else {
+            gfail(err, errlen, "vkQueueSubmit failed during texture upload");
+        }
+        vkFreeCommandBuffers(g->device, g->pool, 1, &cb);
+    } else {
+        gfail(err, errlen, "vkAllocateCommandBuffers failed during texture upload");
+    }
+    vkDestroyBuffer(g->device, sb, NULL);
+    vkFreeMemory(g->device, sm, NULL);
+    g->mem_used = before;
+    if (!ok) destroy_tex(g, out);
+    return ok;
+}
+
+static bool write_set(hta_gfx *g, VkDescriptorSet set,
+                      VkImageView albedo, VkImageView light)
+{
+    VkDescriptorImageInfo ii[2];
+    memset(ii, 0, sizeof(ii));
+    ii[0].sampler = g->samp_repeat;
+    ii[0].imageView = albedo;
+    ii[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    ii[1].sampler = g->samp_clamp;
+    ii[1].imageView = light;
+    ii[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet w[2];
+    memset(w, 0, sizeof(w));
+    w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w[0].dstSet = set; w[0].dstBinding = 0;
+    w[0].descriptorCount = 1;
+    w[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w[0].pImageInfo = &ii[0];
+    w[1] = w[0]; w[1].dstBinding = 1; w[1].pImageInfo = &ii[1];
+    vkUpdateDescriptorSets(g->device, 2, w, 0, NULL);
+    return true;
+}
+
+hta_gfx_mesh *hta_gfx_mesh_upload(hta_gfx *g, const hta_bsp_mesh *mesh,
                                   char *err, size_t errlen)
 {
-    if (!g || !g->ready || !verts || !indices || !nverts || !nindices) {
+    if (!g || !g->ready || !mesh || !mesh->vertices || !mesh->indices ||
+        !mesh->vertex_count || !mesh->index_count) {
         gfail(err, errlen, "mesh upload: bad arguments");
         return NULL;
     }
     hta_gfx_mesh *m = (hta_gfx_mesh *)calloc(1, sizeof(*m));
     if (!m) { gfail(err, errlen, "out of memory"); return NULL; }
 
-    VkDeviceSize vsz = (VkDeviceSize)nverts * sizeof(hta_vertex);
-    VkDeviceSize isz = (VkDeviceSize)nindices * sizeof(uint32_t);
+    VkDeviceSize vsz = (VkDeviceSize)mesh->vertex_count * sizeof(hta_vertex);
+    VkDeviceSize isz = (VkDeviceSize)mesh->index_count * sizeof(uint32_t);
 
     if (!make_buffer(g, vsz, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &m->vbuf, &m->vmem, err, errlen) ||
@@ -693,13 +871,73 @@ hta_gfx_mesh *hta_gfx_mesh_upload(hta_gfx *g, const hta_vertex *verts, uint32_t 
         hta_gfx_mesh_free(g, m);
         return NULL;
     }
-    if (!upload_via_staging(g, m->vbuf, verts, vsz, err, errlen) ||
-        !upload_via_staging(g, m->ibuf, indices, isz, err, errlen)) {
+    if (!upload_via_staging(g, m->vbuf, mesh->vertices, vsz, err, errlen) ||
+        !upload_via_staging(g, m->ibuf, mesh->indices, isz, err, errlen)) {
         hta_gfx_mesh_free(g, m);
         return NULL;
     }
-    m->index_count = nindices;
+    m->index_count = mesh->index_count;
     m->bytes = (uint64_t)vsz + (uint64_t)isz;
+
+    m->tex_count = mesh->texture_count;
+    if (m->tex_count) {
+        m->tex = (hta_vk_tex *)calloc(m->tex_count, sizeof(hta_vk_tex));
+        if (!m->tex) { hta_gfx_mesh_free(g, m); gfail(err, errlen, "oom"); return NULL; }
+        for (uint32_t i = 0; i < m->tex_count; i++) {
+            const hta_bsp_texture *t = &mesh->textures[i];
+            if (!t->rgba || !upload_rgba(g, t->rgba, t->width, t->height, &m->tex[i], err, errlen)) {
+                hta_gfx_mesh_free(g, m);
+                return NULL;
+            }
+        }
+    }
+
+    uint32_t nsm = mesh->submesh_count ? mesh->submesh_count : 1;
+    m->submeshes = (hta_vk_submesh *)calloc(nsm, sizeof(hta_vk_submesh));
+    if (!m->submeshes) { hta_gfx_mesh_free(g, m); gfail(err, errlen, "oom"); return NULL; }
+    m->submesh_count = nsm;
+
+    VkDescriptorPoolSize ps;
+    ps.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    ps.descriptorCount = nsm * 2;
+    VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+    pci.maxSets = nsm;
+    pci.poolSizeCount = 1;
+    pci.pPoolSizes = &ps;
+    if (vkCreateDescriptorPool(g->device, &pci, NULL, &m->desc_pool) != VK_SUCCESS) {
+        gfail(err, errlen, "vkCreateDescriptorPool failed");
+        hta_gfx_mesh_free(g, m);
+        return NULL;
+    }
+    VkDescriptorSetLayout layouts[256];
+    if (nsm > 256) { gfail(err, errlen, "too many submeshes"); hta_gfx_mesh_free(g, m); return NULL; }
+    for (uint32_t i = 0; i < nsm; i++) layouts[i] = g->set_layout;
+    VkDescriptorSetAllocateInfo dai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+    dai.descriptorPool = m->desc_pool;
+    dai.descriptorSetCount = nsm;
+    dai.pSetLayouts = layouts;
+    VkDescriptorSet sets[256];
+    if (vkAllocateDescriptorSets(g->device, &dai, sets) != VK_SUCCESS) {
+        gfail(err, errlen, "vkAllocateDescriptorSets failed");
+        hta_gfx_mesh_free(g, m);
+        return NULL;
+    }
+
+    for (uint32_t i = 0; i < nsm; i++) {
+        uint32_t first = 0, count = mesh->index_count, ai = ~0u, li = ~0u;
+        if (mesh->submesh_count) {
+            first = mesh->submeshes[i].first_index;
+            count = mesh->submeshes[i].index_count;
+            ai = mesh->submeshes[i].albedo_tex;
+            li = mesh->submeshes[i].lightmap_tex;
+        }
+        m->submeshes[i].first_index = first;
+        m->submeshes[i].index_count = count;
+        m->submeshes[i].set = sets[i];
+        VkImageView av = (ai != ~0u && ai < m->tex_count) ? m->tex[ai].view : g->tex_clay.view;
+        VkImageView lv = (li != ~0u && li < m->tex_count) ? m->tex[li].view : g->tex_light.view;
+        write_set(g, sets[i], av, lv);
+    }
     return m;
 }
 
@@ -708,6 +946,12 @@ void hta_gfx_mesh_free(hta_gfx *g, hta_gfx_mesh *m)
     if (!g || !m) return;
     if (g->device) {
         vkDeviceWaitIdle(g->device);
+        if (m->desc_pool) vkDestroyDescriptorPool(g->device, m->desc_pool, NULL);
+        if (m->tex) {
+            for (uint32_t i = 0; i < m->tex_count; i++) destroy_tex(g, &m->tex[i]);
+            free(m->tex);
+        }
+        free(m->submeshes);
         if (m->vbuf) vkDestroyBuffer(g->device, m->vbuf, NULL);
         if (m->vmem) vkFreeMemory(g->device, m->vmem, NULL);
         if (m->ibuf) vkDestroyBuffer(g->device, m->ibuf, NULL);
@@ -782,7 +1026,17 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
         VkDeviceSize zero = 0;
         vkCmdBindVertexBuffers(cb, 0, 1, &mesh->vbuf, &zero);
         vkCmdBindIndexBuffer(cb, mesh->ibuf, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cb, mesh->index_count, 1, 0, 0, 0);
+        if (mesh->submesh_count) {
+            for (uint32_t i = 0; i < mesh->submesh_count; i++) {
+                if (!mesh->submeshes[i].index_count) continue;
+                vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
+                                        0, 1, &mesh->submeshes[i].set, 0, NULL);
+                vkCmdDrawIndexed(cb, mesh->submeshes[i].index_count, 1,
+                                 mesh->submeshes[i].first_index, 0, 0);
+            }
+        } else {
+            vkCmdDrawIndexed(cb, mesh->index_count, 1, 0, 0, 0);
+        }
     }
 
     vkCmdEndRenderPass(cb);
@@ -862,6 +1116,11 @@ void hta_gfx_destroy(hta_gfx *g)
         if (g->readback_mem) vkFreeMemory(g->device, g->readback_mem, NULL);
         if (g->off_image)    vkDestroyImage(g->device, g->off_image, NULL);
         if (g->off_mem)      vkFreeMemory(g->device, g->off_mem, NULL);
+        destroy_tex(g, &g->tex_clay);
+        destroy_tex(g, &g->tex_light);
+        if (g->samp_repeat) vkDestroySampler(g->device, g->samp_repeat, NULL);
+        if (g->samp_clamp)  vkDestroySampler(g->device, g->samp_clamp, NULL);
+        if (g->set_layout)  vkDestroyDescriptorSetLayout(g->device, g->set_layout, NULL);
         if (g->pool)      vkDestroyCommandPool(g->device, g->pool, NULL);
         if (g->pipeline)  vkDestroyPipeline(g->device, g->pipeline, NULL);
         if (g->layout)    vkDestroyPipelineLayout(g->device, g->layout, NULL);

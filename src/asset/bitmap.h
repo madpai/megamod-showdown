@@ -1,0 +1,77 @@
+/* Bitmap tag decoder + environment-shader base-map lookup.
+ *
+ * Gearbox Trial stores pixel bytes in bitmaps.map (BitmapData flag
+ * "external"), not in bloodgulch.map. The tag-array `indexed` field is a
+ * different mechanism and is zero for every Blood Gulch tag.
+ *
+ * We decode mip 0 to tightly packed RGBA8. Formats actually used by the
+ * Trial (measured): DXT1/3/5, R5G6B5, A1R5G5B5, A4R4G4B4, X8R8G8B8, A8R8G8B8.
+ */
+#ifndef HTA_BITMAP_H
+#define HTA_BITMAP_H
+
+#include "cache.h"
+#include "bsp.h"
+
+#define HTA_BITM_DATA_REFLEXIVE  0x60u  /* TagReflexive of BitmapData */
+#define HTA_BITM_DATA_SIZE       48u
+#define HTA_BITM_DATA_WIDTH      0x04u
+#define HTA_BITM_DATA_HEIGHT     0x06u
+#define HTA_BITM_DATA_FORMAT     0x0Cu
+#define HTA_BITM_DATA_FLAGS      0x0Eu
+#define HTA_BITM_DATA_PIXEL_OFF  0x18u
+#define HTA_BITM_DATA_PIXEL_SIZE 0x1Cu
+
+#define HTA_BITM_FLAG_EXTERNAL   (1u << 8)
+
+#define HTA_FMT_R5G6B5    6u
+#define HTA_FMT_A1R5G5B5  8u
+#define HTA_FMT_A4R4G4B4  9u
+#define HTA_FMT_X8R8G8B8  10u
+#define HTA_FMT_A8R8G8B8  11u
+#define HTA_FMT_DXT1      14u
+#define HTA_FMT_DXT3      15u
+#define HTA_FMT_DXT5      16u
+
+/* ShaderEnvironment.base_map TagDependency, after the 40-byte Shader header. */
+#define HTA_SENV_BASE_MAP  0x88u
+
+typedef struct {
+    const uint8_t *data;
+    size_t         size;
+    uint32_t       type;   /* 1 = bitmaps */
+} hta_resource_map;
+
+typedef struct {
+    uint32_t  width, height;
+    uint8_t  *rgba;        /* width*height*4, malloc'd; free with hta_bitmap_free */
+} hta_bitmap;
+
+void hta_bitmap_free(hta_bitmap *b);
+
+/* Opens a Gearbox resource map (bitmaps.map). Does not copy the bytes. */
+bool hta_resource_open(hta_resource_map *r, const uint8_t *data, size_t size,
+                       char *err, size_t errlen);
+
+/* Decode bitmap_data[index] of a 'bitm' tag to RGBA8.
+ * `bitmaps` may be NULL if the pixel data is in the cache (it is not, on Trial). */
+bool hta_bitmap_decode(const hta_cache *c, const hta_resource_map *bitmaps,
+                       uint32_t tag_id, uint32_t index,
+                       hta_bitmap *out, char *err, size_t errlen);
+
+/* First bitmap tag referenced by a shader (senv base map, else first 'bitm'
+ * TagDependency). Returns 0 if none. */
+uint32_t hta_shader_base_bitmap(const hta_cache *c, uint32_t shader_tag_id);
+
+/* Decode every unique albedo + lightmap referenced by the mesh. Fills
+ * mesh->textures and per-submesh albedo_tex/lightmap_tex. Missing resource
+ * map is not fatal: those slots stay ~0u (renderer uses a default). */
+bool hta_bsp_load_textures(const hta_cache *c, const hta_resource_map *bitmaps,
+                           hta_bsp_mesh *mesh, char *err, size_t errlen);
+
+/* Decode a raw pixel blob (used by unit tests; no cache involved). */
+bool hta_bitmap_decode_pixels(uint16_t format, uint32_t w, uint32_t h,
+                              const uint8_t *src, uint32_t src_len,
+                              hta_bitmap *out, char *err, size_t errlen);
+
+#endif

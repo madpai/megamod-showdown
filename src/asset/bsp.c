@@ -110,6 +110,10 @@ void hta_bsp_free(hta_bsp_mesh *m)
     free(m->vertices);
     free(m->indices);
     free(m->submeshes);
+    if (m->textures) {
+        for (uint32_t i = 0; i < m->texture_count; i++) free(m->textures[i].rgba);
+        free(m->textures);
+    }
     memset(m, 0, sizeof(*m));
 }
 
@@ -182,6 +186,7 @@ bool hta_bsp_load_first(const hta_cache *c, hta_bsp_mesh *out,
     read_rgb(c, sbsp_off + HTA_SBSP_AMBIENT_COLOR, out->ambient);
     read_rgb(c, sbsp_off + HTA_SBSP_LIGHT0_COLOR, out->light0_color);
     read_rgb(c, sbsp_off + HTA_SBSP_LIGHT0_DIRECTION, out->light0_dir);
+    hta_rd_u32(c, sbsp_off + HTA_SBSP_LIGHTMAPS_BITMAP + 0x0C, &out->lightmaps_bitmap_id);
 
     /* ---- surfaces (the index source) ---- */
     uint32_t surf_count, surf_ptr;
@@ -301,14 +306,22 @@ bool hta_bsp_load_first(const hta_cache *c, hta_bsp_mesh *out,
                 out->materials_skipped_bad++; continue;
             }
             uint64_t vstart = (uint64_t)vblock;
+            uint32_t blob_size = 0;
+            hta_rd_u32(c, me + HTA_MAT_UNCOMPRESSED_VERTS + HTA_TAGDATAOFFSET_SIZE, &blob_size);
+            uint32_t lm_base = 0;
+            if ((uint64_t)vcount * (HTA_VERTEX_ENV_UNCOMPRESSED_SIZE + HTA_VERTEX_LIGHTMAP_SIZE)
+                <= (uint64_t)blob_size)
+                lm_base = (uint32_t)vstart + vcount * HTA_VERTEX_ENV_UNCOMPRESSED_SIZE;
 
             uint32_t base_vertex = out->vertex_count;
 
-            /* vertices: 56-byte environment_vertex_uncompressed */
+            /* vertices: 56-byte environment_vertex_uncompressed, then optional
+             * 20-byte lightmap vertices (UV at +12). */
             bool vok = true;
             for (uint32_t v = 0; v < vcount; v++) {
                 uint32_t vo = (uint32_t)vstart + v * HTA_VERTEX_ENV_UNCOMPRESSED_SIZE;
                 hta_vertex *dst = &out->vertices[base_vertex + v];
+                dst->lm_uv[0] = dst->lm_uv[1] = 0.0f;
                 if (!hta_rd_f32(c, vo + 0,  &dst->pos[0])   ||
                     !hta_rd_f32(c, vo + 4,  &dst->pos[1])   ||
                     !hta_rd_f32(c, vo + 8,  &dst->pos[2])   ||
@@ -317,6 +330,11 @@ bool hta_bsp_load_first(const hta_cache *c, hta_bsp_mesh *out,
                     !hta_rd_f32(c, vo + 20, &dst->normal[2])||
                     !hta_rd_f32(c, vo + 48, &dst->uv[0])    ||
                     !hta_rd_f32(c, vo + 52, &dst->uv[1])) { vok = false; break; }
+                if (lm_base) {
+                    uint32_t lo = lm_base + v * HTA_VERTEX_LIGHTMAP_SIZE + 12u;
+                    hta_rd_f32(c, lo + 0, &dst->lm_uv[0]);
+                    hta_rd_f32(c, lo + 4, &dst->lm_uv[1]);
+                }
 
                 for (int k = 0; k < 3; k++) {
                     float p = dst->pos[k];
@@ -356,6 +374,8 @@ bool hta_bsp_load_first(const hta_cache *c, hta_bsp_mesh *out,
             out->submeshes[out->submesh_count].index_count    = emitted;
             out->submeshes[out->submesh_count].shader_tag_id  = shader_id;
             out->submeshes[out->submesh_count].lightmap_index = lm_bitmap;
+            out->submeshes[out->submesh_count].albedo_tex     = ~0u;
+            out->submeshes[out->submesh_count].lightmap_tex   = ~0u;
             out->submesh_count++;
         }
     }

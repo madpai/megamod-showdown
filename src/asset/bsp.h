@@ -63,14 +63,28 @@
 #define HTA_VTX_ENV_COMPRESSED   1u
 #define HTA_VERTEX_ENV_UNCOMPRESSED_SIZE 56u
 
-typedef struct { float pos[3]; float normal[3]; float uv[2]; } hta_vertex; /* 32 bytes */
+typedef struct {
+    float pos[3];
+    float normal[3];
+    float uv[2];
+    float lm_uv[2];
+} hta_vertex; /* 40 bytes */
 
 typedef struct {
     uint32_t first_index;
     uint32_t index_count;
     uint32_t shader_tag_id;
-    uint32_t lightmap_index;
+    uint32_t lightmap_index;  /* 0xFFFF = none */
+    uint32_t albedo_tex;      /* index into hta_bsp_mesh.textures, ~0u = none */
+    uint32_t lightmap_tex;
 } hta_submesh;
+
+typedef struct {
+    uint32_t tag_id;
+    uint32_t index;
+    uint32_t width, height;
+    uint8_t *rgba;            /* malloc'd RGBA8 */
+} hta_bsp_texture;
 
 typedef struct {
     hta_vertex  *vertices;
@@ -92,6 +106,10 @@ typedef struct {
     uint32_t materials_seen;
     uint32_t materials_skipped_compressed;
     uint32_t materials_skipped_bad;
+
+    uint32_t         lightmaps_bitmap_id;
+    hta_bsp_texture *textures;
+    uint32_t         texture_count;
 } hta_bsp_mesh;
 
 typedef struct {

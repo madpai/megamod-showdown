@@ -1,6 +1,6 @@
 # Progress
 
-Last updated: **2026-09-18** (Phase 2)
+Last updated: **2026-09-18** (Phase 3 textures)
 
 Legend: ✅ done & verified · 🟡 built but not verified on device · ⬜ not started · 🚫 blocked
 
@@ -33,9 +33,9 @@ Legend: ✅ done & verified · 🟡 built but not verified on device · ⬜ not 
 - ✅ `scripts/verify.sh` — 10 automated build/artifact checks, all passing
 - ✅ **APK installs on device** — sideloaded on S24+ over Tailscale, 2026-09-18
 - ✅ **APK launches / Vulkan initializes on S24+** — magenta frame presented; Adreno swapchain/present works
-- 🟡 **Touch changes render state on device** — *pending: needs a loaded map*
-- 🟡 **Gamepad input on device** — *pending: needs a loaded map*
-- 🟡 **Clean exit via BACK** — *pending retest after picker build*
+- ✅ **Touch changes render state on device** — walked Blood Gulch on S24+
+- 🟡 **Gamepad input on device** — *not yet confirmed*
+- 🟡 **Clean exit via BACK** — *not yet confirmed*
 - 🟡 **Stage-2 `mmap(0x40440000)` probe result** — *pending: logcat from our own process only*
 
 Run `scripts/device_test.sh` with the S24+ connected to convert remaining 🟡.
@@ -45,13 +45,13 @@ Run `scripts/device_test.sh` with the S24+ connected to convert remaining 🟡.
 - ✅ Host-side Trial cache parser + BSP extractor (`htainfo`) against real `bloodgulch.map`
 - ✅ Host renderer draws Blood Gulch geometry (`htaview`)
 - ✅ On-device import: `SetupActivity` document picker copies the user's map into app-private storage (no All-files access required)
-- 🟡 Parse tag table on device and render Blood Gulch — *blocked on first on-device map load; desktop path verified*
+- ✅ Parse tag table on device and render Blood Gulch — S24+ walk-around 2026-09-18
 
 ## Phase 3 — Renderer
 
-- ⬜ Blood Gulch BSP geometry, untextured, fly-cam
-- ⬜ Textures + lightmaps
-- ⬜ Shader/material translation
+- ✅ Blood Gulch BSP geometry on device (untextured slice, then textured)
+- ✅ Textures + lightmaps — `bitm` decode from `bitmaps.map`, `senv` base map, 2× lightmap multiply. Host `htaview` shows orange canyon + sand. Pending S24+ retest.
+- 🟡 Shader/material translation — senv base map + generic first-`bitm` for schi/scex; no detail/bump/glass yet
 
 ## Phase 4 — Gameplay
 
@@ -105,10 +105,11 @@ The owner supplied their own `HaloTrialSetup.exe`. Extracted to
 `~/halo-trial-data/` — **outside the repository**. `.gitignore` prevents any
 game data from being committed; the APK bundles nothing.
 
-### 7. Textures are not sampled yet
-The BSP's default ambient/distant lights are all zero (real lighting is in
-lightmaps), so the engine substitutes a fallback key light. Blood Gulch is
-recognisable but flat-shaded. This is the next milestone, not a defect.
+### 7. ~~Textures are not sampled yet~~ — **RESOLVED 2026-09-18 (host)**
+Pixel bytes live in `bitmaps.map` (BitmapData `external` flag), not in
+`bloodgulch.map`. Decoder covers DXT1/3/5 and the 16/32-bit formats the Trial
+uses. Host render of real Blood Gulch shows canyon rock + sand. Device retest
+needs the user to also copy `bitmaps.map` (79 MB).
 
 ---
 
@@ -134,6 +135,8 @@ recognisable but flat-shaded. This is the next milestone, not a defect.
 | Player + collision | `./build-host/test_player` | ✅ 27/27 |
 | Real Trial data parse + extract | `HTA_MAP=... scripts/verify.sh` | ✅ 5/5 |
 | Offscreen render draws geometry | `scripts/verify.sh` | ✅ |
-| **Full suite** | `HTA_MAP=... scripts/verify.sh` | ✅ **27/27** |
-| APK installs / launches / Vulkan presents | S24+ sideload 2026-09-18 | ✅ magenta frame |
-| APK loads map / walks Blood Gulch / exits | picker build, pending retest | 🟡 |
+| **Full suite** | `HTA_MAP=... scripts/verify.sh` | ✅ **28/28** |
+| APK installs / launches / Vulkan presents | S24+ sideload 2026-09-18 | ✅ |
+| APK loads map / walks Blood Gulch | S24+ 2026-09-18 | ✅ untextured, then landscape-fixed |
+| Host textured Blood Gulch (`htaview` + bitmaps.map) | 2026-09-18 | ✅ 31 unique textures |
+| Device textured Blood Gulch | pending `bitmaps.map` on phone | 🟡 |

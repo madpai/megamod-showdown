@@ -17,6 +17,7 @@
 #include "../engine/player.h"
 #include "../asset/cache.h"
 #include "../asset/bsp.h"
+#include "../asset/bitmap.h"
 #include "../gfx/gfx.h"
 #include "../engine/scene_light.h"
 
@@ -76,8 +77,11 @@ typedef struct {
 
     /* asset state */
     char      map_path[512];
+    char      bitmaps_path[512];
     uint8_t  *map_data;
     size_t    map_size;
+    uint8_t  *bitmaps_data;
+    size_t    bitmaps_size;
     bool      map_loaded;
     char      status[256];
 
@@ -180,6 +184,9 @@ static bool find_map(hta_android *s)
         while ((e = readdir(d)) != NULL) {
             size_t n = strlen(e->d_name);
             if (n > 4 && strcasecmp(e->d_name + n - 4, ".map") == 0) {
+                if (!strcasecmp(e->d_name, "bitmaps.map") ||
+                    !strcasecmp(e->d_name, "sounds.map") ||
+                    !strcasecmp(e->d_name, "ui.map")) continue;
                 char cand[520];
                 snprintf(cand, sizeof(cand), "%s/%s", dirs[i], e->d_name);
                 if (file_exists(cand)) {
@@ -204,6 +211,39 @@ static bool find_map(hta_android *s)
     hta_log("[assets]   Settings > Apps > Halo Trial PoC > Permissions >");
     hta_log("[assets]   Files and media > Allow management of all files");
     hta_log("[assets] ============================================================");
+    return false;
+}
+
+static bool find_named(hta_android *s, const char *name, char *out, size_t outlen)
+{
+    /* Reuse the map search directories: same folder as the cache, plus Download. */
+    char dir[512];
+    if (s->map_path[0]) {
+        snprintf(dir, sizeof(dir), "%s", s->map_path);
+        char *slash = strrchr(dir, '/');
+        if (slash) {
+            *slash = 0;
+            char cand[520];
+            snprintf(cand, sizeof(cand), "%s/%s", dir, name);
+            if (file_exists(cand)) { snprintf(out, outlen, "%s", cand); return true; }
+        }
+    }
+    static const char *public_dirs[] = {
+        "/sdcard/halo-trial/maps", "/sdcard/halo-trial",
+        "/sdcard/Download/halo-trial", "/sdcard/Download",
+        "/storage/emulated/0/Download",
+    };
+    for (unsigned i = 0; i < sizeof(public_dirs)/sizeof(public_dirs[0]); i++) {
+        char cand[520];
+        snprintf(cand, sizeof(cand), "%s/%s", public_dirs[i], name);
+        if (file_exists(cand)) { snprintf(out, outlen, "%s", cand); return true; }
+    }
+    const char *ext = s->app->activity->externalDataPath;
+    if (ext) {
+        char cand[520];
+        snprintf(cand, sizeof(cand), "%s/%s", ext, name);
+        if (file_exists(cand)) { snprintf(out, outlen, "%s", cand); return true; }
+    }
     return false;
 }
 
@@ -247,6 +287,31 @@ static bool load_map(hta_android *s)
     hta_log("[assets] bounds (%.2f %.2f %.2f) .. (%.2f %.2f %.2f)",
             s->mesh.bounds_min[0], s->mesh.bounds_min[1], s->mesh.bounds_min[2],
             s->mesh.bounds_max[0], s->mesh.bounds_max[1], s->mesh.bounds_max[2]);
+
+    hta_resource_map rm;
+    memset(&rm, 0, sizeof(rm));
+    if (find_named(s, "bitmaps.map", s->bitmaps_path, sizeof(s->bitmaps_path))) {
+        int bfd = open(s->bitmaps_path, O_RDONLY);
+        struct stat bst;
+        if (bfd >= 0 && fstat(bfd, &bst) == 0 && bst.st_size > 0) {
+            void *bp = mmap(NULL, (size_t)bst.st_size, PROT_READ, MAP_PRIVATE, bfd, 0);
+            close(bfd);
+            if (bp != MAP_FAILED) {
+                s->bitmaps_data = (uint8_t *)bp;
+                s->bitmaps_size = (size_t)bst.st_size;
+                if (hta_resource_open(&rm, s->bitmaps_data, s->bitmaps_size, err, sizeof(err)))
+                    hta_log("[assets] bitmaps.map %zu bytes from %s", s->bitmaps_size, s->bitmaps_path);
+                else
+                    hta_log("[assets] bitmaps.map rejected: %s", err);
+            }
+        } else if (bfd >= 0) close(bfd);
+    } else {
+        hta_log("[assets] no bitmaps.map — world will stay untextured. Copy it next to bloodgulch.map");
+    }
+    if (!hta_bsp_load_textures(&s->cache, rm.data ? &rm : NULL, &s->mesh, err, sizeof(err)))
+        hta_log("[assets] texture load: %s", err);
+    else
+        hta_log("[assets] textures: %u unique (albedos+lightmaps)", s->mesh.texture_count);
 
     if (!hta_collision_build(&s->col, &s->mesh))
         hta_log("[assets] collision grid failed to build; player will free-fly");
@@ -434,8 +499,7 @@ static void start_gfx(hta_android *s)
 
     if (s->have_mesh) {
         double t0 = hta_time_seconds();
-        s->gpu_mesh = hta_gfx_mesh_upload(s->gfx, s->mesh.vertices, s->mesh.vertex_count,
-                                          s->mesh.indices, s->mesh.index_count, err, sizeof(err));
+        s->gpu_mesh = hta_gfx_mesh_upload(s->gfx, &s->mesh, err, sizeof(err));
         if (!s->gpu_mesh) hta_log("[gfx] mesh upload FAILED: %s", err);
         else hta_log("[gfx] uploaded %u verts / %u tris in %.1f ms (device mem %.2f MiB)",
                      s->mesh.vertex_count, s->mesh.index_count/3,
@@ -593,4 +657,5 @@ done:
     hta_collision_free(&state.col);
     hta_bsp_free(&state.mesh);
     if (state.map_data) munmap(state.map_data, state.map_size);
+    if (state.bitmaps_data) munmap(state.bitmaps_data, state.bitmaps_size);
 }

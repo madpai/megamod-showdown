@@ -27,11 +27,11 @@ Phase 2a flagged as UNKNOWN whether Blood Gulch needs `bitmaps.map`/`sounds.map`
 `sounds.map` (77 MB), but Blood Gulch does not reference them through the
 indexed mechanism.
 
-**Practical consequence: the vertical slice needs exactly one 13.8 MiB file.**
-That is a very convenient onboarding story for Android — the user copies one
-file, not a 170 MB directory. *(Caveat: this is proven for tag data. Whether
-bitmap pixel data resolves entirely in-map is not yet proven, because we do not
-sample textures yet — see §5.)*
+**Tag data is self-contained. Pixel data is not.** Every tag's *struct* lives
+inside `bloodgulch.map`, but every `bitm` BitmapData entry has the Gearbox
+`external` flag, and the pixel bytes live in `bitmaps.map` (79 MB) at the
+offsets stored in the tag. Geometry-only play needs one file; textured play
+needs `bloodgulch.map` + `bitmaps.map`.
 
 ## 2. Tag classes present (top of 59)
 
@@ -143,7 +143,7 @@ S24+; the renderer will be bound by texture and lightmap work, not geometry.
 
 | Asset | Status |
 |---|---|
-| `bitm` (448 tags) incl. the lightmap atlas | **not sampled yet** — flat shading with a fallback key light |
+| `bitm` (448 tags) incl. the lightmap atlas | **sampled** from `bitmaps.map` (external pixel store) |
 | `senv`/`soso`/`schi` shaders (176 tags) | not interpreted; submesh shader tag ids are recorded but unused |
 | `collision bsp` (1 block) | not used; ground collision currently ray-casts the render mesh |
 | `mod2` models (70) | no bases, weapons, vehicles, or characters |

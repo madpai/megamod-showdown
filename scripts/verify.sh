@@ -20,6 +20,7 @@ if ./build-host/test_cache  >/dev/null 2>&1; then ok "cache parser tests";  else
 if ./build-host/test_bsp    >/dev/null 2>&1; then ok "bsp extraction tests"; else bad "bsp extraction tests"; fi
 if ./build-host/test_camera >/dev/null 2>&1; then ok "camera/projection tests"; else bad "camera/projection tests"; fi
 if ./build-host/test_player >/dev/null 2>&1; then ok "player/collision tests"; else bad "player/collision tests"; fi
+if ./build-host/test_bitmap >/dev/null 2>&1; then ok "bitmap decode tests"; else bad "bitmap decode tests"; fi
 
 # Optional: validate against the user's own Trial data if HTA_MAP points at it.
 if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
