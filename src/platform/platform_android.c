@@ -128,6 +128,7 @@ typedef struct {
     hta_ammo ammo;
     float    dry_cooldown;   /* stops an empty trigger clicking every frame */
     bool     hud_reload;
+    bool     hud_melee;
     bool          have_mesh;
     bool          have_sky;
     bool          have_coll;
@@ -688,6 +689,7 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
         if (code == AKEYCODE_BUTTON_R1 || code == AKEYCODE_BUTTON_R2 ||
             code == AKEYCODE_BUTTON_X) { s->fire_held = down; return 1; }
         if (code == AKEYCODE_BUTTON_Y && down) { s->hud_reload = true; return 1; }
+        if (code == AKEYCODE_BUTTON_R1 && down) { s->hud_melee = true; return 1; }
         if (code == AKEYCODE_BUTTON_B && down) {
             s->player.noclip = !s->player.noclip;
             hta_log("[input] noclip %s", s->player.noclip ? "ON" : "OFF");
@@ -944,6 +946,13 @@ Java_net_hta_halotrial_GameActivity_nativeHudReload(JNIEnv *env, jclass cls)
     if (g_android) g_android->hud_reload = true;
 }
 
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudMelee(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    if (g_android) g_android->hud_melee = true;
+}
+
 void android_main(struct android_app *app)
 {
     static hta_android state;
@@ -1003,12 +1012,23 @@ void android_main(struct android_app *app)
         hta_ammo_update(&state.ammo, dt);
         if (state.dry_cooldown > 0.0f) state.dry_cooldown -= dt;
 
+        /* A swing takes the weapon out of the fight until it finishes, so
+         * the rest of this frame's trigger work has to know about it. */
+        bool swinging = state.vm.loaded && state.vm.state == HTA_VM_MELEE;
+        if (state.hud_melee) {
+            state.hud_melee = false;
+            if (!swinging && state.ammo.phase != HTA_AMMO_RELOADING) {
+                hta_viewmodel_play(&state.vm, HTA_VM_MELEE);
+                swinging = state.vm.state == HTA_VM_MELEE;
+            }
+        }
+
         if (state.hud_reload) {
             state.hud_reload = false;
-            if (hta_ammo_reload(&state.ammo))
+            if (!swinging && hta_ammo_reload(&state.ammo))
                 hta_viewmodel_play(&state.vm, HTA_VM_RELOAD);
         }
-        if (in.fire && hta_gun_ready(&state.gun)) {
+        if (in.fire && !swinging && hta_gun_ready(&state.gun)) {
             if (hta_ammo_shoot(&state.ammo)) {
                 hta_gun_fire(&state.gun, state.col.built ? &state.col : NULL, &state.cam);
                 hta_viewmodel_play(&state.vm, HTA_VM_FIRE);

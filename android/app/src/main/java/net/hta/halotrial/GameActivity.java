@@ -137,6 +137,7 @@ public class GameActivity extends NativeActivity {
     static native void nativeHudFire(boolean down);
     static native void nativeHudCrouch(boolean down);
     static native void nativeHudReload();
+    static native void nativeHudMelee();
     static native String nativeDebugText();
     static native String nativeAmmoText();
 
@@ -148,6 +149,7 @@ public class GameActivity extends NativeActivity {
         private final Paint jumpP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint crouchP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint reloadP = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint meleeP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint debug = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint ammo = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -157,8 +159,9 @@ public class GameActivity extends NativeActivity {
         private float jumpCx, jumpCy, jumpR;
         private float crouchCx, crouchCy, crouchR;
         private float reloadCx, reloadCy, reloadR;
+        private float meleeCx, meleeCy, meleeR;
         private int stickPtr = -1, firePtr = -1, jumpPtr = -1, crouchPtr = -1;
-        private int reloadPtr = -1;
+        private int reloadPtr = -1, meleePtr = -1;
         private final float[] lastX = new float[16];
         private final float[] lastY = new float[16];
 
@@ -174,6 +177,7 @@ public class GameActivity extends NativeActivity {
             jumpP.setColor(0xCC2B6CF6);
             crouchP.setColor(0xCC555C66);
             reloadP.setColor(0xCCB08420);
+            meleeP.setColor(0xCC6E3BA8);
             label.setColor(0xFFFFFFFF);
             ammo.setColor(0xF2FFFFFF);
             ammo.setTextAlign(Paint.Align.RIGHT);
@@ -203,6 +207,9 @@ public class GameActivity extends NativeActivity {
             reloadR = m * 0.058f;
             reloadCx = w * 0.665f;
             reloadCy = h * 0.90f;
+            meleeR = m * 0.058f;
+            meleeCx = w * 0.70f;
+            meleeCy = h * 0.72f;
             label.setTextSize(m * 0.032f);
             ammo.setTextSize(m * 0.085f);
             excludeFromSystemGestures();
@@ -251,6 +258,9 @@ public class GameActivity extends NativeActivity {
                 } else if (in(x, y, reloadCx, reloadCy, reloadR * 1.15f) && reloadPtr < 0) {
                     reloadPtr = id;
                     GameActivity.nativeHudReload();
+                } else if (in(x, y, meleeCx, meleeCy, meleeR * 1.15f) && meleePtr < 0) {
+                    meleePtr = id;
+                    GameActivity.nativeHudMelee();
                 } else if ((in(x, y, stickCx, stickCy, stickR * 1.4f) || x < getWidth() * 0.38f)
                         && stickPtr < 0) {
                     stickPtr = id;
@@ -282,12 +292,14 @@ public class GameActivity extends NativeActivity {
                     releaseJump();
                     releaseCrouch();
                     reloadPtr = -1;
+                    meleePtr = -1;
                 } else {
                     if (id == stickPtr) releaseStick();
                     if (id == firePtr) releaseFire();
                     if (id == jumpPtr) releaseJump();
                     if (id == crouchPtr) releaseCrouch();
                     if (id == reloadPtr) reloadPtr = -1;
+                    if (id == meleePtr) meleePtr = -1;
                 }
                 break;
             default:
@@ -365,6 +377,10 @@ public class GameActivity extends NativeActivity {
             c.drawCircle(reloadCx, reloadCy, reloadR, reloadP);
             c.drawCircle(reloadCx, reloadCy, reloadR, ring);
             c.drawText("RELOAD", reloadCx, reloadCy + label.getTextSize() * 0.35f, label);
+
+            c.drawCircle(meleeCx, meleeCy, meleeR, meleeP);
+            c.drawCircle(meleeCx, meleeCy, meleeR, ring);
+            c.drawText("MELEE", meleeCx, meleeCy + label.getTextSize() * 0.35f, label);
 
             /* Ammo, big and bottom-right: loaded / reserve, "--" while the
              * magazine is out. */

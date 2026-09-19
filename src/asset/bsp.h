@@ -85,6 +85,11 @@ typedef struct {
     /* HUD meters only: 0..1 fill. Negative means this is an ordinary sprite
      * and the meter path is off. */
     float    meter;
+    /* HUD only: draw the art as a pure alpha MASK in the tint's colour,
+     * ignoring its RGB. Halo's `hud_ammo_alphas` is exactly that -- black
+     * art whose shape is the empty pip grid -- and drawing its colour paints
+     * a black grid over the corner. */
+    float    mask;
 } hta_submesh;
 
 #define HTA_DRAW_OPAQUE 0u

@@ -197,6 +197,29 @@ value, and `HTA_HUD_PHONE_SCALE` (1.75) is a deliberate enlargement for a
 handset. Those two are the only invented numbers in the HUD and both are
 named and commented as such.
 
+### Melee (2026-09-19)
+
+The owner asked for it. The `antr` already had the clip: `first-person
+melee`, 37 frames (1.23 s), with its own sound on frame 0 -- so playing it
+fires `ar_melee` through the cue path that reload already uses. A MELEE
+button on the HUD, gamepad R1, and the swing locks out firing and reloading
+until it finishes.
+
+It does no damage, because nothing can be damaged yet.
+
+### The pip grid is approximate, and here is why
+
+The meter art is white-on-black with the pip SHAPE antialiased in the RGB,
+not the alpha -- a pip's edge pixels are dark while carrying the same alpha
+as its bright middle -- and the alpha is a three-level ramp, one level per
+ROW (4, 88, 168), not a smooth left-to-right gradient like the shield's.
+
+Drawing it at full opacity outlines every pip in navy. Weighting opacity by
+the art's own brightness (`smoothstep(0.15,0.40,a) * lit`) removes that and
+is what white-on-black art expects, but the result reads as outlines rather
+than the solid ticks Halo shows. How Halo actually composites this is not
+pinned down. Do not assume the current look is right.
+
 ### Still missing from Halo's HUD
 
 The **numeric readouts** (total ammo, grenade count) and the **motion

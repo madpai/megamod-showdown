@@ -39,8 +39,22 @@ void main() {
          * solid while leaving the art's faintest marks faint stands in for
          * them. Without it the health bar's dim left cap turns into a black
          * blob. */
-        float opacity = smoothstep(0.15, 0.40, t.a);
+        /* HUD meter art is white-on-black: the gaps between the assault
+         * rifle's pips are pure black at a low but non-zero alpha, and drawn
+         * they outline every pip in dark. Black in this art means "nothing
+         * here", so gate on the art's own brightness. */
+        /* HUD meter art is white-on-black, and its shape is antialiased in
+         * the RGB rather than the alpha -- a pip's edge pixels are dark but
+         * carry the same alpha as its bright middle. Drawn at full opacity
+         * that outlines every pip in navy. Weighting opacity by the art's
+         * own brightness composites it the way white-on-black art expects:
+         * the edges go soft, the black between pips disappears. */
+        float lit = max(t.r, max(t.g, t.b));
+        float opacity = smoothstep(0.15, 0.40, t.a) * lit;
         out_color = vec4(t.rgb * push.tint.rgb, opacity * push.tint.a);
+    } else if (push.ambient.z > 0.5) {
+        /* The art is a mask: its shape, the tag's colour. */
+        out_color = vec4(push.tint.rgb, t.a * push.tint.a);
     } else {
         out_color = vec4(t.rgb * push.tint.rgb, t.a * push.tint.a);
     }

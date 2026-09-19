@@ -260,6 +260,57 @@ int main(int argc, char **argv)
     for (int i = 0; i < (int)(fa->frame_count * 3); i++) hta_viewmodel_update(&vm, 1.0f/30.0f);
     CHECK(vm.state == HTA_VM_IDLE, "firing returns to idle when it ends");
 
+    /* --- melee --------------------------------------------------------- */
+    printf("\n[melee]\n");
+    {
+        CHECK(vm.clip[HTA_VM_MELEE] >= 0, "the graph has a melee clip");
+        if (vm.clip[HTA_VM_MELEE] >= 0) {
+            const hta_animation *ma = &vm.graph.anims[vm.clip[HTA_VM_MELEE]];
+            printf("    '%s', %u frames (%.2f s), sound index %d frame %d\n",
+                   ma->name, ma->frame_count,
+                   (float)ma->frame_count / HTA_ANIM_FPS,
+                   (int)ma->sound_index, (int)ma->sound_frame);
+            CHECK(ma->frame_count > 10 && ma->frame_count < 120,
+                  "a swing is a second or so, not a frame and not a minute");
+
+            /* It must actually move the weapon: compare the pose partway
+             * through against idle. */
+            hta_viewmodel_play(&vm, HTA_VM_IDLE);
+            hta_viewmodel_update(&vm, 0.0f);
+            float idle0[3] = { vm.posed[vm.hands_verts].pos[0],
+                               vm.posed[vm.hands_verts].pos[1],
+                               vm.posed[vm.hands_verts].pos[2] };
+
+            hta_viewmodel_play(&vm, HTA_VM_MELEE);
+            CHECK(vm.state == HTA_VM_MELEE && vm.frame == 0.0f,
+                  "melee restarts at frame 0");
+            uint32_t cues = 0;
+            for (int i = 0; i < (int)ma->frame_count; i++) {
+                hta_viewmodel_update(&vm, 1.0f / HTA_ANIM_FPS);
+                if (vm.sound_cue) { cues++; vm.sound_cue = 0; }
+            }
+            /* Halo puts the swing's own sound on a frame of the clip. */
+            printf("    sound cues during the swing: %u\n", cues);
+            CHECK(cues >= 1, "the swing fires its tagged sound");
+
+            hta_viewmodel_play(&vm, HTA_VM_MELEE);
+            for (int i = 0; i < (int)(ma->frame_count / 2); i++)
+                hta_viewmodel_update(&vm, 1.0f / HTA_ANIM_FPS);
+            float moved = 0.0f;
+            for (int k = 0; k < 3; k++) {
+                float dd = vm.posed[vm.hands_verts].pos[k] - idle0[k];
+                moved += dd * dd;
+            }
+            printf("    hands move %.3f wu from idle mid-swing\n", sqrtf(moved));
+            CHECK(sqrtf(moved) > 0.02f, "the weapon actually swings");
+
+            /* And it has to put itself away again. */
+            for (int i = 0; i < (int)ma->frame_count * 2; i++)
+                hta_viewmodel_update(&vm, 1.0f / HTA_ANIM_FPS);
+            CHECK(vm.state == HTA_VM_IDLE, "and returns to idle when it ends");
+        }
+    }
+
     /* --- muzzle flash ------------------------------------------------- */
     printf("\n[muzzle flash]\n");
     if (!have_bitmaps) {

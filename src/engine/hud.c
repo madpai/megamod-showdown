@@ -114,6 +114,7 @@ static int add_elem(hta_hud *h, uint32_t tex, const hta_bitmap_sprite *sp,
     sm->draw_mode = HTA_DRAW_ALPHA;
     memcpy(sm->tint, tint, 4 * sizeof(float));
     sm->meter = meter;
+    sm->mask = 0.0f;
 
     h->mesh.vertex_count = base_v + 4;
     h->mesh.index_count = base_i + 6;
@@ -176,18 +177,24 @@ static int add_tag_elem(hta_hud *h, const hta_cache *c,
     hta_rd_bytes(c, e + color_off, col, 4);
     float tint[4];
     unpack_color(col, tint);
-    /* An all-zero colour means "use the HUD's own", not "draw it black".
-     * The assault rifle's ammo plate carries exactly that. */
-    if (col[0] == 0 && col[1] == 0 && col[2] == 0) {
+    /* An all-zero colour means the element has none of its own: Halo uses
+     * the HUD's colour and the art purely as a MASK. The assault rifle's
+     * empty-pip layer is exactly that -- black art named "alphas" -- and
+     * multiplying its RGB paints a black grid over the corner. */
+    bool as_mask = (col[0] == 0 && col[1] == 0 && col[2] == 0);
+    if (as_mask) {
         tint[0] = 40.0f/255.0f; tint[1] = 150.0f/255.0f; tint[2] = 1.0f;
         tint[3] = 1.0f;
     }
     if (out_color) memcpy(out_color, tint, 4 * sizeof(float));
 
-    return add_elem(h, tex, &sp,
-                    (float)h->mesh.textures[tex].width,
-                    (float)h->mesh.textures[tex].height,
-                    ax, ay, anchor, tint, meter);
+    int ei = add_elem(h, tex, &sp,
+                      (float)h->mesh.textures[tex].width,
+                      (float)h->mesh.textures[tex].height,
+                      ax, ay, anchor, tint, meter);
+    if (ei >= 0 && as_mask)
+        h->mesh.submeshes[h->elem[ei].submesh].mask = 1.0f;
+    return ei;
 }
 
 /* One panel of a unit HUD: its bitmap, sprite, offset and colour. */
