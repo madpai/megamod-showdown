@@ -87,7 +87,8 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ## The counter on the gun, and a strip bug it uncovered (2026-09-19)
 
-**Confirmed on the S24+:** magazine, reload and muzzle flash all work.
+**Confirmed on the S24+:** magazine, reload and muzzle flash all work; the
+on-gun round counter reads correctly and tracks the HUD.
 
 The owner asked for the AR's own little LCD round counter. Chasing it found a
 model-parsing bug that had been silently damaging **every** model in the game.
@@ -430,7 +431,9 @@ a gun.
   for the viewmodel could fix it
 - Shrubs/ferns with no `coll` tag still ghost; colliders are hollow (spawn *inside* a hog
   will not shove you out)
-- No world weapon pickups; you spawn with the AR
+- No world weapon pickups and no resupply: you spawn with 60 + 180 from the
+  tag, and once that is gone the rifle clicks until the app restarts. The
+  owner reached 60/0 on 2026-09-19 simply by testing.
 - Gamepad / BACK-to-exit not confirmed on device (BACK now competes with the
   gesture-nav back swipe; the HUD claims the lower half of both edges via
   `setSystemGestureExclusionRects`, which the platform caps)
