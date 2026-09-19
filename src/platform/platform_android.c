@@ -712,6 +712,18 @@ static void on_cmd(struct android_app *app, int32_t cmd)
     }
 }
 
+/* Where the pawn is, for the HUD to draw. Chasing a collision bug from a
+ * screenshot needs coordinates: without them you are guessing which doorway
+ * out of a 126 x 145 world unit map the reporter was standing in. */
+static char g_debug_text[128];
+
+JNIEXPORT jstring JNICALL
+Java_net_hta_halotrial_GameActivity_nativeDebugText(JNIEnv *env, jclass cls)
+{
+    (void)cls;
+    return (*env)->NewStringUTF(env, g_debug_text);
+}
+
 JNIEXPORT void JNICALL
 Java_net_hta_halotrial_GameActivity_nativeHudReady(JNIEnv *env, jclass cls, jboolean ready)
 {
@@ -833,6 +845,11 @@ void android_main(struct android_app *app)
             state.frames++;
             state.fps_accum += dt;
             state.fps_frames++;
+            snprintf(g_debug_text, sizeof(g_debug_text),
+                     "%.2f %.2f %.2f  %s  %.0f fps",
+                     state.player.pos[0], state.player.pos[1], state.player.pos[2],
+                     state.player.on_ground ? "ground" : "air",
+                     state.fps_accum > 0.05 ? state.fps_frames / state.fps_accum : 0.0);
             if (state.fps_accum >= 2.0) {
                 hta_log("[perf] %.1f fps | pos (%.2f %.2f %.2f) %s | tris %u",
                         state.fps_frames / state.fps_accum,

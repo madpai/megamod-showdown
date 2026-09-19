@@ -198,6 +198,45 @@ int main(void)
         CHECK(wp.pos[0] < 5.0f - 0.15f, "walking into a wall stops before the surface");
         CHECK(wp.pos[0] > 2.5f, "walking into a wall still reaches it");
         CHECK(fabsf(wp.pos[1] - 5.0f) < 0.3f, "wall slide does not throw the pawn sideways");
+
+        /* --- overhangs must not shove the pawn sideways ---------------------
+         * A sloped roof above your head is a headroom limit, not a wall. The
+         * pawn is a cylinder from the feet to `height`; anything entirely
+         * above that cannot touch it. This is what made the Blood Gulch base
+         * doorways impassable standing: the old test probed a single height
+         * and clamped the result, so a leaning roof read as near. */
+        {
+            /* One steeply sloped quad (normal tilted ~68deg, facing down),
+             * spanning x 4.8..5.2, parked at a height we can slide up/down. */
+            for (int above = 0; above < 2; above++) {
+                float base_z = above ? 1.40f : 0.25f;
+                hta_vertex ov[4];
+                memset(ov, 0, sizeof(ov));
+                ov[0].pos[0]=4.8f; ov[0].pos[1]=4.0f; ov[0].pos[2]=base_z;
+                ov[1].pos[0]=5.2f; ov[1].pos[1]=4.0f; ov[1].pos[2]=base_z+1.0f;
+                ov[2].pos[0]=5.2f; ov[2].pos[1]=6.0f; ov[2].pos[2]=base_z+1.0f;
+                ov[3].pos[0]=4.8f; ov[3].pos[1]=6.0f; ov[3].pos[2]=base_z;
+                uint32_t oi[6] = { 0,2,1, 0,3,2 };
+                hta_bsp_mesh om;
+                memset(&om, 0, sizeof(om));
+                om.vertices = ov; om.vertex_count = 4;
+                om.indices = oi;  om.index_count = 6;
+                om.bounds_min[0]=0; om.bounds_min[1]=0; om.bounds_min[2]=0;
+                om.bounds_max[0]=10; om.bounds_max[1]=10; om.bounds_max[2]=4;
+                hta_collision oc;
+                if (!hta_collision_build(&oc, &om)) { CHECK(0, "overhang collision builds"); break; }
+                float ox = 4.95f, oy = 5.0f;
+                hta_collision_depenetrate(&oc, &ox, &oy, 0.0f, 0.7f, 0.2f);
+                float moved = fabsf(ox - 4.95f) + fabsf(oy - 5.0f);
+                if (above)
+                    CHECK(moved < 0.001f,
+                          "a roof above the head does not push the pawn sideways");
+                else
+                    CHECK(moved > 0.01f,
+                          "the same roof at chest height still blocks");
+                hta_collision_free(&oc);
+            }
+        }
         float vwall = wp.velocity[0];
         CHECK(vwall < 0.3f, "inbound velocity is cancelled after the wall push");
         hta_collision_free(&wcol);

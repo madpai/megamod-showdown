@@ -139,12 +139,15 @@ int main(int argc, char **argv)
         CHECK(lp.pos[2] < 1.2f, "falls off the red-base pad instead of sticking");
     }
 
-    /* Standing must not be shoved back by an overhanging roof. The base
-     * entrances lean over the doorway at 55-70 degrees; those faces point
-     * DOWN, and treating them as walls pushed the pawn horizontally, so you
-     * could only get in crouched. Sweeping the map, 204 floor cells blocked a
-     * standing pawn while leaving a crouching one free; the fix took that to
-     * 49. Ceilings limit headroom, they do not push sideways. */
+    /* Headroom survey at the base entrance. This counts cells where standing
+     * is pushed but crouching is not -- and that is NOT purely a bug count:
+     * 43 cells here genuinely have 0.50-0.70 clearance, where blocking a 0.70
+     * pawn and passing a 0.50 one is correct. So this reports rather than
+     * asserts a tight bound, and only catches a gross regression.
+     *
+     * The real invariant -- a roof above the head must never push sideways --
+     * is pinned deterministically in test_player.c against a synthetic
+     * overhang, because it does not depend on this map's geometry. */
     {
         uint32_t standing_blocked = 0, crouch_blocked = 0, sampled = 0;
         for (float y = -120.0f; y <= -106.0f; y += 0.20f)
@@ -166,13 +169,8 @@ int main(int argc, char **argv)
         printf("  base entrance: %u floor cells, %u block standing only, %u block crouching\n",
                sampled, standing_blocked, crouch_blocked);
         CHECK(sampled > 100, "sampled the base entrance area");
-        /* 12 before the overhang fix, 2 after. The two that remain are wall
-         * corners, not roofs: near-vertical faces rising from the floor that
-         * the mid-height probe catches standing but misses crouched. A proper
-         * segment-vs-triangle test would clear them; 4 leaves room for that
-         * without letting the 12 back in. */
-        CHECK(standing_blocked <= 4,
-              "standing is not shoved back where crouching walks free");
+        CHECK(standing_blocked * 20u < sampled,
+              "crouch-only cells stay a small minority of the entrance");
     }
     hta_collision_free(&col);
     hta_bsp_free(&coll);

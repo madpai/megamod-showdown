@@ -78,6 +78,7 @@ public class GameActivity extends NativeActivity {
     static native void nativeHudJump(boolean down);
     static native void nativeHudFire(boolean down);
     static native void nativeHudCrouch(boolean down);
+    static native String nativeDebugText();
 
     private static final class HudOverlay extends View {
         private final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -87,6 +88,7 @@ public class GameActivity extends NativeActivity {
         private final Paint jumpP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint crouchP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint debug = new Paint(Paint.ANTI_ALIAS_FLAG);
 
         private float stickCx, stickCy, stickR, stickTx, stickTy;
         private float fireCx, fireCy, fireR;
@@ -108,6 +110,7 @@ public class GameActivity extends NativeActivity {
             jumpP.setColor(0xCC2B6CF6);
             crouchP.setColor(0xCC555C66);
             label.setColor(0xFFFFFFFF);
+            debug.setColor(0xCC00FF88);
             label.setTextAlign(Paint.Align.CENTER);
             label.setTypeface(Typeface.DEFAULT_BOLD);
         }
@@ -265,6 +268,15 @@ public class GameActivity extends NativeActivity {
             c.drawCircle(crouchCx, crouchCy, crouchR, crouchP);
             c.drawCircle(crouchCx, crouchCy, crouchR, ring);
             c.drawText("CROUCH", crouchCx, crouchCy + label.getTextSize() * 0.35f, label);
+
+            /* Position readout, so a bug report screenshot carries coordinates. */
+            String t = null;
+            try { t = nativeDebugText(); } catch (Throwable ignored) { }
+            if (t != null && t.length() > 0) {
+                debug.setTextSize(label.getTextSize() * 0.8f);
+                c.drawText(t, 24f, debug.getTextSize() * 2.2f, debug);
+            }
+            postInvalidateDelayed(200);
         }
     }
 }

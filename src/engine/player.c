@@ -177,41 +177,86 @@ bool hta_collision_ground(const hta_collision *c, float x, float y, float z_from
     return found;
 }
 
-static void closest_on_tri(const float a[3], const float b[3], const float c[3],
-                           const float p[3], float q[3])
+
+/* The pawn is a CYLINDER: radius r, from the feet to the head, flat-topped.
+ * A triangle blocks it only where the triangle lies inside that height slab.
+ *
+ * So: clip the triangle to [z0,z1] and measure the XY distance from the axis to
+ * what is left. Anything above the head clips away entirely and cannot push --
+ * which is the whole bug. The old code probed one height and clamped the answer,
+ * which on a leaning face reports the wrong distance in both directions; a
+ * capsule test is no good either, because its rounded shoulder still catches
+ * roofs. Returns 1e30f when the triangle never reaches the slab.
+ *
+ * `inside` is set when the axis is within the clipped polygon, where there is no
+ * meaningful direction to push and the caller falls back to the face normal. */
+static float tri_slab_xy_dist(const float a[3], const float b[3], const float c3[3],
+                              float px, float py, float z0, float z1,
+                              float *out_qx, float *out_qy, int *inside)
 {
-    float ab[3] = { b[0]-a[0], b[1]-a[1], b[2]-a[2] };
-    float ac[3] = { c[0]-a[0], c[1]-a[1], c[2]-a[2] };
-    float ap[3] = { p[0]-a[0], p[1]-a[1], p[2]-a[2] };
-    float d1 = ab[0]*ap[0]+ab[1]*ap[1]+ab[2]*ap[2];
-    float d2 = ac[0]*ap[0]+ac[1]*ap[1]+ac[2]*ap[2];
-    if (d1 <= 0.0f && d2 <= 0.0f) { q[0]=a[0]; q[1]=a[1]; q[2]=a[2]; return; }
-    float bp[3] = { p[0]-b[0], p[1]-b[1], p[2]-b[2] };
-    float d3 = ab[0]*bp[0]+ab[1]*bp[1]+ab[2]*bp[2];
-    float d4 = ac[0]*bp[0]+ac[1]*bp[1]+ac[2]*bp[2];
-    if (d3 >= 0.0f && d4 <= d3) { q[0]=b[0]; q[1]=b[1]; q[2]=b[2]; return; }
-    float vc = d1*d4 - d3*d2;
-    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
-        float v = d1 / (d1 - d3);
-        q[0]=a[0]+ab[0]*v; q[1]=a[1]+ab[1]*v; q[2]=a[2]+ab[2]*v; return;
+    float poly[8][3], tmp[8][3];
+    int n = 3, m = 0;
+    poly[0][0]=a[0]; poly[0][1]=a[1]; poly[0][2]=a[2];
+    poly[1][0]=b[0]; poly[1][1]=b[1]; poly[1][2]=b[2];
+    poly[2][0]=c3[0]; poly[2][1]=c3[1]; poly[2][2]=c3[2];
+
+    /* Sutherland-Hodgman against the two horizontal planes. */
+    for (int pass = 0; pass < 2; pass++) {
+        float lim = pass ? z1 : z0;
+        m = 0;
+        for (int i = 0; i < n; i++) {
+            const float *p = poly[i], *q = poly[(i + 1) % n];
+            float dp = pass ? (lim - p[2]) : (p[2] - lim);
+            float dq = pass ? (lim - q[2]) : (q[2] - lim);
+            int inp = dp >= 0.0f, inq = dq >= 0.0f;
+            if (inp && m < 8) { tmp[m][0]=p[0]; tmp[m][1]=p[1]; tmp[m][2]=p[2]; m++; }
+            if (inp != inq && m < 8) {
+                float den = dp - dq;
+                float t = (fabsf(den) > 1e-12f) ? dp / den : 0.0f;
+                tmp[m][0] = p[0] + (q[0]-p[0])*t;
+                tmp[m][1] = p[1] + (q[1]-p[1])*t;
+                tmp[m][2] = p[2] + (q[2]-p[2])*t;
+                m++;
+            }
+        }
+        n = m;
+        for (int i = 0; i < n; i++) {
+            poly[i][0]=tmp[i][0]; poly[i][1]=tmp[i][1]; poly[i][2]=tmp[i][2];
+        }
+        if (n == 0) return 1e30f;
     }
-    float cp[3] = { p[0]-c[0], p[1]-c[1], p[2]-c[2] };
-    float d5 = ab[0]*cp[0]+ab[1]*cp[1]+ab[2]*cp[2];
-    float d6 = ac[0]*cp[0]+ac[1]*cp[1]+ac[2]*cp[2];
-    if (d6 >= 0.0f && d5 <= d6) { q[0]=c[0]; q[1]=c[1]; q[2]=c[2]; return; }
-    float vb = d5*d2 - d1*d6;
-    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
-        float w = d2 / (d2 - d6);
-        q[0]=a[0]+ac[0]*w; q[1]=a[1]+ac[1]*w; q[2]=a[2]+ac[2]*w; return;
+    if (n == 0) return 1e30f;
+
+    /* Distance in XY from the axis to the clipped polygon. */
+    *inside = 0;
+    if (n >= 3) {
+        int neg = 0, pos = 0;
+        for (int i = 0; i < n; i++) {
+            const float *p = poly[i], *q = poly[(i + 1) % n];
+            float cr = (q[0]-p[0])*(py-p[1]) - (q[1]-p[1])*(px-p[0]);
+            if (cr < -1e-9f) neg = 1;
+            if (cr >  1e-9f) pos = 1;
+        }
+        if (!(neg && pos)) { *inside = 1; *out_qx = px; *out_qy = py; return 0.0f; }
     }
-    float va = d3*d6 - d5*d4;
-    if (va <= 0.0f && (d4 - d3) >= 0.0f && (d5 - d6) >= 0.0f) {
-        float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
-        q[0]=b[0]+(c[0]-b[0])*w; q[1]=b[1]+(c[1]-b[1])*w; q[2]=b[2]+(c[2]-b[2])*w; return;
+    float best = 1e30f;
+    for (int i = 0; i < n; i++) {
+        const float *p = poly[i];
+        const float *q = poly[(i + 1) % n];
+        float ex = q[0]-p[0], ey = q[1]-p[1];
+        float len2 = ex*ex + ey*ey;
+        float t = 0.0f;
+        if (len2 > 1e-12f) {
+            t = ((px-p[0])*ex + (py-p[1])*ey) / len2;
+            if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
+        }
+        float qx = p[0] + ex*t, qy = p[1] + ey*t;
+        float dx = px-qx, dy = py-qy;
+        float d2 = dx*dx + dy*dy;
+        if (d2 < best) { best = d2; *out_qx = qx; *out_qy = qy; }
+        if (n < 2) break;
     }
-    float denom = 1.0f / (va + vb + vc);
-    float v = vb * denom, w = vc * denom;
-    q[0]=a[0]+ab[0]*v+ac[0]*w; q[1]=a[1]+ab[1]*v+ac[1]*w; q[2]=a[2]+ab[2]*v+ac[2]*w;
+    return best;
 }
 
 void hta_collision_depenetrate(const hta_collision *c,
@@ -222,7 +267,6 @@ void hta_collision_depenetrate(const hta_collision *c,
     float walk = (c->walkable_nz > 0.1f) ? c->walkable_nz : 0.50f;
     float z0 = z_feet;
     float z1 = z_feet + (height > 1e-4f ? height : 0.7f);
-    float zc = 0.5f * (z0 + z1);
     float r = radius;
     float r2 = r * r;
     /* Deepest penetration per pass so a triangle listed in several grid
@@ -253,15 +297,6 @@ void hta_collision_depenetrate(const hta_collision *c,
                 float nlen = sqrtf(nx*nx+ny*ny+nz*nz);
                 if (nlen < 1e-8f) continue;
                 if (fabsf(nz) / nlen >= walk) continue; /* floor/ceiling */
-                /* Overhangs and sloped ceilings must not shove the pawn
-                 * sideways. Their normal's horizontal part is arbitrary, so
-                 * the push direction is meaningless -- and pushing on it is
-                 * what made the base doorways impassable unless you crouched:
-                 * standing, the pill's probe height reached the sloped roof;
-                 * ducking dropped below it. Headroom is a vertical limit, not
-                 * a lateral one. Winding is consistent here (floors read
-                 * nz ~ +0.9, ceilings ~ -0.96), so the sign is meaningful. */
-                if (nz / nlen < -0.10f) continue;
                 /* Ledge lips: the vertical face of the floor you are standing on
                  * must not act as a wall, or you cannot walk off a base. A real
                  * wall/pylon rises more than a step above the feet. */
@@ -269,15 +304,13 @@ void hta_collision_depenetrate(const hta_collision *c,
                 if (b[2] > zmax) zmax = b[2];
                 if (d[2] > zmax) zmax = d[2];
                 if (zmax <= z0 + 0.18f) continue;
-                float q[3], p[3] = { px, py, zc };
-                closest_on_tri(a, b, d, p, q);
-                float az = q[2];
-                if (az < z0) az = z0;
-                if (az > z1) az = z1;
-                float dx = px - q[0], dy = py - q[1], dz = az - q[2];
-                float xy2 = dx * dx + dy * dy;
-                float dist2 = (fabsf(dz) < 1e-4f) ? xy2 : (xy2 + dz * dz);
+                float qx = px, qy = py;
+                int inside = 0;
+                float dist2 = tri_slab_xy_dist(a, b, d, px, py, z0, z1,
+                                               &qx, &qy, &inside);
                 if (dist2 >= r2) continue;
+                float dx = px - qx, dy = py - qy;
+                if (inside) dist2 = 0.0f;
                 float hx, hy, hl, push;
                 if (dist2 < 1e-12f) {
                     hx = nx / nlen;
