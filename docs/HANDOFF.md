@@ -1,9 +1,9 @@
 # Session handoff — Halo Trial Android
 
-**Date:** 2026-09-18  
-**Repo:** `/home/commander/projects/halo-trial-android`  
-**Map data (not in git):** `/home/commander/halo-trial-data/extract/maps/` (`bloodgulch.map`, `bitmaps.map`)  
-**Device:** Galaxy S24+, Tailscale node `100.68.201.52` (`node`)  
+**Date:** 2026-09-18
+**Repo:** `/home/commander/projects/halo-trial-android`
+**Map data (not in git):** `/home/commander/halo-trial-data/extract/maps/` (`bloodgulch.map`, `bitmaps.map`; `sounds.map` is there too, still unused)
+**Device:** Galaxy S24+, Tailscale node `100.68.201.52` (`node`)
 **Build host Tailscale:** `100.89.1.14`
 
 Do **not** commit Trial `.map` files. The APK never bundles Halo assets.
@@ -17,15 +17,14 @@ cd /home/commander/projects/halo-trial-android
 HTA_MAP=/home/commander/halo-trial-data/extract/maps/bloodgulch.map scripts/verify.sh
 ```
 
-Sideload page (keep the Python server bound to Tailscale only):
+Look at the first-person view without a device:
 
-**http://100.89.1.14:8731**
+```
+./build-host/htaview $HTA_MAP --fp idle   --shots 2 --out /tmp/fp
+./build-host/htaview $HTA_MAP --fp reload --shots 6 --out /tmp/rl
+```
 
-Server: `scripts/serve_poc.py --bind 100.89.1.14 --port 8731` serving  
-`/tmp/claude-1000/-home-commander/dacf88c7-0fa5-4691-a530-83bafded3436/scratchpad/serve/`  
-Screenshots land in that dir’s `uploads/` and are mirrored to `scratch/uploads/`.
-
-If the server died:
+Sideload: **http://100.89.1.14:8731** (Tailscale bind only).
 
 ```
 python3 scripts/serve_poc.py \
@@ -34,45 +33,157 @@ python3 scripts/serve_poc.py \
   --mirror /home/commander/projects/halo-trial-android/scratch/uploads
 ```
 
-Then copy a new APK over `halo-trial-poc.apk` and refresh `SHA256SUMS`.
+Copy a new APK over `halo-trial-poc.apk` and refresh `SHA256SUMS`. Screenshots land in that dir's `uploads/` and are mirrored to `scratch/uploads/`.
+
+Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unless asked.
 
 ---
 
-## What this session finished
+## Verified
 
-- Vulkan on S24+, Blood Gulch textured + lightmaps
-- Sky portals, additive glass/lights, scenery + vehicles (triangle strips + regions)
-- Spawn no longer falls through (collision rebind after realloc)
-- COD-style HUD: stick, FIRE, JUMP, CROUCH (WindowManager overlay on NativeActivity)
-- Aim while holding fire
-- No walking up walls (upward faces + slide)
-- **Pawn physics from Trial tags:** `matg` player info + `cyborg_mp`  
-  run 2.25 wu/s, accel, jump 0.07/tick, cam 0.62, radius 0.2, 45° slope
-- **Previous drop:** FP assault rifle (`weapons\assault rifle\fp\fp`), weap ROF 15/s, structure collision BSP (~2830 verts / 5940 tris)
-- **This drop (pill vs BSP walls):**
-  - Standing cylinder (radius 0.2, tag height) depenetrates steep collision faces
-  - Deepest-hit per pass so a triangle in several grid cells cannot over-push
-  - Inbound XY velocity is cancelled after a push — that was the “slight clip” (point query + sinking back in next frame)
-  - Scenery/vehicles still have no colliders (walk through rocks and warthogs)
+**On the S24+ (2026-09-18)**
 
----
+- Vulkan, textured Blood Gulch + lightmaps, sky/glass, scenery + vehicles
+- COD-style HUD (stick, FIRE, JUMP, CROUCH); look while firing
+- Pawn from Trial tags (`matg` + `cyborg_mp`): run 2.25, jump 0.07/tick, cam 0.62, radius 0.2, 45° slope
+- Structure collision BSP + scenery/vehicle `coll` tags (Blood Gulch 19+28 → ~10155 verts / 18898 tris)
+- Wall pill vs pylons; **walk off the red-base pad into the canyon** (user confirmed)
 
-## What is still not Halo
+**On the host, in the offscreen renderer (2026-09-18) — not yet on device**
 
-- No first-person **animations** (static FP mesh)
-- No real **projectiles** / tracers / ammo UI (hitscan + cooldown only)
-- No weapon pickup; you spawn with the AR
-- Vehicle `shader_model` textures still weak; some attachments may sit wrong
-- Rocks/vehicles are **not** solid (only structure collision BSP)
-- Multiplayer not started (by request)
+- **Animated first-person AR**: right hand, lower-right, barrel forward, left hand on
+  the foregrip, hands and gun skinned from the Trial tags. Full reload plays.
+
+`HTA_MAP=... scripts/verify.sh` is **31/31**. `test_player` 45 checks, `test_biped` 25,
+`test_anim` 46.
 
 ---
 
-## Suggested next session (after you test)
+## Guns: what changed this session
 
-1. Walk into a **base wall / pylon** — you should stop at ~0.2 wu, not sink. Rocks and warthogs still ghost.
-2. FP AR sits a bit low-left and untextured — tweak `weap.fp_offset` / viewmodel basis if needed
-3. Then: scenery/vehicle colliders, projectile tags, ammo, or netcode (Phase 5)
+The hold was never an offset problem. The tags say so directly:
+
+- `weap` trigger `first person offset` (trigger+136) is **(0,0,0)** for both the AR and
+  the pistol. The old `fp_offset` default of `(0.18, 0.08, -0.12)` in `weapon.c` was
+  invented, and is gone.
+- Halo builds the FP view from **two meshes on one skeleton**: the hands
+  (`matg` → first person interface → `mod2 characters\cyborg\fp\fp`, 37 nodes) and the
+  weapon's own FP model (`weap+0x45C` → `mod2 weapons\assault rifle\fp\fp`, **5 nodes,
+  no arms**). The `antr` at `weap+0x46C` has **42 = 37 + 5** nodes, and `frame gun` is a
+  child of `frame r wriste`.
+
+So the gun is in the right hand because the skeleton puts it there.
+
+### Animation format (validated against real data)
+
+`ModelAnimationsAnimation` is 180 bytes. Three 64-bit flag sets say, per node, whether
+rotation / transform / scale vary per frame; varying components are packed per frame in
+node order (rot 8B, trans 12B, scale 4B) and the rest appear once in default data, same
+order. Therefore
+
+```
+default_size + frame_size == node_count * 24
+```
+
+which holds for all 13 AR clips and is asserted in `hta_anim_load`. It is the only thing
+that catches the field order — **transform flags are at +0x5C, rotation at +0x6C**, and
+swapping them still parses, it just silently trades 8- and 12-byte reads.
+
+Two gotchas that cost real time, both now covered by tests:
+
+1. **Rotations are stored conjugated** relative to the child→parent convention the
+   transform algebra composes in. Taken as stored, the AR's barrel (its local +X, a
+   0.289 wu / 88 cm span) points `(-0.10, +0.81, +0.58)` — up and to the left, which
+   renders as a giant gun across the screen. Conjugated it is `(+1.000, +0.006, +0.008)`,
+   straight down the view, and the gun moves to Y ≈ −0.04 (right). Conjugation happens at
+   the two read sites: `read_node` in `anim.c` and `skin_bind_nodes` in `model.c`.
+2. The hands model sets `mod2` flag `0x2` (**parts have local nodes**), so its vertex
+   node indices are per-part table lookups (`part+107` count, `part+108` 22 bytes). The
+   weapon FP model does not. Getting this wrong silently mis-binds the arms.
+
+Cross-check that proved the parse before any rendering: the `antr` default-pose
+**translations match the `mod2` bind translations exactly** for all 37 hand nodes and all
+5 gun nodes (only the two roots differ, as they should — the animation places them
+relative to the camera).
+
+### Tag values now parsed
+
+| Field | Where | AR value |
+|---|---|---|
+| FP model | `weap+0x45C` | `weapons\assault rifle\fp\fp` |
+| FP animations | `weap+0x46C` | `antr weapons\assault rifle\fp\fp` |
+| pickup / zoom sounds | `weap+0x490 / +0x4A0 / +0x4B0` | `ar_ammo`; AR has no zoom |
+| magazine | `weap+0x4F0` | 60 loaded / 600 reserve / 240 initial, **3.4 s** reload |
+| ROF | trigger+4 (two floats) | 15/s (pistol 3.5) |
+| error angle | trigger+124 | 0.0349 → 0.1134 rad |
+| projectile | trigger+148 | `proj weapons\assault rifle\bullet` |
+| firing effects | trigger+264 | `effe …\fire bullet`, `effe …\empty`, `jpt! …\trigger` |
+| graph sounds | `antr+0x054` | `ar_reload`, `ar_melee`, `weapon ready` |
+
+Clips present: idle, firing, ready, reload-full ×2, melee, stealth-melee, put-away,
+moving, posing, overlays, light-off, throw-grenade.
+
+---
+
+## NEXT WORK
+
+### 1. Confirm the viewmodel on the S24+ — do this first
+
+Everything above is verified in the **host** offscreen renderer only. Build, sideload,
+and look. The GPU path changed: the viewmodel now uses
+`hta_gfx_mesh_upload_dynamic` (one host-visible vertex-buffer slot per in-flight frame,
+rewritten inside `hta_gfx_draw` behind that slot's fence). Adreno has not seen this yet.
+Watch for: viewmodel flicker or tearing (slot/fence bug), and CPU cost of skinning 3200
+verts per frame.
+
+### 2. Sound — the owner's remaining ask
+
+Nothing audible exists yet. `hta_viewmodel.sound_cue` already fires the tagged `snd!`
+tag id when a clip crosses its sound frame; nothing consumes it.
+
+- Decode `snd!` (and the `effe` firing effects) from **`sounds.map`**, which sits next to
+  `bitmaps.map` (~77 MB). Tag structs are in `bloodgulch.map`; samples are almost
+  certainly external, same pattern as bitmaps (`hta_resource_open` type 2 rather than 1).
+- SetupActivity picks only `bloodgulch.map` + `bitmaps.map` — **add a `sounds.map`
+  picker**.
+- Android audio out (AAudio/OpenSL). **No synthesized or substituted gunshots, and
+  nothing bundled in the APK.**
+
+### 3. Projectiles
+
+`proj weapons\assault rifle\bullet` is parsed but unused; `gun.c` is still hitscan with
+scorch quads. Spawn from the camera plus the trigger's tagged error angle, then replace
+scorches with the projectile's own impact effect.
+
+### 4. Magazines / ammo
+
+Counts and reload time are parsed and unused: no ammo is tracked, reload is never
+triggered, and `HTA_VM_RELOAD` is only reachable by calling `hta_viewmodel_play`
+directly. Wire ammo → reload clip → `chamber_time`.
+
+Netcode (Phase 5, own protocol) still waits until a local shot looks **and sounds** like
+a gun.
+
+---
+
+## Other leftovers (not the next slice)
+
+- Vehicle `shader_model` still dark/flat (unused sun push constants; soso not fully wired)
+- Warthog chaingun over the cabin is bind-pose barrels — the same skinning that now works
+  for the viewmodel could fix it
+- Shrubs/ferns with no `coll` tag still ghost; colliders are hollow (spawn *inside* a hog
+  will not shove you out)
+- No world weapon pickups; you spawn with the AR
+- Gamepad / BACK-to-exit not confirmed on device
+- FP arms are lit by the world light only; Halo lights the viewmodel separately
+
+### Collision notes the next agent should not re-break
+
+- Walk-off: do **not** restore "no walkable ground → slide XY back". That was the
+  invisible wall at the base lip. Fall instead. Walls stay on the pill.
+- Pill: skip faces whose `zmax <= feet + 0.18` (ledge lips). Real pylons rise above that.
+- Object `coll` verts are **node-local** (apply GBXModel rest T/R). Render verts are
+  already model-space.
 
 ---
 
@@ -80,10 +191,25 @@ Then copy a new APK over `halo-trial-poc.apk` and refresh `SHA256SUMS`.
 
 | Area | Path |
 |---|---|
-| Pawn physics parse | `src/asset/biped.c` |
-| Movement | `src/engine/player.c` |
-| Weapon + ROF | `src/asset/weapon.c`, `src/engine/gun.c` |
-| Collision BSP | `src/asset/bsp.c` `hta_bsp_load_collision` |
-| FP draw | `src/gfx/gfx_vulkan.c` viewmodel pass |
+| Animation graph (`antr`), transform algebra | `src/asset/anim.c`, `src/asset/anim.h` |
+| Viewmodel: load, playback, CPU skinning | `src/engine/viewmodel.c`, `.h` |
+| Skinned mod2 append + bind pose | `src/asset/model.c` `hta_model_append_skinned` |
+| Weapon / magazine / trigger parse | `src/asset/weapon.c`, `.h` |
+| FP hands from globals | `src/asset/weapon.c` `hta_globals_fp_hands` |
+| Dynamic vertex buffer + viewmodel pass | `src/gfx/gfx_vulkan.c`, `src/gfx/gfx.h` |
+| Host FP preview (`--fp <clip>`) | `src/tools/htaview.c` |
+| Pawn physics | `src/asset/biped.c` |
+| Movement / pill / walk-off | `src/engine/player.c` |
+| Hitscan + scorches | `src/engine/gun.c` |
+| Collision BSP + object coll emit | `src/asset/bsp.c`, `src/asset/model.c` |
+| Resource maps (bitmaps only today) | `src/asset/bitmap.c` `hta_resource_open` (type 1; type 2 = sounds) |
+| Tag layouts | `upstream/invader/src/tag/hek/definition/*.json` |
 | HUD | `android/.../GameActivity.java` |
+| Map / bitmap picker | `android/.../SetupActivity.java` |
 | Android glue | `src/platform/platform_android.c` |
+| Animation + skinning tests | `tests/test_anim.c` (needs `HTA_MAP`) |
+| Tag physics tests | `tests/test_biped.c` (needs `HTA_MAP`) |
+
+**Reading Invader's JSON:** count a field with `"bounds": true` as **two** values. Missing
+that is what made `Weapon` come out 4 bytes short and put every offset past
+`zoom magnification range` (0x3DC) in the wrong place.

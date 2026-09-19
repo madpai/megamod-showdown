@@ -10,11 +10,13 @@ if(ANDROID)
         src/engine/camera.c
         src/engine/player.c
         src/engine/gun.c
+        src/engine/viewmodel.c
         src/asset/cache.c
         src/asset/bsp.c
         src/asset/bitmap.c
         src/asset/biped.c
         src/asset/weapon.c
+        src/asset/anim.c
         src/asset/model.c
         src/gfx/gfx_vulkan.c
         src/platform/platform_android.c
@@ -32,7 +34,9 @@ if(ANDROID)
 else()
     # Host build: the portable engine only, plus its tests.
     add_library(hta_engine STATIC src/engine/engine.c src/engine/camera.c src/engine/player.c src/engine/gun.c
-        src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c src/asset/biped.c src/asset/weapon.c src/asset/model.c)
+        src/engine/viewmodel.c
+        src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c src/asset/biped.c src/asset/weapon.c
+        src/asset/anim.c src/asset/model.c)
     target_include_directories(hta_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(hta_engine PRIVATE -Wall -Wextra)
 
@@ -85,6 +89,10 @@ else()
     add_executable(test_biped tests/test_biped.c)
     target_link_libraries(test_biped PRIVATE hta_engine m)
     add_test(NAME biped COMMAND test_biped)
+
+    add_executable(test_anim tests/test_anim.c)
+    target_link_libraries(test_anim PRIVATE hta_engine m)
+    add_test(NAME anim COMMAND test_anim)
 
     add_executable(mkfixture tests/mkfixture.c tests/fixture.c)
     target_include_directories(mkfixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

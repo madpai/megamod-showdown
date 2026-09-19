@@ -1,4 +1,10 @@
-/* First-person weapon from Trial `weap` tags. */
+/* First-person weapon from Trial `weap` tags.
+ *
+ * Offsets were checked against Invader's weapon.json with `bounds` fields
+ * counted as two values -- "zoom magnification range" is one, which is why
+ * everything from 0x3DC on sits 4 bytes later than a naive field walk says.
+ * The AR reading 15 shots/s and the pistol 3.5 is the confirmation.
+ */
 #ifndef HTA_WEAPON_H
 #define HTA_WEAPON_H
 
@@ -6,22 +12,86 @@
 #include "bsp.h"
 #include "bitmap.h"
 
-#define HTA_WEAP_FP_MODEL  0x45Cu  /* TagDependency to fp mod2 */
-#define HTA_WEAP_TRIGGERS  0x4FCu
-#define HTA_TRIG_SIZE      276u
-#define HTA_TRIG_ROF       4u      /* two floats: initial, final shots/sec */
+#define HTA_TAG_EFFE HTA_FOURCC('e','f','f','e')
+#define HTA_TAG_PROJ HTA_FOURCC('p','r','o','j')
+#define HTA_TAG_SND  HTA_FOURCC('s','n','d','!')
+
+/* ---- Weapon ---- */
+#define HTA_WEAP_FP_MODEL     0x45Cu  /* TagDependency -> mod2 */
+#define HTA_WEAP_FP_ANIM      0x46Cu  /* TagDependency -> antr */
+#define HTA_WEAP_HUD          0x480u  /* TagDependency -> wphi */
+#define HTA_WEAP_PICKUP_SND   0x490u  /* TagDependency -> snd! */
+#define HTA_WEAP_ZOOM_IN_SND  0x4A0u
+#define HTA_WEAP_ZOOM_OUT_SND 0x4B0u
+#define HTA_WEAP_MAGAZINES    0x4F0u  /* TagReflexive */
+#define HTA_WEAP_TRIGGERS     0x4FCu  /* TagReflexive */
+
+/* ---- WeaponMagazine ---- */
+#define HTA_MAG_SIZE             112u
+#define HTA_MAG_ROUNDS_INITIAL   6u    /* int16 */
+#define HTA_MAG_ROUNDS_RESERVE   8u    /* int16 */
+#define HTA_MAG_ROUNDS_LOADED    10u   /* int16 */
+#define HTA_MAG_RELOAD_TIME      20u   /* float, seconds */
+#define HTA_MAG_ROUNDS_RELOADED  24u   /* int16 */
+#define HTA_MAG_CHAMBER_TIME     28u   /* float */
+#define HTA_MAG_RELOADING_FX     56u   /* TagDependency -> effe */
+#define HTA_MAG_CHAMBERING_FX    72u   /* TagDependency -> effe */
+
+/* ---- WeaponTrigger ---- */
+#define HTA_TRIG_SIZE         276u
+#define HTA_TRIG_ROF          4u    /* two floats: initial, final shots/sec */
+#define HTA_TRIG_ROUNDS_SHOT  34u   /* int16 */
+#define HTA_TRIG_PROJ_SHOT    110u  /* int16 */
+#define HTA_TRIG_ERROR_ANGLE  124u  /* two Angles: initial, final (radians) */
+#define HTA_TRIG_FP_OFFSET    136u  /* Point3D: projectile spawn, NOT the hold */
+#define HTA_TRIG_PROJECTILE   148u  /* TagDependency -> proj */
+#define HTA_TRIG_FIRING_FX    264u  /* TagReflexive */
+
+/* ---- WeaponTriggerFiringEffect ---- */
+#define HTA_FIREFX_SIZE    132u
+#define HTA_FIREFX_FIRING  36u   /* TagDependency -> effe */
+#define HTA_FIREFX_EMPTY   68u   /* TagDependency -> effe */
+#define HTA_FIREFX_DAMAGE  84u   /* TagDependency -> jpt! */
+
+/* ---- Globals -> first person interface ---- */
+#define HTA_MATG_FP_INTERFACE 0x17Cu  /* TagReflexive */
+#define HTA_FPI_SIZE          192u
+#define HTA_FPI_HANDS         0u      /* TagDependency -> mod2 */
 
 typedef struct {
-    uint32_t fp_model_id;
-    float    rof;          /* shots per second (final) */
-    float    cooldown;     /* 1/rof */
-    float    fp_offset[3]; /* X forward, Y left, Z up; may be zero */
+    uint32_t fp_model_id;    /* the weapon mesh: gun only, no arms */
+    uint32_t fp_anim_id;     /* antr: the merged hands+gun skeleton */
+    uint32_t pickup_snd_id, zoom_in_snd_id, zoom_out_snd_id;
+
+    float    rof;            /* shots per second (final) */
+    float    cooldown;       /* 1/rof */
+    float    error_angle[2]; /* radians, initial -> final */
+    int      rounds_per_shot;
+    int      projectiles_per_shot;
+    uint32_t projectile_id;
+    uint32_t firing_fx_id, empty_fx_id, firing_damage_id;
+
+    /* magazine 0 */
+    int      rounds_loaded_max, rounds_reserve_max, rounds_initial, rounds_reloaded;
+    float    reload_time, chamber_time;
+    uint32_t reloading_fx_id;
+
+    /* Projectile spawn offset from the trigger (+X fwd, +Y left, +Z up).
+     * The Trial leaves this (0,0,0) for the AR and the pistol: it is NOT
+     * where the viewmodel is held. The hold comes from the animation, which
+     * parents `frame gun` to `frame r wriste`. */
+    float    fp_offset[3];
     char     path[96];
 } hta_weapon_def;
 
-/* Prefers assault rifle, then pistol. Loads FP mesh into `fp` if bitmaps given. */
+/* Prefers assault rifle, then pistol. Loads the FP mesh into `fp` if given --
+ * bind pose only; the animated viewmodel goes through hta_viewmodel_load. */
 bool hta_weapon_load_default(const hta_cache *c, const hta_resource_map *bitmaps,
                              hta_weapon_def *def, hta_bsp_mesh *fp,
                              char *err, size_t errlen);
+
+/* `matg` -> first person interface -> first person hands (the cyborg arms).
+ * Returns 0 if absent. */
+uint32_t hta_globals_fp_hands(const hta_cache *c);
 
 #endif

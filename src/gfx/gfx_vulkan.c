@@ -51,6 +51,13 @@ struct hta_gfx_mesh {
     uint32_t       index_count;
     uint64_t       bytes;
 
+    /* A dynamic mesh (the skinned viewmodel) holds one vertex-buffer slot per
+     * in-flight frame and stays mapped. The copy happens inside hta_gfx_draw,
+     * after that slot's fence, so the GPU is never reading what we overwrite. */
+    void          *vmapped;
+    VkDeviceSize   vslot_bytes;
+    uint32_t       vslots;
+
     hta_vk_tex     *tex;
     uint32_t        tex_count;
     VkDescriptorPool desc_pool;
@@ -885,8 +892,8 @@ static bool write_set(hta_gfx *g, VkDescriptorSet set,
     return true;
 }
 
-hta_gfx_mesh *hta_gfx_mesh_upload(hta_gfx *g, const hta_bsp_mesh *mesh,
-                                  char *err, size_t errlen)
+static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
+                                 uint32_t vslots, char *err, size_t errlen)
 {
     if (!g || !g->ready || !mesh || !mesh->vertices || !mesh->indices ||
         !mesh->vertex_count || !mesh->index_count) {
@@ -899,20 +906,37 @@ hta_gfx_mesh *hta_gfx_mesh_upload(hta_gfx *g, const hta_bsp_mesh *mesh,
     VkDeviceSize vsz = (VkDeviceSize)mesh->vertex_count * sizeof(hta_vertex);
     VkDeviceSize isz = (VkDeviceSize)mesh->index_count * sizeof(uint32_t);
 
-    if (!make_buffer(g, vsz, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &m->vbuf, &m->vmem, err, errlen) ||
+    bool ok;
+    if (vslots) {
+        m->vslot_bytes = vsz;
+        m->vslots = vslots;
+        ok = make_buffer(g, vsz * vslots, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                         &m->vbuf, &m->vmem, err, errlen);
+        if (ok && vkMapMemory(g->device, m->vmem, 0, vsz * vslots, 0, &m->vmapped) != VK_SUCCESS) {
+            gfail(err, errlen, "vkMapMemory failed for dynamic vertex buffer");
+            ok = false;
+        }
+        if (ok)
+            for (uint32_t i = 0; i < vslots; i++)
+                memcpy((uint8_t *)m->vmapped + (size_t)(vsz * i), mesh->vertices, (size_t)vsz);
+    } else {
+        ok = make_buffer(g, vsz, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &m->vbuf, &m->vmem, err, errlen);
+    }
+    if (!ok ||
         !make_buffer(g, isz, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &m->ibuf, &m->imem, err, errlen)) {
         hta_gfx_mesh_free(g, m);
         return NULL;
     }
-    if (!upload_via_staging(g, m->vbuf, mesh->vertices, vsz, err, errlen) ||
+    if ((!vslots && !upload_via_staging(g, m->vbuf, mesh->vertices, vsz, err, errlen)) ||
         !upload_via_staging(g, m->ibuf, mesh->indices, isz, err, errlen)) {
         hta_gfx_mesh_free(g, m);
         return NULL;
     }
     m->index_count = mesh->index_count;
-    m->bytes = (uint64_t)vsz + (uint64_t)isz;
+    m->bytes = (uint64_t)vsz * (vslots ? vslots : 1u) + (uint64_t)isz;
 
     m->tex_count = mesh->texture_count;
     if (m->tex_count) {
@@ -978,6 +1002,20 @@ hta_gfx_mesh *hta_gfx_mesh_upload(hta_gfx *g, const hta_bsp_mesh *mesh,
     return m;
 }
 
+hta_gfx_mesh *hta_gfx_mesh_upload(hta_gfx *g, const hta_bsp_mesh *mesh,
+                                  char *err, size_t errlen)
+{
+    return upload_mesh(g, mesh, 0, err, errlen);
+}
+
+hta_gfx_mesh *hta_gfx_mesh_upload_dynamic(hta_gfx *g, const hta_bsp_mesh *mesh,
+                                          char *err, size_t errlen)
+{
+    if (!g || !g->ready) { gfail(err, errlen, "renderer not ready"); return NULL; }
+    uint32_t slots = g->image_count ? g->image_count : 1u;
+    return upload_mesh(g, mesh, slots, err, errlen);
+}
+
 void hta_gfx_mesh_free(hta_gfx *g, hta_gfx_mesh *m)
 {
     if (!g || !m) return;
@@ -989,6 +1027,7 @@ void hta_gfx_mesh_free(hta_gfx *g, hta_gfx_mesh *m)
             free(m->tex);
         }
         free(m->submeshes);
+        if (m->vmapped) vkUnmapMemory(g->device, m->vmem);
         if (m->vbuf) vkDestroyBuffer(g->device, m->vbuf, NULL);
         if (m->vmem) vkFreeMemory(g->device, m->vmem, NULL);
         if (m->ibuf) vkDestroyBuffer(g->device, m->ibuf, NULL);
@@ -1013,12 +1052,25 @@ static void fill_push(uint8_t *p, const hta_camera *cam, const hta_scene *s)
 
 bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                   hta_gfx_mesh *mesh, hta_gfx_mesh *sky, hta_gfx_mesh *fx,
-                  hta_gfx_mesh *viewmodel, const float vm_offset[3])
+                  const hta_gfx_viewmodel *vm)
 {
     if (!g || !g->ready || !cam || !scene) return false;
 
     uint32_t slot = g->frame % g->image_count;
     vkWaitForFences(g->device, 1, &g->fence[slot], VK_TRUE, UINT64_MAX);
+
+    /* Past the fence: this slot's vertices are no longer being read. */
+    hta_gfx_mesh *viewmodel = vm ? vm->mesh : NULL;
+    VkDeviceSize vm_voffset = 0;
+    if (viewmodel && viewmodel->vslots) {
+        uint32_t vslot = slot % viewmodel->vslots;
+        vm_voffset = viewmodel->vslot_bytes * vslot;
+        if (vm->vertices && vm->vertex_count) {
+            VkDeviceSize n = (VkDeviceSize)vm->vertex_count * sizeof(hta_vertex);
+            if (n > viewmodel->vslot_bytes) n = viewmodel->vslot_bytes;
+            memcpy((uint8_t *)viewmodel->vmapped + vm_voffset, vm->vertices, (size_t)n);
+        }
+    }
 
     uint32_t idx = 0;
     if (!g->offscreen) {
@@ -1109,9 +1161,7 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
             hta_camera_forward(cam, fwd);
             hta_camera_right(cam, right);
             hta_camera_up(cam, up);
-            float ox = vm_offset ? vm_offset[0] : 0.18f;
-            float oy = vm_offset ? vm_offset[1] : 0.08f;
-            float oz = vm_offset ? vm_offset[2] : -0.12f;
+            float ox = vm->offset[0], oy = vm->offset[1], oz = vm->offset[2];
             /* Halo FP offset: +X forward, +Y left, +Z up. */
             float gp[3] = {
                 cam->pos[0] + fwd[0]*ox - right[0]*oy + up[0]*oz,
@@ -1131,7 +1181,7 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                0, PUSH_SIZE, push);
             vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline);
-            vkCmdBindVertexBuffers(cb, 0, 1, &viewmodel->vbuf, &zero);
+            vkCmdBindVertexBuffers(cb, 0, 1, &viewmodel->vbuf, &vm_voffset);
             vkCmdBindIndexBuffer(cb, viewmodel->ibuf, 0, VK_INDEX_TYPE_UINT32);
             for (uint32_t i = 0; i < viewmodel->submesh_count; i++) {
                 if (!viewmodel->submeshes[i].index_count) continue;

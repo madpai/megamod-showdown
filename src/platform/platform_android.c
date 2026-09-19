@@ -16,6 +16,7 @@
 #include "../engine/camera.h"
 #include "../engine/player.h"
 #include "../engine/gun.h"
+#include "../engine/viewmodel.h"
 #include "../asset/cache.h"
 #include "../asset/bsp.h"
 #include "../asset/bitmap.h"
@@ -93,7 +94,7 @@ typedef struct {
     hta_bsp_mesh  mesh;
     hta_bsp_mesh  sky;
     hta_bsp_mesh  coll_mesh;
-    hta_bsp_mesh  fp_mesh;
+    hta_viewmodel vm;
     hta_collision col;
     bool          have_mesh;
     bool          have_sky;
@@ -363,11 +364,20 @@ static bool load_map(hta_android *s)
     if (!s->have_coll)
         hta_collision_rebind(&s->col, s->mesh.vertices, s->mesh.indices);
 
-    if (hta_weapon_load_default(&s->cache, rm.data ? &rm : NULL, &s->weap, &s->fp_mesh, err, sizeof(err))) {
+    if (hta_weapon_load_default(&s->cache, rm.data ? &rm : NULL, &s->weap, NULL, err, sizeof(err))) {
         s->gun.fire_interval = s->weap.cooldown;
-        s->have_fp = s->fp_mesh.vertex_count > 0;
-        hta_log("[weapon] %s  ROF %.1f/s  fp verts %u", s->weap.path, s->weap.rof,
-                s->fp_mesh.vertex_count);
+        hta_log("[weapon] %s  ROF %.1f/s  mag %d/%d  reload %.1fs",
+                s->weap.path, s->weap.rof, s->weap.rounds_loaded_max,
+                s->weap.rounds_reserve_max, s->weap.reload_time);
+        if (hta_viewmodel_load(&s->vm, &s->cache, rm.data ? &rm : NULL, &s->weap,
+                               err, sizeof(err))) {
+            s->have_fp = true;
+            hta_log("[weapon] viewmodel %u verts (%u hands + %u gun), %u nodes, %u clips",
+                    s->vm.mesh.vertex_count, s->vm.hands_verts, s->vm.gun_verts,
+                    s->vm.graph.node_count, s->vm.graph.anim_count);
+        } else {
+            hta_log("[weapon] viewmodel: %s", err);
+        }
     } else {
         hta_log("[weapon] %s", err);
     }
@@ -612,7 +622,7 @@ static void start_gfx(hta_android *s)
             s->gpu_fx = hta_gfx_mesh_upload(s->gfx, &s->gun.mesh, err, sizeof(err));
         }
         if (s->have_fp) {
-            s->gpu_fp = hta_gfx_mesh_upload(s->gfx, &s->fp_mesh, err, sizeof(err));
+            s->gpu_fp = hta_gfx_mesh_upload_dynamic(s->gfx, &s->vm.mesh, err, sizeof(err));
             if (!s->gpu_fp) hta_log("[gfx] fp weapon upload FAILED: %s", err);
         }
         float span = s->mesh.bounds_max[0] - s->mesh.bounds_min[0];
@@ -791,7 +801,9 @@ void android_main(struct android_app *app)
         hta_player_update(&state.player, &state.cam,
                           state.col.built ? &state.col : NULL, &in, dt);
         hta_gun_update(&state.gun, dt);
-        if (in.fire) hta_gun_fire(&state.gun, state.col.built ? &state.col : NULL, &state.cam);
+        if (in.fire && hta_gun_fire(&state.gun, state.col.built ? &state.col : NULL, &state.cam))
+            hta_viewmodel_play(&state.vm, HTA_VM_FIRE);
+        hta_viewmodel_update(&state.vm, dt);
         if (state.gun.dirty && state.gfx) {
             char err[HTA_ERRLEN];
             hta_gun_build_mesh(&state.gun);
@@ -803,8 +815,17 @@ void android_main(struct android_app *app)
         if (state.has_window && state.gfx) {
             rebuild_gfx_if_size_changed(&state);
             if (!state.gfx) continue;
-            if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh, state.gpu_sky, state.gpu_fx,
-                              state.gpu_fp, state.weap.fp_offset)) {
+            hta_gfx_viewmodel vmdraw;
+            memset(&vmdraw, 0, sizeof(vmdraw));
+            if (state.gpu_fp) {
+                vmdraw.mesh = state.gpu_fp;
+                vmdraw.vertices = state.vm.posed;
+                vmdraw.vertex_count = state.vm.mesh.vertex_count;
+                for (int k = 0; k < 3; k++) vmdraw.offset[k] = state.weap.fp_offset[k];
+            }
+            if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh,
+                              state.gpu_sky, state.gpu_fx,
+                              state.gpu_fp ? &vmdraw : NULL)) {
                 hta_log("[app] surface lost; rebuilding renderer");
                 stop_gfx(&state);
                 if (app->window) start_gfx(&state);
@@ -832,7 +853,7 @@ done:
     hta_bsp_free(&state.mesh);
     hta_bsp_free(&state.sky);
     hta_bsp_free(&state.coll_mesh);
-    hta_bsp_free(&state.fp_mesh);
+    hta_viewmodel_free(&state.vm);
     if (state.map_data) munmap(state.map_data, state.map_size);
     if (state.bitmaps_data) munmap(state.bitmaps_data, state.bitmaps_size);
 }

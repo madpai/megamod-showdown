@@ -23,6 +23,7 @@ if ./build-host/test_player >/dev/null 2>&1; then ok "player/collision tests"; e
 if ./build-host/test_bitmap >/dev/null 2>&1; then ok "bitmap decode tests"; else bad "bitmap decode tests"; fi
 if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_biped "$HTA_MAP" >/dev/null 2>&1; then ok "biped/globals physics from Trial map"; else bad "biped/globals physics from Trial map"; fi
+  if ./build-host/test_anim "$HTA_MAP" >/dev/null 2>&1; then ok "FP animation graph + skinned viewmodel"; else bad "FP animation graph + skinned viewmodel"; fi
 fi
 
 # Optional: validate against the user's own Trial data if HTA_MAP points at it.
@@ -58,6 +59,14 @@ if [ -x ./build-host/htaview ]; then
     echo "  SKIP  offscreen render (no usable GPU here)"
   fi
   rm -rf "$(dirname "$GRID")"
+
+  # The viewmodel has to survive a real render, not just the unit test.
+  if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
+    VM=$(mktemp -d)
+    OUT=$(cd "$VM" && "$OLDPWD/build-host/htaview" "$HTA_MAP" --fp idle --out vm --width 320 --height 240 --shots 1 2>&1) || true
+    if echo "$OUT" | grep -q "verts.*hands.*gun"; then ok "first-person viewmodel renders"; else bad "first-person viewmodel renders"; fi
+    rm -rf "$VM"
+  fi
 else
   echo "  SKIP  htaview not built (host Vulkan missing)"
 fi

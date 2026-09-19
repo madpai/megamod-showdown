@@ -7,6 +7,7 @@
 #define HTA_MODEL_H
 
 #include "bitmap.h"
+#include "anim.h"
 
 #define HTA_SCENARIO_SKIES_OFF     0x030u
 #define HTA_SCENARIO_SCENERY_OFF   0x210u
@@ -17,6 +18,7 @@
 #define HTA_OBJECT_MODEL_ID        0x34u  /* Object.model TagDependency.tag_id */
 #define HTA_OBJECT_COLLISION_ID    0x7Cu  /* Object.collision_model tag_id */
 #define HTA_MOD2_FLAGS             0x000u
+#define HTA_MOD2_FLAG_LOCAL_NODES  0x2u   /* "parts have local nodes" */
 #define HTA_MOD2_NODES             0x0B8u
 #define HTA_NODE_SIZE              156u
 #define HTA_NODE_PARENT            36u
@@ -42,11 +44,39 @@
 #define HTA_PART_VTYPE             84u  /* 4 = model uncompressed */
 #define HTA_PART_VCOUNT            88u
 #define HTA_PART_VOFFSET           100u
+#define HTA_PART_LOCAL_NODE_COUNT  107u  /* u8 */
+#define HTA_PART_LOCAL_NODES       108u  /* u8[22] */
+#define HTA_PART_MAX_LOCAL_NODES   22u
 #define HTA_VTYPE_MODEL_UNCOMP     4u
 #define HTA_MODEL_VTX_SIZE         68u
+#define HTA_MODEL_VTX_NODE0        56u  /* u16 */
+#define HTA_MODEL_VTX_NODE1        58u  /* u16 */
+#define HTA_MODEL_VTX_WEIGHT0      60u  /* float */
+#define HTA_MODEL_VTX_WEIGHT1      64u  /* float */
 #define HTA_SCENERY_ENTRY_SIZE     72u
 #define HTA_VEHICLE_ENTRY_SIZE     120u
 #define HTA_PALETTE_ENTRY_SIZE     48u
+
+/* One vertex's binding onto an animation graph's skeleton. Node indices are
+ * already resolved: local-node tables and model-node names are both collapsed
+ * into graph node indices at load time, so skinning is a flat lookup. */
+typedef struct {
+    uint16_t node[2];    /* graph node index; HTA_SKIN_NONE = unbound */
+    float    weight[2];
+} hta_skin_vertex;
+
+#define HTA_SKIN_NONE 0xFFFFu
+
+/* Append a first-person mod2 onto `dst`, bound to `g`'s skeleton by node name.
+ * `*skin` grows in step with dst->vertices (realloc'd; free it yourself).
+ * `rest_inv` and `have_rest` are indexed by GRAPH node and are filled in for
+ * the nodes this model owns -- the hands and the weapon own disjoint nodes, so
+ * two calls populate one shared table. */
+bool hta_model_append_skinned(hta_bsp_mesh *dst, hta_skin_vertex **skin,
+                              const hta_cache *c, const hta_resource_map *bitmaps,
+                              uint32_t model_tag_id, const hta_anim_graph *g,
+                              hta_transform *rest_inv, uint8_t *have_rest,
+                              char *err, size_t errlen);
 
 /* Append a placed mod2 (scenery, vehicle, …) onto `world`, textures interned. */
 bool hta_model_instance(hta_bsp_mesh *world, const hta_cache *c,

@@ -1,6 +1,6 @@
 # Progress
 
-Last updated: **2026-09-18** (Phase 4 pawn + FP AR + collision BSP + wall pill)
+Last updated: **2026-09-18** (Phase 4: FP guns animated from tags; next is sound)
 
 Legend: ✅ done & verified · 🟡 built but not verified on device · ⬜ not started · 🚫 blocked
 
@@ -57,8 +57,19 @@ Run `scripts/device_test.sh` with the S24+ connected to convert remaining 🟡.
 
 - ✅ Pawn physics from Trial tags (`matg` player info + `cyborg_mp`): run 2.25, accel, jump 0.07/tick, camera 0.62, radius 0.2, 45° slope
 - ✅ Structure **collision BSP** for walking/hitscan (~5940 tris vs render mesh)
-- 🟡 Pill depenetration vs steep BSP faces (radius 0.2 cylinder + inbound-velocity cancel). Host tests cover a synthetic wall; S24+ confirm pending. Rocks/vehicles still ghost.
-- 🟡 Weapons: FP assault rifle mesh + tag ROF 15/s; still hitscan (no projectile objects / ammo UI)
+- ✅ Pill depenetration vs steep BSP faces (radius 0.2 cylinder + inbound-velocity cancel). S24+: pylons stop you; **walk-off the red-base pad works** (ledge lips skipped; no-ground falls instead of sliding back).
+- ✅ Scenery/vehicle `coll` tags instanced onto the collision mesh (19+28 on Blood Gulch). S24+ walk-around after this drop. Shrubs without a coll tag still ghost.
+- ✅ **Animated first-person weapon from Trial tags** — hands (`matg` → FP interface) +
+  gun (`weap+0x45C`) skinned on the weapon's 42-node `antr` (`weap+0x46C`). Right hand,
+  lower-right, barrel forward; idle / ready / firing / reload / melee all play. Verified
+  in the host offscreen renderer (`htaview --fp`); the fabricated `fp_offset` is gone —
+  the tag's own value is (0,0,0) and the hold comes from `frame gun` hanging off
+  `frame r wriste`.
+- 🟡 **Viewmodel on device** — *not yet confirmed on the S24+*. The GPU path is new
+  (dynamic per-frame vertex buffer); build, sideload and look.
+- 🟡 Weapons still hitscan: `proj`, magazines/ammo and all audio are parsed but unwired.
+  **Next slice is sound** — `snd!` / `effe` from `sounds.map`, which SetupActivity does
+  not pick yet. Owner: no synthesized or substituted gunshots. See `docs/HANDOFF.md`.
 - ✅ Touch HUD: stick, fire, jump, crouch
 
 ## Phase 5 — Multiplayer (the product)
@@ -125,6 +136,9 @@ geometry.
 | 2026-09-18 | **No new engine built on Demon or halo-re** | Both unportable (measured) and halo-re is unlicensed. Investigation §4, §7. |
 | 2026-09-18 | **Vulkan only, no GLES3 path** | Target is the S24+; a second backend doubles renderer work for no gain. Investigation §6. |
 | 2026-09-18 | **Host left un-upgraded** (~425 packages behind) | Avoid a 436-package kernel upgrade on a daily driver. Fix conflicts surgically instead. |
+| 2026-09-18 | **Guns from Trial tags, right-handed + animated + original sounds** | Owner: hold like CE (right hand), play FP `antr`, play `snd!`/`effe` from `sounds.map`. No synthesized gunshots, no mirrored viewmodel. Netcode waits until a local shot looks and sounds like a gun. |
+| 2026-09-18 | **Skin the viewmodel on the CPU, not the GPU** | 3200 verts × 2 influences per frame is negligible, and it keeps the Vulkan side to one vertex-buffer write instead of a new pipeline, descriptor layout and bone UBO. Revisit only if a device profile says so. |
+| 2026-09-18 | **Animation quaternions are conjugated on read** | Halo stores node rotations in the opposite sense to the child→parent convention the transform algebra composes in. Fixed at the two read sites rather than by inverting the composition, so `hta_xf_*` stays standard quaternion algebra. |
 
 ## Test inventory
 
@@ -136,10 +150,12 @@ geometry.
 | APK arm64-only, correct exports, links Vulkan | `scripts/verify.sh` | ✅ 10/10 |
 | Demon cross-build (reference) | mingw32 toolchain | ✅ 44/44 |
 | Camera/projection math | `./build-host/test_camera` | ✅ 23/23 |
-| Player + collision | `./build-host/test_player` | ✅ 41/41 (includes wall pill) |
+| Player + collision | `./build-host/test_player` | ✅ 45/45 (wall pill + walk-off ledge) |
 | Real Trial data parse + extract | `HTA_MAP=... scripts/verify.sh` | ✅ 5/5 |
 | Offscreen render draws geometry | `scripts/verify.sh` | ✅ |
-| **Full suite** | `HTA_MAP=... scripts/verify.sh` | ✅ **29/29** |
+| FP animation graph + skinned viewmodel | `./build-host/test_anim $HTA_MAP` | ✅ 46/46 |
+| FP viewmodel renders | `htaview --fp idle` | ✅ |
+| **Full suite** | `HTA_MAP=... scripts/verify.sh` | ✅ **31/31** |
 | APK installs / launches / Vulkan presents | S24+ sideload 2026-09-18 | ✅ |
 | APK loads map / walks Blood Gulch | S24+ 2026-09-18 | ✅ untextured, then landscape-fixed |
 | Host textured Blood Gulch (`htaview` + bitmaps.map) | 2026-09-18 | ✅ 31 unique textures |

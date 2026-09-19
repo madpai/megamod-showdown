@@ -5,12 +5,20 @@
  * over SSH and doubles as an automated renderer test.
  *
  *   htaview <cache.map> [--out prefix] [--width N] [--height N] [--shots N]
+ *                       [--fp [clip]]
+ *
+ * --fp stands at a player spawn with the animated first-person viewmodel up,
+ * stepping one animation frame per shot. That is the visual check for the
+ * hands/weapon skinning; "clip" defaults to idle.
  */
 #include "asset/cache.h"
 #include "asset/bsp.h"
 #include "asset/bitmap.h"
 #include "asset/model.h"
+#include "asset/weapon.h"
 #include "engine/camera.h"
+#include "engine/viewmodel.h"
+#include "asset/biped.h"
 #include "gfx/gfx.h"
 #include "engine/scene_light.h"
 #include "platform/platform.h"
@@ -69,12 +77,18 @@ int main(int argc, char **argv)
         return 2;
     }
     const char *prefix = "bloodgulch";
+    const char *fp_clip = "idle";
+    int fp_mode = 0;
     uint32_t W = 1280, H = 720, shots = 4;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--out")    && i + 1 < argc) prefix = argv[++i];
         else if (!strcmp(argv[i], "--width")  && i + 1 < argc) W = (uint32_t)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--height") && i + 1 < argc) H = (uint32_t)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--shots")  && i + 1 < argc) shots = (uint32_t)atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--fp")) {
+            fp_mode = 1;
+            if (i + 1 < argc && argv[i+1][0] != '-') fp_clip = argv[++i];
+        }
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     if (W == 0 || H == 0 || W > 8192 || H > 8192) { fprintf(stderr, "bad size\n"); return 2; }
@@ -155,6 +169,27 @@ int main(int argc, char **argv)
     printf("upload         %.1f ms, device memory %.2f MiB\n",
            t_upload * 1000.0, hta_gfx_device_memory_used(g) / (1024.0*1024.0));
 
+    hta_viewmodel vm;
+    hta_weapon_def wdef;
+    hta_gfx_mesh *gvm = NULL;
+    int32_t fp_anim = -1;
+    memset(&vm, 0, sizeof(vm));
+    memset(&wdef, 0, sizeof(wdef));
+    if (fp_mode) {
+        if (!hta_weapon_load_default(&c, rm.data ? &rm : NULL, &wdef, NULL, err, sizeof(err)))
+            printf("weapon         %s\n", err);
+        else if (!hta_viewmodel_load(&vm, &c, rm.data ? &rm : NULL, &wdef, err, sizeof(err)))
+            printf("viewmodel      %s\n", err);
+        else {
+            fp_anim = hta_anim_find(&vm.graph, fp_clip);
+            printf("viewmodel      %s: %u verts (%u hands + %u gun), clip '%s' %s\n",
+                   wdef.path, vm.mesh.vertex_count, vm.hands_verts, vm.gun_verts,
+                   fp_clip, fp_anim >= 0 ? vm.graph.anims[fp_anim].name : "NOT FOUND");
+            gvm = hta_gfx_mesh_upload_dynamic(g, &vm.mesh, err, sizeof(err));
+            if (!gvm) printf("viewmodel      upload failed: %s\n", err);
+        }
+    }
+
     /* frame the whole BSP: orbit the bounding sphere */
     float ctr[3], radius = 0.0f;
     for (int k = 0; k < 3; k++) ctr[k] = 0.5f * (mesh.bounds_min[k] + mesh.bounds_max[k]);
@@ -182,19 +217,60 @@ int main(int argc, char **argv)
     printf("\n");
     double total_render = 0.0;
     uint32_t drawn = 0;
+    hta_spawn_point spawn;
+    int have_spawn = hta_scenario_spawns(&c, &spawn, 1) > 0;
+    if (fp_mode) {
+        cam.znear = 0.02f;
+        cam.zfar  = radius * 12.0f;
+    }
     for (uint32_t s = 0; s < shots; s++) {
-        float ang = 6.2831853f * (float)s / (float)(shots ? shots : 1);
-        float dist = radius * 2.4f;
-        cam.pos[0] = ctr[0] + cosf(ang) * dist;
-        cam.pos[1] = ctr[1] + sinf(ang) * dist;
-        cam.pos[2] = ctr[2] + radius * 0.85f;
-        /* aim at the centre */
-        float dx = ctr[0]-cam.pos[0], dy = ctr[1]-cam.pos[1], dz = ctr[2]-cam.pos[2];
-        cam.yaw   = atan2f(dy, dx);
-        cam.pitch = atan2f(dz, sqrtf(dx*dx + dy*dy));
+        if (fp_mode) {
+            /* Stand where a player spawns and look along the spawn facing. */
+            if (have_spawn) {
+                cam.pos[0] = spawn.position[0];
+                cam.pos[1] = spawn.position[1];
+                cam.pos[2] = spawn.position[2] + 0.62f;  /* Trial standing eye */
+                cam.yaw = spawn.facing;
+            } else {
+                cam.pos[0] = ctr[0]; cam.pos[1] = ctr[1]; cam.pos[2] = ctr[2] + 1.0f;
+                cam.yaw = 0.0f;
+            }
+            cam.pitch = 0.0f;
+            if (vm.loaded && fp_anim >= 0) {
+                /* One animation frame per shot, straight through the clip. */
+                const hta_animation *a = &vm.graph.anims[fp_anim];
+                float f = a->frame_count > 1
+                        ? (float)(a->frame_count - 1) * (float)s / (float)(shots > 1 ? shots - 1 : 1)
+                        : 0.0f;
+                hta_transform local[HTA_ANIM_MAX_NODES], world[HTA_ANIM_MAX_NODES];
+                if (hta_anim_sample(&vm.graph, (uint32_t)fp_anim, f, local)) {
+                    hta_anim_world(&vm.graph, local, world);
+                    hta_viewmodel_pose(&vm, world);
+                }
+            }
+        } else {
+            float ang = 6.2831853f * (float)s / (float)(shots ? shots : 1);
+            float dist = radius * 2.4f;
+            cam.pos[0] = ctr[0] + cosf(ang) * dist;
+            cam.pos[1] = ctr[1] + sinf(ang) * dist;
+            cam.pos[2] = ctr[2] + radius * 0.85f;
+            /* aim at the centre */
+            float dx = ctr[0]-cam.pos[0], dy = ctr[1]-cam.pos[1], dz = ctr[2]-cam.pos[2];
+            cam.yaw   = atan2f(dy, dx);
+            cam.pitch = atan2f(dz, sqrtf(dx*dx + dy*dy));
+        }
+
+        hta_gfx_viewmodel vmdraw;
+        memset(&vmdraw, 0, sizeof(vmdraw));
+        if (gvm) {
+            vmdraw.mesh = gvm;
+            vmdraw.vertices = vm.posed;
+            vmdraw.vertex_count = vm.mesh.vertex_count;
+            for (int k = 0; k < 3; k++) vmdraw.offset[k] = wdef.fp_offset[k];
+        }
 
         double r0 = hta_time_seconds();
-        bool ok = hta_gfx_draw(g, &cam, &scene, gm, gs, NULL, NULL, NULL);
+        bool ok = hta_gfx_draw(g, &cam, &scene, gm, gs, NULL, gvm ? &vmdraw : NULL);
         double r1 = hta_time_seconds();
         if (!ok) { fprintf(stderr, "draw failed on shot %u\n", s); break; }
         total_render += (r1 - r0);
@@ -217,6 +293,8 @@ int main(int argc, char **argv)
     }
 
     free(pixels);
+    if (gvm) hta_gfx_mesh_free(g, gvm);
+    hta_viewmodel_free(&vm);
     if (gs) hta_gfx_mesh_free(g, gs);
     hta_gfx_mesh_free(g, gm);
     hta_gfx_destroy(g);

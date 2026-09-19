@@ -40,10 +40,75 @@ static bool grow(void **p, uint32_t *cap, uint32_t need, uint32_t elem)
     return true;
 }
 
+/* ------------------------------ FP skinning ------------------------------ */
+
+typedef struct {
+    const hta_anim_graph *graph;
+    hta_transform        *rest_inv;   /* indexed by graph node */
+    uint8_t              *have_rest;
+    hta_skin_vertex     **out;        /* grows with dst->vertices */
+    uint32_t              cap;
+    /* model node -> graph node, resolved by name */
+    int16_t               map[HTA_ANIM_MAX_NODES];
+    uint32_t              node_count;
+    int                   local_nodes; /* mod2 flag: per-part node tables */
+    uint32_t              unbound;     /* vertices with no usable binding */
+} skin_ctx;
+
+/* Walks the mod2 node list, composes each node's bind pose into model space,
+ * and stores its inverse against the matching graph node. Halo keys the two
+ * skeletons by node name, not index: the hands model has 37 nodes and the FP
+ * weapon 5, and they land in different slots of the graph's 42. */
+static bool skin_bind_nodes(skin_ctx *sk, const hta_cache *c, uint32_t moff,
+                            char *err, size_t errlen)
+{
+    uint32_t n = 0, ptr = 0, arr = 0;
+    if (!hta_read_reflexive(c, moff + HTA_MOD2_NODES, &n, &ptr) || n == 0) {
+        fail(err, errlen, "model has no nodes to skin against");
+        return false;
+    }
+    if (n > HTA_ANIM_MAX_NODES) { fail(err, errlen, "model has %u nodes", n); return false; }
+    if (!hta_cache_ptr_to_offset(c, ptr, &arr)) return false;
+
+    hta_transform rest[HTA_ANIM_MAX_NODES];
+    int16_t parent[HTA_ANIM_MAX_NODES];
+    hta_transform local[HTA_ANIM_MAX_NODES];
+    char name[32];
+
+    sk->node_count = n;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t nb = arr + i * HTA_NODE_SIZE;
+        memset(name, 0, sizeof(name));
+        hta_rd_bytes(c, nb, name, 31);
+        sk->map[i] = (int16_t)hta_anim_node_index(sk->graph, name);
+        uint16_t par = 0xFFFFu;
+        hta_rd_u16(c, nb + HTA_NODE_PARENT, &par);
+        int16_t p = (int16_t)par;
+        parent[i] = (p >= (int16_t)n) ? -1 : p;
+        for (int k = 0; k < 3; k++) hta_rd_f32(c, nb + HTA_NODE_DEF_T + (uint32_t)k*4u, &local[i].t[k]);
+        for (int k = 0; k < 4; k++) hta_rd_f32(c, nb + HTA_NODE_DEF_Q + (uint32_t)k*4u, &local[i].q[k]);
+        /* Same rotation sense as the animation data -- conjugate on read. */
+        local[i].q[0] = -local[i].q[0];
+        local[i].q[1] = -local[i].q[1];
+        local[i].q[2] = -local[i].q[2];
+        local[i].s = 1.0f;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        int16_t p = parent[i];
+        if (p < 0 || (uint32_t)p == i || (uint32_t)p > i) rest[i] = local[i];
+        else hta_xf_mul(&rest[i], &rest[p], &local[i]);
+        if (sk->map[i] >= 0) {
+            hta_xf_inverse(&sk->rest_inv[sk->map[i]], &rest[i]);
+            sk->have_rest[sk->map[i]] = 1;
+        }
+    }
+    return true;
+}
+
 static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
                         const hta_resource_map *bitmaps, uint32_t model_tag_id,
                         const float *pos, const float *rot, int sky,
-                        char *err, size_t errlen)
+                        skin_ctx *sk, char *err, size_t errlen)
 {
     int32_t mi = hta_cache_find_tag_by_id(c, model_tag_id);
     if (mi < 0) { fail(err, errlen, "model tag 0x%08X missing", model_tag_id); return false; }
@@ -53,6 +118,13 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
     }
     uint32_t moff;
     if (!hta_cache_ptr_to_offset(c, mt.tag_data_ptr, &moff)) return false;
+
+    if (sk) {
+        uint32_t mflags = 0;
+        hta_rd_u32(c, moff + HTA_MOD2_FLAGS, &mflags);
+        sk->local_nodes = (mflags & HTA_MOD2_FLAG_LOCAL_NODES) != 0;
+        if (!skin_bind_nodes(sk, c, moff, err, errlen)) return false;
+    }
 
     uint32_t gcount=0, gptr=0, scount=0, sptr=0;
     if (!hta_read_reflexive(c, moff + HTA_MOD2_GEOMETRIES, &gcount, &gptr) || gcount == 0)
@@ -131,6 +203,13 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
         hta_rd_u16(c, pe + HTA_PART_VTYPE, &vtype);
         hta_rd_u32(c, pe + HTA_PART_VCOUNT, &vcount);
         hta_rd_u32(c, pe + HTA_PART_VOFFSET, &voff);
+        uint8_t lnodes[HTA_PART_MAX_LOCAL_NODES], lncount = 0;
+        if (sk && sk->local_nodes) {
+            hta_rd_u8(c, pe + HTA_PART_LOCAL_NODE_COUNT, &lncount);
+            if (lncount > HTA_PART_MAX_LOCAL_NODES) lncount = HTA_PART_MAX_LOCAL_NODES;
+            memset(lnodes, 0, sizeof(lnodes));
+            hta_rd_bytes(c, pe + HTA_PART_LOCAL_NODES, lnodes, lncount);
+        }
         /* vtype 4 = model uncompressed (68-byte). tbuf 1 = triangle strip. */
         if (vtype != HTA_VTYPE_MODEL_UNCOMP || vcount == 0 || tcount == 0 ||
             vcount > 20000 || tcount > 80000)
@@ -149,6 +228,8 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
         if (!grow((void **)&dst->vertices, &vcap, need_v, sizeof(hta_vertex))) return false;
         if (!grow((void **)&dst->indices, &icap, need_i, sizeof(uint32_t))) return false;
         if (!grow((void **)&dst->submeshes, &scap, need_s, sizeof(hta_submesh))) return false;
+        if (sk && !grow((void **)sk->out, &sk->cap, need_v, sizeof(hta_skin_vertex)))
+            return false;
 
         uint32_t base = dst->vertex_count;
         float zp[3] = {0,0,0}, zr[3] = {0,0,0};
@@ -170,6 +251,26 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
             d->uv[0]=uv[0]; d->uv[1]=uv[1];
             d->lm_uv[0]=d->lm_uv[1]=0;
 
+            if (sk) {
+                hta_skin_vertex *sv = &(*sk->out)[base + v];
+                uint16_t idx[2] = {0,0};
+                float    w[2] = {0.0f,0.0f};
+                hta_rd_u16(c, vo + HTA_MODEL_VTX_NODE0, &idx[0]);
+                hta_rd_u16(c, vo + HTA_MODEL_VTX_NODE1, &idx[1]);
+                hta_rd_f32(c, vo + HTA_MODEL_VTX_WEIGHT0, &w[0]);
+                hta_rd_f32(c, vo + HTA_MODEL_VTX_WEIGHT1, &w[1]);
+                float total = 0.0f;
+                for (int k = 0; k < 2; k++) {
+                    uint16_t mn = idx[k];
+                    if (sk->local_nodes)
+                        mn = (mn < lncount) ? lnodes[mn] : 0xFFFFu;
+                    int16_t gn = (mn < sk->node_count) ? sk->map[mn] : -1;
+                    if (gn < 0 || !(w[k] > 0.0f)) { sv->node[k] = HTA_SKIN_NONE; sv->weight[k] = 0.0f; }
+                    else { sv->node[k] = (uint16_t)gn; sv->weight[k] = w[k]; total += w[k]; }
+                }
+                if (total > 1e-6f) { sv->weight[0] /= total; sv->weight[1] /= total; }
+                else sk->unbound++;
+            }
         }
 
         uint32_t first = dst->index_count, emitted = 0;
@@ -247,7 +348,34 @@ bool hta_model_instance(hta_bsp_mesh *world, const hta_cache *c,
                         char *err, size_t errlen)
 {
     if (!world || !c) { fail(err, errlen, "bad arguments"); return false; }
-    return append_mod2(world, c, bitmaps, model_tag_id, pos, rot, 0, err, errlen);
+    return append_mod2(world, c, bitmaps, model_tag_id, pos, rot, 0, NULL, err, errlen);
+}
+
+bool hta_model_append_skinned(hta_bsp_mesh *dst, hta_skin_vertex **skin,
+                              const hta_cache *c, const hta_resource_map *bitmaps,
+                              uint32_t model_tag_id, const hta_anim_graph *g,
+                              hta_transform *rest_inv, uint8_t *have_rest,
+                              char *err, size_t errlen)
+{
+    if (!dst || !skin || !c || !g || !rest_inv || !have_rest) {
+        fail(err, errlen, "bad arguments"); return false;
+    }
+    skin_ctx sk;
+    memset(&sk, 0, sizeof(sk));
+    sk.graph = g;
+    sk.rest_inv = rest_inv;
+    sk.have_rest = have_rest;
+    sk.out = skin;
+    sk.cap = dst->vertex_count;
+    for (uint32_t i = 0; i < HTA_ANIM_MAX_NODES; i++) sk.map[i] = -1;
+
+    if (!append_mod2(dst, c, bitmaps, model_tag_id, NULL, NULL, 0, &sk, err, errlen))
+        return false;
+    if (sk.unbound) {
+        fail(err, errlen, "%u vertices bound to no graph node", sk.unbound);
+        return false;
+    }
+    return true;
 }
 
 static uint32_t palette_model(const hta_cache *c, uint32_t pal_arr, uint32_t pal_count,
@@ -585,7 +713,7 @@ bool hta_sky_load(hta_bsp_mesh *out, const hta_cache *c,
 
     out->textures = (hta_bsp_texture *)calloc(256, sizeof(hta_bsp_texture));
     if (!out->textures) return false;
-    if (!append_mod2(out, c, bitmaps, mid, NULL, NULL, 1, err, errlen)) {
+    if (!append_mod2(out, c, bitmaps, mid, NULL, NULL, 1, NULL, err, errlen)) {
         hta_bsp_free(out);
         return false;
     }
