@@ -125,6 +125,8 @@ typedef struct {
     uint32_t empty_snd;      /* the click when the magazine is out */
     uint32_t foot_snd[33];   /* per MaterialType, resolved on first use */
     uint8_t  foot_known[33];
+    uint32_t impact_snd[33];
+    uint8_t  impact_known[33];
     uint32_t rng;
 
     hta_ammo ammo;
@@ -328,6 +330,22 @@ static void play_tag(hta_android *s, uint32_t tag_id, float gain)
     s->rng = s->rng * 1664525u + 1013904223u;
     uint32_t pick = n > 1 ? (s->rng >> 16) % n : 0u;
     hta_audio_play(&s->audio, s->bank[b].clip[pick], gain);
+}
+
+/* What the round hit. Halo keeps one response per material on the
+ * projectile itself, each naming the effect -- so a bullet into sand and a
+ * bullet into a base wall are the weapon's own two sounds, not one of
+ * ours. */
+static void play_impact(hta_android *s, uint8_t material)
+{
+    if (material >= 33u || !s->weap.projectile_id) return;
+    if (!s->impact_known[material]) {
+        s->impact_known[material] = 1;
+        s->impact_snd[material] =
+            hta_projectile_impact_sound(&s->cache, s->weap.projectile_id, material);
+        if (s->impact_snd[material]) bank_get(s, s->impact_snd[material]);
+    }
+    if (s->impact_snd[material]) play_tag(s, s->impact_snd[material], 0.8f);
 }
 
 /* The footstep for what you are standing on. Halo keeps these in the
@@ -1061,6 +1079,7 @@ void android_main(struct android_app *app)
                 hta_viewmodel_play(&state.vm, HTA_VM_FIRE);
                 hta_viewmodel_flash(&state.vm);
                 play_tag(&state, state.fire_snd, 1.0f);
+                play_impact(&state, state.gun.hit_material);
             } else if (state.ammo.dry && state.dry_cooldown <= 0.0f) {
                 /* Click, then reload by itself, the way Halo does. */
                 play_tag(&state, state.empty_snd, 1.0f);

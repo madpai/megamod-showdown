@@ -262,6 +262,60 @@ int main(int argc, char **argv)
         }
     }
 
+    printf("\n[impact sounds from the projectile's own tag]\n");
+    {
+        hta_weapon_def wd;
+        memset(&wd, 0, sizeof(wd));
+        CHECK(hta_weapon_load_default(&c, NULL, &wd, NULL, err, sizeof(err)),
+              "weapon loads");
+        CHECK(wd.projectile_id != 0, "the trigger names a projectile");
+
+        /* Halo keeps one response per material ON THE PROJECTILE, each
+         * naming an effect, and the sound is that effect's. */
+        const uint8_t mats[4] = { 1u, 2u, 7u, 9u };
+        const char *nm[4] = { "sand", "stone", "metal thick", "glass" };
+        uint32_t resolved = 0, distinct = 0;
+        uint32_t seen[4] = {0,0,0,0};
+        for (int i = 0; i < 4; i++) {
+            uint32_t sid = hta_projectile_impact_sound(&c, wd.projectile_id, mats[i]);
+            char sp2[192] = "(none)";
+            if (sid) {
+                int32_t si = hta_cache_find_tag_by_id(&c, sid);
+                if (si >= 0) {
+                    hta_tag_entry st;
+                    hta_cache_tag(&c, (uint32_t)si, &st);
+                    hta_cache_tag_path(&c, &st, sp2, sizeof(sp2));
+                    resolved++;
+                }
+                int dup = 0;
+                for (int k = 0; k < 4; k++) if (seen[k] == sid) dup = 1;
+                if (!dup) seen[distinct++] = sid;
+            }
+            printf("    %-12s -> %s\n", nm[i], sp2);
+        }
+        CHECK(resolved == 4, "every material Blood Gulch is made of has an impact");
+        CHECK(distinct >= 3, "and they are not all the same sound");
+
+        CHECK(hta_projectile_impact_sound(&c, wd.projectile_id, 200u) == 0,
+              "an out-of-range material is refused");
+        CHECK(hta_projectile_impact_sound(&c, 0u, 1u) == 0,
+              "no projectile means no impact");
+
+        if (have_sounds) {
+            uint32_t sid = hta_projectile_impact_sound(&c, wd.projectile_id, 1u);
+            hta_pcm pcm;
+            CHECK(sid && hta_sound_decode(&c, &sm, sid, 0, &pcm, err, sizeof(err)),
+                  "the sand impact decodes from sounds.map");
+            if (sid && pcm.samples) {
+                printf("    sand impact: %.3f s\n",
+                       (double)pcm.frame_count / (double)pcm.sample_rate);
+                CHECK(pcm.frame_count < pcm.sample_rate * 3u,
+                      "and is an impact's length");
+                hta_pcm_free(&pcm);
+            }
+        }
+    }
+
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

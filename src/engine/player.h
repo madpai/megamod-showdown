@@ -61,6 +61,13 @@ bool hta_collision_ray(const hta_collision *c,
                        const float orig[3], const float dir[3], float max_t,
                        float *out_t, float hit[3], float nrm[3]);
 
+/* As above, and also what the surface is made of. A bullet sounds different
+ * hitting sand and hitting a base wall, and the projectile tag says how. */
+bool hta_collision_ray_material(const hta_collision *c,
+                                const float orig[3], const float dir[3], float max_t,
+                                float *out_t, float hit[3], float nrm[3],
+                                uint8_t *out_material);
+
 typedef struct {
     float pos[3];        /* feet position */
     float velocity[3];

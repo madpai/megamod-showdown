@@ -64,4 +64,11 @@ bool hta_effect_fp_flash(const hta_cache *c, uint32_t effect_tag_id,
 uint32_t hta_material_effect_sound(const hta_cache *c, uint32_t foot_tag_id,
                                    uint32_t group, uint8_t material);
 
+/* What a projectile sounds like hitting that MaterialType. Halo keeps one
+ * response per material on the projectile itself, each naming an `effe`,
+ * and the sound is that effect's. Returns 0 when the material has no
+ * response -- a shield or rubber makes no impact noise. */
+uint32_t hta_projectile_impact_sound(const hta_cache *c, uint32_t projectile_id,
+                                     uint8_t material);
+
 #endif

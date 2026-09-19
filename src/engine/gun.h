@@ -33,6 +33,9 @@ typedef struct {
     float    error_decel;       /* seconds of rest to return to 0 */
     float    since_shot;        /* seconds since the last round left */
     uint32_t rng;
+    /* What the last round hit, so the caller can play that material's own
+     * impact. HTA_MATERIAL_NONE when it missed or hit something unknown. */
+    uint8_t  hit_material;
 } hta_gun;
 
 /* Take the trigger's error fields. Without this the gun keeps its defaults

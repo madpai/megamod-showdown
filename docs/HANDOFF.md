@@ -197,6 +197,33 @@ value, and `HTA_HUD_PHONE_SCALE` (1.75) is a deliberate enlargement for a
 handset. Those two are the only invented numbers in the HUD and both are
 named and commented as such.
 
+## Bullet impacts (2026-09-19)
+
+Hitting sand and hitting a base wall are the weapon's own two sounds, and
+the chain is fully referenced -- no tag path is hardcoded:
+
+`weap` -> trigger's `projectile` -> `proj weapons\assault rifle\bullet` ->
+**projectile material response[MaterialType]** -> its `default effect`
+(`effe`) -> `hta_effect_first_sound`.
+
+Projectile inherits Object (380), so the responses sit at **576** absolute,
+160 bytes each, `default effect` at **+4**. On the Trial's AR that gives
+dirthits for dirt and sand, granhit for stone, metalhit for all three
+metals, glass_hits for glass, fleshhit for a grunt -- 33 responses in all.
+
+`hta_collision_ray_material` reports what the ray struck, and the gun
+remembers it on `hit_material`, so the caller plays the right one.
+
+**Two other places the same material index leads, not yet used:**
+
+- `matg globals` -> materials[type] (884 bytes each) -> **melee hit sound**
+  at **+868**: melee_dirt, melee_concrete, melee_metal, melee_impact_fleshy.
+  Melee swings connect with nothing yet, but when they do, that is the
+  sound.
+- `foot sound\sfx\impulse\material_effects\weapon` group 8 holds a
+  parallel set of impact sounds. Nothing here references it, and the
+  projectile's own responses are the referenced route, so it is unused.
+
 ## Footsteps (2026-09-19)
 
 You hear what you are walking on, because Halo's biped says so. The chain is

@@ -432,13 +432,16 @@ void hta_collision_depenetrate(const hta_collision *c,
     }
 }
 
-bool hta_collision_ray(const hta_collision *c,
-                       const float orig[3], const float dir[3], float max_t,
-                       float *out_t, float hit[3], float nrm[3])
+bool hta_collision_ray_material(const hta_collision *c,
+                                const float orig[3], const float dir[3], float max_t,
+                                float *out_t, float hit[3], float nrm[3],
+                                uint8_t *out_material)
 {
+    if (out_material) *out_material = HTA_MATERIAL_NONE;
     if (!c || !c->built || !orig || !dir) return false;
     float best = max_t;
     int found = 0;
+    int32_t best_tri = -1;
     float bn[3] = {0, 0, 1};
     const float EPS = 1e-7f;
     for (uint32_t t = 0; t < c->tri_count; t++) {
@@ -469,6 +472,7 @@ bool hta_collision_ray(const hta_collision *c,
         if (tt <= EPS || tt >= best) continue;
         best = tt;
         found = 1;
+        best_tri = (int32_t)t;
         float nx = e1[1]*e2[2] - e1[2]*e2[1];
         float ny = e1[2]*e2[0] - e1[0]*e2[2];
         float nz = e1[0]*e2[1] - e1[1]*e2[0];
@@ -485,7 +489,16 @@ bool hta_collision_ray(const hta_collision *c,
         hit[2] = orig[2] + dir[2] * best;
     }
     if (nrm) { nrm[0] = bn[0]; nrm[1] = bn[1]; nrm[2] = bn[2]; }
+    if (out_material && c->tri_material && best_tri >= 0)
+        *out_material = c->tri_material[best_tri];
     return true;
+}
+
+bool hta_collision_ray(const hta_collision *c,
+                       const float orig[3], const float dir[3], float max_t,
+                       float *out_t, float hit[3], float nrm[3])
+{
+    return hta_collision_ray_material(c, orig, dir, max_t, out_t, hit, nrm, NULL);
 }
 
 /* ------------------------------ player ------------------------------ */

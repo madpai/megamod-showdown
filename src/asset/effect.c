@@ -200,3 +200,34 @@ uint32_t hta_material_effect_sound(const hta_cache *c, uint32_t foot_tag_id,
         return 0;
     return (snd && snd != 0xFFFFFFFFu) ? snd : 0;
 }
+
+/* Projectile inherits Object (380 bytes), so its own fields start there and
+ * the material responses sit 196 in. ProjectileMaterialResponse is 160 with
+ * its `default effect` dependency at +4. */
+#define PROJ_MATERIAL_RESPONSES 576u
+#define PROJ_RESPONSE_SIZE      160u
+#define PROJ_RESPONSE_EFFECT      4u
+
+uint32_t hta_projectile_impact_sound(const hta_cache *c, uint32_t projectile_id,
+                                     uint8_t material)
+{
+    if (!c || !projectile_id || projectile_id == 0xFFFFFFFFu) return 0;
+    if (material >= 33u) return 0;
+    int32_t ti = hta_cache_find_tag_by_id(c, projectile_id);
+    if (ti < 0) return 0;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t) || t.indexed) return 0;
+    uint32_t base = 0;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return 0;
+
+    uint32_t n = 0, p = 0, off = 0;
+    if (!hta_read_reflexive(c, base + PROJ_MATERIAL_RESPONSES, &n, &p)) return 0;
+    if (material >= n || !hta_cache_ptr_to_offset(c, p, &off)) return 0;
+
+    uint32_t fx = 0;
+    if (!hta_rd_u32(c, off + (uint32_t)material * PROJ_RESPONSE_SIZE
+                        + PROJ_RESPONSE_EFFECT + 12u, &fx))
+        return 0;
+    if (!fx || fx == 0xFFFFFFFFu) return 0;
+    return hta_effect_first_sound(c, fx);
+}

@@ -8,6 +8,7 @@ void hta_gun_init(hta_gun *g)
     if (!g) return;
     memset(g, 0, sizeof(*g));
     g->fire_interval = HTA_GUN_COOLDOWN;
+    g->hit_material = HTA_MATERIAL_NONE;
     g->error_accel = 0.6f;
     g->error_decel = 1.0f;
     g->since_shot = 1e6f;
@@ -112,7 +113,9 @@ int hta_gun_fire(hta_gun *g, const hta_collision *col, const hta_camera *cam)
     hta_gun_shot_dir(g, aim, dir);
     g->since_shot = 0.0f;
     float hit[3], nrm[3], t;
-    if (!hta_collision_ray(col, cam->pos, dir, HTA_GUN_RANGE, &t, hit, nrm))
+    g->hit_material = HTA_MATERIAL_NONE;
+    if (!hta_collision_ray_material(col, cam->pos, dir, HTA_GUN_RANGE, &t, hit, nrm,
+                                    &g->hit_material))
         return 1; /* shot fired, missed */
     uint32_t i = g->next % HTA_GUN_MAX_HITS;
     g->hits[i].pos[0] = hit[0] + nrm[0] * 0.02f;
