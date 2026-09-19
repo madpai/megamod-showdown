@@ -98,6 +98,12 @@ bool hta_player_physics_load(hta_player_physics *p, const hta_cache *c,
             hta_cache_ptr_to_offset(c, t.tag_data_ptr, &off)) {
             float fov = rd_f(c, off + HTA_BIPD_UNIT + HTA_UNIT_FOV);
             if (fov > 0.4f && fov < 2.5f) p->fov_y = fov;
+            /* Biped inherits Unit inherits Object, so its own fields start
+             * at HTA_BIPD_BODY; footsteps is a dependency 156 in. */
+            uint32_t foot = 0;
+            if (hta_rd_u32(c, off + HTA_BIPD_BODY + HTA_BIPD_FOOTSTEPS + 12u, &foot) &&
+                foot && foot != 0xFFFFFFFFu)
+                p->footsteps_id = foot;
             float slope = rd_f(c, off + HTA_BIPD_BODY + HTA_BIPD_SLOPE);
             if (slope > 0.1f && slope < 1.6f) p->max_slope = slope;
             float ds = rd_f(c, off + HTA_BIPD_BODY + HTA_BIPD_DOWN_SCALE);

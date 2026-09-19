@@ -110,6 +110,7 @@ void hta_bsp_free(hta_bsp_mesh *m)
     free(m->vertices);
     free(m->indices);
     free(m->submeshes);
+    free(m->tri_material);
     if (m->textures) {
         for (uint32_t i = 0; i < m->texture_count; i++) free(m->textures[i].rgba);
         free(m->textures);
@@ -420,6 +421,7 @@ static bool coll_bsp_emit(hta_bsp_mesh *dst, const hta_cache *c,
                           uint32_t voff, uint32_t vcount,
                           uint32_t soff, uint32_t scount,
                           uint32_t eoff, uint32_t ecount,
+                          const uint8_t *mat_lut, uint32_t mat_count,
                           hta_coll_xform_fn xform, void *user)
 {
     if (!dst || !c || vcount == 0 || scount == 0 || ecount == 0) return false;
@@ -459,10 +461,18 @@ static bool coll_bsp_emit(hta_bsp_mesh *dst, const hta_cache *c,
     }
 
     uint32_t nidx = dst->index_count;
+    uint32_t mcap = dst->index_count / 3u;
     uint32_t loop[64];
     for (uint32_t s = 0; s < scount; s++) {
         uint32_t first = 0;
         hta_rd_u32(c, soff + s * HTA_COLL_SURF_SIZE + 4, &first);
+        /* The surface's material index maps through the BSP's collision
+         * materials to one of Halo's 33 MaterialTypes. */
+        uint16_t midx = 0;
+        uint8_t mtype = HTA_MATERIAL_NONE;
+        if (hta_rd_u16(c, soff + s * HTA_COLL_SURF_SIZE + 10, &midx) &&
+            mat_lut && midx < mat_count)
+            mtype = mat_lut[midx];
         if (first >= ecount) continue;
         uint32_t e = first, nv = 0;
         for (uint32_t guard = 0; guard < 32 && nv < 64; guard++) {
@@ -487,6 +497,10 @@ static bool coll_bsp_emit(hta_bsp_mesh *dst, const hta_cache *c,
             uint32_t need = nidx + 3;
             if (!grow_mesh((void **)&dst->indices, &icap, need, sizeof(uint32_t)))
                 return false;
+            if (!grow_mesh((void **)&dst->tri_material, &mcap, nidx / 3u + 1u,
+                           sizeof(uint8_t)))
+                return false;
+            dst->tri_material[nidx / 3u] = mtype;
             dst->indices[nidx++] = base + loop[0];
             dst->indices[nidx++] = base + loop[i];
             dst->indices[nidx++] = base + loop[i + 1];
@@ -497,7 +511,8 @@ static bool coll_bsp_emit(hta_bsp_mesh *dst, const hta_cache *c,
     return dst->index_count > nidx_start;
 }
 
-bool hta_coll_bsp_append(hta_bsp_mesh *dst, const hta_cache *c, uint32_t cb_off,
+bool hta_coll_bsp_append_mat(hta_bsp_mesh *dst, const hta_cache *c, uint32_t cb_off,
+                             const uint8_t *mat_lut, uint32_t mat_count,
                          hta_coll_xform_fn xform, void *user,
                          char *err, size_t errlen)
 {
@@ -515,10 +530,20 @@ bool hta_coll_bsp_append(hta_bsp_mesh *dst, const hta_cache *c, uint32_t cb_off,
         fail(err, errlen, "object collision arrays"); return false;
     }
     uint32_t before = dst->index_count;
-    if (!coll_bsp_emit(dst, c, voff, vcount, soff, scount, eoff, ecount, xform, user)) {
+    if (!coll_bsp_emit(dst, c, voff, vcount, soff, scount, eoff, ecount,
+                       mat_lut, mat_count, xform, user)) {
         fail(err, errlen, "object collision emit failed"); return false;
     }
     return dst->index_count > before;
+}
+
+bool hta_coll_bsp_append(hta_bsp_mesh *dst, const hta_cache *c, uint32_t cb_off,
+                         hta_coll_xform_fn xform, void *user,
+                         char *err, size_t errlen)
+{
+    /* Object colliders index their own `coll` tag's materials, not the
+     * BSP's, so they come back unknown rather than wrong. */
+    return hta_coll_bsp_append_mat(dst, c, cb_off, NULL, 0, xform, user, err, errlen);
 }
 
 bool hta_bsp_load_collision(const hta_cache *c, hta_bsp_mesh *out,
@@ -567,7 +592,27 @@ bool hta_bsp_load_collision(const hta_cache *c, hta_bsp_mesh *out,
     if (!bsp_ptr(&reg, sptr, &soff) || !bsp_ptr(&reg, eptr, &eoff) || !bsp_ptr(&reg, vptr, &voff)) {
         fail(err, errlen, "collision arrays"); return false;
     }
-    if (!coll_bsp_emit(out, c, voff, vcount, soff, scount, eoff, ecount, NULL, NULL) ||
+    /* Which of Halo's 33 material types each collision surface is. The
+     * surface stores an index into the BSP's own collision materials, and
+     * each of those names the type outright. */
+    uint8_t mat_lut[256];
+    uint32_t mat_count = 0;
+    {
+        uint32_t mc = 0, mp = 0, mo = 0;
+        if (hta_read_reflexive(c, sbsp_off + HTA_SBSP_COLLISION_MATERIALS, &mc, &mp) &&
+            mc && bsp_ptr(&reg, mp, &mo)) {
+            if (mc > 256) mc = 256;
+            for (uint32_t i = 0; i < mc; i++) {
+                uint16_t ty = 0;
+                hta_rd_u16(c, mo + i * HTA_SBSP_COLL_MAT_SIZE + HTA_SBSP_COLL_MAT_TYPE, &ty);
+                mat_lut[i] = (ty < 33u) ? (uint8_t)ty : HTA_MATERIAL_NONE;
+            }
+            mat_count = mc;
+        }
+    }
+
+    if (!coll_bsp_emit(out, c, voff, vcount, soff, scount, eoff, ecount,
+                       mat_lut, mat_count, NULL, NULL) ||
         out->index_count < 3) {
         fail(err, errlen, "collision BSP produced no triangles");
         hta_bsp_free(out);

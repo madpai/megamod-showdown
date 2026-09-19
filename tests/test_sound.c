@@ -7,6 +7,7 @@
 #include "asset/sound.h"
 #include "asset/effect.h"
 #include "asset/weapon.h"
+#include "asset/biped.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -196,6 +197,68 @@ int main(int argc, char **argv)
             /* Without sounds.map the failure has to be clear, not a crash. */
             CHECK(!hta_sound_decode(&c, NULL, snd, 0, &bad, err, sizeof(err)),
                   "decoding without sounds.map fails cleanly");
+        }
+    }
+
+    printf("\n[footstep sounds from the biped's own tag]\n");
+    {
+        hta_player_physics phys;
+        hta_player_physics_defaults(&phys);
+        CHECK(hta_player_physics_load(&phys, &c, err, sizeof(err)),
+              "cyborg physics load");
+        CHECK(phys.footsteps_id != 0, "the biped names a footsteps tag");
+
+        int32_t fi = hta_cache_find_tag_by_id(&c, phys.footsteps_id);
+        CHECK(fi >= 0, "and it is in this cache");
+        if (fi >= 0) {
+            hta_tag_entry ft;
+            hta_cache_tag(&c, (uint32_t)fi, &ft);
+            char fpath[192] = "";
+            hta_cache_tag_path(&c, &ft, fpath, sizeof(fpath));
+            printf("    %s\n", fpath);
+            CHECK(ft.primary_class == HTA_FOURCC('f','o','o','t'),
+                  "it really is a material_effects tag");
+        }
+
+        /* Blood Gulch's collision is sand, stone and metal, so those three
+         * have to resolve or the map is silent underfoot. */
+        const uint8_t want[3] = { 1u, 2u, 7u };   /* sand, stone, metal thick */
+        const char *name[3] = { "sand", "stone", "metal thick" };
+        uint32_t got = 0;
+        for (int i = 0; i < 3; i++) {
+            uint32_t sid = hta_material_effect_sound(&c, phys.footsteps_id, 0u, want[i]);
+            char sp2[192] = "(none)";
+            if (sid) {
+                int32_t si = hta_cache_find_tag_by_id(&c, sid);
+                if (si >= 0) {
+                    hta_tag_entry st;
+                    hta_cache_tag(&c, (uint32_t)si, &st);
+                    hta_cache_tag_path(&c, &st, sp2, sizeof(sp2));
+                    got++;
+                }
+            }
+            printf("    %-12s -> %s\n", name[i], sp2);
+        }
+        CHECK(got == 3, "the materials Blood Gulch is made of all have a footstep");
+
+        /* A material with no sound must come back 0, not a wrong one. */
+        CHECK(hta_material_effect_sound(&c, phys.footsteps_id, 0u, 200u) == 0,
+              "an out-of-range material is refused");
+        CHECK(hta_material_effect_sound(&c, 0u, 0u, 1u) == 0,
+              "no footsteps tag means no sound");
+
+        if (have_sounds) {
+            uint32_t sid = hta_material_effect_sound(&c, phys.footsteps_id, 0u, 1u);
+            hta_pcm pcm;
+            CHECK(sid && hta_sound_decode(&c, &sm, sid, 0, &pcm, err, sizeof(err)),
+                  "the sand footstep decodes from sounds.map");
+            if (sid && pcm.samples) {
+                printf("    sand footstep: %.3f s\n",
+                       (double)pcm.frame_count / (double)pcm.sample_rate);
+                CHECK(pcm.frame_count > 0 && pcm.frame_count < pcm.sample_rate * 3u,
+                      "and is a footstep's length, not a song");
+                hta_pcm_free(&pcm);
+            }
         }
     }
 

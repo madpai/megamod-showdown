@@ -20,6 +20,7 @@ typedef struct {
     uint32_t *tri_index;    /* flattened */
     const hta_vertex *verts;
     const uint32_t   *indices;
+    const uint8_t    *tri_material;   /* may be NULL */
     uint32_t          tri_count;
     float             walkable_nz; /* cos(max slope); 0.5 ≈ 60° */
     bool built;
@@ -37,10 +38,16 @@ void hta_collision_free(hta_collision *c);
  * append). The grid still refers to the original triangle range. */
 void hta_collision_rebind(hta_collision *c, const hta_vertex *verts,
                           const uint32_t *indices);
+void hta_collision_rebind_material(hta_collision *c, const uint8_t *tri_material);
 
 /* Highest triangle surface at or below (x,y,z_from). Returns false if none. */
 bool hta_collision_ground(const hta_collision *c, float x, float y, float z_from,
                           float *out_z);
+
+/* Halo's MaterialType of the ground there, or HTA_MATERIAL_NONE. What you
+ * are standing on is what decides which footstep plays. */
+uint8_t hta_collision_ground_material(const hta_collision *c,
+                                      float x, float y, float z_from);
 
 /* Push a standing pill (radius, [z_feet, z_feet+height]) out of steep faces.
  * Floors are ignored — those stay a ground snap. */
@@ -66,7 +73,18 @@ typedef struct {
     float gravity;
     bool  noclip;
     hta_player_physics phys;
+
+    /* Footsteps are paced by distance, not by a timer, so they slow down
+     * when you do and stop when you stop. `footstep` is true for the one
+     * update in which a foot lands. */
+    float step_distance;
+    bool  footstep;
+    bool  landed;        /* true for the update a fall ends */
 } hta_player;
+
+/* World units between footfalls. The Trial's cyborg runs at 2.25 wu/s, so
+ * this is a little under three steps a second at a full run. */
+#define HTA_STEP_LENGTH 0.80f
 
 typedef struct {
     float move_forward;  /* -1 .. 1 */

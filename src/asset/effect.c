@@ -162,3 +162,41 @@ bool hta_effect_fp_flash(const hta_cache *c, uint32_t effect_tag_id,
     }
     return false;
 }
+
+/* MaterialEffects (140): effects@0.
+ * MaterialEffectsMaterialEffect (28): materials@0.
+ * MaterialEffectsMaterialEffectMaterial (48): effect@0, sound@16. */
+#define MATFX_EFFECTS        0u
+#define MATFX_EFFECT_SIZE   28u
+#define MATFX_MATERIALS      0u
+#define MATFX_MAT_SIZE      48u
+#define MATFX_MAT_SOUND     16u
+
+uint32_t hta_material_effect_sound(const hta_cache *c, uint32_t foot_tag_id,
+                                   uint32_t group, uint8_t material)
+{
+    if (!c || !foot_tag_id || foot_tag_id == 0xFFFFFFFFu) return 0;
+    if (material >= 33u) return 0;
+    int32_t ti = hta_cache_find_tag_by_id(c, foot_tag_id);
+    if (ti < 0) return 0;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t) || t.indexed) return 0;
+    uint32_t base = 0;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return 0;
+
+    uint32_t ec = 0, ep = 0, eo = 0;
+    if (!hta_read_reflexive(c, base + MATFX_EFFECTS, &ec, &ep)) return 0;
+    if (group >= ec || !hta_cache_ptr_to_offset(c, ep, &eo)) return 0;
+
+    uint32_t mc = 0, mp = 0, mo = 0;
+    if (!hta_read_reflexive(c, eo + group * MATFX_EFFECT_SIZE + MATFX_MATERIALS,
+                            &mc, &mp))
+        return 0;
+    if (material >= mc || !hta_cache_ptr_to_offset(c, mp, &mo)) return 0;
+
+    uint32_t snd = 0;
+    if (!hta_rd_u32(c, mo + (uint32_t)material * MATFX_MAT_SIZE
+                        + MATFX_MAT_SOUND + 12u, &snd))
+        return 0;
+    return (snd && snd != 0xFFFFFFFFu) ? snd : 0;
+}

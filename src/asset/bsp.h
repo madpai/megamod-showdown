@@ -25,6 +25,9 @@
 #define HTA_SBSP_AMBIENT_COLOR      0x02Cu  /* ColorRGB */
 #define HTA_SBSP_LIGHT0_COLOR       0x03Cu  /* ColorRGB */
 #define HTA_SBSP_LIGHT0_DIRECTION   0x048u  /* Vector3D */
+#define HTA_SBSP_COLLISION_MATERIALS 0x0A4u /* TagReflexive, 20 bytes each */
+#define HTA_SBSP_COLL_MAT_SIZE       20u
+#define HTA_SBSP_COLL_MAT_TYPE       18u    /* MaterialType */
 #define HTA_SBSP_COLLISION_BSP      0x0B0u  /* TagReflexive */
 /* World bounds are three min/max PAIRS (6 floats, 24 bytes), not 3 floats.
  * Invader's generated definition lists them as three scalars, which is what
@@ -95,7 +98,8 @@ typedef struct {
 #define HTA_DRAW_OPAQUE 0u
 #define HTA_DRAW_ALPHA  1u
 #define HTA_DRAW_ADD    2u
-#define HTA_DRAW_SKIP   3u  /* sky portals: don't draw, let the sky show through */
+#define HTA_DRAW_SKIP   3u
+#define HTA_MATERIAL_NONE 0xFFu  /* sky portals: don't draw, let the sky show through */
 
 typedef struct {
     uint32_t tag_id;
@@ -111,6 +115,11 @@ typedef struct {
     uint32_t     index_count;
     hta_submesh *submeshes;
     uint32_t     submesh_count;
+
+    /* Collision meshes only: Halo's MaterialType per triangle (0 dirt,
+     * 1 sand, 2 stone, ...), or HTA_MATERIAL_NONE. What you are standing on
+     * decides which footstep the biped's `foot` tag plays. */
+    uint8_t     *tri_material;   /* index_count / 3 entries */
 
     /* simple lighting straight out of the BSP */
     float ambient[3];
@@ -152,6 +161,13 @@ bool hta_bsp_load_collision(const hta_cache *c, hta_bsp_mesh *out,
 /* Flatten one ModelCollisionGeometryBSP (object `coll` tag, cache pointers)
  * onto `dst`, running each vertex through `xform` if given. */
 typedef void (*hta_coll_xform_fn)(float out[3], const float in[3], void *user);
+/* `mat_lut` maps a collision surface's material index to Halo's MaterialType;
+ * pass NULL when there is none and every triangle comes back
+ * HTA_MATERIAL_NONE. */
+bool hta_coll_bsp_append_mat(hta_bsp_mesh *dst, const hta_cache *c, uint32_t cb_off,
+                             const uint8_t *mat_lut, uint32_t mat_count,
+                             hta_coll_xform_fn xform, void *user,
+                             char *err, size_t errlen);
 bool hta_coll_bsp_append(hta_bsp_mesh *dst, const hta_cache *c, uint32_t cb_off,
                          hta_coll_xform_fn xform, void *user,
                          char *err, size_t errlen);

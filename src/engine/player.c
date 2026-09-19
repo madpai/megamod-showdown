@@ -28,6 +28,7 @@ bool hta_collision_build(hta_collision *c, const hta_bsp_mesh *mesh)
 
     c->verts     = mesh->vertices;
     c->indices   = mesh->indices;
+    c->tri_material = mesh->tri_material;
     c->tri_count = mesh->index_count / 3;
     c->walkable_nz = 0.50f;
 
@@ -138,6 +139,56 @@ static bool tri_height(const float a[3], const float b[3], const float c3[3],
     }
     *out_z = a[2] + u * (c3[2]-a[2]) + v * (b[2]-a[2]);
     return true;
+}
+
+/* Shared by the height query and the material query: the best walkable
+ * triangle under this point, or -1. */
+static int32_t ground_tri(const hta_collision *c, float x, float y, float z_from,
+                          float *out_z)
+{
+    if (!c || !c->built) return -1;
+    int cx = (int)((x - c->min[0]) / c->cell);
+    int cy = (int)((y - c->min[1]) / c->cell);
+    if (cx < 0 || cy < 0 || cx >= (int)c->nx || cy >= (int)c->ny) return -1;
+
+    uint32_t ci = (uint32_t)cy * c->nx + (uint32_t)cx;
+    uint32_t s = c->cell_start[ci], e = c->cell_start[ci + 1u];
+    int32_t best_tri = -1;
+    float best = -1e30f;
+    const float WALKABLE_NZ = (c->walkable_nz > 0.1f) ? c->walkable_nz : 0.50f;
+    const float STEP = 0.18f;
+    for (uint32_t k = s; k < e; k++) {
+        uint32_t t = c->tri_index[k];
+        const float *a = c->verts[c->indices[t*3+0]].pos;
+        const float *b = c->verts[c->indices[t*3+1]].pos;
+        const float *d = c->verts[c->indices[t*3+2]].pos;
+        float e1x = b[0]-a[0], e1y = b[1]-a[1], e1z = b[2]-a[2];
+        float e2x = d[0]-a[0], e2y = d[1]-a[1], e2z = d[2]-a[2];
+        float nx = e1y*e2z - e1z*e2y;
+        float ny = e1z*e2x - e1x*e2z;
+        float nz = e1x*e2y - e1y*e2x;
+        float nlen = sqrtf(nx*nx + ny*ny + nz*nz);
+        if (nlen < 1e-8f || fabsf(nz) / nlen < WALKABLE_NZ) continue;
+        float z;
+        if (!tri_height(a, b, d, x, y, &z)) continue;
+        if (z <= z_from + STEP && z > best) { best = z; best_tri = (int32_t)t; }
+    }
+    if (best_tri >= 0 && out_z) *out_z = best;
+    return best_tri;
+}
+
+uint8_t hta_collision_ground_material(const hta_collision *c,
+                                      float x, float y, float z_from)
+{
+    if (!c || !c->tri_material) return HTA_MATERIAL_NONE;
+    int32_t t = ground_tri(c, x, y, z_from, NULL);
+    if (t < 0) return HTA_MATERIAL_NONE;
+    return c->tri_material[t];
+}
+
+void hta_collision_rebind_material(hta_collision *c, const uint8_t *tri_material)
+{
+    if (c) c->tri_material = tri_material;
 }
 
 bool hta_collision_ground(const hta_collision *c, float x, float y, float z_from,
@@ -499,6 +550,9 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
     p->eye_height = p->phys.cam_stand + (p->phys.cam_crouch - p->phys.cam_stand) * p->crouch_t;
     p->radius = p->phys.radius;
 
+    bool  was_air_this_update = false;
+    float step_start_x = p->pos[0], step_start_y = p->pos[1];
+
     float fwd[3], right[3];
     hta_camera_forward(cam, fwd);
     hta_camera_right(cam, right);
@@ -543,6 +597,9 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
         p->velocity[2] -= p->gravity * dt;
         if (p->velocity[2] < -40.0f) p->velocity[2] = -40.0f;
 
+        was_air_this_update = !p->on_ground;
+        step_start_x = p->pos[0];
+        step_start_y = p->pos[1];
         float oz = p->pos[2];
         p->pos[0] += p->velocity[0] * dt;
         p->pos[1] += p->velocity[1] * dt;
@@ -616,6 +673,28 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
             }
         }
         /* no mesh: leave on_ground as-is so tag-physics tests can stay grounded */
+    }
+
+    /* Footsteps are paced by ground covered, so they keep step with you
+     * whatever your speed, and stop dead when you do. A landing is its own
+     * footfall however far you travelled getting there. */
+    p->footstep = false;
+    p->landed = false;
+    if (!p->noclip && p->on_ground) {
+        if (was_air_this_update) {
+            p->landed = true;
+            p->footstep = true;
+            p->step_distance = 0.0f;
+        } else {
+            float sdx = p->pos[0] - step_start_x, sdy = p->pos[1] - step_start_y;
+            p->step_distance += sqrtf(sdx * sdx + sdy * sdy);
+            if (p->step_distance >= HTA_STEP_LENGTH) {
+                p->step_distance -= HTA_STEP_LENGTH;
+                p->footstep = true;
+            }
+        }
+    } else if (!p->on_ground) {
+        p->step_distance = 0.0f;
     }
 
     cam->pos[0] = p->pos[0];

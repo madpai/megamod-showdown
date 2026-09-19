@@ -123,6 +123,8 @@ typedef struct {
     uint32_t bank_count;
     uint32_t fire_snd;       /* snd! id of the weapon's gunshot, 0 if none */
     uint32_t empty_snd;      /* the click when the magazine is out */
+    uint32_t foot_snd[33];   /* per MaterialType, resolved on first use */
+    uint8_t  foot_known[33];
     uint32_t rng;
 
     hta_ammo ammo;
@@ -327,6 +329,22 @@ static void play_tag(hta_android *s, uint32_t tag_id, float gain)
     uint32_t pick = n > 1 ? (s->rng >> 16) % n : 0u;
     hta_audio_play(&s->audio, s->bank[b].clip[pick], gain);
 }
+
+/* The footstep for what you are standing on. Halo keeps these in the
+ * biped's own `foot` tag, one sound per material, and plenty of materials
+ * have none -- silence is the right answer there, so remember that too. */
+static void play_footstep(hta_android *s, uint8_t material)
+{
+    if (material >= 33u || !s->player.phys.footsteps_id) return;
+    if (!s->foot_known[material]) {
+        s->foot_known[material] = 1;
+        s->foot_snd[material] =
+            hta_material_effect_sound(&s->cache, s->player.phys.footsteps_id, 0u, material);
+        if (s->foot_snd[material]) bank_get(s, s->foot_snd[material]);
+    }
+    if (s->foot_snd[material]) play_tag(s, s->foot_snd[material], 0.7f);
+}
+
 
 static bool find_named(hta_android *s, const char *name, char *out, size_t outlen)
 {
@@ -553,6 +571,8 @@ static bool load_map(hta_android *s)
             hta_log("[player] cyborg_mp run %.2f wu/s jump %.2f cam %.2f r %.2f slope %.0f deg",
                     phys.run_forward, phys.jump_speed, phys.cam_stand, phys.radius,
                     phys.max_slope * (180.0f / 3.14159265f));
+            hta_log("[player] footsteps tag 0x%08X, step every %.2f wu",
+                    phys.footsteps_id, HTA_STEP_LENGTH);
         } else {
             hta_log("[player] using fallback physics (%s)", err);
         }
@@ -1006,6 +1026,13 @@ void android_main(struct android_app *app)
         gather_input(&state, &in, dt);
         hta_player_update(&state.player, &state.cam,
                           state.col.built ? &state.col : NULL, &in, dt);
+        if (state.player.footstep && state.col.built) {
+            uint8_t mat = hta_collision_ground_material(&state.col,
+                                                        state.player.pos[0],
+                                                        state.player.pos[1],
+                                                        state.player.pos[2] + 0.1f);
+            play_footstep(&state, mat);
+        }
         hta_gun_update(&state.gun, dt);
         /* Ammo gates the shot: hta_gun_fire spends the cooldown whether or
          * not the magazine could pay, so ask before pulling. */

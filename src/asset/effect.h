@@ -58,4 +58,10 @@ uint32_t hta_effect_first_sound(const hta_cache *c, uint32_t effect_tag_id);
 bool hta_effect_fp_flash(const hta_cache *c, uint32_t effect_tag_id,
                          const char *marker_name, hta_effect_particle *out);
 
+/* `foot` (material_effects): the sound this biped makes stepping on that
+ * MaterialType. Group 0 is the walk set. Returns 0 when the material has no
+ * sound of its own -- plenty do not, and silence is the right answer. */
+uint32_t hta_material_effect_sound(const hta_cache *c, uint32_t foot_tag_id,
+                                   uint32_t group, uint8_t material);
+
 #endif

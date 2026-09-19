@@ -197,6 +197,40 @@ value, and `HTA_HUD_PHONE_SCALE` (1.75) is a deliberate enlargement for a
 handset. Those two are the only invented numbers in the HUD and both are
 named and commented as such.
 
+## Footsteps (2026-09-19)
+
+You hear what you are walking on, because Halo's biped says so. The chain is
+short once found:
+
+`bipd cyborg_mp` **+ BIPD_BODY + 156** (footsteps dependency) ->
+`foot globals\cyborg` -> effect group 0 (walk) -> materials[MaterialType] ->
+`snd!`. Biped inherits Unit inherits Object, so its own fields start at
+BIPD_BODY (752), which is why the offset looks odd on its own.
+
+Which material you are on comes from the collision BSP, not a guess:
+
+- a collision **surface** carries a material INDEX at **+10** (the surface is
+  12 bytes, and the loader already used that stride for `first edge`)
+- that indexes the BSP's **collision materials** at **SBSP +0xA4**, 20 bytes
+  each, whose `material` at **+18** is Halo's MaterialType outright -- no
+  shader hop needed
+
+Blood Gulch comes out 2433 sand, 1382 stone, 1556 metal thick, 222 plastic,
+347 none, which is exactly the canyon floor, the cliffs and the bases.
+`hta_bsp_mesh` now carries `tri_material` per collision triangle, and object
+colliders index their own `coll` tag's materials rather than the BSP's, so
+they come back HTA_MATERIAL_NONE rather than wrong.
+
+**Footsteps are paced by ground covered, not by a timer** -- one every
+`HTA_STEP_LENGTH` (0.80 wu), which is a little under three a second at the
+cyborg's 2.25 wu/s run. That keeps cadence with your speed for free, stops
+dead when you stop, and does not change with frame rate; `test_player`
+checks the same walk at 60 and 15 fps takes the same number of steps.
+Landing is its own footfall however far you travelled getting there.
+
+Materials with no sound stay silent -- plenty have none, and that is the
+right answer, so the lookup result is cached including the misses.
+
 ### Melee (2026-09-19)
 
 The owner asked for it. The `antr` already had the clip: `first-person

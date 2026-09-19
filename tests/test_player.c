@@ -563,6 +563,96 @@ int main(void)
         CHECK(distinct > 190, "each round gets its own direction");
     }
 
+    /* Footsteps are paced by ground covered, not by a clock, so they keep
+     * step with you at any speed and stop when you stop. */
+    printf("\n[footsteps]\n");
+    {
+        static hta_vertex fv[4];
+        static uint32_t   fi[6];
+        memset(fv, 0, sizeof(fv));
+        float fp[4][3] = { {0,0,0}, {40,0,0}, {40,40,0}, {0,40,0} };
+        for (int i = 0; i < 4; i++) {
+            fv[i].pos[0] = fp[i][0]; fv[i].pos[1] = fp[i][1]; fv[i].pos[2] = fp[i][2];
+            fv[i].normal[2] = 1.0f;
+        }
+        uint32_t ft[6] = { 0,1,2, 0,2,3 };
+        memcpy(fi, ft, sizeof(ft));
+        static uint8_t fm[2] = { 1u, 1u };          /* sand */
+        hta_bsp_mesh fmesh;
+        memset(&fmesh, 0, sizeof(fmesh));
+        fmesh.vertices = fv; fmesh.vertex_count = 4;
+        fmesh.indices = fi;  fmesh.index_count = 6;
+        fmesh.tri_material = fm;
+        fmesh.bounds_min[0] = 0; fmesh.bounds_min[1] = 0; fmesh.bounds_min[2] = -1;
+        fmesh.bounds_max[0] = 40; fmesh.bounds_max[1] = 40; fmesh.bounds_max[2] = 1;
+
+        hta_collision fcol;
+        CHECK(hta_collision_build(&fcol, &fmesh), "footstep floor builds");
+        CHECK(hta_collision_ground_material(&fcol, 20.0f, 20.0f, 1.0f) == 1u,
+              "the ground reports the material it is made of");
+        CHECK(hta_collision_ground_material(&fcol, 999.0f, 999.0f, 1.0f)
+              == HTA_MATERIAL_NONE, "off the mesh there is no material");
+
+        hta_player fpl;
+        hta_camera fcam;
+        hta_player_init(&fpl);
+        hta_camera_init(&fcam);
+        fpl.phys.radius = 0.2f;
+        fpl.radius = 0.2f;
+        fpl.pos[0] = 2.0f; fpl.pos[1] = 20.0f; fpl.pos[2] = 0.0f;
+        fpl.on_ground = true;
+        fcam.yaw = 0.0f;
+        hta_player_input fin;
+        memset(&fin, 0, sizeof(fin));
+
+        /* Standing still must never take a step. */
+        int steps = 0;
+        for (int i = 0; i < 300; i++) {
+            hta_player_update(&fpl, &fcam, &fcol, &fin, 1.0f / 60.0f);
+            if (fpl.footstep) steps++;
+        }
+        CHECK(steps == 0, "standing still takes no steps");
+
+        /* Walking a known distance takes the number of steps that distance
+         * is worth, whatever the frame rate. */
+        fin.move_forward = 1.0f;
+        float x0 = fpl.pos[0];
+        steps = 0;
+        for (int i = 0; i < 1200; i++) {
+            hta_player_update(&fpl, &fcam, &fcol, &fin, 1.0f / 60.0f);
+            if (fpl.footstep) steps++;
+        }
+        float walked = fpl.pos[0] - x0;
+        int want = (int)(walked / HTA_STEP_LENGTH);
+        printf("  walked %.2f wu, %d steps (expected about %d)\n", walked, steps, want);
+        CHECK(steps > 0, "walking takes steps");
+        CHECK(steps >= want - 1 && steps <= want + 1,
+              "one step per stride of ground covered");
+
+        /* The same walk at a different frame rate must take the same steps:
+         * paced by distance, not by frames. */
+        hta_player p2;
+        hta_camera c2;
+        hta_player_init(&p2);
+        hta_camera_init(&c2);
+        p2.phys.radius = 0.2f; p2.radius = 0.2f;
+        p2.pos[0] = 2.0f; p2.pos[1] = 20.0f; p2.pos[2] = 0.0f;
+        p2.on_ground = true;
+        c2.yaw = 0.0f;
+        int steps2 = 0;
+        float x2 = p2.pos[0];
+        for (int i = 0; i < 300; i++) {
+            hta_player_update(&p2, &c2, &fcol, &fin, 1.0f / 15.0f);
+            if (p2.footstep) steps2++;
+        }
+        float walked2 = p2.pos[0] - x2;
+        printf("  at 15 fps: walked %.2f wu, %d steps\n", walked2, steps2);
+        CHECK(fabsf((float)steps2 - walked2 / HTA_STEP_LENGTH) <= 1.5f,
+              "frame rate does not change the cadence");
+
+        hta_collision_free(&fcol);
+    }
+
     printf("\n[rebind after realloc]\n");
     {
         uint32_t nv = mesh.vertex_count, ni = mesh.index_count;

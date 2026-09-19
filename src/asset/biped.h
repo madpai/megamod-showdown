@@ -33,6 +33,7 @@
 #define HTA_BIPD_COLL_STAND      308u
 #define HTA_BIPD_COLL_CROUCH     312u
 #define HTA_BIPD_COLL_RADIUS     316u
+#define HTA_BIPD_FOOTSTEPS       156u  /* TagDependency -> foot */
 #define HTA_BIPD_FLAG_PLAYER_PHYS (1u << 1)
 
 typedef struct {
@@ -47,6 +48,7 @@ typedef struct {
     float cam_stand, cam_crouch, crouch_time;
     float coll_stand, coll_crouch, radius;
     float max_slope;           /* radians */
+    uint32_t footsteps_id;     /* `foot` material_effects tag, 0 if none */
     float downhill_scale, uphill_scale;
     float fov_y;
     int   loaded;
