@@ -78,6 +78,10 @@ typedef struct {
     uint32_t albedo_tex;      /* index into hta_bsp_mesh.textures, ~0u = none */
     uint32_t lightmap_tex;
     uint8_t  draw_mode;       /* HTA_DRAW_* */
+    /* HUD overlays only: the tag's own colour for this element. Halo's HUD
+     * art is white with an alpha mask, so the colour lives here rather than
+     * in the texture. {0,0,0,0} means untinted. */
+    float    tint[4];
 } hta_submesh;
 
 #define HTA_DRAW_OPAQUE 0u

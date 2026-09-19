@@ -85,6 +85,53 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## A 2D HUD pass, and Halo's own crosshair (2026-09-19)
+
+The owner's verdict after the on-gun counter: *"It doesn't feel like a ready
+game yet. We have one weapon, no HUD, no crosshair, no other sound effects."*
+**Netcode is parked until they say otherwise.**
+
+All of that needs one thing first: there was **no 2D overlay path at all** in
+the native renderer. The Java layer draws the touch controls; the native side
+drew only 3D. Crosshair, shield bars and HUD numbers all ride on the same
+screen-space quad.
+
+### The HUD is its own program
+
+The mesh shader cannot draw a HUD: it forces `alpha = 1.0` and multiplies by a
+lightmap ×2. So there is now `shaders/hud.vert` / `hud.frag` and a
+`pipeline_hud` -- no depth at all, real alpha out of the texture, and a tint
+from the push constants (reusing the `light_color` slot, so the pipeline
+layout is unchanged).
+
+Vertices arrive **already in clip space**, so the HUD needs no matrix and no
+camera: `hta_hud_layout` converts pixels to clip space itself. Vulkan's Y and
+pixel Y both point down, so there is no flip.
+
+`hta_submesh` gained a `tint[4]`, used only by the overlay.
+
+### The crosshair is entirely the tag's
+
+`wphi weapons\assault rifle\assault rifle` -- a weapon and its HUD interface
+share a tag path in Halo, which is how the right `wphi` is found. Its
+crosshairs reflexive (+132) holds one entry of type **aim**, whose overlay
+names sequence 0 of `ui\hud\bitmaps\combined\hud_reticles`: the top-left
+66x66 of a 128x128 sheet.
+
+**Colour byte order matters and is easy to get backwards.** `ColorARGBInt` is
+stored **blue, green, red, alpha**. The AR's is `FF 96 28 00` -> (r 40, g 150,
+b 255), Halo's cyan. Read the other way it is orange. And every HUD element in
+the Trial carries **alpha 0, which means opaque**, not invisible.
+
+Halo lays the HUD out on a fixed **640x480** canvas and scales by screen
+HEIGHT, so the reticle keeps its apparent size on any aspect ratio.
+
+Verified by rendering and measuring pixels: the reticle lands within 2 px of
+frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
+
+Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
+need weapon state we do not track yet.
+
 ## The counter on the gun, and a strip bug it uncovered (2026-09-19)
 
 **Confirmed on the S24+:** magazine, reload and muzzle flash all work; the
@@ -505,6 +552,8 @@ after building, wherever real tag physics are available.
 | Muzzle flash quad | `src/engine/viewmodel.c` `setup_flash` / `pose_flash` |
 | On-gun round counter | `src/engine/viewmodel.c` `setup_counter` / `pose_counter` |
 | Digit atlas, declared blend | `src/asset/bitmap.c` |
+| Screen HUD from `wphi` | `src/engine/hud.c`, `.h` |
+| HUD shader + pipeline | `shaders/hud.vert`, `hud.frag`, `pipeline_hud` |
 | AAudio stream | `src/platform/audio_android.c` |
 | snd! + Xbox ADPCM + effe->snd! | `src/asset/sound.c`, `.h` |
 | Sound inspector / WAV dump | `src/tools/htasound.c` |

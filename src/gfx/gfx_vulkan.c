@@ -23,12 +23,20 @@ static const uint32_t kMeshVert[] =
 static const uint32_t kMeshFrag[] =
 #include "../../shaders/mesh_frag.inl"
 ;
+static const uint32_t kHudVert[] =
+#include "../../shaders/hud_vert.inl"
+;
+static const uint32_t kHudFrag[] =
+#include "../../shaders/hud_frag.inl"
+;
 
 /* If the include braces are ever double-wrapped again, these fire at compile
  * time instead of failing on a device. */
 _Static_assert(sizeof(kMeshVert) > 256, "mesh vertex SPIR-V looks truncated");
 _Static_assert(sizeof(kMeshFrag) > 256, "mesh fragment SPIR-V looks truncated");
 _Static_assert(sizeof(kMeshVert) % 4 == 0, "SPIR-V must be a whole number of words");
+_Static_assert(sizeof(kHudVert) > 256, "hud vertex SPIR-V looks truncated");
+_Static_assert(sizeof(kHudFrag) > 256, "hud fragment SPIR-V looks truncated");
 
 #define MAX_IMAGES 8
 #define PUSH_SIZE  112u   /* mat4(64) + 3 * vec4(48) */
@@ -105,6 +113,7 @@ struct hta_gfx {
     VkPipeline            pipeline_alpha;
     VkPipeline            pipeline_add;
     VkPipeline            pipeline_sky;
+    VkPipeline            pipeline_hud;
     VkDescriptorSetLayout set_layout;
     VkSampler             samp_repeat;
     VkSampler             samp_clamp;
@@ -610,6 +619,38 @@ static bool create_pass_pipeline(hta_gfx *g, char *err, size_t errlen)
             return false;
         }
     }
+    /* The HUD is its own program: screen-space positions, a tag-supplied tint,
+     * real alpha out of the texture, and no depth at all. The mesh shader
+     * cannot do it -- it forces alpha to 1 and multiplies by a lightmap. */
+    VkShaderModule hvs = VK_NULL_HANDLE, hfs = VK_NULL_HANDLE;
+    VkShaderModuleCreateInfo hsv = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+    hsv.codeSize = sizeof(kHudVert); hsv.pCode = kHudVert;
+    VkShaderModuleCreateInfo hsf = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+    hsf.codeSize = sizeof(kHudFrag); hsf.pCode = kHudFrag;
+    if (vkCreateShaderModule(g->device, &hsv, NULL, &hvs) != VK_SUCCESS) hvs = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(g->device, &hsf, NULL, &hfs) != VK_SUCCESS) hfs = VK_NULL_HANDLE;
+    if (hvs && hfs) {
+        stages[0].module = hvs;
+        stages[1].module = hfs;
+        ds.depthTestEnable  = VK_FALSE;
+        ds.depthWriteEnable = VK_FALSE;
+        memset(&cba, 0, sizeof(cba));
+        cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                             VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        cba.blendEnable = VK_TRUE;
+        cba.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        cba.colorBlendOp = VK_BLEND_OP_ADD;
+        cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        cba.alphaBlendOp = VK_BLEND_OP_ADD;
+        if (vkCreateGraphicsPipelines(g->device, VK_NULL_HANDLE, 1, &gp, NULL,
+                                      &g->pipeline_hud) != VK_SUCCESS)
+            g->pipeline_hud = VK_NULL_HANDLE;
+    }
+    if (hvs) vkDestroyShaderModule(g->device, hvs, NULL);
+    if (hfs) vkDestroyShaderModule(g->device, hfs, NULL);
+
     vkDestroyShaderModule(g->device, vs, NULL);
     vkDestroyShaderModule(g->device, fs, NULL);
     return true;
@@ -1052,7 +1093,7 @@ static void fill_push(uint8_t *p, const hta_camera *cam, const hta_scene *s)
 
 bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                   hta_gfx_mesh *mesh, hta_gfx_mesh *sky, hta_gfx_mesh *fx,
-                  const hta_gfx_viewmodel *vm)
+                  const hta_gfx_viewmodel *vm, const hta_gfx_overlay *hud)
 {
     if (!g || !g->ready || !cam || !scene) return false;
 
@@ -1069,6 +1110,18 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
             VkDeviceSize n = (VkDeviceSize)vm->vertex_count * sizeof(hta_vertex);
             if (n > viewmodel->vslot_bytes) n = viewmodel->vslot_bytes;
             memcpy((uint8_t *)viewmodel->vmapped + vm_voffset, vm->vertices, (size_t)n);
+        }
+    }
+
+    hta_gfx_mesh *hudmesh = hud ? hud->mesh : NULL;
+    VkDeviceSize hud_voffset = 0;
+    if (hudmesh && hudmesh->vslots) {
+        uint32_t hslot = slot % hudmesh->vslots;
+        hud_voffset = hudmesh->vslot_bytes * hslot;
+        if (hud->vertices && hud->vertex_count) {
+            VkDeviceSize n = (VkDeviceSize)hud->vertex_count * sizeof(hta_vertex);
+            if (n > hudmesh->vslot_bytes) n = hudmesh->vslot_bytes;
+            memcpy((uint8_t *)hudmesh->vmapped + hud_voffset, hud->vertices, (size_t)n);
         }
     }
 
@@ -1217,6 +1270,31 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                                  fx->submeshes[i].first_index, 0, 0);
             }
         }
+        /* The HUD goes on last: no depth, its own tint per element. */
+        if (hudmesh && hudmesh->index_count && g->pipeline_hud) {
+            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline_hud);
+            vkCmdBindVertexBuffers(cb, 0, 1, &hudmesh->vbuf, &hud_voffset);
+            vkCmdBindIndexBuffer(cb, hudmesh->ibuf, 0, VK_INDEX_TYPE_UINT32);
+            for (uint32_t i = 0; i < hudmesh->submesh_count; i++) {
+                if (!hudmesh->submeshes[i].index_count) continue;
+                float tint[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+                if (hud->submeshes && i < hud->submesh_count) {
+                    const float *t = hud->submeshes[i].tint;
+                    if (t[3] > 0.0f) {
+                        tint[0] = t[0]; tint[1] = t[1];
+                        tint[2] = t[2]; tint[3] = t[3];
+                    }
+                }
+                memcpy(push + 64 + 16, tint, sizeof(tint));   /* the tint slot */
+                vkCmdPushConstants(cb, g->layout,
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                   0, PUSH_SIZE, push);
+                vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
+                                        0, 1, &hudmesh->submeshes[i].set, 0, NULL);
+                vkCmdDrawIndexed(cb, hudmesh->submeshes[i].index_count, 1,
+                                 hudmesh->submeshes[i].first_index, 0, 0);
+            }
+        }
     }
 
     vkCmdEndRenderPass(cb);
@@ -1306,6 +1384,7 @@ void hta_gfx_destroy(hta_gfx *g)
         if (g->pipeline_alpha) vkDestroyPipeline(g->device, g->pipeline_alpha, NULL);
         if (g->pipeline_add)   vkDestroyPipeline(g->device, g->pipeline_add, NULL);
         if (g->pipeline_sky)   vkDestroyPipeline(g->device, g->pipeline_sky, NULL);
+        if (g->pipeline_hud)   vkDestroyPipeline(g->device, g->pipeline_hud, NULL);
         if (g->layout)    vkDestroyPipelineLayout(g->device, g->layout, NULL);
         if (g->pass)      vkDestroyRenderPass(g->device, g->pass, NULL);
         if (g->swapchain) vkDestroySwapchainKHR(g->device, g->swapchain, NULL);

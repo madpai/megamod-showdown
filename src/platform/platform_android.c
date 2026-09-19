@@ -17,6 +17,7 @@
 #include "../engine/player.h"
 #include "../engine/gun.h"
 #include "../engine/ammo.h"
+#include "../engine/hud.h"
 #include "../engine/viewmodel.h"
 #include "../asset/cache.h"
 #include "../asset/bsp.h"
@@ -139,6 +140,8 @@ typedef struct {
     hta_gfx_mesh *gpu_sky;
     hta_gfx_mesh *gpu_fx;
     hta_gfx_mesh *gpu_fp;
+    hta_hud       hud;
+    hta_gfx_mesh *gpu_hud;
     hta_camera    cam;
     hta_player    player;
     hta_gun       gun;
@@ -500,6 +503,15 @@ static bool load_map(hta_android *s)
                         s->vm.flash_radius, s->vm.flash_life * 1000.0f);
             else
                 hta_log("[weapon] no first-person muzzle flash in the firing effect");
+            char herr[HTA_ERRLEN] = {0};
+            hta_hud_load(&s->hud, &s->cache, rm.data ? &rm : NULL, &s->weap,
+                         herr, sizeof(herr));
+            if (s->hud.have_cross)
+                hta_log("[hud] reticle %.0f px, tint %.2f %.2f %.2f",
+                        s->hud.cross_px, s->hud.mesh.submeshes[0].tint[0],
+                        s->hud.mesh.submeshes[0].tint[1], s->hud.mesh.submeshes[0].tint[2]);
+            else
+                hta_log("[hud] no crosshair: %s", herr);
             if (s->vm.have_counter)
                 hta_log("[weapon] on-gun round counter: %u digits, submeshes %u/%u",
                         s->vm.counter_digits, s->vm.counter_submesh[0],
@@ -757,6 +769,10 @@ static void start_gfx(hta_android *s)
             s->gpu_fp = hta_gfx_mesh_upload_dynamic(s->gfx, &s->vm.mesh, err, sizeof(err));
             if (!s->gpu_fp) hta_log("[gfx] fp weapon upload FAILED: %s", err);
         }
+        if (s->hud.have_cross) {
+            s->gpu_hud = hta_gfx_mesh_upload_dynamic(s->gfx, &s->hud.mesh, err, sizeof(err));
+            if (!s->gpu_hud) hta_log("[gfx] hud upload FAILED: %s", err);
+        }
         float span = s->mesh.bounds_max[0] - s->mesh.bounds_min[0];
         if (span < 1.0f) span = 1.0f;
         s->cam.zfar  = span * 6.0f;
@@ -766,6 +782,7 @@ static void start_gfx(hta_android *s)
 
 static void stop_gfx(hta_android *s)
 {
+    if (s->gpu_hud) { hta_gfx_mesh_free(s->gfx, s->gpu_hud); s->gpu_hud = NULL; }
     if (s->gpu_fp) { hta_gfx_mesh_free(s->gfx, s->gpu_fp); s->gpu_fp = NULL; }
     if (s->gpu_fx) { hta_gfx_mesh_free(s->gfx, s->gpu_fx); s->gpu_fx = NULL; }
     if (s->gpu_sky) { hta_gfx_mesh_free(s->gfx, s->gpu_sky); s->gpu_sky = NULL; }
@@ -1023,6 +1040,18 @@ void android_main(struct android_app *app)
             if (!state.gfx) continue;
             hta_gfx_viewmodel vmdraw;
             memset(&vmdraw, 0, sizeof(vmdraw));
+            hta_gfx_overlay huddraw;
+            memset(&huddraw, 0, sizeof(huddraw));
+            if (state.gpu_hud) {
+                uint32_t ew = 0, eh = 0;
+                hta_gfx_extent(state.gfx, &ew, &eh);
+                hta_hud_layout(&state.hud, ew, eh);
+                huddraw.mesh = state.gpu_hud;
+                huddraw.vertices = state.hud.mesh.vertices;
+                huddraw.vertex_count = state.hud.mesh.vertex_count;
+                huddraw.submeshes = state.hud.mesh.submeshes;
+                huddraw.submesh_count = state.hud.mesh.submesh_count;
+            }
             if (state.gpu_fp) {
                 vmdraw.mesh = state.gpu_fp;
                 vmdraw.vertices = state.vm.posed;
@@ -1031,7 +1060,8 @@ void android_main(struct android_app *app)
             }
             if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh,
                               state.gpu_sky, state.gpu_fx,
-                              state.gpu_fp ? &vmdraw : NULL)) {
+                              state.gpu_fp ? &vmdraw : NULL,
+                              state.gpu_hud ? &huddraw : NULL)) {
                 hta_log("[app] surface lost; rebuilding renderer");
                 stop_gfx(&state);
                 if (app->window) start_gfx(&state);
@@ -1073,6 +1103,7 @@ done:
     hta_log("[app] shutting down after %llu frames", (unsigned long long)state.frames);
     /* Stop the stream before freeing the PCM its voices point at. */
     hta_audio_android_stop();
+    hta_hud_free(&state.hud);
     for (uint32_t i = 0; i < state.bank_count; i++)
         for (uint32_t k = 0; k < state.bank[i].count; k++)
             free(state.bank[i].pcm[k]);

@@ -13,6 +13,7 @@ if(ANDROID)
         src/engine/viewmodel.c
         src/engine/audio.c
         src/engine/ammo.c
+        src/engine/hud.c
         src/asset/cache.c
         src/asset/bsp.c
         src/asset/bitmap.c
@@ -39,7 +40,7 @@ if(ANDROID)
 else()
     # Host build: the portable engine only, plus its tests.
     add_library(hta_engine STATIC src/engine/engine.c src/engine/camera.c src/engine/player.c src/engine/gun.c
-        src/engine/viewmodel.c src/engine/audio.c src/engine/ammo.c
+        src/engine/viewmodel.c src/engine/audio.c src/engine/ammo.c src/engine/hud.c
         src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c src/asset/sound.c src/asset/effect.c src/asset/biped.c src/asset/weapon.c
         src/asset/anim.c src/asset/model.c)
     target_include_directories(hta_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -106,6 +107,10 @@ else()
     add_executable(test_anim tests/test_anim.c)
     target_link_libraries(test_anim PRIVATE hta_engine m)
     add_test(NAME anim COMMAND test_anim)
+
+    add_executable(test_hud tests/test_hud.c)
+    target_link_libraries(test_hud PRIVATE hta_engine m)
+    add_test(NAME hud COMMAND test_hud)
 
     add_executable(test_ammo tests/test_ammo.c)
     target_link_libraries(test_ammo PRIVATE hta_engine m)

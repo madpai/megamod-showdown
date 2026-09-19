@@ -23,6 +23,7 @@
 #include "asset/weapon.h"
 #include "engine/camera.h"
 #include "engine/viewmodel.h"
+#include "engine/hud.h"
 #include "asset/biped.h"
 #include "gfx/gfx.h"
 #include "engine/scene_light.h"
@@ -224,6 +225,33 @@ int main(int argc, char **argv)
     hta_scene_light_from_bsp(&mesh, scene.light_dir, scene.light_color, scene.ambient);
     scene.clear[0] = 0.42f; scene.clear[1] = 0.55f; scene.clear[2] = 0.72f;
 
+    /* HUD from the weapon's own wphi. */
+    hta_hud hud;
+    memset(&hud, 0, sizeof(hud));
+    hta_gfx_mesh *ghud = NULL;
+    hta_gfx_overlay huddraw;
+    memset(&huddraw, 0, sizeof(huddraw));
+    if (vm.loaded) {
+        char herr[HTA_ERRLEN] = {0};
+        hta_hud_load(&hud, &c, rm.data ? &rm : NULL, &wdef, herr, sizeof(herr));
+        if (hud.have_cross) {
+            hta_hud_layout(&hud, W, H);
+            ghud = hta_gfx_mesh_upload_dynamic(g, &hud.mesh, herr, sizeof(herr));
+            if (ghud) {
+                huddraw.mesh = ghud;
+                huddraw.vertices = hud.mesh.vertices;
+                huddraw.vertex_count = hud.mesh.vertex_count;
+                huddraw.submeshes = hud.mesh.submeshes;
+                huddraw.submesh_count = hud.mesh.submesh_count;
+                printf("hud            reticle %.0f px, tint %.2f %.2f %.2f\n",
+                       hud.cross_px, hud.mesh.submeshes[0].tint[0],
+                       hud.mesh.submeshes[0].tint[1], hud.mesh.submeshes[0].tint[2]);
+            }
+        } else {
+            printf("hud            no crosshair (%s)\n", herr);
+        }
+    }
+
     uint8_t *pixels = malloc((size_t)W * H * 4);
     if (!pixels) { fprintf(stderr, "oom\n"); return 1; }
 
@@ -304,7 +332,8 @@ int main(int argc, char **argv)
         }
 
         double r0 = hta_time_seconds();
-        bool ok = hta_gfx_draw(g, &cam, &scene, gm, gs, NULL, gvm ? &vmdraw : NULL);
+        bool ok = hta_gfx_draw(g, &cam, &scene, gm, gs, NULL, gvm ? &vmdraw : NULL,
+                               ghud ? &huddraw : NULL);
         double r1 = hta_time_seconds();
         if (!ok) { fprintf(stderr, "draw failed on shot %u\n", s); break; }
         total_render += (r1 - r0);

@@ -53,11 +53,22 @@ typedef struct {
     float             offset[3];
 } hta_gfx_viewmodel;
 
+/* A screen-space overlay drawn last, with no depth and real alpha. Vertex
+ * positions are already in clip space (x and y in -1..1), so the HUD needs no
+ * matrix; each submesh carries the colour its tag asked for. */
+typedef struct {
+    hta_gfx_mesh     *mesh;
+    const hta_vertex *vertices;
+    uint32_t          vertex_count;
+    const hta_submesh *submeshes;   /* tints, parallel to the mesh's own */
+    uint32_t          submesh_count;
+} hta_gfx_overlay;
+
 /* Renders one frame. In swapchain mode this also presents. Returns false if the
  * surface needs rebuilding (caller should recreate). */
 bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                   hta_gfx_mesh *mesh, hta_gfx_mesh *sky, hta_gfx_mesh *fx,
-                  const hta_gfx_viewmodel *vm);
+                  const hta_gfx_viewmodel *vm, const hta_gfx_overlay *hud);
 
 /* Offscreen only: copies the last rendered frame out as tightly packed RGBA8.
  * `dst` must hold w*h*4 bytes. */
