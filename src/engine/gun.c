@@ -25,6 +25,11 @@ void hta_gun_update(hta_gun *g, float dt)
     if (g->cooldown < 0.0f) g->cooldown = 0.0f;
 }
 
+int hta_gun_ready(const hta_gun *g)
+{
+    return g && g->cooldown <= 0.0f;
+}
+
 int hta_gun_fire(hta_gun *g, const hta_collision *col, const hta_camera *cam)
 {
     if (!g || !cam) return 0;

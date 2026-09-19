@@ -26,6 +26,10 @@ typedef struct {
 
 void hta_gun_init(hta_gun *g);
 void hta_gun_free(hta_gun *g);
+/* Would a trigger pull fire right now? Ammo has to be checked before
+ * hta_gun_fire, because that call spends the cooldown whether or not the
+ * magazine could pay for the shot. */
+int  hta_gun_ready(const hta_gun *g);
 /* Returns 1 if a shot fired (and possibly hit). */
 int  hta_gun_fire(hta_gun *g, const hta_collision *col, const hta_camera *cam);
 void hta_gun_update(hta_gun *g, float dt);

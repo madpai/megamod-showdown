@@ -16,6 +16,7 @@
 #include "../engine/camera.h"
 #include "../engine/player.h"
 #include "../engine/gun.h"
+#include "../engine/ammo.h"
 #include "../engine/viewmodel.h"
 #include "../asset/cache.h"
 #include "../asset/bsp.h"
@@ -119,7 +120,12 @@ typedef struct {
     } bank[HTA_SND_MAX_BANK];
     uint32_t bank_count;
     uint32_t fire_snd;       /* snd! id of the weapon's gunshot, 0 if none */
+    uint32_t empty_snd;      /* the click when the magazine is out */
     uint32_t rng;
+
+    hta_ammo ammo;
+    float    dry_cooldown;   /* stops an empty trigger clicking every frame */
+    bool     hud_reload;
     bool          have_mesh;
     bool          have_sky;
     bool          have_coll;
@@ -469,6 +475,13 @@ static bool load_map(hta_android *s)
         s->fire_snd = hta_effect_first_sound(&s->cache, s->weap.firing_fx_id);
         if (s->fire_snd) bank_get(s, s->fire_snd);
         else hta_log("[audio] the trigger's firing effect names no snd!");
+        s->empty_snd = hta_effect_first_sound(&s->cache, s->weap.empty_fx_id);
+        if (s->empty_snd) bank_get(s, s->empty_snd);
+
+        hta_ammo_init(&s->ammo, &s->weap);
+        hta_log("[weapon] ammo %d loaded / %d reserve, %d per reload, %.2f s",
+                s->ammo.loaded, s->ammo.reserve, s->ammo.per_reload,
+                s->ammo.reload_time);
         hta_log("[weapon] %s  ROF %.1f/s  mag %d/%d  reload %.1fs",
                 s->weap.path, s->weap.rof, s->weap.rounds_loaded_max,
                 s->weap.rounds_reserve_max, s->weap.reload_time);
@@ -639,6 +652,7 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
         if (code == AKEYCODE_BUTTON_A || code == AKEYCODE_SPACE) { s->jump_held = down; return 1; }
         if (code == AKEYCODE_BUTTON_R1 || code == AKEYCODE_BUTTON_R2 ||
             code == AKEYCODE_BUTTON_X) { s->fire_held = down; return 1; }
+        if (code == AKEYCODE_BUTTON_Y && down) { s->hud_reload = true; return 1; }
         if (code == AKEYCODE_BUTTON_B && down) {
             s->player.noclip = !s->player.noclip;
             hta_log("[input] noclip %s", s->player.noclip ? "ON" : "OFF");
@@ -819,12 +833,20 @@ static void on_cmd(struct android_app *app, int32_t cmd)
  * screenshot needs coordinates: without them you are guessing which doorway
  * out of a 126 x 145 world unit map the reporter was standing in. */
 static char g_debug_text[128];
+static char g_ammo_text[32];
 
 JNIEXPORT jstring JNICALL
 Java_net_hta_halotrial_GameActivity_nativeDebugText(JNIEnv *env, jclass cls)
 {
     (void)cls;
     return (*env)->NewStringUTF(env, g_debug_text);
+}
+
+JNIEXPORT jstring JNICALL
+Java_net_hta_halotrial_GameActivity_nativeAmmoText(JNIEnv *env, jclass cls)
+{
+    (void)cls;
+    return (*env)->NewStringUTF(env, g_ammo_text);
 }
 
 JNIEXPORT void JNICALL
@@ -872,6 +894,14 @@ Java_net_hta_halotrial_GameActivity_nativeHudCrouch(JNIEnv *env, jclass cls, jbo
 {
     (void)env; (void)cls;
     if (g_android) g_android->hud_crouch = down ? true : false;
+}
+
+/* A request, not a held button: the game loop consumes and clears it. */
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudReload(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    if (g_android) g_android->hud_reload = true;
 }
 
 void android_main(struct android_app *app)
@@ -928,10 +958,31 @@ void android_main(struct android_app *app)
         hta_player_update(&state.player, &state.cam,
                           state.col.built ? &state.col : NULL, &in, dt);
         hta_gun_update(&state.gun, dt);
-        if (in.fire && hta_gun_fire(&state.gun, state.col.built ? &state.col : NULL, &state.cam)) {
-            hta_viewmodel_play(&state.vm, HTA_VM_FIRE);
-            play_tag(&state, state.fire_snd, 1.0f);
+        /* Ammo gates the shot: hta_gun_fire spends the cooldown whether or
+         * not the magazine could pay, so ask before pulling. */
+        hta_ammo_update(&state.ammo, dt);
+        if (state.dry_cooldown > 0.0f) state.dry_cooldown -= dt;
+
+        if (state.hud_reload) {
+            state.hud_reload = false;
+            if (hta_ammo_reload(&state.ammo))
+                hta_viewmodel_play(&state.vm, HTA_VM_RELOAD);
         }
+        if (in.fire && hta_gun_ready(&state.gun)) {
+            if (hta_ammo_shoot(&state.ammo)) {
+                hta_gun_fire(&state.gun, state.col.built ? &state.col : NULL, &state.cam);
+                hta_viewmodel_play(&state.vm, HTA_VM_FIRE);
+                play_tag(&state, state.fire_snd, 1.0f);
+            } else if (state.ammo.dry && state.dry_cooldown <= 0.0f) {
+                /* Click, then reload by itself, the way Halo does. */
+                play_tag(&state, state.empty_snd, 1.0f);
+                state.dry_cooldown = 0.35f;
+                if (hta_ammo_reload(&state.ammo))
+                    hta_viewmodel_play(&state.vm, HTA_VM_RELOAD);
+            }
+        }
+        if (state.ammo.reload_done)
+            hta_log("[weapon] reloaded: %d / %d", state.ammo.loaded, state.ammo.reserve);
         /* The animation graph fires a snd! id when a clip crosses its sound
          * frame -- reload clacks, the weapon-ready rack. Nothing consumed it
          * until now. */
@@ -970,6 +1021,11 @@ void android_main(struct android_app *app)
             state.frames++;
             state.fps_accum += dt;
             state.fps_frames++;
+            if (state.ammo.phase == HTA_AMMO_RELOADING)
+                snprintf(g_ammo_text, sizeof(g_ammo_text), "-- / %d", state.ammo.reserve);
+            else
+                snprintf(g_ammo_text, sizeof(g_ammo_text), "%d / %d",
+                         state.ammo.loaded, state.ammo.reserve);
             snprintf(g_debug_text, sizeof(g_debug_text),
                      "%.2f %.2f %.2f  %s  %.0f fps",
                      state.player.pos[0], state.player.pos[1], state.player.pos[2],
@@ -986,6 +1042,9 @@ void android_main(struct android_app *app)
                         hta_audio_active_voices(&state.audio),
                         state.audio.started,
                         (unsigned)atomic_load(&state.audio.dropped));
+                hta_log("[weapon] ammo %d / %d%s", state.ammo.loaded,
+                        state.ammo.reserve,
+                        state.ammo.phase == HTA_AMMO_RELOADING ? " (reloading)" : "");
                 state.fps_accum = 0.0;
                 state.fps_frames = 0;
             }

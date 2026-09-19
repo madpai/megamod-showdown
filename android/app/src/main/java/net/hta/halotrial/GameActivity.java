@@ -136,7 +136,9 @@ public class GameActivity extends NativeActivity {
     static native void nativeHudJump(boolean down);
     static native void nativeHudFire(boolean down);
     static native void nativeHudCrouch(boolean down);
+    static native void nativeHudReload();
     static native String nativeDebugText();
+    static native String nativeAmmoText();
 
     private static final class HudOverlay extends View {
         private final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -145,14 +147,18 @@ public class GameActivity extends NativeActivity {
         private final Paint fireP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint jumpP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint crouchP = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint reloadP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint debug = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint ammo = new Paint(Paint.ANTI_ALIAS_FLAG);
 
         private float stickCx, stickCy, stickR, stickTx, stickTy;
         private float fireCx, fireCy, fireR;
         private float jumpCx, jumpCy, jumpR;
         private float crouchCx, crouchCy, crouchR;
+        private float reloadCx, reloadCy, reloadR;
         private int stickPtr = -1, firePtr = -1, jumpPtr = -1, crouchPtr = -1;
+        private int reloadPtr = -1;
         private final float[] lastX = new float[16];
         private final float[] lastY = new float[16];
 
@@ -167,7 +173,11 @@ public class GameActivity extends NativeActivity {
             fireP.setColor(0xCCE23B3B);
             jumpP.setColor(0xCC2B6CF6);
             crouchP.setColor(0xCC555C66);
+            reloadP.setColor(0xCCB08420);
             label.setColor(0xFFFFFFFF);
+            ammo.setColor(0xF2FFFFFF);
+            ammo.setTextAlign(Paint.Align.RIGHT);
+            ammo.setTypeface(Typeface.DEFAULT_BOLD);
             debug.setColor(0xCC00FF88);
             label.setTextAlign(Paint.Align.CENTER);
             label.setTypeface(Typeface.DEFAULT_BOLD);
@@ -190,7 +200,11 @@ public class GameActivity extends NativeActivity {
             crouchR = m * 0.062f;
             crouchCx = w * 0.78f;
             crouchCy = h * 0.86f;
+            reloadR = m * 0.058f;
+            reloadCx = w * 0.665f;
+            reloadCy = h * 0.90f;
             label.setTextSize(m * 0.032f);
+            ammo.setTextSize(m * 0.085f);
             excludeFromSystemGestures();
         }
 
@@ -234,6 +248,9 @@ public class GameActivity extends NativeActivity {
                 } else if (in(x, y, crouchCx, crouchCy, crouchR * 1.15f) && crouchPtr < 0) {
                     crouchPtr = id;
                     GameActivity.nativeHudCrouch(true);
+                } else if (in(x, y, reloadCx, reloadCy, reloadR * 1.15f) && reloadPtr < 0) {
+                    reloadPtr = id;
+                    GameActivity.nativeHudReload();
                 } else if ((in(x, y, stickCx, stickCy, stickR * 1.4f) || x < getWidth() * 0.38f)
                         && stickPtr < 0) {
                     stickPtr = id;
@@ -264,11 +281,13 @@ public class GameActivity extends NativeActivity {
                     releaseFire();
                     releaseJump();
                     releaseCrouch();
+                    reloadPtr = -1;
                 } else {
                     if (id == stickPtr) releaseStick();
                     if (id == firePtr) releaseFire();
                     if (id == jumpPtr) releaseJump();
                     if (id == crouchPtr) releaseCrouch();
+                    if (id == reloadPtr) reloadPtr = -1;
                 }
                 break;
             default:
@@ -342,6 +361,17 @@ public class GameActivity extends NativeActivity {
             c.drawCircle(crouchCx, crouchCy, crouchR, crouchP);
             c.drawCircle(crouchCx, crouchCy, crouchR, ring);
             c.drawText("CROUCH", crouchCx, crouchCy + label.getTextSize() * 0.35f, label);
+
+            c.drawCircle(reloadCx, reloadCy, reloadR, reloadP);
+            c.drawCircle(reloadCx, reloadCy, reloadR, ring);
+            c.drawText("RELOAD", reloadCx, reloadCy + label.getTextSize() * 0.35f, label);
+
+            /* Ammo, big and bottom-right: loaded / reserve, "--" while the
+             * magazine is out. */
+            String a = null;
+            try { a = nativeAmmoText(); } catch (Throwable ignored) { }
+            if (a != null && a.length() > 0)
+                c.drawText(a, getWidth() - 28f, getHeight() * 0.30f, ammo);
 
             /* Position readout, so a bug report screenshot carries coordinates.
              * Keep it clear of the camera cutout: the status bar no longer
