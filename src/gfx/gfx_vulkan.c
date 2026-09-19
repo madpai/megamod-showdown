@@ -1180,16 +1180,28 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
             vkCmdPushConstants(cb, g->layout,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                0, PUSH_SIZE, push);
-            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline);
             vkCmdBindVertexBuffers(cb, 0, 1, &viewmodel->vbuf, &vm_voffset);
             vkCmdBindIndexBuffer(cb, viewmodel->ibuf, 0, VK_INDEX_TYPE_UINT32);
-            for (uint32_t i = 0; i < viewmodel->submesh_count; i++) {
-                if (!viewmodel->submeshes[i].index_count) continue;
-                if (viewmodel->submeshes[i].draw_mode == HTA_DRAW_SKIP) continue;
-                vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
-                                        0, 1, &viewmodel->submeshes[i].set, 0, NULL);
-                vkCmdDrawIndexed(cb, viewmodel->submeshes[i].index_count, 1,
-                                 viewmodel->submeshes[i].first_index, 0, 0);
+            /* The gun and hands are opaque; the muzzle flash adds light on
+             * top of them. Drawing it with the opaque pipeline paints the
+             * sprite's black background over the world, so honour the
+             * submesh's draw mode here exactly as the world pass does. */
+            const uint8_t vm_passes[3] = { HTA_DRAW_OPAQUE, HTA_DRAW_ALPHA, HTA_DRAW_ADD };
+            VkPipeline vm_pipes[3] = { g->pipeline, g->pipeline_alpha, g->pipeline_add };
+            for (int p = 0; p < 3; p++) {
+                int bound = 0;
+                for (uint32_t i = 0; i < viewmodel->submesh_count; i++) {
+                    if (!viewmodel->submeshes[i].index_count) continue;
+                    if (viewmodel->submeshes[i].draw_mode != vm_passes[p]) continue;
+                    if (!bound) {
+                        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vm_pipes[p]);
+                        bound = 1;
+                    }
+                    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
+                                            0, 1, &viewmodel->submeshes[i].set, 0, NULL);
+                    vkCmdDrawIndexed(cb, viewmodel->submeshes[i].index_count, 1,
+                                     viewmodel->submeshes[i].first_index, 0, 0);
+                }
             }
         }
 

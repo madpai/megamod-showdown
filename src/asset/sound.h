@@ -54,8 +54,4 @@ bool hta_sound_decode(const hta_cache *c, const hta_resource_map *sounds,
 bool hta_xbox_adpcm_decode(const uint8_t *src, uint32_t src_len, uint8_t channels,
                            int16_t *dst, uint32_t dst_frames);
 
-/* The first `snd!` a given `effe` tag plays, or 0. Halo puts the gunshot in the
- * weapon trigger's firing effect rather than on the weapon itself. */
-uint32_t hta_effect_first_sound(const hta_cache *c, uint32_t effect_tag_id);
-
 #endif

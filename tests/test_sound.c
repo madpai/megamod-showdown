@@ -5,6 +5,7 @@
  */
 #include "asset/cache.h"
 #include "asset/sound.h"
+#include "asset/effect.h"
 #include "asset/weapon.h"
 #include <stdio.h>
 #include <stdlib.h>

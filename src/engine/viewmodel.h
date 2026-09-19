@@ -16,6 +16,7 @@
 #include "../asset/anim.h"
 #include "../asset/model.h"
 #include "../asset/weapon.h"
+#include "../asset/bitmap.h"
 
 typedef enum {
     HTA_VM_READY = 0,   /* raise on spawn, then fall through to idle */
@@ -46,6 +47,28 @@ typedef struct {
      * `snd!` decoding needs sounds.map, which SetupActivity does not pick yet;
      * until then this is the hook, not a played sound. */
     uint32_t         sound_cue;   /* snd! tag id, 0 = none */
+
+    /* Muzzle flash. Four vertices and a submesh appended to the viewmodel's
+     * own mesh, so it is skinned, posed and drawn in view space with
+     * everything else -- no second pass, no world-space transform to get
+     * wrong. Collapsed to zero area when not firing.
+     *
+     * Everything about it is the weapon's own tag: which marker it hangs
+     * from, its bitmap, its radius and how long it lasts. */
+    bool             have_flash;
+    int32_t          flash_node;      /* index into graph.nodes */
+    float            flash_offset[3]; /* marker translation, node-local */
+    float            flash_radius;
+    float            flash_life;      /* seconds, from the particle tag */
+    float            flash_timer;     /* counts down while visible */
+    uint32_t         flash_first_vertex;
+    /* The flash bitmap is a sprite sheet of nine variants; Halo picks one
+     * per shot. These are the ones on sheet 0, which is the texture we
+     * interned. */
+    hta_bitmap_sprite flash_sprite[12];
+    uint32_t          flash_sprite_count;
+    uint32_t          flash_pick;
+    uint32_t          flash_rng;
 } hta_viewmodel;
 
 /* Builds hands + gun against the weapon's animation graph. Returns false and
@@ -63,5 +86,9 @@ void hta_viewmodel_pose(hta_viewmodel *vm, const hta_transform *world);
 
 /* Restarts a clip. Ignored if the graph has no clip for that state. */
 void hta_viewmodel_play(hta_viewmodel *vm, hta_vm_state s);
+
+/* Lights the muzzle flash for its tagged lifespan. Harmless if the weapon
+ * has no first-person flash particle. */
+void hta_viewmodel_flash(hta_viewmodel *vm);
 
 #endif

@@ -85,6 +85,69 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## Ammo, reload and the muzzle flash (2026-09-19)
+
+**Confirmed on the S24+:** the rifle sounds right and full auto is clean.
+
+Two gaps the owner hit: no reload could be heard because nothing triggered a
+reload, and there was no muzzle flash to judge audio/visual sync against.
+
+### Magazine
+
+All from the Trial's own `WeaponMagazine`. **"Rounds total initial" counts the
+loaded magazine**, so the AR's 240 is 60 loaded + 180 reserve -- Halo exactly --
+with 60 per reload and 3.40 s. Firing empty clicks the weapon's own empty
+effect and auto-reloads, with a 0.35 s cooldown so a dead trigger does not
+click every frame once the reserve is gone too.
+
+Ammo must gate the shot **before** `hta_gun_fire`, which spends the cooldown
+whether or not the magazine could pay -- hence `hta_gun_ready`.
+
+Reloading plays the FP reload clip, which is what finally fires the animation
+graph's own reload sound frames. Those were wired to the mixer already and
+simply had no clip to fire in.
+
+### Muzzle flash
+
+Which particle is "the" first-person muzzle flash needs no guessing and no
+matching on tag paths. The tag says so four ways over, and
+`hta_effect_fp_flash` uses all four:
+
+- attached to the `primary trigger` marker (effect **locations** are just
+  marker names, and location 0 is the muzzle, location 1 the ejection port)
+- `create in` is air or any -- the water variants are different particles
+- `create` is not third-person -- what other players see is not what we see
+- its `part` **blends additively**; the smoke at the same marker alpha-blends,
+  and that is what tells them apart
+
+On the Trial's AR exactly one particle satisfies all four: `flash h ar`, whose
+bitmap is literally called `flash h ar fp`. Radius 0.125, life 75 ms, oriented
+*parallel to direction* -- along the barrel, not screen-facing.
+
+Three things this cost, all visible in one render and worth not re-learning:
+
+1. **The viewmodel pass ignored `draw_mode`** and drew everything with the
+   opaque pipeline, so the flash sprite's black background painted over the
+   world. It now runs the same three passes the world pass does.
+2. **The flash bitmap is a sprite sheet**, `type` 3. Nine variants, each its
+   own "bitmap group sequence" holding one sprite; Halo picks a sequence per
+   shot. Using 0..1 UVs draws the entire sheet at once.
+3. The quad's four vertices are **not skinned** -- they are placed by hand
+   from the marker -- so they are deliberately unbound, and `test_anim`'s
+   "every vertex is bound" invariant had to be narrowed to the skinned range.
+
+Geometry lives in the viewmodel's own mesh: four vertices and one ADD submesh
+appended after the gun, so it is posed and drawn in view space with everything
+else -- no second pass and no world transform to get wrong. Unlit, the four
+vertices collapse onto the muzzle so the triangles have zero area; that beats
+skipping the submesh, since the index buffer is uploaded once and never edited.
+
+**Known simplification:** the nine sprite variants span two bitmap sheets, and
+only the six on sheet 0 are used, to keep this to one texture and one submesh.
+
+The flash needs `bitmaps.map`; without it `have_flash` stays false and the
+weapon simply has no flash.
+
 ## Sound (2026-09-19)
 
 **Confirmed on the S24+ this session:** ramps work standing, both directions,
@@ -381,6 +444,11 @@ after building, wherever real tag physics are available.
 | Tag layouts | `upstream/invader/src/tag/hek/definition/*.json` |
 | HUD, fullscreen, gesture exclusion | `android/.../GameActivity.java` |
 | Portable voice mixer | `src/engine/audio.c`, `.h` |
+| Magazine / reload | `src/engine/ammo.c`, `.h` |
+| effe walking, FP flash selection | `src/asset/effect.c`, `.h` |
+| Model markers | `src/asset/model.c` `hta_model_marker` |
+| Sprite-sheet UVs | `src/asset/bitmap.c` `hta_bitmap_sprite_at` |
+| Muzzle flash quad | `src/engine/viewmodel.c` `setup_flash` / `pose_flash` |
 | AAudio stream | `src/platform/audio_android.c` |
 | snd! + Xbox ADPCM + effe->snd! | `src/asset/sound.c`, `.h` |
 | Sound inspector / WAV dump | `src/tools/htasound.c` |

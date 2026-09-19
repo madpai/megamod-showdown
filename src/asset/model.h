@@ -78,6 +78,19 @@ bool hta_model_append_skinned(hta_bsp_mesh *dst, hta_skin_vertex **skin,
                               hta_transform *rest_inv, uint8_t *have_rest,
                               char *err, size_t errlen);
 
+/* A named marker on a mod2: which node it hangs from and where.
+ *
+ * The node comes back as a NAME, not an index, because a model's node list is
+ * its own -- what maps it into an animation graph is the name
+ * (hta_anim_node_index), the same way hta_model_append_skinned binds skins.
+ *
+ * GBXModel markers sit at +0xAC, immediately before the node list at +0xB8.
+ * ModelMarker is 64 bytes (name, then instances at +52); ModelMarkerInstance
+ * is 32 (region, permutation, node index, then translation at +4). */
+bool hta_model_marker(const hta_cache *c, uint32_t model_tag_id,
+                      const char *marker_name,
+                      char out_node_name[32], float out_translation[3]);
+
 /* Append a placed mod2 (scenery, vehicle, …) onto `world`, textures interned. */
 bool hta_model_instance(hta_bsp_mesh *world, const hta_cache *c,
                         const hta_resource_map *bitmaps, uint32_t model_tag_id,

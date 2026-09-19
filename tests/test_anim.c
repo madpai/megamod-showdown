@@ -144,16 +144,35 @@ int main(int argc, char **argv)
 
     /* ---- the skinned viewmodel ---- */
     hta_viewmodel vm;
-    CHECK(hta_viewmodel_load(&vm, &c, NULL, &w, err, sizeof(err)), "viewmodel loads");
+    /* The muzzle flash needs its bitmap, which lives in bitmaps.map beside
+     * the cache. Without it the geometry still loads, just unlit and
+     * flashless -- so the flash checks below are skipped, not failed. */
+    char bmp[1024];
+    snprintf(bmp, sizeof(bmp), "%s", argv[1]);
+    char *bslash = strrchr(bmp, '/');
+    if (bslash) snprintf(bslash + 1, sizeof(bmp) - (size_t)(bslash + 1 - bmp), "bitmaps.map");
+    else snprintf(bmp, sizeof(bmp), "bitmaps.map");
+    size_t bsz = 0;
+    uint8_t *bdata = slurp(bmp, &bsz);
+    hta_resource_map bm;
+    memset(&bm, 0, sizeof(bm));
+    int have_bitmaps = bdata && hta_resource_open(&bm, bdata, bsz, err, sizeof(err));
+    if (!have_bitmaps) printf("  note: no bitmaps.map beside the cache\n");
+
+    CHECK(hta_viewmodel_load(&vm, &c, have_bitmaps ? &bm : NULL, &w, err, sizeof(err)),
+          "viewmodel loads");
     if (!vm.loaded) { printf("  (%s)\n", err); printf("\n%d checks, %d failures\n", checks, failures); return failures != 0; }
     printf("  viewmodel: %u verts (%u hands + %u gun), %u submeshes\n",
            vm.mesh.vertex_count, vm.hands_verts, vm.gun_verts, vm.mesh.submesh_count);
     CHECK(vm.hands_verts > 0, "hands mesh loaded from globals");
     CHECK(vm.gun_verts > 0, "gun mesh loaded from the weapon");
 
-    /* Every vertex must be bound, or the mesh would collapse to the origin. */
+    /* Every SKINNED vertex must be bound, or the mesh would collapse to the
+     * origin. The muzzle-flash quad at the end is placed by hand rather than
+     * skinned, so it is deliberately unbound and not part of this. */
+    uint32_t skinned = vm.have_flash ? vm.flash_first_vertex : vm.mesh.vertex_count;
     uint32_t unbound = 0, resty = 0;
-    for (uint32_t i = 0; i < vm.mesh.vertex_count; i++)
+    for (uint32_t i = 0; i < skinned; i++)
         if (vm.skin[i].weight[0] + vm.skin[i].weight[1] < 0.99f) unbound++;
     for (uint32_t i = 0; i < vm.graph.node_count; i++) if (vm.have_rest[i]) resty++;
     CHECK(unbound == 0, "every vertex has a full-weight binding");
@@ -240,6 +259,77 @@ int main(int argc, char **argv)
     const hta_animation *fa = &vm.graph.anims[vm.clip[HTA_VM_FIRE]];
     for (int i = 0; i < (int)(fa->frame_count * 3); i++) hta_viewmodel_update(&vm, 1.0f/30.0f);
     CHECK(vm.state == HTA_VM_IDLE, "firing returns to idle when it ends");
+
+    /* --- muzzle flash ------------------------------------------------- */
+    printf("\n[muzzle flash]\n");
+    if (!have_bitmaps) {
+        printf("  skip: needs bitmaps.map for the flash sprite\n");
+    } else {
+    CHECK(vm.have_flash, "the AR's firing effect yields a first-person flash");
+    if (vm.have_flash) {
+        /* It must hang off the gun, not off a hand: the marker names a node
+         * in the gun's own model, resolved into the merged skeleton by name. */
+        CHECK(vm.flash_node >= 0 && (uint32_t)vm.flash_node < vm.graph.node_count,
+              "its node is in the merged skeleton");
+        printf("    node %d '%s', offset (%.3f %.3f %.3f), radius %.3f, %.0f ms,"
+               " %u sprite(s)\n",
+               (int)vm.flash_node, vm.graph.nodes[vm.flash_node].name,
+               vm.flash_offset[0], vm.flash_offset[1], vm.flash_offset[2],
+               vm.flash_radius, vm.flash_life * 1000.0f, vm.flash_sprite_count);
+        CHECK(strcmp(vm.graph.nodes[vm.flash_node].name, "frame gun") == 0,
+              "and it is the gun node");
+        /* The barrel runs down local +X; the marker must be out along it. */
+        CHECK(vm.flash_offset[0] > 0.15f, "the marker is out at the muzzle, not at the grip");
+        CHECK(vm.flash_life > 0.01f && vm.flash_life < 0.5f,
+              "a flash lasts a few frames, not a second");
+        CHECK(vm.flash_radius > 0.01f && vm.flash_radius < 1.0f,
+              "and is a sane size");
+        CHECK(vm.flash_sprite_count > 1, "several sprite variants were found");
+
+        uint32_t fv = vm.flash_first_vertex;
+        CHECK(fv + 4 == vm.mesh.vertex_count, "its quad is the last four vertices");
+        CHECK(vm.mesh.submeshes[vm.mesh.submesh_count-1].draw_mode == HTA_DRAW_ADD,
+              "drawn additively, as the particle tag says");
+
+        /* Unlit, the quad must have zero area so it rasterises nothing. */
+        vm.flash_timer = 0.0f;
+        hta_viewmodel_update(&vm, 0.0f);
+        int collapsed = 1;
+        for (int i = 1; i < 4; i++)
+            for (int j = 0; j < 3; j++)
+                if (vm.posed[fv+i].pos[j] != vm.posed[fv].pos[j]) collapsed = 0;
+        CHECK(collapsed, "an unlit flash collapses to a point");
+
+        /* Lit, it must open up around the muzzle. */
+        hta_viewmodel_flash(&vm);
+        CHECK(vm.flash_timer > 0.0f, "firing lights it");
+        hta_viewmodel_update(&vm, 0.0f);
+        float w = 0.0f;
+        for (int j = 0; j < 3; j++) {
+            float d = vm.posed[fv+2].pos[j] - vm.posed[fv].pos[j];
+            w += d * d;
+        }
+        w = sqrtf(w);
+        CHECK(w > vm.flash_radius, "a lit flash spans at least its radius");
+
+        /* The sprite rectangle must be a sub-rectangle of the sheet, or the
+         * quad shows every flash on it at once. */
+        int sub = 1;
+        for (int i = 0; i < 4; i++) {
+            float u = vm.posed[fv+i].uv[0], v = vm.posed[fv+i].uv[1];
+            if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f) sub = 0;
+        }
+        CHECK(sub, "its UVs stay inside the sheet");
+        float du = fabsf(vm.posed[fv+1].uv[0] - vm.posed[fv].uv[0]);
+        float dv = fabsf(vm.posed[fv+3].uv[1] - vm.posed[fv].uv[1]);
+        CHECK(du > 0.0f && du < 0.95f && dv > 0.0f && dv < 0.95f,
+              "and cover one sprite, not the whole sheet");
+
+        /* It must go out on its own. */
+        hta_viewmodel_update(&vm, vm.flash_life + 0.01f);
+        CHECK(vm.flash_timer == 0.0f, "and it burns out by itself");
+    }
+    }
 
     hta_viewmodel_free(&vm);
     hta_anim_free(&g);

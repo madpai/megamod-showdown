@@ -82,6 +82,24 @@ uint32_t hta_mesh_intern_bitmap(hta_bsp_mesh *mesh, const hta_cache *c,
 
 uint8_t hta_shader_draw_mode(const hta_cache *c, uint32_t shader_tag_id);
 
+/* Sprite-sheet bitmaps (`type` 3). Halo stores each variant as its own
+ * "bitmap group sequence" holding a single sprite, and picks a sequence at
+ * random when it spawns a particle -- that is why one muzzle flash never
+ * looks quite like the last.
+ *
+ * Bitmap 108: sequences at +84, bitmap data at +96.
+ * BitmapGroupSequence 64: sprites at +52.
+ * BitmapGroupSprite 32: bitmap index at 0, then left/right/top/bottom. */
+typedef struct {
+    uint32_t bitmap_index;   /* which bitmap_data the sprite lives in */
+    float    u0, u1, v0, v1;
+} hta_bitmap_sprite;
+
+uint32_t hta_bitmap_sequence_count(const hta_cache *c, uint32_t tag_id);
+/* First sprite of sequence `seq`. */
+bool hta_bitmap_sprite_at(const hta_cache *c, uint32_t tag_id, uint32_t seq,
+                          hta_bitmap_sprite *out);
+
 /* Decode a raw pixel blob (used by unit tests; no cache involved). */
 bool hta_bitmap_decode_pixels(uint16_t format, uint32_t w, uint32_t h,
                               const uint8_t *src, uint32_t src_len,

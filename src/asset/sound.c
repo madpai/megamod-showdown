@@ -22,14 +22,6 @@
 #define SPERM_FORMAT        40u
 #define SPERM_SAMPLES       64u   /* TagDataOffset: size@0, external@4, offset@8 */
 
-/* Effect (64) / EffectEvent (68) / EffectPart (104) */
-#define EFF_EVENTS          52u
-#define EFFEVENT_SIZE       68u
-#define EFFEVENT_PARTS      44u
-#define EFFPART_SIZE       104u
-#define EFFPART_TYPE_CLASS  20u
-#define EFFPART_TYPE        24u   /* TagDependency: class@0, ..., tag id@12 */
-
 static void fail(char *err, size_t n, const char *fmt, ...)
 {
     if (!err || !n) return;
@@ -276,36 +268,4 @@ bool hta_sound_decode(const hta_cache *c, const hta_resource_map *sounds,
          pfmt == HTA_SND_FMT_OGG ? "Ogg Vorbis" :
          pfmt == HTA_SND_FMT_IMA ? "IMA ADPCM" : "?");
     return false;
-}
-
-uint32_t hta_effect_first_sound(const hta_cache *c, uint32_t effect_tag_id)
-{
-    if (!c || !effect_tag_id || effect_tag_id == 0xFFFFFFFFu) return 0;
-    int32_t ti = hta_cache_find_tag_by_id(c, effect_tag_id);
-    if (ti < 0) return 0;
-    hta_tag_entry t;
-    if (!hta_cache_tag(c, (uint32_t)ti, &t) || t.indexed) return 0;
-    uint32_t base;
-    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return 0;
-
-    uint32_t ev_count = 0, ev_ptr = 0, ev_off = 0;
-    if (!hta_read_reflexive(c, base + EFF_EVENTS, &ev_count, &ev_ptr)) return 0;
-    if (!ev_count || !hta_cache_ptr_to_offset(c, ev_ptr, &ev_off)) return 0;
-
-    for (uint32_t e = 0; e < ev_count; e++) {
-        uint32_t pc = 0, pp = 0, po = 0;
-        if (!hta_read_reflexive(c, ev_off + e * EFFEVENT_SIZE + EFFEVENT_PARTS, &pc, &pp))
-            continue;
-        if (!pc || !hta_cache_ptr_to_offset(c, pp, &po)) continue;
-        for (uint32_t k = 0; k < pc; k++) {
-            uint32_t pk = po + k * EFFPART_SIZE;
-            uint32_t cls = 0, id = 0;
-            if (!hta_rd_u32(c, pk + EFFPART_TYPE_CLASS, &cls)) continue;
-            if (cls != HTA_FOURCC('s','n','d','!')) continue;
-            /* TagDependency: class, path ptr, path len, tag id. */
-            if (!hta_rd_u32(c, pk + EFFPART_TYPE + 12u, &id)) continue;
-            if (id && id != 0xFFFFFFFFu) return id;
-        }
-    }
-    return 0;
 }

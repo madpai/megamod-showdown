@@ -24,6 +24,7 @@
 #include "../asset/biped.h"
 #include "../asset/weapon.h"
 #include "../asset/sound.h"
+#include "../asset/effect.h"
 #include "../asset/model.h"
 #include "../gfx/gfx.h"
 #include "../engine/scene_light.h"
@@ -491,6 +492,14 @@ static bool load_map(hta_android *s)
             hta_log("[weapon] viewmodel %u verts (%u hands + %u gun), %u nodes, %u clips",
                     s->vm.mesh.vertex_count, s->vm.hands_verts, s->vm.gun_verts,
                     s->vm.graph.node_count, s->vm.graph.anim_count);
+            if (s->vm.have_flash)
+                hta_log("[weapon] muzzle flash: node %d, offset (%.3f %.3f %.3f),"
+                        " radius %.3f, %.0f ms",
+                        (int)s->vm.flash_node, s->vm.flash_offset[0],
+                        s->vm.flash_offset[1], s->vm.flash_offset[2],
+                        s->vm.flash_radius, s->vm.flash_life * 1000.0f);
+            else
+                hta_log("[weapon] no first-person muzzle flash in the firing effect");
         } else {
             hta_log("[weapon] viewmodel: %s", err);
         }
@@ -972,6 +981,7 @@ void android_main(struct android_app *app)
             if (hta_ammo_shoot(&state.ammo)) {
                 hta_gun_fire(&state.gun, state.col.built ? &state.col : NULL, &state.cam);
                 hta_viewmodel_play(&state.vm, HTA_VM_FIRE);
+                hta_viewmodel_flash(&state.vm);
                 play_tag(&state, state.fire_snd, 1.0f);
             } else if (state.ammo.dry && state.dry_cooldown <= 0.0f) {
                 /* Click, then reload by itself, the way Halo does. */

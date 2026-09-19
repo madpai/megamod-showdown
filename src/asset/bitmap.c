@@ -406,3 +406,57 @@ bool hta_bsp_load_textures(const hta_cache *c, const hta_resource_map *bitmaps,
     (void)errlen;
     return true;
 }
+
+#define HTA_BITM_SEQUENCES    84u
+#define HTA_BITM_SEQ_SIZE     64u
+#define HTA_BITM_SEQ_SPRITES  52u
+#define HTA_BITM_SPRITE_SIZE  32u
+
+static bool sequences_of(const hta_cache *c, uint32_t tag_id,
+                         uint32_t *out_off, uint32_t *out_count)
+{
+    int32_t ti = hta_cache_find_tag_by_id(c, tag_id);
+    if (ti < 0) return false;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t) || t.indexed) return false;
+    uint32_t base;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return false;
+    uint32_t n = 0, ptr = 0, off = 0;
+    if (!hta_read_reflexive(c, base + HTA_BITM_SEQUENCES, &n, &ptr)) return false;
+    if (!n || !hta_cache_ptr_to_offset(c, ptr, &off)) return false;
+    *out_off = off;
+    *out_count = n;
+    return true;
+}
+
+uint32_t hta_bitmap_sequence_count(const hta_cache *c, uint32_t tag_id)
+{
+    uint32_t off = 0, n = 0;
+    if (!c || !sequences_of(c, tag_id, &off, &n)) return 0;
+    return n;
+}
+
+bool hta_bitmap_sprite_at(const hta_cache *c, uint32_t tag_id, uint32_t seq,
+                          hta_bitmap_sprite *out)
+{
+    if (!c || !out) return false;
+    memset(out, 0, sizeof(*out));
+    uint32_t off = 0, n = 0;
+    if (!sequences_of(c, tag_id, &off, &n) || seq >= n) return false;
+
+    uint32_t sc = 0, sp = 0, so = 0;
+    if (!hta_read_reflexive(c, off + seq * HTA_BITM_SEQ_SIZE + HTA_BITM_SEQ_SPRITES,
+                            &sc, &sp))
+        return false;
+    if (!sc || !hta_cache_ptr_to_offset(c, sp, &so)) return false;
+
+    uint16_t bi = 0;
+    if (!hta_rd_u16(c, so, &bi)) return false;
+    out->bitmap_index = bi;
+    if (!hta_rd_f32(c, so + 8u,  &out->u0) ||
+        !hta_rd_f32(c, so + 12u, &out->u1) ||
+        !hta_rd_f32(c, so + 16u, &out->v0) ||
+        !hta_rd_f32(c, so + 20u, &out->v1))
+        return false;
+    return true;
+}

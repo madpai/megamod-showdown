@@ -342,6 +342,62 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
     return dst->submesh_count > 0 || dst->vertex_count > 0;
 }
 
+#define HTA_MOD2_MARKERS           0x0ACu
+#define HTA_MARKER_SIZE            64u
+#define HTA_MARKER_INSTANCES       52u
+#define HTA_MARKER_INST_SIZE       32u
+#define HTA_MARKER_INST_NODE        2u
+#define HTA_MARKER_INST_TRANS       4u
+#define HTA_MODEL_NODE_SIZE       156u
+
+bool hta_model_marker(const hta_cache *c, uint32_t model_tag_id,
+                      const char *marker_name,
+                      char out_node_name[32], float out_translation[3])
+{
+    if (!c || !marker_name || !out_node_name || !out_translation) return false;
+    out_node_name[0] = '\0';
+    int32_t ti = hta_cache_find_tag_by_id(c, model_tag_id);
+    if (ti < 0) return false;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t) || t.indexed) return false;
+    uint32_t base;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return false;
+
+    uint32_t mc = 0, mp = 0, mo = 0;
+    if (!hta_read_reflexive(c, base + HTA_MOD2_MARKERS, &mc, &mp)) return false;
+    if (!mc || !hta_cache_ptr_to_offset(c, mp, &mo)) return false;
+
+    for (uint32_t i = 0; i < mc; i++) {
+        uint32_t m = mo + i * HTA_MARKER_SIZE;
+        char name[33] = {0};
+        if (!hta_rd_bytes(c, m, name, 32)) continue;
+        name[32] = '\0';
+        if (strcmp(name, marker_name) != 0) continue;
+
+        uint32_t ic = 0, ip = 0, io = 0;
+        if (!hta_read_reflexive(c, m + HTA_MARKER_INSTANCES, &ic, &ip)) return false;
+        if (!ic || !hta_cache_ptr_to_offset(c, ip, &io)) return false;
+
+        uint8_t node = 0;
+        if (!hta_rd_u8(c, io + HTA_MARKER_INST_NODE, &node)) return false;
+        if (!hta_rd_f32(c, io + HTA_MARKER_INST_TRANS + 0u, &out_translation[0]) ||
+            !hta_rd_f32(c, io + HTA_MARKER_INST_TRANS + 4u, &out_translation[1]) ||
+            !hta_rd_f32(c, io + HTA_MARKER_INST_TRANS + 8u, &out_translation[2]))
+            return false;
+
+        /* Resolve the node index against this model's own node list. */
+        uint32_t nc = 0, np = 0, no = 0;
+        if (!hta_read_reflexive(c, base + HTA_MOD2_NODES, &nc, &np)) return false;
+        if (node >= nc || !hta_cache_ptr_to_offset(c, np, &no)) return false;
+        if (!hta_rd_bytes(c, no + (uint32_t)node * HTA_MODEL_NODE_SIZE,
+                          out_node_name, 31))
+            return false;
+        out_node_name[31] = '\0';
+        return true;
+    }
+    return false;
+}
+
 bool hta_model_instance(hta_bsp_mesh *world, const hta_cache *c,
                         const hta_resource_map *bitmaps, uint32_t model_tag_id,
                         const float pos[3], const float rot[3],
