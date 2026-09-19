@@ -11,6 +11,7 @@ if(ANDROID)
         src/engine/player.c
         src/engine/gun.c
         src/engine/viewmodel.c
+        src/engine/audio.c
         src/asset/cache.c
         src/asset/bsp.c
         src/asset/bitmap.c
@@ -21,13 +22,14 @@ if(ANDROID)
         src/asset/model.c
         src/gfx/gfx_vulkan.c
         src/platform/platform_android.c
+        src/platform/audio_android.c
         ${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c
     )
     target_include_directories(hta_native PRIVATE
         ${ANDROID_NDK}/sources/android/native_app_glue
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
-    target_link_libraries(hta_native PRIVATE android log vulkan m)
+    target_link_libraries(hta_native PRIVATE android log vulkan aaudio m)
     # Vulkan structs are idiomatically brace-initialised with only sType set.
     target_compile_options(hta_native PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
     # native_app_glue registers android_main via a constructor; keep it.
@@ -35,7 +37,7 @@ if(ANDROID)
 else()
     # Host build: the portable engine only, plus its tests.
     add_library(hta_engine STATIC src/engine/engine.c src/engine/camera.c src/engine/player.c src/engine/gun.c
-        src/engine/viewmodel.c
+        src/engine/viewmodel.c src/engine/audio.c
         src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c src/asset/sound.c src/asset/biped.c src/asset/weapon.c
         src/asset/anim.c src/asset/model.c)
     target_include_directories(hta_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -102,6 +104,10 @@ else()
     add_executable(test_anim tests/test_anim.c)
     target_link_libraries(test_anim PRIVATE hta_engine m)
     add_test(NAME anim COMMAND test_anim)
+
+    add_executable(test_audio tests/test_audio.c)
+    target_link_libraries(test_audio PRIVATE hta_engine m)
+    add_test(NAME audio COMMAND test_audio)
 
     add_executable(test_sound tests/test_sound.c)
     target_link_libraries(test_sound PRIVATE hta_engine m)

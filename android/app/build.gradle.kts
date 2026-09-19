@@ -7,7 +7,9 @@ android {
 
     defaultConfig {
         applicationId = "net.hta.halotrial"
-        minSdk = 24              // Vulkan + AHardwareBuffer era; S24+ is far above
+        // AAudio is API 26. Vulkan 1.1 (required in the manifest) already put
+        // the real floor well above 24, so this costs nothing we had.
+        minSdk = 26
         targetSdk = 35
         versionCode = 1
         versionName = "0.1-poc"

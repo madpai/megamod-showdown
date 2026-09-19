@@ -22,9 +22,11 @@
 #include "../asset/bitmap.h"
 #include "../asset/biped.h"
 #include "../asset/weapon.h"
+#include "../asset/sound.h"
 #include "../asset/model.h"
 #include "../gfx/gfx.h"
 #include "../engine/scene_light.h"
+#include "audio_android.h"
 
 #include <android/log.h>
 #include <android/input.h>
@@ -77,16 +79,22 @@ bool hta_probe_fixed_map(uint64_t addr, size_t len)
 
 /* ------------------------------------------------------------------ */
 
+#define HTA_SND_MAX_BANK   24u
+#define HTA_SND_MAX_PERMS   8u
+
 typedef struct {
     struct android_app *app;
 
     /* asset state */
     char      map_path[512];
     char      bitmaps_path[512];
+    char      sounds_path[512];
     uint8_t  *map_data;
     size_t    map_size;
     uint8_t  *bitmaps_data;
     size_t    bitmaps_size;
+    uint8_t  *sounds_data;
+    size_t    sounds_size;
     bool      map_loaded;
     char      status[256];
 
@@ -96,6 +104,22 @@ typedef struct {
     hta_bsp_mesh  coll_mesh;
     hta_viewmodel vm;
     hta_collision col;
+
+    /* Sound. One bank entry per snd! tag actually asked for, decoded once and
+     * kept; Halo tags carry several permutations of the same sound and pick
+     * between them, so each entry holds every permutation as its own clip. */
+    hta_resource_map sounds_rm;
+    hta_audio        audio;
+    bool             audio_ok;
+    struct {
+        uint32_t tag_id;
+        uint32_t count;
+        uint32_t clip[HTA_SND_MAX_PERMS];
+        int16_t *pcm[HTA_SND_MAX_PERMS];
+    } bank[HTA_SND_MAX_BANK];
+    uint32_t bank_count;
+    uint32_t fire_snd;       /* snd! id of the weapon's gunshot, 0 if none */
+    uint32_t rng;
     bool          have_mesh;
     bool          have_sky;
     bool          have_coll;
@@ -241,6 +265,58 @@ static bool find_map(hta_android *s)
     return false;
 }
 
+/* Decode every permutation of a snd! tag once, and remember it. Returns the
+ * bank index, or -1. Called from the game thread only. */
+static int bank_get(hta_android *s, uint32_t tag_id)
+{
+    if (!tag_id || tag_id == 0xFFFFFFFFu || !s->audio_ok) return -1;
+    for (uint32_t i = 0; i < s->bank_count; i++)
+        if (s->bank[i].tag_id == tag_id) return (int)i;
+    if (s->bank_count >= HTA_SND_MAX_BANK) return -1;
+
+    char err[HTA_ERRLEN] = {0};
+    hta_sound_info info;
+    if (!hta_sound_info_load(&s->cache, tag_id, &info, err, sizeof(err))) {
+        hta_log("[audio] snd! 0x%08X: %s", tag_id, err);
+        return -1;
+    }
+    uint32_t idx = s->bank_count;
+    s->bank[idx].tag_id = tag_id;
+    s->bank[idx].count = 0;
+    uint32_t want = info.permutations;
+    if (want > HTA_SND_MAX_PERMS) want = HTA_SND_MAX_PERMS;
+    for (uint32_t p = 0; p < want; p++) {
+        hta_pcm pcm;
+        if (!hta_sound_decode(&s->cache, &s->sounds_rm, tag_id, p, &pcm,
+                              err, sizeof(err))) {
+            /* Ogg permutations land here; the rest of the tag still plays. */
+            hta_log("[audio] snd! 0x%08X perm %u: %s", tag_id, p, err);
+            continue;
+        }
+        uint32_t clip = hta_audio_add_clip(&s->audio, pcm.samples, pcm.frame_count,
+                                           pcm.sample_rate, pcm.channels);
+        if (clip == HTA_AUDIO_NO_CLIP) { hta_pcm_free(&pcm); break; }
+        uint32_t k = s->bank[idx].count++;
+        s->bank[idx].clip[k] = clip;
+        s->bank[idx].pcm[k] = pcm.samples;   /* the mixer holds this pointer */
+    }
+    if (!s->bank[idx].count) return -1;
+    s->bank_count++;
+    hta_log("[audio] snd! 0x%08X ready: %u permutation(s)", tag_id, s->bank[idx].count);
+    return (int)idx;
+}
+
+/* Halo picks between a sound's permutations rather than repeating one. */
+static void play_tag(hta_android *s, uint32_t tag_id, float gain)
+{
+    int b = bank_get(s, tag_id);
+    if (b < 0) return;
+    uint32_t n = s->bank[b].count;
+    s->rng = s->rng * 1664525u + 1013904223u;
+    uint32_t pick = n > 1 ? (s->rng >> 16) % n : 0u;
+    hta_audio_play(&s->audio, s->bank[b].clip[pick], gain);
+}
+
 static bool find_named(hta_android *s, const char *name, char *out, size_t outlen)
 {
     /* Reuse the map search directories: same folder as the cache, plus Download. */
@@ -315,6 +391,28 @@ static bool load_map(hta_android *s)
             s->mesh.bounds_min[0], s->mesh.bounds_min[1], s->mesh.bounds_min[2],
             s->mesh.bounds_max[0], s->mesh.bounds_max[1], s->mesh.bounds_max[2]);
 
+    /* sounds.map, same external-resource pattern as bitmaps but type 2. */
+    if (find_named(s, "sounds.map", s->sounds_path, sizeof(s->sounds_path))) {
+        int sfd = open(s->sounds_path, O_RDONLY);
+        struct stat sst;
+        if (sfd >= 0 && fstat(sfd, &sst) == 0 && sst.st_size > 0) {
+            void *sp = mmap(NULL, (size_t)sst.st_size, PROT_READ, MAP_PRIVATE, sfd, 0);
+            close(sfd);
+            if (sp != MAP_FAILED) {
+                s->sounds_data = (uint8_t *)sp;
+                s->sounds_size = (size_t)sst.st_size;
+                if (hta_resource_open_typed(&s->sounds_rm, s->sounds_data, s->sounds_size,
+                                            HTA_RESOURCE_SOUNDS, err, sizeof(err)))
+                    hta_log("[assets] sounds.map %zu bytes from %s",
+                            s->sounds_size, s->sounds_path);
+                else
+                    hta_log("[assets] sounds.map rejected: %s", err);
+            }
+        } else if (sfd >= 0) close(sfd);
+    } else {
+        hta_log("[assets] no sounds.map -- the game will be silent. Copy it next to bloodgulch.map");
+    }
+
     hta_resource_map rm;
     memset(&rm, 0, sizeof(rm));
     if (find_named(s, "bitmaps.map", s->bitmaps_path, sizeof(s->bitmaps_path))) {
@@ -366,6 +464,11 @@ static bool load_map(hta_android *s)
 
     if (hta_weapon_load_default(&s->cache, rm.data ? &rm : NULL, &s->weap, NULL, err, sizeof(err))) {
         s->gun.fire_interval = s->weap.cooldown;
+        /* The gunshot is not on the weapon: it hangs off the trigger's firing
+         * effect, among that effect's parts. */
+        s->fire_snd = hta_effect_first_sound(&s->cache, s->weap.firing_fx_id);
+        if (s->fire_snd) bank_get(s, s->fire_snd);
+        else hta_log("[audio] the trigger's firing effect names no snd!");
         hta_log("[weapon] %s  ROF %.1f/s  mag %d/%d  reload %.1fs",
                 s->weap.path, s->weap.rof, s->weap.rounds_loaded_max,
                 s->weap.rounds_reserve_max, s->weap.reload_time);
@@ -787,6 +890,18 @@ void android_main(struct android_app *app)
     hta_camera_init(&state.cam);
     hta_player_init(&state.player);
     hta_gun_init(&state.gun);
+    state.rng = 0x9E3779B9u;
+    /* Before any asset loading: the clip table lives in the mixer, and
+     * hta_audio_init clears it, so the stream has to exist first. */
+    state.audio_ok = hta_audio_android_start(&state.audio);
+    if (state.audio_ok) {
+        /* The AR fires 15/s and its gunshot is 0.70 s long, so ten shots
+         * overlap in steady fire. At unity that sums straight into the
+         * clamp and turns into a buzz; leave headroom instead. */
+        state.audio.master_gain = 0.45f;
+    } else {
+        hta_log("[audio] no output stream; running silent");
+    }
     state.last_time = hta_time_seconds();
 
     hta_log("[app] android_main; pointer size %zu bytes", sizeof(void *));
@@ -813,8 +928,18 @@ void android_main(struct android_app *app)
         hta_player_update(&state.player, &state.cam,
                           state.col.built ? &state.col : NULL, &in, dt);
         hta_gun_update(&state.gun, dt);
-        if (in.fire && hta_gun_fire(&state.gun, state.col.built ? &state.col : NULL, &state.cam))
+        if (in.fire && hta_gun_fire(&state.gun, state.col.built ? &state.col : NULL, &state.cam)) {
             hta_viewmodel_play(&state.vm, HTA_VM_FIRE);
+            play_tag(&state, state.fire_snd, 1.0f);
+        }
+        /* The animation graph fires a snd! id when a clip crosses its sound
+         * frame -- reload clacks, the weapon-ready rack. Nothing consumed it
+         * until now. */
+        if (state.vm.sound_cue) {
+            play_tag(&state, state.vm.sound_cue, 1.0f);
+            state.vm.sound_cue = 0;
+        }
+        hta_audio_android_poll(&state.audio);
         hta_viewmodel_update(&state.vm, dt);
         if (state.gun.dirty && state.gfx) {
             char err[HTA_ERRLEN];
@@ -851,11 +976,16 @@ void android_main(struct android_app *app)
                      state.player.on_ground ? "ground" : "air",
                      state.fps_accum > 0.05 ? state.fps_frames / state.fps_accum : 0.0);
             if (state.fps_accum >= 2.0) {
-                hta_log("[perf] %.1f fps | pos (%.2f %.2f %.2f) %s | tris %u",
+                hta_log("[perf] %.1f fps | pos (%.2f %.2f %.2f) %s | tris %u"
+                        " | audio %s %u voices %u started %u dropped",
                         state.fps_frames / state.fps_accum,
                         state.player.pos[0], state.player.pos[1], state.player.pos[2],
                         state.player.on_ground ? "grounded" : "airborne",
-                        state.have_mesh ? state.mesh.index_count / 3 : 0);
+                        state.have_mesh ? state.mesh.index_count / 3 : 0,
+                        hta_audio_android_running() ? "on" : "off",
+                        hta_audio_active_voices(&state.audio),
+                        state.audio.started,
+                        (unsigned)atomic_load(&state.audio.dropped));
                 state.fps_accum = 0.0;
                 state.fps_frames = 0;
             }
@@ -864,6 +994,12 @@ void android_main(struct android_app *app)
 
 done:
     hta_log("[app] shutting down after %llu frames", (unsigned long long)state.frames);
+    /* Stop the stream before freeing the PCM its voices point at. */
+    hta_audio_android_stop();
+    for (uint32_t i = 0; i < state.bank_count; i++)
+        for (uint32_t k = 0; k < state.bank[i].count; k++)
+            free(state.bank[i].pcm[k]);
+    state.bank_count = 0;
     stop_gfx(&state);
     hta_collision_free(&state.col);
     hta_gun_free(&state.gun);
@@ -873,4 +1009,5 @@ done:
     hta_viewmodel_free(&state.vm);
     if (state.map_data) munmap(state.map_data, state.map_size);
     if (state.bitmaps_data) munmap(state.bitmaps_data, state.bitmaps_size);
+    if (state.sounds_data) munmap(state.sounds_data, state.sounds_size);
 }

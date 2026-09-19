@@ -85,6 +85,60 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## Sound (2026-09-19)
+
+**Confirmed on the S24+ this session:** ramps work standing, both directions,
+at both bases; the animated first-person AR renders on Adreno at 120 fps
+(that was NEXT WORK #1 and is now closed); fullscreen and the position readout
+work.
+
+What the Trial ships, measured: 333 `snd!` tags, 951 permutations, 11.4 MiB of
+samples, **every byte in sounds.map and none in the cache**. 294 tags are Xbox
+ADPCM, 39 are Ogg Vorbis -- and the Ogg is announcer dialogue, not effects. So
+no Vorbis decoder is on the critical path; that is only needed for the MP
+announcer later.
+
+Xbox ADPCM is IMA with a fixed 36-byte block per channel: 4-byte header (int16
+seed, step index) then 8 chunks of 8 nibble codes. **The seed is itself the
+block's first output frame**, so a block yields 64 frames and the last code of
+the final chunk goes unused. Mirror that or every block after the first drifts.
+Every permutation size in the map is a whole multiple of 36.
+
+The decode is **bit-exact against ffmpeg's independent IMA decoder** over all
+15488 samples of the AR's first gunshot permutation (ffmpeg keeps the 65th
+sample per block that Halo drops; every sample Halo keeps matches).
+
+**The gunshot is not on the weapon.** Halo hangs it off the trigger's firing
+`effe`, among that effect's parts: `hta_effect_first_sound` walks
+events -> parts for a `snd!`-classed dependency. On Trial that resolves
+`weapons\assault rifle\assault rifle` -> `sound\sfx\weapons\assault rifle\fire`,
+4 permutations, 0.60-0.80 s. Halo picks between permutations rather than
+repeating one, and so do we.
+
+Architecture: the mixer (`src/engine/audio.c`) is portable and knows nothing
+about Android, so resampling, summing, clamping and voice stealing are all
+tested on the host. `src/platform/audio_android.c` only owns an AAudio stream
+and hands its callback buffer to `hta_audio_mix`. The device picks the rate;
+each voice carries its own resampling step. Game thread and audio thread share
+only an SPSC ring of play requests, so the audio callback never blocks or
+allocates.
+
+Gotchas worth not re-learning:
+
+- `hta_audio_init` wipes the clip table, and `hta_audio_android_start` calls it
+  with the device's format -- so **start the stream before registering clips**,
+  and restore clips and master gain after a route-change restart
+  (`hta_audio_android_poll` does).
+- Master gain is 0.45. The AR fires 15/s with a 0.70 s sample, so ten shots
+  overlap in steady fire; at unity that sums into the clamp and buzzes.
+- `AAudioStreamBuilder_setUsage` is API 28 and `__builtin_available` does not
+  gate it in the NDK's C path. It is only a routing hint, so it is omitted
+  rather than raising minSdk.
+- minSdk is 26 for AAudio. The manifest already requires Vulkan 1.1, so the
+  real floor was never 24.
+
+Still silent: footsteps, impacts, projectile effects, and anything Ogg.
+
 ## The pawn's crown is rounded (2026-09-19)
 
 The ramp block was **not** the slope fix below — that was real and separate. The
@@ -225,7 +279,7 @@ rewritten inside `hta_gfx_draw` behind that slot's fence). Adreno has not seen t
 Watch for: viewmodel flicker or tearing (slot/fence bug), and CPU cost of skinning 3200
 verts per frame.
 
-### 2. Sound — the owner's remaining ask
+### 2. Sound — done for the gun; see "Sound" above. What is left
 
 Nothing audible exists yet. `hta_viewmodel.sound_cue` already fires the tagged `snd!`
 tag id when a clip crosses its sound frame; nothing consumes it.
@@ -326,6 +380,10 @@ after building, wherever real tag physics are available.
 | Resource maps (bitmaps only today) | `src/asset/bitmap.c` `hta_resource_open` (type 1; type 2 = sounds) |
 | Tag layouts | `upstream/invader/src/tag/hek/definition/*.json` |
 | HUD, fullscreen, gesture exclusion | `android/.../GameActivity.java` |
+| Portable voice mixer | `src/engine/audio.c`, `.h` |
+| AAudio stream | `src/platform/audio_android.c` |
+| snd! + Xbox ADPCM + effe->snd! | `src/asset/sound.c`, `.h` |
+| Sound inspector / WAV dump | `src/tools/htasound.c` |
 | Fit probe at a coordinate | `src/tools/htaprobe.c` |
 | Map / bitmap picker | `android/.../SetupActivity.java` |
 | Android glue | `src/platform/platform_android.c` |

@@ -107,6 +107,9 @@ file "$SO" | grep -q 'ARM aarch64' && ok "native lib is aarch64" || bad "native 
 $TOOLS/llvm-nm -D --defined-only "$SO" 2>/dev/null | grep -q ' android_main' && ok "exports android_main" || bad "exports android_main"
 $TOOLS/llvm-nm -D --defined-only "$SO" 2>/dev/null | grep -q 'ANativeActivity_onCreate' && ok "exports ANativeActivity_onCreate" || bad "exports ANativeActivity_onCreate"
 $TOOLS/llvm-readelf -d "$SO" | grep -q 'libvulkan.so' && ok "links libvulkan" || bad "links libvulkan"
+$TOOLS/llvm-readelf -d "$SO" | grep -q 'libaaudio.so' && ok "links libaaudio" || bad "links libaaudio"
+# Nothing in the APK may be an audio asset: the user supplies sounds.map.
+unzip -l "$APK" | grep -qiE '\.(wav|ogg|mp3|m4a|aac|opus)$' && bad "no audio bundled in the APK" || ok "no audio bundled in the APK"
 
 echo
 echo "$pass passed, $fail failed"
