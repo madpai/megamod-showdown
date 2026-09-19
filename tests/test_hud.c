@@ -122,9 +122,11 @@ int main(int argc, char **argv)
         float px_h = (maxy - miny) * 0.5f * (float)H;
         printf("    on screen: %.1f x %.1f px\n", px_w, px_h);
         CHECK(fabsf(px_w - px_h) < 1.0f, "square on screen, not stretched by aspect");
-        /* Halo scales its HUD by height. */
-        float want = h.cross_px * (float)H / HTA_HUD_CANVAS_H;
+        /* Halo scales its HUD by height; we then enlarge it for a phone. */
+        float want = h.cross_px * (float)H / HTA_HUD_CANVAS_H * HTA_HUD_PHONE_SCALE;
         CHECK(fabsf(px_w - want) < 1.0f, "scaled by screen height, as Halo does");
+        CHECK(HTA_HUD_PHONE_SCALE >= 1.0f && HTA_HUD_PHONE_SCALE <= 3.0f,
+              "the phone enlargement is a sane multiple");
         CHECK(px_w > 4.0f && px_w < (float)H * 0.5f, "and is a believable size");
 
         /* The same reticle on a different screen must stay square and the

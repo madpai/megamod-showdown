@@ -22,6 +22,14 @@
 #define HTA_HUD_CANVAS_W 640.0f
 #define HTA_HUD_CANVAS_H 480.0f
 
+/* Halo's canvas assumes a monitor at desk distance. A phone is a much
+ * smaller slab of glass held at arm's length, and scaling the HUD straight
+ * off screen height leaves it unreadably small -- more so on a 21:9 handset,
+ * where scaling by height gives the HUD an even smaller share of the width
+ * than Halo's 4:3 ever did. This is a deliberate departure from the tag, and
+ * the one number here that Halo does not supply. */
+#define HTA_HUD_PHONE_SCALE 1.75f
+
 /* HUDInterfaceAnchor */
 #define HTA_HUD_ANCHOR_TOP_LEFT      0u
 #define HTA_HUD_ANCHOR_TOP_RIGHT     1u

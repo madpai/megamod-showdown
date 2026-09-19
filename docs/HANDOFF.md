@@ -132,6 +132,41 @@ are live and driven by `hta_hud_set_shield` / `hta_hud_set_health`, verified
 by rendering at 1.0, 0.55 and 0.15: the shield drains from the left and
 darkens, health goes pink then red.
 
+### Making the meters look like Halo's rather than like slabs
+
+Comparing against the owner's screenshots of the real game, three things were
+wrong and all three were in the shader:
+
+1. **A meter must MULTIPLY the art's RGB, not replace it.** The art carries
+   the bar's gradient and its bright edge; drawing flat in the tag's colour
+   turns Halo's shield into a plain blue slab and hides the health bar's
+   eight chevrons completely.
+2. **Alpha cannot also be the opacity.** It is already the fill ramp, and the
+   two meters encode it differently -- the shield's sits in a narrow band
+   around 0.45, the health bar steps once per chevron from 0.94 down to 0.12.
+   Using it as opacity leaves the whole bar half transparent. Halo separates
+   them with the meter's `alpha multiplier`, `alpha bias` and `min alpha`,
+   which we do not read yet; `smoothstep(0.15, 0.40, a)` stands in.
+3. **Forcing lit pixels opaque leaves black blobs.** The health bar's left cap
+   is RGB 0 at alpha 30 -- Halo blends it to nothing.
+
+### The one number Halo does not supply
+
+`HTA_HUD_PHONE_SCALE` (1.75) in `hud.h`. Halo's canvas assumes a monitor at
+desk distance; a 21:9 handset scaling straight off screen height gives the
+HUD an even smaller share of the width than Halo's 4:3 ever did, and the
+owner's verdict on the faithful version was "the tiniest saddest HUD". This
+is a deliberate departure and the only invented number in the HUD.
+
+### Still missing from Halo's HUD
+
+The **ammo block top-left** (rounds, grenade count, the pip grid, and the
+"hold X to swap" prompt) and the **motion tracker bottom-left**. Both are
+real tags -- the ammo elements are the weapon `wphi`'s static/number/meter
+elements, the tracker is in the `unhi` -- and both now have a 2D pass to
+ride on. The plain white "60 / 180" the Java HUD draws is a placeholder for
+the first of those.
+
 ## A 2D HUD pass, and Halo's own crosshair (2026-09-19)
 
 The owner's verdict after the on-gun counter: *"It doesn't feel like a ready

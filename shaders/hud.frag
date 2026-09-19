@@ -26,7 +26,21 @@ void main() {
     if (push.ambient.y > 0.5) {
         if (t.a <= 0.004) discard;                 /* outside the bar */
         if (t.a < 1.0 - push.ambient.x) discard;   /* past the fill */
-        out_color = vec4(push.tint.rgb, push.tint.a);
+        /* Keep the art's shading: its RGB carries the bar's gradient and
+         * bright edge, and a flat tag colour turns Halo's shield into a
+         * plain slab.
+         *
+         * Opacity cannot simply be that alpha, because alpha is already
+         * doing duty as the fill ramp -- the shield's sits in a narrow band
+         * around 0.45 and the health bar steps once per chevron, so using it
+         * directly leaves the whole bar half transparent. Halo separates the
+         * two with the meter's alpha multiplier, alpha bias and min alpha,
+         * which we do not read yet; until we do, a curve that makes the bar
+         * solid while leaving the art's faintest marks faint stands in for
+         * them. Without it the health bar's dim left cap turns into a black
+         * blob. */
+        float opacity = smoothstep(0.15, 0.40, t.a);
+        out_color = vec4(t.rgb * push.tint.rgb, opacity * push.tint.a);
     } else {
         out_color = vec4(t.rgb * push.tint.rgb, t.a * push.tint.a);
     }

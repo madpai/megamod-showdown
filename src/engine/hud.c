@@ -357,7 +357,7 @@ void hta_hud_layout(hta_hud *h, uint32_t screen_w, uint32_t screen_h)
 
     /* Halo scales its HUD by height, so everything keeps its size relative
      * to the vertical field of view whatever the aspect ratio. */
-    float scale = (float)screen_h / HTA_HUD_CANVAS_H;
+    float scale = (float)screen_h / HTA_HUD_CANVAS_H * HTA_HUD_PHONE_SCALE;
     float fw = (float)screen_w, fh = (float)screen_h;
     float sx = 2.0f / fw, sy = 2.0f / fh;
 
