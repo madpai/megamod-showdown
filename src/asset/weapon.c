@@ -68,6 +68,9 @@ static void load_trigger(const hta_cache *c, uint32_t weap, hta_weapon_def *def)
     def->projectiles_per_shot = rdi16(c, arr + HTA_TRIG_PROJ_SHOT);
     def->error_angle[0] = rdf(c, arr + HTA_TRIG_ERROR_ANGLE);
     def->error_angle[1] = rdf(c, arr + HTA_TRIG_ERROR_ANGLE + 4u);
+    def->error_accel    = rdf(c, arr + HTA_TRIG_ERROR_ACCEL);
+    def->error_decel    = rdf(c, arr + HTA_TRIG_ERROR_DECEL);
+    def->min_error      = rdf(c, arr + HTA_TRIG_MIN_ERROR);
     for (int k = 0; k < 3; k++)
         def->fp_offset[k] = rdf(c, arr + HTA_TRIG_FP_OFFSET + (uint32_t)k*4u);
     def->projectile_id = rddep(c, arr + HTA_TRIG_PROJECTILE);

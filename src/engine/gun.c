@@ -8,6 +8,31 @@ void hta_gun_init(hta_gun *g)
     if (!g) return;
     memset(g, 0, sizeof(*g));
     g->fire_interval = HTA_GUN_COOLDOWN;
+    g->error_accel = 0.6f;
+    g->error_decel = 1.0f;
+    g->since_shot = 1e6f;
+    g->rng = 0x2545F491u;
+}
+
+void hta_gun_set_error(hta_gun *g, const float error_angle[2],
+                       float accel, float decel)
+{
+    if (!g || !error_angle) return;
+    g->error_angle[0] = error_angle[0];
+    g->error_angle[1] = error_angle[1];
+    /* A tag with no ramp time would divide by zero and snap straight to the
+     * wide cone on the first round. */
+    if (accel > 1e-3f) g->error_accel = accel;
+    if (decel > 1e-3f) g->error_decel = decel;
+}
+
+float hta_gun_spread(const hta_gun *g)
+{
+    if (!g) return 0.0f;
+    float a = g->error_angle[0];
+    float b = g->error_angle[1];
+    if (b < a) b = a;
+    return a + (b - a) * g->error;
 }
 
 void hta_gun_free(hta_gun *g)
@@ -23,6 +48,51 @@ void hta_gun_update(hta_gun *g, float dt)
     if (dt < 0.0f) dt = 0.0f;
     g->cooldown -= dt;
     if (g->cooldown < 0.0f) g->cooldown = 0.0f;
+
+    /* Still firing if a round left within about one shot's time; a burst at
+     * the tagged rate of fire therefore keeps blooming between rounds. */
+    g->since_shot += dt;
+    float gap = g->fire_interval > 0.01f ? g->fire_interval : HTA_GUN_COOLDOWN;
+    if (g->since_shot <= gap * 1.5f) g->error += dt / g->error_accel;
+    else                             g->error -= dt / g->error_decel;
+    if (g->error > 1.0f) g->error = 1.0f;
+    if (g->error < 0.0f) g->error = 0.0f;
+}
+
+/* A direction inside a cone of `half_angle` about `in`. The polar angle is
+ * drawn as angle*sqrt(u) so shots land evenly across the disc rather than
+ * bunching at the centre. */
+static void spread_dir(hta_gun *g, const float in[3], float half_angle, float out[3])
+{
+    out[0] = in[0]; out[1] = in[1]; out[2] = in[2];
+    if (half_angle <= 1e-6f) return;
+
+    /* An orthonormal basis around the aim direction. */
+    float up[3] = { 0.0f, 0.0f, 1.0f };
+    if (fabsf(in[2]) > 0.99f) { up[0] = 1.0f; up[2] = 0.0f; }
+    float r[3] = { in[1]*up[2] - in[2]*up[1],
+                   in[2]*up[0] - in[0]*up[2],
+                   in[0]*up[1] - in[1]*up[0] };
+    float rl = sqrtf(r[0]*r[0] + r[1]*r[1] + r[2]*r[2]);
+    if (rl < 1e-6f) return;
+    r[0] /= rl; r[1] /= rl; r[2] /= rl;
+    float u2[3] = { in[1]*r[2] - in[2]*r[1],
+                    in[2]*r[0] - in[0]*r[2],
+                    in[0]*r[1] - in[1]*r[0] };
+
+    g->rng = g->rng * 1664525u + 1013904223u;
+    float a = (float)((g->rng >> 8) & 0xFFFFFFu) / (float)0x1000000;
+    g->rng = g->rng * 1664525u + 1013904223u;
+    float b = (float)((g->rng >> 8) & 0xFFFFFFu) / (float)0x1000000;
+
+    float theta = half_angle * sqrtf(a);
+    float phi = b * 6.28318531f;
+    float st = sinf(theta), ct = cosf(theta);
+    float cp = cosf(phi), sp = sinf(phi);
+    for (int i = 0; i < 3; i++)
+        out[i] = in[i] * ct + (r[i] * cp + u2[i] * sp) * st;
+    float l = sqrtf(out[0]*out[0] + out[1]*out[1] + out[2]*out[2]);
+    if (l > 1e-6f) { out[0] /= l; out[1] /= l; out[2] /= l; }
 }
 
 int hta_gun_ready(const hta_gun *g)
@@ -35,8 +105,12 @@ int hta_gun_fire(hta_gun *g, const hta_collision *col, const hta_camera *cam)
     if (!g || !cam) return 0;
     if (g->cooldown > 0.0f) return 0;
     g->cooldown = (g->fire_interval > 0.02f) ? g->fire_interval : HTA_GUN_COOLDOWN;
-    float dir[3];
-    hta_camera_forward(cam, dir);
+    float aim[3], dir[3];
+    hta_camera_forward(cam, aim);
+    /* Where the round actually goes: inside the trigger's own error cone,
+     * which widens while the trigger is held. */
+    hta_gun_shot_dir(g, aim, dir);
+    g->since_shot = 0.0f;
     float hit[3], nrm[3], t;
     if (!hta_collision_ray(col, cam->pos, dir, HTA_GUN_RANGE, &t, hit, nrm))
         return 1; /* shot fired, missed */
@@ -117,4 +191,10 @@ void hta_gun_build_mesh(hta_gun *g)
     g->mesh.submeshes[0].lightmap_tex = ~0u;
     g->mesh.submeshes[0].draw_mode = HTA_DRAW_OPAQUE;
     g->dirty = 0;
+}
+
+void hta_gun_shot_dir(hta_gun *g, const float aim[3], float out[3])
+{
+    if (!g || !aim || !out) return;
+    spread_dir(g, aim, hta_gun_spread(g), out);
 }

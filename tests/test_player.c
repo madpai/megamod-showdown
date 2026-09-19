@@ -1,5 +1,6 @@
 /* Player + collision tests against the grid fixture (real geometry). */
 #include "engine/player.h"
+#include "engine/gun.h"
 #include "asset/cache.h"
 #include "asset/bsp.h"
 #include "fixture.h"
@@ -481,6 +482,85 @@ int main(void)
         CHECK(got[0] > 3.5f, "STANDING gets under the lip too");
         #undef GZ
         hta_collision_free(&lcol2);
+    }
+
+    /* Sustained fire widens the shot cone, exactly as the weapon trigger's
+     * own error fields say -- Halo puts the reactivity in where the round
+     * goes, not in the reticle, which has no field for it. */
+    printf("\n[shot spread]\n");
+    {
+        hta_gun gun;
+        hta_gun_init(&gun);
+        float ea[2] = { 0.0349f, 0.1134f };     /* the Trial AR: 2 -> 6.5 deg */
+        hta_gun_set_error(&gun, ea, 0.60f, 1.00f);
+        gun.fire_interval = 1.0f / 15.0f;
+
+        CHECK(fabsf(hta_gun_spread(&gun) - 0.0349f) < 1e-4f,
+              "a rested weapon shoots its tightest cone");
+
+        hta_camera gcam;
+        hta_camera_init(&gcam);
+        /* Hold the trigger for the tagged bloom time. */
+        for (int i = 0; i < 60; i++) {
+            hta_gun_update(&gun, 1.0f / 60.0f);
+            if (hta_gun_ready(&gun)) hta_gun_fire(&gun, NULL, &gcam);
+        }
+        printf("  after 1.0 s of fire: %.3f deg\n", hta_gun_spread(&gun) * 57.2957795f);
+        CHECK(fabsf(hta_gun_spread(&gun) - 0.1134f) < 1e-3f,
+              "holding the trigger reaches the widest cone");
+
+        /* And it settles again over the tagged deceleration time. */
+        for (int i = 0; i < 30; i++) hta_gun_update(&gun, 1.0f / 60.0f);
+        printf("  half a second later:  %.3f deg\n", hta_gun_spread(&gun) * 57.2957795f);
+        CHECK(hta_gun_spread(&gun) < 0.1134f && hta_gun_spread(&gun) > 0.0349f,
+              "letting go settles it part way back");
+        for (int i = 0; i < 60; i++) hta_gun_update(&gun, 1.0f / 60.0f);
+        CHECK(fabsf(hta_gun_spread(&gun) - 0.0349f) < 1e-4f,
+              "and all the way back, not past it");
+
+        /* The bloom must not outrun the tag: a single shot is still tight. */
+        hta_gun g2;
+        hta_gun_init(&g2);
+        hta_gun_set_error(&g2, ea, 0.60f, 1.00f);
+        g2.fire_interval = 1.0f / 15.0f;
+        hta_gun_fire(&g2, NULL, &gcam);
+        hta_gun_update(&g2, 1.0f / 60.0f);
+        CHECK(hta_gun_spread(&g2) < 0.045f, "one shot barely moves the cone");
+
+        /* A tag with no ramp time must not divide by zero. */
+        hta_gun g3;
+        hta_gun_init(&g3);
+        hta_gun_set_error(&g3, ea, 0.0f, 0.0f);
+        hta_gun_update(&g3, 1.0f / 60.0f);
+        CHECK(hta_gun_spread(&g3) >= 0.0f && hta_gun_spread(&g3) <= 0.1134f,
+              "a zero ramp time falls back to a sane default");
+
+        /* Rounds must actually scatter, and stay inside the cone. */
+        hta_gun g4;
+        hta_gun_init(&g4);
+        hta_gun_set_error(&g4, ea, 0.60f, 1.00f);
+        g4.fire_interval = 1.0f / 15.0f;
+        g4.error = 1.0f;                     /* fully bloomed */
+        float fwd[3];
+        hta_camera_forward(&gcam, fwd);
+        float worst = 0.0f;
+        int distinct = 0;
+        float prev = -2.0f;
+        for (int i = 0; i < 200; i++) {
+            float d[3];
+            hta_gun_shot_dir(&g4, fwd, d);
+            float dot = d[0]*fwd[0] + d[1]*fwd[1] + d[2]*fwd[2];
+            if (dot > 1.0f) dot = 1.0f;
+            float ang = acosf(dot);
+            if (ang > worst) worst = ang;
+            if (fabsf(dot - prev) > 1e-6f) distinct++;
+            prev = dot;
+        }
+        printf("  200 rounds at full bloom: worst %.3f deg of %.3f\n",
+               worst * 57.2957795f, 0.1134f * 57.2957795f);
+        CHECK(worst <= 0.1134f + 1e-4f, "no round leaves the tagged cone");
+        CHECK(worst > 0.05f, "and they really do scatter across it");
+        CHECK(distinct > 190, "each round gets its own direction");
     }
 
     printf("\n[rebind after realloc]\n");

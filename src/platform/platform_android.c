@@ -474,6 +474,8 @@ static bool load_map(hta_android *s)
 
     if (hta_weapon_load_default(&s->cache, rm.data ? &rm : NULL, &s->weap, NULL, err, sizeof(err))) {
         s->gun.fire_interval = s->weap.cooldown;
+        hta_gun_set_error(&s->gun, s->weap.error_angle,
+                          s->weap.error_accel, s->weap.error_decel);
         /* The gunshot is not on the weapon: it hangs off the trigger's firing
          * effect, among that effect's parts. */
         s->fire_snd = hta_effect_first_sound(&s->cache, s->weap.firing_fx_id);
@@ -489,6 +491,10 @@ static bool load_map(hta_android *s)
         hta_log("[weapon] %s  ROF %.1f/s  mag %d/%d  reload %.1fs",
                 s->weap.path, s->weap.rof, s->weap.rounds_loaded_max,
                 s->weap.rounds_reserve_max, s->weap.reload_time);
+        hta_log("[weapon] spread %.2f..%.2f deg, blooms in %.2fs, settles in %.2fs",
+                s->weap.error_angle[0] * 57.2957795f,
+                s->weap.error_angle[1] * 57.2957795f,
+                s->weap.error_accel, s->weap.error_decel);
         if (hta_viewmodel_load(&s->vm, &s->cache, rm.data ? &rm : NULL, &s->weap,
                                err, sizeof(err))) {
             s->have_fp = true;
@@ -1090,6 +1096,7 @@ void android_main(struct android_app *app)
                         hta_audio_active_voices(&state.audio),
                         state.audio.started,
                         (unsigned)atomic_load(&state.audio.dropped));
+                hta_log("[weapon] spread %.2f deg", hta_gun_spread(&state.gun) * 57.2957795f);
                 hta_log("[weapon] ammo %d / %d%s", state.ammo.loaded,
                         state.ammo.reserve,
                         state.ammo.phase == HTA_AMMO_RELOADING ? " (reloading)" : "");

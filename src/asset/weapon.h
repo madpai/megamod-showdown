@@ -42,6 +42,9 @@
 #define HTA_TRIG_ROF          4u    /* two floats: initial, final shots/sec */
 #define HTA_TRIG_ROUNDS_SHOT  34u   /* int16 */
 #define HTA_TRIG_PROJ_SHOT    110u  /* int16 */
+#define HTA_TRIG_ERROR_ACCEL  56u   /* float, seconds to bloom to the max cone */
+#define HTA_TRIG_ERROR_DECEL  60u   /* float, seconds to settle back */
+#define HTA_TRIG_MIN_ERROR    120u  /* Angle */
 #define HTA_TRIG_ERROR_ANGLE  124u  /* two Angles: initial, final (radians) */
 #define HTA_TRIG_FP_OFFSET    136u  /* Point3D: projectile spawn, NOT the hold */
 #define HTA_TRIG_PROJECTILE   148u  /* TagDependency -> proj */
@@ -65,7 +68,13 @@ typedef struct {
 
     float    rof;            /* shots per second (final) */
     float    cooldown;       /* 1/rof */
+    /* Halo does not bloom the reticle; it widens the SHOT cone while the
+     * trigger is held. `error` runs 0..1, reaching 1 after error_accel
+     * seconds of fire and returning to 0 over error_decel, and the cone
+     * half-angle lerps between these two. */
     float    error_angle[2]; /* radians, initial -> final */
+    float    error_accel, error_decel;   /* seconds */
+    float    min_error;      /* radians */
     int      rounds_per_shot;
     int      projectiles_per_shot;
     uint32_t projectile_id;
