@@ -54,7 +54,8 @@ bool hta_collision_build(hta_collision *c, const hta_bsp_mesh *mesh)
         float lo1 = fminf(a[1], fminf(b[1], d[1])), hi1 = fmaxf(a[1], fmaxf(b[1], d[1]));
         int cx0 = (int)((lo0 - c->min[0]) / c->cell), cx1 = (int)((hi0 - c->min[0]) / c->cell);
         int cy0 = (int)((lo1 - c->min[1]) / c->cell), cy1 = (int)((hi1 - c->min[1]) / c->cell);
-        if (cx0 < 0) cx0 = 0; if (cy0 < 0) cy0 = 0;
+        if (cx0 < 0) cx0 = 0;
+        if (cy0 < 0) cy0 = 0;
         if (cx1 >= (int)c->nx) cx1 = (int)c->nx - 1;
         if (cy1 >= (int)c->ny) cy1 = (int)c->ny - 1;
         for (int y = cy0; y <= cy1; y++)
@@ -81,7 +82,8 @@ bool hta_collision_build(hta_collision *c, const hta_bsp_mesh *mesh)
         float lo1 = fminf(a[1], fminf(b[1], d[1])), hi1 = fmaxf(a[1], fmaxf(b[1], d[1]));
         int cx0 = (int)((lo0 - c->min[0]) / c->cell), cx1 = (int)((hi0 - c->min[0]) / c->cell);
         int cy0 = (int)((lo1 - c->min[1]) / c->cell), cy1 = (int)((hi1 - c->min[1]) / c->cell);
-        if (cx0 < 0) cx0 = 0; if (cy0 < 0) cy0 = 0;
+        if (cx0 < 0) cx0 = 0;
+        if (cy0 < 0) cy0 = 0;
         if (cx1 >= (int)c->nx) cx1 = (int)c->nx - 1;
         if (cy1 >= (int)c->ny) cy1 = (int)c->ny - 1;
         for (int y = cy0; y <= cy1; y++)
