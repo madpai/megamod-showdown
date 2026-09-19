@@ -197,6 +197,35 @@ value, and `HTA_HUD_PHONE_SCALE` (1.75) is a deliberate enlargement for a
 handset. Those two are the only invented numbers in the HUD and both are
 named and commented as such.
 
+## Eleven weapons (2026-09-19)
+
+The last item on the owner's list. **SWAP** on the HUD (gamepad L1) cycles
+every weapon in the cache a player could fight with, and the payoff is that
+all the earlier work turned out to be genuinely weapon-driven: each one
+brings its own first-person model and animation graph, muzzle flash,
+on-gun counter, magazine, rate of fire, error cone, firing and dry-fire
+sounds, impact sounds, crosshair and HUD ammo display, with nothing edited.
+
+The plasma rifle's HUD shows a red heat bar instead of pips; the rocket
+launcher's shows two rockets for its two rounds; the sniper's reticle is
+12 px against the pistol's 28 and the assault rifle's 66. All from tags.
+
+**A weapon names its own HUD interface** at **1152** (Weapon inherits Item
+inherits Object, so its own fields start at 776 and `hud interface` is 376
+in). Finding the `wphi` by matching tag paths looks right until the rocket
+launcher, whose HUD tag is `rocket_launcher`, and the flamethrower's
+`flame thrower` -- both silently lost their crosshairs that way.
+
+**Playable** means a first-person model, first-person animations AND a HUD
+interface. That last one is what rules out the ball and the flag: they are
+held in first person with their own animations, but carried rather than
+fired.
+
+`equip_weapon` rebuilds everything, freeing and re-uploading the GPU meshes.
+`hta_gfx_mesh_free` waits for device idle first, so that is safe between
+frames, but it must stay on the game thread. The impact-sound cache is
+cleared on swap, since impacts belong to the projectile.
+
 ## Bullet impacts (2026-09-19)
 
 Hitting sand and hitting a base wall are the weapon's own two sounds, and

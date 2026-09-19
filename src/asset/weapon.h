@@ -17,6 +17,11 @@
 #define HTA_TAG_SND  HTA_FOURCC('s','n','d','!')
 
 /* ---- Weapon ---- */
+/* Weapon inherits Item inherits Object, so its own fields start at 776 and
+ * the HUD interface sits 376 in. Do NOT find a weapon's `wphi` by matching
+ * tag paths: the rocket launcher's is "rocket_launcher" and the
+ * flamethrower's is "flame thrower". */
+#define HTA_WEAP_HUD_INTERFACE 1152u /* TagDependency -> wphi */
 #define HTA_WEAP_FP_MODEL     0x45Cu  /* TagDependency -> mod2 */
 #define HTA_WEAP_FP_ANIM      0x46Cu  /* TagDependency -> antr */
 #define HTA_WEAP_HUD          0x480u  /* TagDependency -> wphi */
@@ -62,6 +67,7 @@
 #define HTA_FPI_HANDS         0u      /* TagDependency -> mod2 */
 
 typedef struct {
+    uint32_t hud_interface_id; /* `wphi`, 0 if none (the ball and the flag) */
     uint32_t fp_model_id;    /* the weapon mesh: gun only, no arms */
     uint32_t fp_anim_id;     /* antr: the merged hands+gun skeleton */
     uint32_t pickup_snd_id, zoom_in_snd_id, zoom_out_snd_id;
@@ -92,6 +98,19 @@ typedef struct {
     float    fp_offset[3];
     char     path[96];
 } hta_weapon_def;
+
+/* One specific weapon by tag id. */
+bool hta_weapon_load_id(const hta_cache *c, const hta_resource_map *bitmaps,
+                        uint32_t weap_tag_id,
+                        hta_weapon_def *def, hta_bsp_mesh *fp,
+                        char *err, size_t errlen);
+
+/* Tag ids of every weapon a player could FIGHT with: one with a
+ * first-person model, first-person animations and a HUD interface. The
+ * last of those is what rules out the ball and the flag, which are held in
+ * first person but carried rather than fired. Returns how many were
+ * written. */
+uint32_t hta_weapon_list_playable(const hta_cache *c, uint32_t *out, uint32_t max);
 
 /* Prefers assault rifle, then pistol. Loads the FP mesh into `fp` if given --
  * bind pose only; the animated viewmodel goes through hta_viewmodel_load. */

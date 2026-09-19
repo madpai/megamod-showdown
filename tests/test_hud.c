@@ -246,6 +246,58 @@ int main(int argc, char **argv)
     hta_hud_free(&h);
     CHECK(h.mesh.vertices == NULL, "free clears the mesh");
 
+    /* Every playable weapon has to bring its own everything. This is what
+     * proves none of the viewmodel, HUD or weapon work was ever wired to
+     * the assault rifle in particular. */
+    printf("\n[every playable weapon]\n");
+    {
+        uint32_t ids[32];
+        uint32_t n = hta_weapon_list_playable(&c, ids, 32);
+        printf("    %u playable weapon(s)\n", n);
+        CHECK(n >= 8, "the cache has a roster, not just one gun");
+
+        uint32_t with_hud = 0, with_cross = 0, with_ammo = 0, loaded = 0;
+        uint32_t cross_sizes[32];
+        uint32_t ncross = 0;
+        for (uint32_t i = 0; i < n; i++) {
+            hta_weapon_def wd;
+            if (!hta_weapon_load_id(&c, &bm, ids[i], &wd, NULL, err, sizeof(err)))
+                continue;
+            loaded++;
+            hta_hud wh;
+            if (!hta_hud_load(&wh, &c, &bm, &wd, err, sizeof(err))) continue;
+            if (wh.elem_count) with_hud++;
+            if (wh.have_cross) {
+                with_cross++;
+                if (ncross < 32) cross_sizes[ncross++] = (uint32_t)wh.cross_px;
+            }
+            if (wh.have_ammo) with_ammo++;
+            printf("      %-40s %2u elem  cross %-3s %3.0fpx  ammo %s\n",
+                   wd.path, wh.elem_count, wh.have_cross ? "yes" : "no",
+                   wh.cross_px, wh.have_ammo ? "yes" : "no");
+            hta_hud_free(&wh);
+        }
+        CHECK(loaded == n, "every listed weapon loads");
+        CHECK(with_hud == n, "and every one builds a HUD");
+
+        /* A weapon names its own HUD interface. Finding it by matching tag
+         * paths silently loses the rocket launcher, whose wphi is
+         * "rocket_launcher", and the flamethrower's "flame thrower". */
+        /* All of them, including the rocket launcher and flamethrower whose
+         * wphi tags are named differently from their weapons. */
+        CHECK(with_cross == n, "every one of them has its own crosshair");
+        CHECK(with_ammo == n, "and its own ammo display");
+
+        /* And the crosshairs are not all the same: the pistol's is small
+         * and the sniper's smaller still. */
+        int varied = 0;
+        for (uint32_t i = 1; i < ncross; i++)
+            if (cross_sizes[i] != cross_sizes[0]) varied = 1;
+        CHECK(varied, "different weapons get different reticles");
+        printf("    %u with a crosshair, %u with an ammo display\n",
+               with_cross, with_ammo);
+    }
+
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

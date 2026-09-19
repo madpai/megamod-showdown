@@ -112,6 +112,7 @@ typedef struct {
      * kept; Halo tags carry several permutations of the same sound and pick
      * between them, so each entry holds every permutation as its own clip. */
     hta_resource_map sounds_rm;
+    hta_resource_map bitmaps_rm;
     hta_audio        audio;
     bool             audio_ok;
     struct {
@@ -127,6 +128,13 @@ typedef struct {
     uint8_t  foot_known[33];
     uint32_t impact_snd[33];
     uint8_t  impact_known[33];
+
+    /* Every weapon in the cache a player could hold, and which one is up. */
+    uint32_t weapons[24];
+    uint32_t weapon_count;
+    uint32_t weapon_slot;
+    bool     hud_swap;
+    bool     bitmaps_ok;
     uint32_t rng;
 
     hta_ammo ammo;
@@ -332,6 +340,75 @@ static void play_tag(hta_android *s, uint32_t tag_id, float gain)
     hta_audio_play(&s->audio, s->bank[b].clip[pick], gain);
 }
 
+/* Put a weapon in the player's hands.
+ *
+ * Everything the game shows and hears about a weapon comes from its own
+ * tags, so swapping means rebuilding all of it: the first-person model and
+ * its animation graph, the muzzle flash and the on-gun counter that hang
+ * off that model, the magazine, the rate of fire and the error cone, the
+ * firing and dry-fire sounds, and the HUD's crosshair and ammo block.
+ *
+ * The GPU meshes are freed and re-uploaded, so this must not run while a
+ * frame is in flight -- it is called from the game thread between frames.
+ */
+static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
+{
+    if (!weap_tag_id) return;
+    char err[HTA_ERRLEN] = {0};
+    hta_resource_map *bm = s->bitmaps_ok ? &s->bitmaps_rm : NULL;
+
+    hta_weapon_def def;
+    if (!hta_weapon_load_id(&s->cache, bm, weap_tag_id, &def, NULL, err, sizeof(err))) {
+        hta_log("[weapon] cannot equip 0x%08X: %s", weap_tag_id, err);
+        return;
+    }
+    s->weap = def;
+
+    s->gun.fire_interval = s->weap.cooldown;
+    hta_gun_set_error(&s->gun, s->weap.error_angle,
+                      s->weap.error_accel, s->weap.error_decel);
+
+    /* The gunshot is not on the weapon: it hangs off the trigger's firing
+     * effect, among that effect's parts. */
+    s->fire_snd = hta_effect_first_sound(&s->cache, s->weap.firing_fx_id);
+    if (s->fire_snd) bank_get(s, s->fire_snd);
+    s->empty_snd = hta_effect_first_sound(&s->cache, s->weap.empty_fx_id);
+    if (s->empty_snd) bank_get(s, s->empty_snd);
+    /* Impacts are this projectile's, so forget the last weapon's. */
+    memset(s->impact_known, 0, sizeof(s->impact_known));
+
+    hta_ammo_init(&s->ammo, &s->weap);
+
+    /* Rebuild the viewmodel and everything hanging off it. */
+    if (s->gpu_fp) { hta_gfx_mesh_free(s->gfx, s->gpu_fp); s->gpu_fp = NULL; }
+    hta_viewmodel_free(&s->vm);
+    s->have_fp = false;
+    if (hta_viewmodel_load(&s->vm, &s->cache, bm, &s->weap, err, sizeof(err))) {
+        s->have_fp = true;
+        if (s->gfx)
+            s->gpu_fp = hta_gfx_mesh_upload_dynamic(s->gfx, &s->vm.mesh, err, sizeof(err));
+    } else {
+        hta_log("[weapon] viewmodel: %s", err);
+    }
+
+    /* And the HUD, whose crosshair and ammo block are this weapon's. */
+    if (s->gpu_hud) { hta_gfx_mesh_free(s->gfx, s->gpu_hud); s->gpu_hud = NULL; }
+    hta_hud_free(&s->hud);
+    hta_hud_load(&s->hud, &s->cache, bm, &s->weap, err, sizeof(err));
+    hta_hud_set_shield(&s->hud, 1.0f);
+    hta_hud_set_health(&s->hud, 1.0f);
+    if (s->gfx && s->hud.elem_count)
+        s->gpu_hud = hta_gfx_mesh_upload_dynamic(s->gfx, &s->hud.mesh, err, sizeof(err));
+
+    hta_log("[weapon] %s: ROF %.1f/s  mag %d/%d  spread %.1f-%.1f deg  %s  %s  %s",
+            s->weap.path, s->weap.rof, s->ammo.loaded, s->ammo.reserve,
+            s->weap.error_angle[0] * 57.2957795f,
+            s->weap.error_angle[1] * 57.2957795f,
+            s->have_fp ? "viewmodel" : "NO viewmodel",
+            s->vm.have_flash ? "flash" : "no flash",
+            s->hud.have_cross ? "crosshair" : "no crosshair");
+}
+
 /* What the round hit. Halo keeps one response per material on the
  * projectile itself, each naming the effect -- so a bullet into sand and a
  * bullet into a base wall are the weapon's own two sounds, not one of
@@ -460,8 +537,9 @@ static bool load_map(hta_android *s)
         hta_log("[assets] no sounds.map -- the game will be silent. Copy it next to bloodgulch.map");
     }
 
-    hta_resource_map rm;
-    memset(&rm, 0, sizeof(rm));
+    /* Kept on the state: swapping weapons re-decodes their art, so the
+     * resource map has to outlive load_map. */
+    memset(&s->bitmaps_rm, 0, sizeof(s->bitmaps_rm));
     if (find_named(s, "bitmaps.map", s->bitmaps_path, sizeof(s->bitmaps_path))) {
         int bfd = open(s->bitmaps_path, O_RDONLY);
         struct stat bst;
@@ -471,7 +549,7 @@ static bool load_map(hta_android *s)
             if (bp != MAP_FAILED) {
                 s->bitmaps_data = (uint8_t *)bp;
                 s->bitmaps_size = (size_t)bst.st_size;
-                if (hta_resource_open(&rm, s->bitmaps_data, s->bitmaps_size, err, sizeof(err)))
+                if (hta_resource_open(&s->bitmaps_rm, s->bitmaps_data, s->bitmaps_size, err, sizeof(err)))
                     hta_log("[assets] bitmaps.map %zu bytes from %s", s->bitmaps_size, s->bitmaps_path);
                 else
                     hta_log("[assets] bitmaps.map rejected: %s", err);
@@ -480,7 +558,7 @@ static bool load_map(hta_android *s)
     } else {
         hta_log("[assets] no bitmaps.map — world will stay untextured. Copy it next to bloodgulch.map");
     }
-    if (!hta_bsp_load_textures(&s->cache, rm.data ? &rm : NULL, &s->mesh, err, sizeof(err)))
+    if (!hta_bsp_load_textures(&s->cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL, &s->mesh, err, sizeof(err)))
         hta_log("[assets] texture load: %s", err);
     else
         hta_log("[assets] textures: %u unique (albedos+lightmaps)", s->mesh.texture_count);
@@ -503,73 +581,29 @@ static bool load_map(hta_android *s)
             hta_log("[assets] collision grid %ux%u cells (render mesh)", s->col.nx, s->col.ny);
     }
 
-    if (hta_scenario_add_objects(&s->mesh, &s->cache, rm.data ? &rm : NULL, err, sizeof(err)))
+    if (hta_scenario_add_objects(&s->mesh, &s->cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL, err, sizeof(err)))
         hta_log("[assets] %s  (now %u verts / %u submeshes)", err,
                 s->mesh.vertex_count, s->mesh.submesh_count);
     if (!s->have_coll)
         hta_collision_rebind(&s->col, s->mesh.vertices, s->mesh.indices);
 
-    if (hta_weapon_load_default(&s->cache, rm.data ? &rm : NULL, &s->weap, NULL, err, sizeof(err))) {
-        s->gun.fire_interval = s->weap.cooldown;
-        hta_gun_set_error(&s->gun, s->weap.error_angle,
-                          s->weap.error_accel, s->weap.error_decel);
-        /* The gunshot is not on the weapon: it hangs off the trigger's firing
-         * effect, among that effect's parts. */
-        s->fire_snd = hta_effect_first_sound(&s->cache, s->weap.firing_fx_id);
-        if (s->fire_snd) bank_get(s, s->fire_snd);
-        else hta_log("[audio] the trigger's firing effect names no snd!");
-        s->empty_snd = hta_effect_first_sound(&s->cache, s->weap.empty_fx_id);
-        if (s->empty_snd) bank_get(s, s->empty_snd);
-
-        hta_ammo_init(&s->ammo, &s->weap);
-        hta_log("[weapon] ammo %d loaded / %d reserve, %d per reload, %.2f s",
-                s->ammo.loaded, s->ammo.reserve, s->ammo.per_reload,
-                s->ammo.reload_time);
-        hta_log("[weapon] %s  ROF %.1f/s  mag %d/%d  reload %.1fs",
-                s->weap.path, s->weap.rof, s->weap.rounds_loaded_max,
-                s->weap.rounds_reserve_max, s->weap.reload_time);
-        hta_log("[weapon] spread %.2f..%.2f deg, blooms in %.2fs, settles in %.2fs",
-                s->weap.error_angle[0] * 57.2957795f,
-                s->weap.error_angle[1] * 57.2957795f,
-                s->weap.error_accel, s->weap.error_decel);
-        if (hta_viewmodel_load(&s->vm, &s->cache, rm.data ? &rm : NULL, &s->weap,
-                               err, sizeof(err))) {
-            s->have_fp = true;
-            hta_log("[weapon] viewmodel %u verts (%u hands + %u gun), %u nodes, %u clips",
-                    s->vm.mesh.vertex_count, s->vm.hands_verts, s->vm.gun_verts,
-                    s->vm.graph.node_count, s->vm.graph.anim_count);
-            if (s->vm.have_flash)
-                hta_log("[weapon] muzzle flash: node %d, offset (%.3f %.3f %.3f),"
-                        " radius %.3f, %.0f ms",
-                        (int)s->vm.flash_node, s->vm.flash_offset[0],
-                        s->vm.flash_offset[1], s->vm.flash_offset[2],
-                        s->vm.flash_radius, s->vm.flash_life * 1000.0f);
-            else
-                hta_log("[weapon] no first-person muzzle flash in the firing effect");
-            char herr[HTA_ERRLEN] = {0};
-            hta_hud_load(&s->hud, &s->cache, rm.data ? &rm : NULL, &s->weap,
-                         herr, sizeof(herr));
-            hta_log("[hud] %u element(s): crosshair %s, unit hud %s, ammo %s (%s)",
-                    s->hud.elem_count, s->hud.have_cross ? "yes" : "no",
-                    s->hud.have_unit ? "yes" : "no",
-                    s->hud.have_ammo ? "yes" : "no", herr);
-            /* Nothing damages the player yet, so the bars sit full. The
-             * meters themselves are live -- hta_hud_set_* drives them. */
-            hta_hud_set_shield(&s->hud, 1.0f);
-            hta_hud_set_health(&s->hud, 1.0f);
-            if (s->vm.have_counter)
-                hta_log("[weapon] on-gun round counter: %u digits, submeshes %u/%u",
-                        s->vm.counter_digits, s->vm.counter_submesh[0],
-                        s->vm.counter_submesh[1]);
-            else
-                hta_log("[weapon] no on-gun round counter on this model");
-        } else {
-            hta_log("[weapon] viewmodel: %s", err);
+    s->bitmaps_ok = (s->bitmaps_rm.data != NULL);
+    s->weapon_count = hta_weapon_list_playable(&s->cache, s->weapons,
+                                               (uint32_t)(sizeof(s->weapons)/sizeof(s->weapons[0])));
+    hta_log("[weapon] %u playable weapon(s) in this cache", s->weapon_count);
+    /* Start on whatever the default picker prefers -- the assault rifle -- and
+     * remember where it sits in the roster so SWAP carries on from there. */
+    if (hta_weapon_load_default(&s->cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL, &s->weap, NULL, err, sizeof(err))) {
+        for (uint32_t i = 0; i < s->weapon_count; i++) {
+            hta_weapon_def probe;
+            if (hta_weapon_load_id(&s->cache, NULL, s->weapons[i], &probe, NULL, NULL, 0) &&
+                strcmp(probe.path, s->weap.path) == 0) { s->weapon_slot = i; break; }
         }
+        equip_weapon(s, s->weap.path[0] ? s->weapons[s->weapon_slot] : 0);
     } else {
         hta_log("[weapon] %s", err);
     }
-    if (hta_sky_load(&s->sky, &s->cache, rm.data ? &rm : NULL, err, sizeof(err))) {
+    if (hta_sky_load(&s->sky, &s->cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL, err, sizeof(err))) {
         s->have_sky = true;
         hta_log("[assets] sky %u verts / %u submeshes", s->sky.vertex_count, s->sky.submesh_count);
     } else {
@@ -728,6 +762,7 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
             code == AKEYCODE_BUTTON_X) { s->fire_held = down; return 1; }
         if (code == AKEYCODE_BUTTON_Y && down) { s->hud_reload = true; return 1; }
         if (code == AKEYCODE_BUTTON_R1 && down) { s->hud_melee = true; return 1; }
+        if (code == AKEYCODE_BUTTON_L1 && down) { s->hud_swap = true; return 1; }
         if (code == AKEYCODE_BUTTON_B && down) {
             s->player.noclip = !s->player.noclip;
             hta_log("[input] noclip %s", s->player.noclip ? "ON" : "OFF");
@@ -991,6 +1026,13 @@ Java_net_hta_halotrial_GameActivity_nativeHudMelee(JNIEnv *env, jclass cls)
     if (g_android) g_android->hud_melee = true;
 }
 
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudSwap(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    if (g_android) g_android->hud_swap = true;
+}
+
 void android_main(struct android_app *app)
 {
     static hta_android state;
@@ -1056,6 +1098,16 @@ void android_main(struct android_app *app)
          * not the magazine could pay, so ask before pulling. */
         hta_ammo_update(&state.ammo, dt);
         if (state.dry_cooldown > 0.0f) state.dry_cooldown -= dt;
+
+        /* Swapping rebuilds the viewmodel and the HUD, so do it before
+         * anything this frame reads either. */
+        if (state.hud_swap) {
+            state.hud_swap = false;
+            if (state.weapon_count > 1) {
+                state.weapon_slot = (state.weapon_slot + 1u) % state.weapon_count;
+                equip_weapon(&state, state.weapons[state.weapon_slot]);
+            }
+        }
 
         /* A swing takes the weapon out of the fight until it finishes, so
          * the rest of this frame's trigger work has to know about it. */

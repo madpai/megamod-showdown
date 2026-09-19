@@ -232,16 +232,10 @@ static void load_crosshair(hta_hud *h, const hta_cache *c,
                            const hta_resource_map *bitmaps,
                            const hta_weapon_def *weap)
 {
-    /* A weapon and its HUD interface share a tag path in Halo. */
-    uint32_t wphi = 0;
-    for (uint32_t i = 0; i < c->tag_count; i++) {
-        hta_tag_entry t;
-        if (!hta_cache_tag(c, i, &t) || t.indexed) continue;
-        if (t.primary_class != HTA_FOURCC('w','p','h','i')) continue;
-        char path[192];
-        if (!hta_cache_tag_path(c, &t, path, sizeof(path))) continue;
-        if (strcmp(path, weap->path) == 0) { wphi = t.tag_id; break; }
-    }
+    /* The weapon names its own HUD interface. Matching tag paths instead
+     * looks right until the rocket launcher, whose wphi is
+     * "rocket_launcher", and the flamethrower's "flame thrower". */
+    uint32_t wphi = weap->hud_interface_id;
     if (!wphi) return;
 
     int32_t ti = hta_cache_find_tag_by_id(c, wphi);
@@ -425,17 +419,7 @@ bool hta_hud_load(hta_hud *h, const hta_cache *c, const hta_resource_map *bitmap
 
     load_unit(h, c, bitmaps);
 
-    /* A weapon and its HUD interface share a tag path in Halo. */
-    uint32_t wphi = 0;
-    for (uint32_t i = 0; i < c->tag_count; i++) {
-        hta_tag_entry t;
-        if (!hta_cache_tag(c, i, &t) || t.indexed) continue;
-        if (t.primary_class != HTA_FOURCC('w','p','h','i')) continue;
-        char path[192];
-        if (!hta_cache_tag_path(c, &t, path, sizeof(path))) continue;
-        if (strcmp(path, weap->path) == 0) { wphi = t.tag_id; break; }
-    }
-    load_weapon_hud(h, c, bitmaps, wphi, 0);
+    load_weapon_hud(h, c, bitmaps, weap->hud_interface_id, 0);
     load_crosshair(h, c, bitmaps, weap);
 
     if (err && errlen) {

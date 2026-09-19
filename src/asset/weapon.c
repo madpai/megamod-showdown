@@ -84,36 +84,30 @@ static void load_trigger(const hta_cache *c, uint32_t weap, hta_weapon_def *def)
     }
 }
 
-bool hta_weapon_load_default(const hta_cache *c, const hta_resource_map *bitmaps,
-                             hta_weapon_def *def, hta_bsp_mesh *fp,
-                             char *err, size_t errlen)
+bool hta_weapon_load_id(const hta_cache *c, const hta_resource_map *bitmaps,
+                        uint32_t weap_tag_id,
+                        hta_weapon_def *def, hta_bsp_mesh *fp,
+                        char *err, size_t errlen)
 {
     if (!c || !def) return false;
     memset(def, 0, sizeof(*def));
     def->rof = 3.5f;
     def->cooldown = 1.0f / 3.5f;
 
-    int32_t best = -1, pistol = -1, any = -1;
-    for (uint32_t i = 0; i < c->tag_count; i++) {
-        hta_tag_entry t;
-        if (!hta_cache_tag(c, i, &t) || t.primary_class != HTA_TAG_WEAP) continue;
-        char path[96];
-        hta_cache_tag_path(c, &t, path, sizeof(path));
-        any = (int32_t)i;
-        if (strstr(path, "assault rifle") && !strstr(path, "ammo")) best = (int32_t)i;
-        if (strstr(path, "weapons\\pistol\\pistol") || strstr(path, "weapons/pistol/pistol"))
-            pistol = (int32_t)i;
-    }
-    if (best < 0) best = pistol;
-    if (best < 0) best = any;
-    if (best < 0) { if (err) snprintf(err, errlen, "no weap tags"); return false; }
+    int32_t best = hta_cache_find_tag_by_id(c, weap_tag_id);
+    if (best < 0) { if (err) snprintf(err, errlen, "weap 0x%08X not found", weap_tag_id); return false; }
 
     hta_tag_entry t;
     if (!hta_cache_tag(c, (uint32_t)best, &t)) return false;
+    if (t.primary_class != HTA_TAG_WEAP) {
+        if (err) snprintf(err, errlen, "0x%08X is not a weapon", weap_tag_id);
+        return false;
+    }
     uint32_t off;
     if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &off)) return false;
     hta_cache_tag_path(c, &t, def->path, sizeof(def->path));
 
+    def->hud_interface_id = rddep(c, off + HTA_WEAP_HUD_INTERFACE);
     def->fp_model_id     = rddep(c, off + HTA_WEAP_FP_MODEL);
     def->fp_anim_id      = rddep(c, off + HTA_WEAP_FP_ANIM);
     def->pickup_snd_id   = rddep(c, off + HTA_WEAP_PICKUP_SND);
@@ -134,4 +128,54 @@ bool hta_weapon_load_default(const hta_cache *c, const hta_resource_map *bitmaps
         }
     }
     return true;
+}
+
+bool hta_weapon_load_default(const hta_cache *c, const hta_resource_map *bitmaps,
+                             hta_weapon_def *def, hta_bsp_mesh *fp,
+                             char *err, size_t errlen)
+{
+    if (!c || !def) return false;
+    int32_t best = -1, pistol = -1, any = -1;
+    for (uint32_t i = 0; i < c->tag_count; i++) {
+        hta_tag_entry t;
+        if (!hta_cache_tag(c, i, &t) || t.primary_class != HTA_TAG_WEAP) continue;
+        char path[96];
+        hta_cache_tag_path(c, &t, path, sizeof(path));
+        any = (int32_t)i;
+        if (strstr(path, "assault rifle") && !strstr(path, "ammo")) best = (int32_t)i;
+        if (strstr(path, "weapons\\pistol\\pistol") || strstr(path, "weapons/pistol/pistol"))
+            pistol = (int32_t)i;
+    }
+    if (best < 0) best = pistol;
+    if (best < 0) best = any;
+    if (best < 0) { if (err) snprintf(err, errlen, "no weap tags"); return false; }
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)best, &t)) return false;
+    return hta_weapon_load_id(c, bitmaps, t.tag_id, def, fp, err, errlen);
+}
+
+/* Every weapon in the cache a player could actually hold: it must have a
+ * first-person model AND first-person animations. That rules out the
+ * vehicle turrets, the flag and the ball, which have neither. */
+uint32_t hta_weapon_list_playable(const hta_cache *c, uint32_t *out, uint32_t max)
+{
+    if (!c || !out || !max) return 0;
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < c->tag_count && n < max; i++) {
+        hta_tag_entry t;
+        if (!hta_cache_tag(c, i, &t) || t.indexed) continue;
+        if (t.primary_class != HTA_TAG_WEAP) continue;
+        uint32_t off;
+        if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &off)) continue;
+        uint32_t fpm = rddep(c, off + HTA_WEAP_FP_MODEL);
+        uint32_t fpa = rddep(c, off + HTA_WEAP_FP_ANIM);
+        if (!fpm || !fpa) continue;
+        /* And it must shoot. The ball and the flag are held in first person
+         * with their own animations, but they are carried, not fired: no
+         * projectile, no HUD interface, no crosshair. */
+        uint32_t hud = rddep(c, off + HTA_WEAP_HUD_INTERFACE);
+        if (!hud) continue;
+        out[n++] = t.tag_id;
+    }
+    return n;
 }

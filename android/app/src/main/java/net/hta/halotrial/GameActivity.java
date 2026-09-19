@@ -138,6 +138,7 @@ public class GameActivity extends NativeActivity {
     static native void nativeHudCrouch(boolean down);
     static native void nativeHudReload();
     static native void nativeHudMelee();
+    static native void nativeHudSwap();
     static native String nativeDebugText();
     static native String nativeAmmoText();
 
@@ -150,6 +151,7 @@ public class GameActivity extends NativeActivity {
         private final Paint crouchP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint reloadP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint meleeP = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint swapP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint debug = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint ammo = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -160,8 +162,9 @@ public class GameActivity extends NativeActivity {
         private float crouchCx, crouchCy, crouchR;
         private float reloadCx, reloadCy, reloadR;
         private float meleeCx, meleeCy, meleeR;
+        private float swapCx, swapCy, swapR;
         private int stickPtr = -1, firePtr = -1, jumpPtr = -1, crouchPtr = -1;
-        private int reloadPtr = -1, meleePtr = -1;
+        private int reloadPtr = -1, meleePtr = -1, swapPtr = -1;
         private final float[] lastX = new float[16];
         private final float[] lastY = new float[16];
 
@@ -178,6 +181,7 @@ public class GameActivity extends NativeActivity {
             crouchP.setColor(0xCC555C66);
             reloadP.setColor(0xCCB08420);
             meleeP.setColor(0xCC6E3BA8);
+            swapP.setColor(0xCC2E7D6B);
             label.setColor(0xFFFFFFFF);
             ammo.setColor(0xF2FFFFFF);
             ammo.setTextAlign(Paint.Align.RIGHT);
@@ -210,6 +214,9 @@ public class GameActivity extends NativeActivity {
             meleeR = m * 0.058f;
             meleeCx = w * 0.70f;
             meleeCy = h * 0.72f;
+            swapR = m * 0.058f;
+            swapCx = w * 0.60f;
+            swapCy = h * 0.90f;
             label.setTextSize(m * 0.032f);
             ammo.setTextSize(m * 0.085f);
             excludeFromSystemGestures();
@@ -261,6 +268,9 @@ public class GameActivity extends NativeActivity {
                 } else if (in(x, y, meleeCx, meleeCy, meleeR * 1.15f) && meleePtr < 0) {
                     meleePtr = id;
                     GameActivity.nativeHudMelee();
+                } else if (in(x, y, swapCx, swapCy, swapR * 1.15f) && swapPtr < 0) {
+                    swapPtr = id;
+                    GameActivity.nativeHudSwap();
                 } else if ((in(x, y, stickCx, stickCy, stickR * 1.4f) || x < getWidth() * 0.38f)
                         && stickPtr < 0) {
                     stickPtr = id;
@@ -293,6 +303,7 @@ public class GameActivity extends NativeActivity {
                     releaseCrouch();
                     reloadPtr = -1;
                     meleePtr = -1;
+                    swapPtr = -1;
                 } else {
                     if (id == stickPtr) releaseStick();
                     if (id == firePtr) releaseFire();
@@ -300,6 +311,7 @@ public class GameActivity extends NativeActivity {
                     if (id == crouchPtr) releaseCrouch();
                     if (id == reloadPtr) reloadPtr = -1;
                     if (id == meleePtr) meleePtr = -1;
+                    if (id == swapPtr) swapPtr = -1;
                 }
                 break;
             default:
@@ -381,6 +393,10 @@ public class GameActivity extends NativeActivity {
             c.drawCircle(meleeCx, meleeCy, meleeR, meleeP);
             c.drawCircle(meleeCx, meleeCy, meleeR, ring);
             c.drawText("MELEE", meleeCx, meleeCy + label.getTextSize() * 0.35f, label);
+
+            c.drawCircle(swapCx, swapCy, swapR, swapP);
+            c.drawCircle(swapCx, swapCy, swapR, ring);
+            c.drawText("SWAP", swapCx, swapCy + label.getTextSize() * 0.35f, label);
 
             /* Ammo, big and bottom-right: loaded / reserve, "--" while the
              * magazine is out. */

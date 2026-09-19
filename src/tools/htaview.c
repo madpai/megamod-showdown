@@ -86,6 +86,7 @@ int main(int argc, char **argv)
     const char *fp_clip = "idle";
     int fp_mode = 0;
     int have_eye = 0, want_flash = 0, ammo = -1;
+    const char *want_weapon = NULL;
     float shield = 1.0f, health = 1.0f;
     float eye[3] = {0.0f, 0.0f, 0.0f}, eye_yaw = 0.0f, eye_pitch = 0.0f;
     uint32_t W = 1280, H = 720, shots = 4;
@@ -106,6 +107,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--pitch") && i + 1 < argc)
             eye_pitch = strtof(argv[++i], NULL) * 0.01745329f;
         else if (!strcmp(argv[i], "--flash")) want_flash = 1;
+        else if (!strcmp(argv[i], "--weapon") && i + 1 < argc) want_weapon = argv[++i];
         else if (!strcmp(argv[i], "--ammo") && i + 1 < argc) ammo = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--shield") && i + 1 < argc) shield = strtof(argv[++i], NULL);
         else if (!strcmp(argv[i], "--health") && i + 1 < argc) health = strtof(argv[++i], NULL);
@@ -200,7 +202,23 @@ int main(int argc, char **argv)
     memset(&vm, 0, sizeof(vm));
     memset(&wdef, 0, sizeof(wdef));
     if (fp_mode) {
-        if (!hta_weapon_load_default(&c, rm.data ? &rm : NULL, &wdef, NULL, err, sizeof(err)))
+        int wok = 0;
+        if (want_weapon) {
+            uint32_t ids[32];
+            uint32_t n = hta_weapon_list_playable(&c, ids, 32);
+            for (uint32_t k = 0; k < n && !wok; k++) {
+                hta_weapon_def probe;
+                if (!hta_weapon_load_id(&c, NULL, ids[k], &probe, NULL, NULL, 0)) continue;
+                if (!strstr(probe.path, want_weapon)) continue;
+                wok = hta_weapon_load_id(&c, rm.data ? &rm : NULL, ids[k], &wdef,
+                                         NULL, err, sizeof(err));
+            }
+            if (!wok) printf("weapon         no playable weapon matching '%s'\n", want_weapon);
+        } else {
+            wok = hta_weapon_load_default(&c, rm.data ? &rm : NULL, &wdef, NULL,
+                                          err, sizeof(err));
+        }
+        if (!wok)
             printf("weapon         %s\n", err);
         else if (!hta_viewmodel_load(&vm, &c, rm.data ? &rm : NULL, &wdef, err, sizeof(err)))
             printf("viewmodel      %s\n", err);
