@@ -331,6 +331,97 @@ int main(int argc, char **argv)
     }
     }
 
+    /* A triangle STRIP part stores a triangle count, not an index count:
+     * N triangles is N + 2 indices. Reading only N drops the last two
+     * triangles of every part -- invisible on a 1682-triangle gun body, and
+     * fatal to a 2-triangle one. The assault rifle's ammo digits are exactly
+     * that: 4 vertices, 2 triangles, 6 indices. If any submesh here is a
+     * single quad, the off-by-two is not back. */
+    printf("\n[triangle strips]\n");
+    {
+        uint32_t quads = 0, smallest = 0xFFFFFFFFu;
+        for (uint32_t i = 0; i < vm.mesh.submesh_count; i++) {
+            uint32_t n = vm.mesh.submeshes[i].index_count;
+            if (!n) continue;
+            if (n < smallest) smallest = n;
+            if (n == 6) quads++;
+        }
+        printf("    smallest submesh is %u indices; %u single-quad part(s)\n",
+               smallest, quads);
+        CHECK(quads >= 2, "two-triangle strip parts survive the strip decoder");
+    }
+
+    /* --- the gun's own round counter --------------------------------- */
+    printf("\n[on-gun round counter]\n");
+    if (!have_bitmaps) {
+        printf("  skip: needs bitmaps.map for the digit frames\n");
+    } else {
+        CHECK(vm.have_counter, "the assault rifle has a round counter on it");
+        if (vm.have_counter) {
+            printf("    %u digits, %u frames, submeshes %u and %u\n",
+                   vm.counter_digits, vm.counter_frames,
+                   vm.counter_submesh[0], vm.counter_submesh[1]);
+            CHECK(vm.counter_digits == 2, "two digits, for a 60-round magazine");
+            CHECK(vm.counter_frames == 10, "ten frames, one per digit");
+
+            /* Both quads must hang off the display node, not the body. */
+            int32_t disp = hta_anim_node_index(&vm.graph, "frame display");
+            CHECK(disp >= 0, "the model has a 'frame display' node");
+            int on_display = 1;
+            for (uint32_t d = 0; d < 2; d++)
+                for (uint32_t k = 0; k < 4; k++) {
+                    uint32_t v = vm.counter_vertex[d][k];
+                    if (vm.skin[v].node[0] != (uint16_t)disp) on_display = 0;
+                }
+            CHECK(on_display, "both digit quads are skinned to it");
+
+            /* The more significant digit sits further +Y, which is left. */
+            float y0 = 0.0f, y1 = 0.0f;
+            for (uint32_t k = 0; k < 4; k++) {
+                y0 += vm.mesh.vertices[vm.counter_vertex[0][k]].pos[1];
+                y1 += vm.mesh.vertices[vm.counter_vertex[1][k]].pos[1];
+            }
+            CHECK(y0 > y1, "the tens digit is the left-hand quad");
+
+            CHECK(vm.mesh.submeshes[vm.counter_submesh[0]].draw_mode == HTA_DRAW_ADD,
+                  "the readout glows, as its shader declares");
+            CHECK(vm.mesh.submeshes[vm.counter_submesh[0]].albedo_tex ==
+                  vm.mesh.submeshes[vm.counter_submesh[1]].albedo_tex,
+                  "both digits sample the same atlas");
+
+            /* Each digit must land in its own tenth of the atlas. */
+            struct { uint32_t value; uint32_t tens, units; } cases[] = {
+                { 60, 6, 0 }, { 47, 4, 7 }, { 8, 0, 8 }, { 0, 0, 0 }, { 99, 9, 9 }
+            };
+            int placed = 1;
+            for (uint32_t i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+                hta_viewmodel_set_counter(&vm, cases[i].value);
+                hta_viewmodel_update(&vm, 0.0f);
+                uint32_t want[2] = { cases[i].tens, cases[i].units };
+                for (uint32_t d = 0; d < 2; d++)
+                    for (uint32_t k = 0; k < 4; k++) {
+                        float u = vm.posed[vm.counter_vertex[d][k]].uv[0];
+                        uint32_t slot = (uint32_t)(u * 10.0f);
+                        if (slot > 9u) slot = 9u;
+                        if (slot != want[d]) placed = 0;
+                    }
+            }
+            CHECK(placed, "every digit 0-9 lands in its own slot of the atlas");
+
+            /* A value past the display's two digits must not read off the
+             * end of the atlas. */
+            hta_viewmodel_set_counter(&vm, 1234u);
+            hta_viewmodel_update(&vm, 0.0f);
+            int inside = 1;
+            for (uint32_t d = 0; d < 2; d++)
+                for (uint32_t k = 0; k < 4; k++) {
+                    float u = vm.posed[vm.counter_vertex[d][k]].uv[0];
+                    if (u < 0.0f || u > 1.0f) inside = 0;
+                }
+            CHECK(inside, "an over-large count still samples inside the atlas");
+        }
+    }
+
     hta_viewmodel_free(&vm);
     hta_anim_free(&g);
     free(data);

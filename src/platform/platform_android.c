@@ -500,6 +500,12 @@ static bool load_map(hta_android *s)
                         s->vm.flash_radius, s->vm.flash_life * 1000.0f);
             else
                 hta_log("[weapon] no first-person muzzle flash in the firing effect");
+            if (s->vm.have_counter)
+                hta_log("[weapon] on-gun round counter: %u digits, submeshes %u/%u",
+                        s->vm.counter_digits, s->vm.counter_submesh[0],
+                        s->vm.counter_submesh[1]);
+            else
+                hta_log("[weapon] no on-gun round counter on this model");
         } else {
             hta_log("[weapon] viewmodel: %s", err);
         }
@@ -991,6 +997,8 @@ void android_main(struct android_app *app)
                     hta_viewmodel_play(&state.vm, HTA_VM_RELOAD);
             }
         }
+        /* The gun carries its own round counter; keep it honest. */
+        hta_viewmodel_set_counter(&state.vm, (uint32_t)state.ammo.loaded);
         if (state.ammo.reload_done)
             hta_log("[weapon] reloaded: %d / %d", state.ammo.loaded, state.ammo.reserve);
         /* The animation graph fires a snd! id when a clip crosses its sound

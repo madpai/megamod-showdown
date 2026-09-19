@@ -69,6 +69,20 @@ typedef struct {
     uint32_t          flash_sprite_count;
     uint32_t          flash_pick;
     uint32_t          flash_rng;
+
+    /* The readout on the gun itself. Halo's assault rifle carries its own
+     * round counter: two quads on `frame display`, each a
+     * shader_transparent_chicago whose "numeric counter limit" is the
+     * weapon's magazine size, textured from a TEN-FRAME bitmap -- one image
+     * per digit, not a sprite sheet. The ten frames are decoded into a
+     * single wide atlas so a digit is chosen by shifting U. */
+    bool              have_counter;
+    uint32_t          counter_submesh[2];   /* [0] most significant */
+    uint32_t          counter_vertex[2][4];   /* the quad's four corners */
+    float             counter_uv[2][4][2];  /* the model's own UVs, per quad */
+    uint32_t          counter_digits;       /* how many quads we found */
+    uint32_t          counter_frames;       /* frames in the atlas */
+    uint32_t          counter_value;
 } hta_viewmodel;
 
 /* Builds hands + gun against the weapon's animation graph. Returns false and
@@ -90,5 +104,8 @@ void hta_viewmodel_play(hta_viewmodel *vm, hta_vm_state s);
 /* Lights the muzzle flash for its tagged lifespan. Harmless if the weapon
  * has no first-person flash particle. */
 void hta_viewmodel_flash(hta_viewmodel *vm);
+
+/* What the gun's own readout shows. Harmless if it has no readout. */
+void hta_viewmodel_set_counter(hta_viewmodel *vm, uint32_t value);
 
 #endif

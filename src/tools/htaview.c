@@ -6,7 +6,7 @@
  *
  *   htaview <cache.map> [--out prefix] [--width N] [--height N] [--shots N]
  *                       [--fp [clip]] [--eye X Y Z] [--yaw DEG] [--pitch DEG]
- *                       [--flash]
+ *                       [--flash] [--ammo N]
  *
  * --fp stands at a player spawn with the animated first-person viewmodel up,
  * stepping one animation frame per shot. That is the visual check for the
@@ -84,7 +84,7 @@ int main(int argc, char **argv)
     const char *prefix = "bloodgulch";
     const char *fp_clip = "idle";
     int fp_mode = 0;
-    int have_eye = 0, want_flash = 0;
+    int have_eye = 0, want_flash = 0, ammo = -1;
     float eye[3] = {0.0f, 0.0f, 0.0f}, eye_yaw = 0.0f, eye_pitch = 0.0f;
     uint32_t W = 1280, H = 720, shots = 4;
     for (int i = 2; i < argc; i++) {
@@ -104,6 +104,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--pitch") && i + 1 < argc)
             eye_pitch = strtof(argv[++i], NULL) * 0.01745329f;
         else if (!strcmp(argv[i], "--flash")) want_flash = 1;
+        else if (!strcmp(argv[i], "--ammo") && i + 1 < argc) ammo = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--fp")) {
             fp_mode = 1;
             if (i + 1 < argc && argv[i+1][0] != '-') fp_clip = argv[++i];
@@ -264,6 +265,7 @@ int main(int argc, char **argv)
             cam.pitch = have_eye ? eye_pitch : 0.0f;
             /* --flash lights the muzzle flash for the shot, so it can be
              * looked at without a device. */
+            if (ammo >= 0 && vm.loaded) hta_viewmodel_set_counter(&vm, (uint32_t)ammo);
             if (want_flash && vm.loaded) {
                 hta_viewmodel_flash(&vm);
                 vm.flash_timer = vm.flash_life;

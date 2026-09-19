@@ -218,7 +218,13 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
         uint32_t vfile = c->model_data_file_offset + voff;
         uint32_t tfile = c->model_data_file_offset + c->vertex_size + toff;
         int strip = (tbuf == 1);
-        uint32_t index_words = strip ? tcount : tcount * 3u;
+        /* `triangle count` is TRIANGLES, not indices. A strip of N triangles
+         * is N + 2 indices long -- reading only N drops the last two
+         * triangles of every part, which is invisible on a 1682-triangle gun
+         * body and fatal to a 2-triangle one: the assault rifle's two ammo
+         * digit quads are exactly 4 verts and 2 triangles each, and vanished
+         * entirely. */
+        uint32_t index_words = strip ? tcount + 2u : tcount * 3u;
         if ((uint64_t)vfile + (uint64_t)vcount * HTA_MODEL_VTX_SIZE > c->size) continue;
         if ((uint64_t)tfile + (uint64_t)index_words * 2u > c->size) continue;
 
@@ -287,11 +293,11 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
                 emitted += 3;
             }
         } else {
-            /* Gearbox stores a triangle strip. tcount is the number of u16
-             * indices. 0xFFFF restarts; duplicated verts are degenerates. */
+            /* Gearbox stores a triangle strip of index_words u16 indices.
+             * 0xFFFF restarts; duplicated verts are degenerates. */
             uint16_t prev0 = 0, prev1 = 0;
             int have = 0, odd = 0;
-            for (uint32_t i = 0; i < tcount; i++) {
+            for (uint32_t i = 0; i < index_words; i++) {
                 uint16_t ix = 0;
                 if (!hta_rd_u16(c, tfile + i * 2u, &ix)) break;
                 if (ix == 0xFFFFu) { have = 0; odd = 0; continue; }

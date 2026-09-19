@@ -82,6 +82,23 @@ uint32_t hta_mesh_intern_bitmap(hta_bsp_mesh *mesh, const hta_cache *c,
 
 uint8_t hta_shader_draw_mode(const hta_cache *c, uint32_t shader_tag_id);
 
+/* `shader_transparent_chicago` numeric counter limit: nonzero means the
+ * shader is a readout whose texture frame is chosen by a counter, rather
+ * than a fixed picture. The assault rifle's two ammo digits carry 60 (its
+ * magazine); its compass carries 8 (the points of the compass). */
+uint8_t hta_shader_numeric_limit(const hta_cache *c, uint32_t shader_tag_id);
+
+/* How many frames a bitmap holds (its bitmap_data count). A digit readout is
+ * a ten-frame bitmap: one image per digit, not a sprite sheet. */
+uint32_t hta_bitmap_frame_count(const hta_cache *c, uint32_t tag_id);
+
+/* Decode `count` frames of `tag_id` side by side into one RGBA atlas and
+ * intern it as a mesh texture, so a quad can pick a frame by shifting U.
+ * Returns the texture slot, or ~0u. */
+uint32_t hta_mesh_intern_atlas(hta_bsp_mesh *mesh, const hta_cache *c,
+                               const hta_resource_map *bitmaps,
+                               uint32_t tag_id, uint32_t count);
+
 /* Sprite-sheet bitmaps (`type` 3). Halo stores each variant as its own
  * "bitmap group sequence" holding a single sprite, and picks a sequence at
  * random when it spawns a particle -- that is why one muzzle flash never

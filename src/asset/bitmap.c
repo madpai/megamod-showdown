@@ -353,8 +353,19 @@ uint8_t hta_shader_draw_mode(const hta_cache *c, uint32_t shader_tag_id)
     if (strstr(path, "black")) return HTA_DRAW_SKIP;
     if (strstr(path, "light") || strstr(path, "teleporter") || strstr(path, "shield"))
         return HTA_DRAW_ADD;
-    if (t.primary_class == HTA_TAG_SCHI || t.primary_class == HTA_TAG_SCEX)
+    if (t.primary_class == HTA_TAG_SCHI || t.primary_class == HTA_TAG_SCEX) {
+        /* Ask the tag rather than the tag's name. Shader base is 40 bytes,
+         * so a chicago shader's framebuffer blend function sits at +44.
+         * The assault rifle's display quads declare ADD; drawn as ALPHA
+         * their black background paints a box over the gun. */
+        uint32_t base = 0;
+        uint16_t blend = 0;
+        if (hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base) &&
+            hta_rd_u16(c, base + 44u, &blend)) {
+            if (blend == 3u) return HTA_DRAW_ADD;   /* add */
+        }
         return HTA_DRAW_ALPHA;
+    }
     return HTA_DRAW_OPAQUE;
 }
 
@@ -459,4 +470,88 @@ bool hta_bitmap_sprite_at(const hta_cache *c, uint32_t tag_id, uint32_t seq,
         !hta_rd_f32(c, so + 20u, &out->v1))
         return false;
     return true;
+}
+
+uint8_t hta_shader_numeric_limit(const hta_cache *c, uint32_t shader_tag_id)
+{
+    if (!c || !shader_tag_id || shader_tag_id == 0xFFFFFFFFu) return 0;
+    int32_t ti = hta_cache_find_tag_by_id(c, shader_tag_id);
+    if (ti < 0) return 0;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t) || t.indexed) return 0;
+    if (t.primary_class != HTA_TAG_SCHI && t.primary_class != HTA_TAG_SCEX) return 0;
+    uint32_t base = 0;
+    uint8_t limit = 0;
+    /* Shader base is 40 bytes; numeric counter limit is chicago's first field. */
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return 0;
+    if (!hta_rd_u8(c, base + 40u, &limit)) return 0;
+    return limit;
+}
+
+uint32_t hta_bitmap_frame_count(const hta_cache *c, uint32_t tag_id)
+{
+    if (!c || !tag_id || tag_id == 0xFFFFFFFFu) return 0;
+    int32_t ti = hta_cache_find_tag_by_id(c, tag_id);
+    if (ti < 0) return 0;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t) || t.indexed) return 0;
+    uint32_t base = 0, n = 0, ptr = 0;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return 0;
+    if (!hta_read_reflexive(c, base + HTA_BITM_DATA_REFLEXIVE, &n, &ptr)) return 0;
+    return n;
+}
+
+uint32_t hta_mesh_intern_atlas(hta_bsp_mesh *mesh, const hta_cache *c,
+                               const hta_resource_map *bitmaps,
+                               uint32_t tag_id, uint32_t count)
+{
+    if (!mesh || !mesh->textures || !c || !tag_id || count == 0) return ~0u;
+    /* Atlases are keyed by tag with a marker index so they are not confused
+     * with frame 0 of the same bitmap. */
+    const uint32_t ATLAS_INDEX = 0xA71A5u;
+    for (uint32_t i = 0; i < mesh->texture_count; i++)
+        if (mesh->textures[i].tag_id == tag_id &&
+            mesh->textures[i].index == ATLAS_INDEX) return i;
+    if (mesh->texture_count >= MAX_TEX) return ~0u;
+
+    hta_bitmap *frames = (hta_bitmap *)calloc(count, sizeof(hta_bitmap));
+    if (!frames) return ~0u;
+    char err[HTA_ERRLEN];
+    uint32_t fw = 0, fh = 0, got = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        if (!hta_bitmap_decode(c, bitmaps, tag_id, i, &frames[i], err, sizeof(err)))
+            break;
+        if (i == 0) { fw = frames[0].width; fh = frames[0].height; }
+        /* Frames of one readout are the same size; anything else is not an
+         * atlas we can lay out by shifting U. */
+        if (frames[i].width != fw || frames[i].height != fh) { got = i; break; }
+        got = i + 1;
+    }
+    if (got != count || fw == 0 || fh == 0) {
+        for (uint32_t i = 0; i < count; i++) hta_bitmap_free(&frames[i]);
+        free(frames);
+        return ~0u;
+    }
+
+    uint32_t aw = fw * count;
+    uint8_t *rgba = (uint8_t *)malloc((size_t)aw * fh * 4u);
+    if (!rgba) {
+        for (uint32_t i = 0; i < count; i++) hta_bitmap_free(&frames[i]);
+        free(frames);
+        return ~0u;
+    }
+    for (uint32_t y = 0; y < fh; y++)
+        for (uint32_t f = 0; f < count; f++)
+            memcpy(rgba + ((size_t)y * aw + (size_t)f * fw) * 4u,
+                   frames[f].rgba + (size_t)y * fw * 4u, (size_t)fw * 4u);
+    for (uint32_t i = 0; i < count; i++) hta_bitmap_free(&frames[i]);
+    free(frames);
+
+    uint32_t slot = mesh->texture_count++;
+    mesh->textures[slot].tag_id = tag_id;
+    mesh->textures[slot].index  = ATLAS_INDEX;
+    mesh->textures[slot].width  = aw;
+    mesh->textures[slot].height = fh;
+    mesh->textures[slot].rgba   = rgba;
+    return slot;
 }

@@ -85,6 +85,57 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## The counter on the gun, and a strip bug it uncovered (2026-09-19)
+
+**Confirmed on the S24+:** magazine, reload and muzzle flash all work.
+
+The owner asked for the AR's own little LCD round counter. Chasing it found a
+model-parsing bug that had been silently damaging **every** model in the game.
+
+### Triangle strips were two triangles short, everywhere
+
+`ModelGeometryPart`'s field is **`triangle count`** -- triangles, not indices.
+A strip of N triangles is **N + 2** indices. The parser read N, so every strip
+part lost its last two triangles. On a 1682-triangle gun body that is
+invisible; on a 2-triangle part it is total. The assault rifle's two ammo
+digit quads are exactly 4 vertices and 2 triangles, so they emitted nothing
+and were dropped by the `emitted == 0` guard.
+
+Note the loop bound and the bounds check are separate: fixing `index_words`
+alone does nothing, because the strip decoder iterated `tcount`.
+
+After the fix the FP model yields all **8** parts instead of 6, and every mesh
+in the game gained its missing tail triangles (gun body 3123 -> 3129 indices).
+`test_anim` pins it: a two-triangle strip part must survive.
+
+### The readout
+
+It is two quads on `frame display`, each a `shader_transparent_chicago` whose
+**numeric counter limit is 60** -- the weapon's magazine size. That is the tag
+saying "this counts that", and it is how the digits are told apart from the
+AR's compass, which is also a counter but with a limit of 8.
+
+`numbers_plate` is **not a sprite sheet**: it is a ten-frame bitmap, one image
+per digit. The ten frames are decoded once into a single wide atlas
+(`hta_mesh_intern_atlas`), so choosing a digit is a shift in U with no
+per-frame cost and no descriptor-set churn. The model's own UVs are kept and
+squeezed into the digit's tenth, because the glyph occupies a sub-rectangle of
+each frame.
+
+The more +Y quad is the tens digit -- Halo FP axes put +Y to the left.
+
+### Chicago shaders now use their declared blend
+
+`hta_shader_draw_mode` guessed from tag *names* ("light", "teleporter") and
+fell back to ALPHA for every chicago shader. They declare a framebuffer blend
+function at **+44** (Shader base is 40). Drawn as ALPHA the display's black
+background painted a box over the gun.
+
+19 of Blood Gulch's 54 chicago shaders change, all ALPHA -> ADD, and every one
+is something that should glow: the AR display and compass, the Warthog
+speedometer and sensor, the needler's luminous core, active camouflage, a door
+blinker. Nothing loses transparency. Checked against canyon renders.
+
 ## Ammo, reload and the muzzle flash (2026-09-19)
 
 **Confirmed on the S24+:** the rifle sounds right and full auto is clean.
@@ -449,6 +500,8 @@ after building, wherever real tag physics are available.
 | Model markers | `src/asset/model.c` `hta_model_marker` |
 | Sprite-sheet UVs | `src/asset/bitmap.c` `hta_bitmap_sprite_at` |
 | Muzzle flash quad | `src/engine/viewmodel.c` `setup_flash` / `pose_flash` |
+| On-gun round counter | `src/engine/viewmodel.c` `setup_counter` / `pose_counter` |
+| Digit atlas, declared blend | `src/asset/bitmap.c` |
 | AAudio stream | `src/platform/audio_android.c` |
 | snd! + Xbox ADPCM + effe->snd! | `src/asset/sound.c`, `.h` |
 | Sound inspector / WAV dump | `src/tools/htasound.c` |

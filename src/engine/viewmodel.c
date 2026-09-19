@@ -21,6 +21,88 @@ static void free_partial(hta_viewmodel *vm)
     memset(vm, 0, sizeof(*vm));
 }
 
+/* Find the gun's own round counter.
+ *
+ * A readout quad is a chicago shader whose "numeric counter limit" equals
+ * this weapon's magazine size -- which is the tag saying, in as many words,
+ * "this counts that". The assault rifle's compass is a counter too, but its
+ * limit is 8, so it is not confused with the ammo.
+ *
+ * The digits are a ten-frame bitmap, one image per digit. They are decoded
+ * once into a wide atlas so picking a digit is a shift in U and costs
+ * nothing per frame.
+ */
+static void setup_counter(hta_viewmodel *vm, const hta_cache *c,
+                          const hta_resource_map *bitmaps,
+                          const hta_weapon_def *weap)
+{
+    if (weap->rounds_loaded_max <= 0 || weap->rounds_loaded_max > 255) return;
+    uint8_t want = (uint8_t)weap->rounds_loaded_max;
+
+    uint32_t found[2];
+    float meanY[2];
+    uint32_t n = 0;
+    uint32_t bitmap_id = 0;
+
+    for (uint32_t i = 0; i < vm->mesh.submesh_count && n < 2; i++) {
+        hta_submesh *sm = &vm->mesh.submeshes[i];
+        if (!sm->index_count || sm->index_count > 12) continue;
+        if (hta_shader_numeric_limit(c, sm->shader_tag_id) != want) continue;
+        uint32_t bm = hta_shader_base_bitmap(c, sm->shader_tag_id);
+        if (!bm) continue;
+        uint32_t frames = hta_bitmap_frame_count(c, bm);
+        if (frames < 10) continue;          /* a digit sheet is 0..9 */
+        bitmap_id = bm;
+
+        /* Which digit position this quad is: Halo FP axes put +Y to the
+         * left, so the more +Y quad is the more significant digit. */
+        uint32_t corner[4];
+        uint32_t cn = 0;
+        float sum = 0.0f;
+        for (uint32_t k = 0; k < sm->index_count && cn < 4; k++) {
+            uint32_t v = vm->mesh.indices[sm->first_index + k];
+            int dup = 0;
+            for (uint32_t q = 0; q < cn; q++) if (corner[q] == v) dup = 1;
+            if (dup) continue;
+            corner[cn++] = v;
+            sum += vm->mesh.vertices[v].pos[1];
+        }
+        if (cn != 4) continue;   /* not a quad; not a digit */
+        found[n] = i;
+        meanY[n] = sum / 4.0f;
+        for (uint32_t k = 0; k < 4; k++) vm->counter_vertex[n][k] = corner[k];
+        n++;
+    }
+    if (n != 2 || !bitmap_id) return;
+
+    uint32_t atlas = hta_mesh_intern_atlas(&vm->mesh, c, bitmaps, bitmap_id, 10);
+    if (atlas == ~0u) return;
+
+    /* Most significant first. */
+    uint32_t order[2] = { 0, 1 };
+    if (meanY[1] > meanY[0]) { order[0] = 1; order[1] = 0; }
+
+    uint32_t corner_copy[2][4];
+    memcpy(corner_copy, vm->counter_vertex, sizeof(corner_copy));
+    for (uint32_t d = 0; d < 2; d++) {
+        uint32_t src = order[d];
+        vm->counter_submesh[d] = found[src];
+        vm->mesh.submeshes[found[src]].albedo_tex = atlas;
+        /* Keep the model's own UVs: the glyph sits in a sub-rectangle of
+         * each frame, and that rectangle must survive the atlas shift. */
+        for (uint32_t k = 0; k < 4; k++) {
+            uint32_t v = corner_copy[src][k];
+            vm->counter_vertex[d][k] = v;
+            vm->counter_uv[d][k][0] = vm->mesh.vertices[v].uv[0];
+            vm->counter_uv[d][k][1] = vm->mesh.vertices[v].uv[1];
+        }
+    }
+    vm->counter_digits = 2;
+    vm->counter_frames = 10;
+    vm->have_counter = true;
+    vm->counter_value = (uint32_t)weap->rounds_loaded_max;
+}
+
 /* Find the first-person muzzle flash and reserve geometry for it.
  *
  * Failing is fine and common -- a vehicle turret has no FP flash -- so this
@@ -160,6 +242,7 @@ bool hta_viewmodel_load(hta_viewmodel *vm, const hta_cache *c,
     /* The muzzle flash: four more vertices and one more submesh on the same
      * mesh. Everything about it comes from the weapon's own firing effect. */
     setup_flash(vm, c, bitmaps, weap);
+    setup_counter(vm, c, bitmaps, weap);
 
     if (vm->mesh.vertex_count == 0) {
         if (err) snprintf(err, errlen, "first-person meshes are empty");
@@ -188,6 +271,35 @@ void hta_viewmodel_free(hta_viewmodel *vm)
 {
     if (!vm) return;
     free_partial(vm);
+}
+
+void hta_viewmodel_set_counter(hta_viewmodel *vm, uint32_t value)
+{
+    if (!vm || !vm->have_counter) return;
+    vm->counter_value = value;
+}
+
+/* Points the readout quads at their digit in the atlas. */
+static void pose_counter(hta_viewmodel *vm)
+{
+    if (!vm->have_counter) return;
+    uint32_t value = vm->counter_value;
+    uint32_t scale = 1;
+    for (uint32_t d = 1; d < vm->counter_digits; d++) scale *= 10u;
+
+    for (uint32_t d = 0; d < vm->counter_digits; d++) {
+        uint32_t digit = (value / scale) % 10u;
+        scale /= 10u;
+        float span = 1.0f / (float)vm->counter_frames;
+        for (uint32_t k = 0; k < 4; k++) {
+            uint32_t v = vm->counter_vertex[d][k];
+            if (v >= vm->mesh.vertex_count) continue;
+            /* The model's U runs across one frame; the atlas lays the ten
+             * frames side by side, so squeeze into this digit's slot. */
+            vm->posed[v].uv[0] = ((float)digit + vm->counter_uv[d][k][0]) * span;
+            vm->posed[v].uv[1] = vm->counter_uv[d][k][1];
+        }
+    }
 }
 
 void hta_viewmodel_flash(hta_viewmodel *vm)
@@ -292,6 +404,7 @@ void hta_viewmodel_pose(hta_viewmodel *vm, const hta_transform *world)
         out->normal[0]=n[0]; out->normal[1]=n[1]; out->normal[2]=n[2];
     }
     pose_flash(vm, world);
+    pose_counter(vm);
 }
 
 void hta_viewmodel_update(hta_viewmodel *vm, float dt)
