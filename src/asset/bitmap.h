@@ -49,7 +49,13 @@ typedef struct {
 
 void hta_bitmap_free(hta_bitmap *b);
 
-/* Opens a Gearbox resource map (bitmaps.map). Does not copy the bytes. */
+/* Opens a Gearbox resource map. Does not copy the bytes.
+ * Type is the first word: 1 = bitmaps, 2 = sounds, 3 = loc. */
+#define HTA_RESOURCE_BITMAPS 1u
+#define HTA_RESOURCE_SOUNDS  2u
+bool hta_resource_open_typed(hta_resource_map *r, const uint8_t *data, size_t size,
+                             uint32_t expect_type, char *err, size_t errlen);
+/* bitmaps.map, for the call sites that only ever want that. */
 bool hta_resource_open(hta_resource_map *r, const uint8_t *data, size_t size,
                        char *err, size_t errlen);
 

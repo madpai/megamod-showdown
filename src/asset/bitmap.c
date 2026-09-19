@@ -20,8 +20,8 @@ void hta_bitmap_free(hta_bitmap *b)
     memset(b, 0, sizeof(*b));
 }
 
-bool hta_resource_open(hta_resource_map *r, const uint8_t *data, size_t size,
-                       char *err, size_t errlen)
+bool hta_resource_open_typed(hta_resource_map *r, const uint8_t *data, size_t size,
+                             uint32_t expect_type, char *err, size_t errlen)
 {
     if (!r || !data || size < 16) {
         fail(err, errlen, "resource map too small");
@@ -29,15 +29,25 @@ bool hta_resource_open(hta_resource_map *r, const uint8_t *data, size_t size,
     }
     uint32_t type = (uint32_t)data[0] | ((uint32_t)data[1] << 8) |
                     ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
-    /* 1 = bitmaps, 2 = sounds, 3 = loc. We only accept bitmaps. */
-    if (type != 1) {
-        fail(err, errlen, "not a bitmaps.map (type %u)", type);
+    /* 1 = bitmaps, 2 = sounds, 3 = loc. Picking the wrong file is the likely
+     * mistake, so name what was expected and what arrived. */
+    if (type != expect_type) {
+        fail(err, errlen, "resource map is type %u, expected %u (%s)",
+             type, expect_type,
+             expect_type == HTA_RESOURCE_BITMAPS ? "bitmaps.map" :
+             expect_type == HTA_RESOURCE_SOUNDS  ? "sounds.map"  : "?");
         return false;
     }
     r->data = data;
     r->size = size;
     r->type = type;
     return true;
+}
+
+bool hta_resource_open(hta_resource_map *r, const uint8_t *data, size_t size,
+                       char *err, size_t errlen)
+{
+    return hta_resource_open_typed(r, data, size, HTA_RESOURCE_BITMAPS, err, errlen);
 }
 
 static void unpack_565(uint16_t c, uint8_t *r, uint8_t *g, uint8_t *b)

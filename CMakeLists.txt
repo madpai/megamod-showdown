@@ -14,6 +14,7 @@ if(ANDROID)
         src/asset/cache.c
         src/asset/bsp.c
         src/asset/bitmap.c
+        src/asset/sound.c
         src/asset/biped.c
         src/asset/weapon.c
         src/asset/anim.c
@@ -35,7 +36,7 @@ else()
     # Host build: the portable engine only, plus its tests.
     add_library(hta_engine STATIC src/engine/engine.c src/engine/camera.c src/engine/player.c src/engine/gun.c
         src/engine/viewmodel.c
-        src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c src/asset/biped.c src/asset/weapon.c
+        src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c src/asset/sound.c src/asset/biped.c src/asset/weapon.c
         src/asset/anim.c src/asset/model.c)
     target_include_directories(hta_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(hta_engine PRIVATE -Wall -Wextra)
@@ -51,6 +52,10 @@ else()
     # Measures the pawn's fit at a reported coordinate: what pushes, and why.
     add_executable(htaprobe src/tools/htaprobe.c)
     target_link_libraries(htaprobe PRIVATE hta_engine m)
+
+    # What format the Trial's samples are in, and where the bytes live.
+    add_executable(htasound src/tools/htasound.c)
+    target_link_libraries(htasound PRIVATE hta_engine m)
 
     # Host offscreen renderer: needs Vulkan loader + headers on the host.
     find_package(Vulkan QUIET)
@@ -97,6 +102,10 @@ else()
     add_executable(test_anim tests/test_anim.c)
     target_link_libraries(test_anim PRIVATE hta_engine m)
     add_test(NAME anim COMMAND test_anim)
+
+    add_executable(test_sound tests/test_sound.c)
+    target_link_libraries(test_sound PRIVATE hta_engine m)
+    add_test(NAME sound COMMAND test_sound)
 
     add_executable(mkfixture tests/mkfixture.c tests/fixture.c)
     target_include_directories(mkfixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
