@@ -1,6 +1,6 @@
 # Session handoff — Halo Trial Android
 
-**Date:** 2026-09-18
+**Date:** 2026-09-19
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Map data (not in git):** `/home/commander/halo-trial-data/extract/maps/` (`bloodgulch.map`, `bitmaps.map`; `sounds.map` is there too, still unused)
 **Device:** Galaxy S24+, Tailscale node `100.68.201.52` (`node`)
@@ -23,6 +23,21 @@ Look at the first-person view without a device:
 ./build-host/htaview $HTA_MAP --fp idle   --shots 2 --out /tmp/fp
 ./build-host/htaview $HTA_MAP --fp reload --shots 6 --out /tmp/rl
 ```
+
+**Chasing a "stuck here" report.** The HUD readout gives x y z; these two turn
+that into a measurement instead of a guess:
+
+```
+./build-host/htaprobe $HTA_MAP --at 96.57 -155.72 --z 0.81   # why it pushes
+./build-host/htaprobe $HTA_MAP --find 0.81 --near 96 -155    # if a digit is unreadable
+./build-host/htaview  $HTA_MAP --eye 96.57 -155.72 1.43 --yaw 180   # their exact frame
+```
+
+`htaprobe --at` prints the whole vertical column, the headroom, the standing and
+crouching push, and every triangle near the body with a verdict (floor / ceiling
+/ ledge lip / wall). Probe **from the player's own z**: a ground query from the
+sky finds the roof and measures a different room. `--eye` takes the *eye*
+position, so add the 0.62 standing eye height to their feet z.
 
 ## Getting a build onto the phone — do this every time
 
@@ -70,7 +85,33 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
-## Guns: what changed this session
+## Slopes: what changed this session (2026-09-19)
+
+The owner reported a doorway that **fits going up and not going down**. That
+asymmetry is not geometry — it is the integrator, and it reproduces on a bare
+synthetic ramp with no map at all.
+
+Gravity alone does not keep a walking pawn on a downward slope. In one frame the
+surface drops further than a standing start falls, so the pawn leaves it, and
+keeps leaving it: **161 of 180 frames airborne walking down a 20-degree ramp**,
+floating ~0.015 wu above it the whole way. Walking up, the ground snap puts the
+feet exactly on the surface every frame: 0 airborne, 0.000 float.
+
+That float lifts the head by the same amount. A leaning lintel with clearance
+between 0.700 (standing) and 0.7148 (standing + float) therefore blocks one
+direction only. It also reports "air" for the entire descent, which silently
+costs the jump and the sneak speed.
+
+**Fix:** in `hta_player_update`, when the pawn began the frame walking and is not
+rising, snap it to the ground at the new XY *before* depenetration — but only as
+far as the steepest walkable slope could have carried it this frame
+(`0.18 + moved * tan(max_slope)`). Further than that is a ledge, and a ledge is
+still a fall; `test_player`'s walk-off checks pin that.
+
+Pinned by `tests/test_player.c` `[down a slope]`: without the fix, "stays on its
+surface" and "does not go airborne" both fail.
+
+## Guns: what changed this session (2026-09-18)
 
 The hold was never an offset problem. The tags say so directly:
 
@@ -138,7 +179,17 @@ moving, posing, overlays, light-off, throw-grenade.
 
 ## NEXT WORK
 
-### 1. Confirm the viewmodel on the S24+ — do this first
+### 0. Two things are waiting on the owner's next screenshot
+
+- **The viewmodel on device** (below) — still never confirmed on Adreno.
+- **Where the doorway actually is.** The slope fix above is the mechanism behind
+  the up/down asymmetry, but the reported coordinate was never pinned down: the
+  status bar and the camera cutout ate a digit of the X, and no column at
+  `9?.57, -155.72` has a floor at z 0.81. The game is fullscreen now and the
+  readout dodges the cutout, so the next screenshot should be legible. Feed it
+  to `htaprobe --at`.
+
+### 1. Confirm the viewmodel on the S24+
 
 Everything above is verified in the **host** offscreen renderer only. Build, sideload,
 and look. The GPU path changed: the viewmodel now uses
@@ -185,7 +236,9 @@ a gun.
 - Shrubs/ferns with no `coll` tag still ghost; colliders are hollow (spawn *inside* a hog
   will not shove you out)
 - No world weapon pickups; you spawn with the AR
-- Gamepad / BACK-to-exit not confirmed on device
+- Gamepad / BACK-to-exit not confirmed on device (BACK now competes with the
+  gesture-nav back swipe; the HUD claims the lower half of both edges via
+  `setSystemGestureExclusionRects`, which the platform caps)
 - FP arms are lit by the world light only; Halo lights the viewmodel separately
 
 ### Headroom / overhangs (fixed 2026-09-18, confirmed by the owner on device)
@@ -245,7 +298,8 @@ after building, wherever real tag physics are available.
 | Collision BSP + object coll emit | `src/asset/bsp.c`, `src/asset/model.c` |
 | Resource maps (bitmaps only today) | `src/asset/bitmap.c` `hta_resource_open` (type 1; type 2 = sounds) |
 | Tag layouts | `upstream/invader/src/tag/hek/definition/*.json` |
-| HUD | `android/.../GameActivity.java` |
+| HUD, fullscreen, gesture exclusion | `android/.../GameActivity.java` |
+| Fit probe at a coordinate | `src/tools/htaprobe.c` |
 | Map / bitmap picker | `android/.../SetupActivity.java` |
 | Android glue | `src/platform/platform_android.c` |
 | Animation + skinning tests | `tests/test_anim.c` (needs `HTA_MAP`) |

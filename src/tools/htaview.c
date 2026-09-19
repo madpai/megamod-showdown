@@ -5,11 +5,15 @@
  * over SSH and doubles as an automated renderer test.
  *
  *   htaview <cache.map> [--out prefix] [--width N] [--height N] [--shots N]
- *                       [--fp [clip]]
+ *                       [--fp [clip]] [--eye X Y Z] [--yaw DEG] [--pitch DEG]
  *
  * --fp stands at a player spawn with the animated first-person viewmodel up,
  * stepping one animation frame per shot. That is the visual check for the
  * hands/weapon skinning; "clip" defaults to idle.
+ *
+ * --eye puts the camera at an exact eye position instead, which is how you
+ * reproduce a player's screenshot from the coordinates in their HUD readout:
+ * pass their feet Z plus the standing eye height (0.62).
  */
 #include "asset/cache.h"
 #include "asset/bsp.h"
@@ -79,12 +83,25 @@ int main(int argc, char **argv)
     const char *prefix = "bloodgulch";
     const char *fp_clip = "idle";
     int fp_mode = 0;
+    int have_eye = 0;
+    float eye[3] = {0.0f, 0.0f, 0.0f}, eye_yaw = 0.0f, eye_pitch = 0.0f;
     uint32_t W = 1280, H = 720, shots = 4;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--out")    && i + 1 < argc) prefix = argv[++i];
         else if (!strcmp(argv[i], "--width")  && i + 1 < argc) W = (uint32_t)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--height") && i + 1 < argc) H = (uint32_t)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--shots")  && i + 1 < argc) shots = (uint32_t)atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--eye") && i + 3 < argc) {
+            eye[0] = strtof(argv[i+1], NULL);
+            eye[1] = strtof(argv[i+2], NULL);
+            eye[2] = strtof(argv[i+3], NULL);
+            have_eye = 1;
+            i += 3;
+        }
+        else if (!strcmp(argv[i], "--yaw") && i + 1 < argc)
+            eye_yaw = strtof(argv[++i], NULL) * 0.01745329f;
+        else if (!strcmp(argv[i], "--pitch") && i + 1 < argc)
+            eye_pitch = strtof(argv[++i], NULL) * 0.01745329f;
         else if (!strcmp(argv[i], "--fp")) {
             fp_mode = 1;
             if (i + 1 < argc && argv[i+1][0] != '-') fp_clip = argv[++i];
@@ -219,14 +236,21 @@ int main(int argc, char **argv)
     uint32_t drawn = 0;
     hta_spawn_point spawn;
     int have_spawn = hta_scenario_spawns(&c, &spawn, 1) > 0;
-    if (fp_mode) {
+    if (fp_mode || have_eye) {
         cam.znear = 0.02f;
         cam.zfar  = radius * 12.0f;
     }
+    if (have_eye) fp_mode = 1;   /* --eye implies the first-person camera */
     for (uint32_t s = 0; s < shots; s++) {
         if (fp_mode) {
-            /* Stand where a player spawns and look along the spawn facing. */
-            if (have_spawn) {
+            /* Stand where a player spawns and look along the spawn facing --
+             * unless --eye named an exact spot to reproduce. */
+            if (have_eye) {
+                cam.pos[0] = eye[0];
+                cam.pos[1] = eye[1];
+                cam.pos[2] = eye[2];
+                cam.yaw = eye_yaw;
+            } else if (have_spawn) {
                 cam.pos[0] = spawn.position[0];
                 cam.pos[1] = spawn.position[1];
                 cam.pos[2] = spawn.position[2] + 0.62f;  /* Trial standing eye */
@@ -235,7 +259,7 @@ int main(int argc, char **argv)
                 cam.pos[0] = ctr[0]; cam.pos[1] = ctr[1]; cam.pos[2] = ctr[2] + 1.0f;
                 cam.yaw = 0.0f;
             }
-            cam.pitch = 0.0f;
+            cam.pitch = have_eye ? eye_pitch : 0.0f;
             if (vm.loaded && fp_anim >= 0) {
                 /* One animation frame per shot, straight through the clip. */
                 const hta_animation *a = &vm.graph.anims[fp_anim];

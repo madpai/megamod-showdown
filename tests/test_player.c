@@ -300,6 +300,110 @@ int main(void)
         hta_collision_free(&lcol);
     }
 
+    /* Walking DOWN a slope must hug it, exactly as walking up does.
+     *
+     * Gravity alone does not: the surface falls away faster in one frame than
+     * a standing start falls, so the pawn leaves the ramp and floats a little
+     * the whole way down. That float raises the head by the same amount, so a
+     * leaning lintel with clearance between the standing height and that
+     * height blocks the pawn one way and not the other -- a doorway you can
+     * walk up through but not back down. It also reports "air" for the whole
+     * descent, which costs the jump and the sneak speed.
+     *
+     * Pinned on synthetic geometry because it is a property of the
+     * integrator, not of any one map. The lintel leans (60 degrees), like
+     * Blood Gulch's base entrances: a flat ceiling is correctly skipped for
+     * horizontal push, so only a leaning one can show the symmetry. */
+    printf("\n[down a slope]\n");
+    {
+        static hta_vertex rv[8];
+        static uint32_t   ri[12];
+        memset(rv, 0, sizeof(rv));
+        const float slope = 0.36f;      /* ~20-degree ramp descending along +X */
+        #define RAMPZ(X) (2.0f - slope * (X))
+        /* Lintel low edge, measured where the pawn's cylinder first touches it
+         * (x = 5 minus the 0.2 radius) -- the tight side, because the ramp
+         * descends and the uphill approach carries the head highest. 0.707 of
+         * clearance: a 0.700 standing head passes, the 0.7148 head a floating
+         * pawn has does not. */
+        const float lz = RAMPZ(4.8f) + 0.707f;
+        float rp[8][3] = {
+            {0,0,RAMPZ(0)}, {10,0,RAMPZ(10)}, {10,6,RAMPZ(10)}, {0,6,RAMPZ(0)},
+            {5.0f,0,lz}, {5.5f,0,lz+0.87f}, {5.5f,6,lz+0.87f}, {5.0f,6,lz},
+        };
+        for (int i = 0; i < 8; i++) {
+            rv[i].pos[0] = rp[i][0];
+            rv[i].pos[1] = rp[i][1];
+            rv[i].pos[2] = rp[i][2];
+            rv[i].normal[2] = 1.0f;
+        }
+        uint32_t rtris[12] = { 0,1,2, 0,2,3,  4,5,6, 4,6,7 };
+        memcpy(ri, rtris, sizeof(rtris));
+        hta_bsp_mesh rampm;
+        memset(&rampm, 0, sizeof(rampm));
+        rampm.vertices = rv;
+        rampm.vertex_count = 8;
+        rampm.indices = ri;
+        rampm.index_count = 12;
+        rampm.bounds_min[0] = 0; rampm.bounds_min[1] = 0; rampm.bounds_min[2] = -2;
+        rampm.bounds_max[0] = 10; rampm.bounds_max[1] = 6; rampm.bounds_max[2] = 4;
+
+        hta_collision rcol;
+        CHECK(hta_collision_build(&rcol, &rampm), "ramp collision builds");
+        hta_collision_set_slope(&rcol, 45.0f * 0.01745329f);   /* the biped's */
+
+        float reached[2] = {0.0f, 0.0f};
+        for (int dir = 0; dir < 2; dir++) {
+            hta_player rpl;
+            hta_camera rcam;
+            hta_player_init(&rpl);
+            hta_camera_init(&rcam);
+            rpl.phys.radius = 0.2f;
+            rpl.radius = 0.2f;
+            rpl.phys.coll_stand = 0.70f;
+            rpl.phys.coll_crouch = 0.50f;
+            rpl.pos[0] = dir ? 8.4f : 1.6f;
+            rpl.pos[1] = 3.0f;
+            rpl.pos[2] = RAMPZ(rpl.pos[0]);
+            rpl.on_ground = true;
+            rcam.yaw = dir ? 3.14159265f : 0.0f;   /* 0: downhill, 1: uphill */
+            hta_player_input rin;
+            memset(&rin, 0, sizeof(rin));
+            rin.move_forward = 1.0f;
+
+            float worst_float = 0.0f;
+            int airborne = 0;
+            /* Stop at the far end of the ramp: walking off it is a fall,
+             * and a fall is airborne for good reason. */
+            int frames = 0;
+            for (int i = 0; i < 480; i++) {
+                if (rpl.pos[0] > 8.5f || rpl.pos[0] < 1.5f) break;
+                hta_player_update(&rpl, &rcam, &rcol, &rin, 1.0f / 60.0f);
+                float f = rpl.pos[2] - RAMPZ(rpl.pos[0]);
+                if (f > worst_float) worst_float = f;
+                if (!rpl.on_ground) airborne++;
+                frames++;
+            }
+            reached[dir] = rpl.pos[0];
+            printf("  %s: reached x %.2f, worst float %.4f, %d/%d frames airborne\n",
+                   dir ? "up  " : "down", rpl.pos[0], worst_float, airborne, frames);
+            if (dir == 0) {
+                CHECK(worst_float < 0.005f, "walking down a slope stays on its surface");
+                CHECK(airborne * 20 < frames, "walking down a slope does not go airborne");
+            } else {
+                CHECK(worst_float < 0.005f, "walking up a slope stays on its surface");
+            }
+        }
+        /* The symmetry the reporter actually felt. These are a loose backstop,
+         * not the sharp edge of this test: at 0.007 of spare clearance the
+         * 0.0148 float only just fails to push, so it is the float checks
+         * above that catch the regression. A larger float gets stuck here. */
+        CHECK(reached[1] <= 1.5f, "the lintel does not block the pawn walking UP");
+        CHECK(reached[0] >= 8.5f, "the lintel does not block it walking DOWN");
+        #undef RAMPZ
+        hta_collision_free(&rcol);
+    }
+
     printf("\n[rebind after realloc]\n");
     {
         uint32_t nv = mesh.vertex_count, ni = mesh.index_count;

@@ -48,6 +48,10 @@ else()
     add_executable(htainfo src/tools/htainfo.c)
     target_link_libraries(htainfo PRIVATE hta_engine m)
 
+    # Measures the pawn's fit at a reported coordinate: what pushes, and why.
+    add_executable(htaprobe src/tools/htaprobe.c)
+    target_link_libraries(htaprobe PRIVATE hta_engine m)
+
     # Host offscreen renderer: needs Vulkan loader + headers on the host.
     find_package(Vulkan QUIET)
     if(Vulkan_FOUND)

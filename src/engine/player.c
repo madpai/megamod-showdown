@@ -503,6 +503,9 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
     } else {
         accel_toward(&p->velocity[0], &p->velocity[1], wishx, wishy, accel, dt);
 
+        /* Was the pawn walking, rather than falling or jumping, when this
+         * frame began? Only then may it be stuck to a descending surface. */
+        bool was_walking = p->on_ground && !in->jump;
         if (in->jump && p->on_ground) { p->velocity[2] = p->jump_speed; p->on_ground = false; }
         p->velocity[2] -= p->gravity * dt;
         if (p->velocity[2] < -40.0f) p->velocity[2] = -40.0f;
@@ -520,6 +523,37 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
              * triangle at the new XY means a drop — fall, do not slide back
              * onto the pad (that was the invisible wall at base edges). */
             float ph = p->phys.coll_stand + (p->phys.coll_crouch - p->phys.coll_stand) * p->crouch_t;
+
+            /* Stick to a surface that drops away under you, BEFORE measuring
+             * the body column against walls.
+             *
+             * Gravity alone does not keep a walking pawn on a downward slope:
+             * in one frame the ground falls further than a standing start
+             * falls, so the pawn leaves it, and keeps leaving it, floating a
+             * little all the way down. That float lifts the head by the same
+             * amount -- so a roof the pawn cleared walking UP the ramp pushes
+             * it back walking DOWN, which is a doorway that only works one
+             * way. It also reports "air" for the whole descent, which costs
+             * the jump and the sneak speed.
+             *
+             * Only ever snap as far as the steepest walkable slope could have
+             * carried the pawn in this frame, plus the step allowance. Walk
+             * off a real ledge and the drop is further than that: you fall. */
+            if (was_walking && p->velocity[2] <= 0.0f) {
+                float vx = p->velocity[0], vy = p->velocity[1];
+                float moved = sqrtf(vx * vx + vy * vy) * dt;
+                float nz = (col->walkable_nz > 0.1f) ? col->walkable_nz : 0.50f;
+                float tan_slope = sqrtf(1.0f - nz * nz) / nz;
+                float reach = 0.18f + moved * tan_slope;
+                float sgz;
+                if (hta_collision_ground(col, p->pos[0], p->pos[1], probe_z, &sgz)
+                    && p->pos[2] > sgz && p->pos[2] - sgz <= reach) {
+                    p->pos[2] = sgz;
+                    p->velocity[2] = 0.0f;
+                    p->on_ground = true;
+                }
+            }
+
             float bx = p->pos[0], by = p->pos[1];
             hta_collision_depenetrate(col, &p->pos[0], &p->pos[1], p->pos[2], ph, p->radius);
             /* Cancel velocity into the wall or the next frame sinks back in. */

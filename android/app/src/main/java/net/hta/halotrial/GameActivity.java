@@ -4,16 +4,29 @@ import android.app.NativeActivity;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.os.Build;
 import android.os.Bundle;
+import android.view.DisplayCutout;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * NativeActivity plus a COD-Mobile-style touch HUD: visible stick, a large
  * fire button, and jump. Look is anywhere that isn't a button.
+ *
+ * The game runs fullscreen: status bar and navigation bar hidden, and the
+ * surface extended under the display cutout. A swipe from an edge brings the
+ * bars back transiently, then they hide again.
  */
 public class GameActivity extends NativeActivity {
     static {
@@ -26,13 +39,52 @@ public class GameActivity extends NativeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        goFullscreen();
     }
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
+            /* Transient bars come back after a system gesture, a notification
+             * shade pull, or returning from the recents screen. Re-hide every
+             * time focus returns, or the game ends up letterboxed again. */
+            goFullscreen();
             getWindow().getDecorView().post(this::attachHud);
+        }
+    }
+
+    /** Status bar and nav bar hidden; surface extended under the cutout. */
+    private void goFullscreen() {
+        Window w = getWindow();
+        if (w == null) return;
+
+        /* Let the surface reach the short edges, under the camera hole.
+         * Without this the renderer is letterboxed away from the cutout and
+         * the HUD has a dead strip down one side. */
+        if (Build.VERSION.SDK_INT >= 28) {
+            WindowManager.LayoutParams a = w.getAttributes();
+            a.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            w.setAttributes(a);
+        }
+
+        if (Build.VERSION.SDK_INT >= 30) {
+            w.setDecorFitsSystemWindows(false);
+            WindowInsetsController ctl = w.getInsetsController();
+            if (ctl != null) {
+                ctl.hide(WindowInsets.Type.systemBars());
+                ctl.setSystemBarsBehavior(
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } else {
+            w.getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                  | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                  | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                  | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                  | View.SYSTEM_UI_FLAG_FULLSCREEN
+                  | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
         }
     }
 
@@ -50,12 +102,18 @@ public class GameActivity extends NativeActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_PANEL,
+                /* No FLAG_LAYOUT_INSET_DECOR: that insets the overlay by the
+                 * system bars, which would park the HUD inside a frame the
+                 * game no longer has. */
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR,
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT);
         lp.token = getWindow().getDecorView().getWindowToken();
         lp.setTitle("hta-hud");
+        if (Build.VERSION.SDK_INT >= 28) {
+            lp.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        }
         try {
             getWindowManager().addView(hud, lp);
             nativeHudReady(true);
@@ -133,6 +191,22 @@ public class GameActivity extends NativeActivity {
             crouchCx = w * 0.78f;
             crouchCy = h * 0.86f;
             label.setTextSize(m * 0.032f);
+            excludeFromSystemGestures();
+        }
+
+        /* With the navigation bar hidden, an edge swipe is a system gesture
+         * (back / home), not a look or a stick drag. Claim the edges the
+         * controls actually sit on. The platform caps how much of an edge an
+         * app may take, and ignores the excess; these rects are well inside
+         * that, and the top of each edge is left to the system. */
+        private void excludeFromSystemGestures() {
+            if (Build.VERSION.SDK_INT < 29) return;
+            int w = getWidth(), h = getHeight();
+            if (w <= 0 || h <= 0) return;
+            List<Rect> rects = new ArrayList<>(2);
+            rects.add(new Rect(0, h / 2, (int) (stickCx + stickR * 1.4f), h));
+            rects.add(new Rect((int) (crouchCx - crouchR * 1.4f), h / 2, w, h));
+            setSystemGestureExclusionRects(rects);
         }
 
         private static boolean in(float x, float y, float cx, float cy, float r) {
@@ -269,12 +343,24 @@ public class GameActivity extends NativeActivity {
             c.drawCircle(crouchCx, crouchCy, crouchR, ring);
             c.drawText("CROUCH", crouchCx, crouchCy + label.getTextSize() * 0.35f, label);
 
-            /* Position readout, so a bug report screenshot carries coordinates. */
+            /* Position readout, so a bug report screenshot carries coordinates.
+             * Keep it clear of the camera cutout: the status bar no longer
+             * covers these digits, but the punch-hole still would, and an
+             * unreadable X is an unmeasurable bug report. */
             String t = null;
             try { t = nativeDebugText(); } catch (Throwable ignored) { }
             if (t != null && t.length() > 0) {
                 debug.setTextSize(label.getTextSize() * 0.8f);
-                c.drawText(t, 24f, debug.getTextSize() * 2.2f, debug);
+                float left = 24f, top = 0f;
+                if (Build.VERSION.SDK_INT >= 28) {
+                    WindowInsets wi = getRootWindowInsets();
+                    DisplayCutout dc = (wi != null) ? wi.getDisplayCutout() : null;
+                    if (dc != null) {
+                        left = Math.max(left, dc.getSafeInsetLeft() + 16f);
+                        top = dc.getSafeInsetTop();
+                    }
+                }
+                c.drawText(t, left, top + debug.getTextSize() * 2.2f, debug);
             }
             postInvalidateDelayed(200);
         }
