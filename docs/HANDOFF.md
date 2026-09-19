@@ -24,16 +24,27 @@ Look at the first-person view without a device:
 ./build-host/htaview $HTA_MAP --fp reload --shots 6 --out /tmp/rl
 ```
 
-Sideload: **http://100.89.1.14:8731** (Tailscale bind only).
+## Getting a build onto the phone — do this every time
 
 ```
-python3 scripts/serve_poc.py \
-  --root /tmp/claude-1000/-home-commander/dacf88c7-0fa5-4691-a530-83bafded3436/scratchpad/serve \
-  --bind 100.89.1.14 --port 8731 \
-  --mirror /home/commander/projects/halo-trial-android/scratch/uploads
+scripts/publish_apk.sh --title "what changed" --notes scratch/notes.html
 ```
 
-Copy a new APK over `halo-trial-poc.apk` and refresh `SHA256SUMS`. Screenshots land in that dir's `uploads/` and are mirrored to `scratch/uploads/`.
+Builds the APK, copies it to the serve root, refreshes `SHA256SUMS`, stamps the page
+with the commit and build time, and starts the server if it is not already up. Then
+**http://100.89.1.14:8731** (Tailscale bind only). Screenshots uploaded from the phone
+land in `scratch/serve/uploads/` and are mirrored to `scratch/uploads/`.
+
+`--notes` takes an HTML fragment; `--notes-text "..."` takes one paragraph inline;
+`--no-build` publishes whatever is already built. The page itself is a committed
+template at `scripts/sideload/index.html.tmpl` — edit that, not the generated
+`scratch/serve/index.html`, which is overwritten on every publish.
+
+The serve root is `scratch/serve/` (gitignored, so the maps and APK never enter git).
+It used to live in a **session scratchpad under `/tmp`**, which is how the page came to
+advertise a build from hours earlier while claiming to be current: the directory belongs
+to a session that ended. If `publish_apk.sh` warns that a server is running with a
+different root, kill it and rerun — otherwise it keeps serving the old files.
 
 Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unless asked.
 

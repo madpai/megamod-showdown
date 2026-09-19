@@ -1,0 +1,96 @@
+#!/bin/sh
+# Publish the current debug APK to the private Tailscale sideload page.
+#
+# This is the standard way to get a build onto the phone. It builds, copies the
+# APK into the serve root, refreshes SHA256SUMS, stamps the page with the commit
+# and build time, and starts the server if it is not already up.
+#
+#   scripts/publish_apk.sh --notes scratch/notes.html
+#   scripts/publish_apk.sh --title "animated FP guns" --notes-text "Reinstall. ..."
+#   scripts/publish_apk.sh --no-build          # publish what is already built
+#
+# The serve root lives in scratch/ (gitignored) so it survives across sessions.
+# It used to sit in a session scratchpad under /tmp, which silently went stale.
+set -e
+cd "$(dirname "$0")/.."
+ROOT=${HTA_SERVE_ROOT:-$PWD/scratch/serve}
+BIND=${HTA_SERVE_BIND:-100.89.1.14}
+PORT=${HTA_SERVE_PORT:-8731}
+export JAVA_HOME=${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk}
+export ANDROID_HOME=${ANDROID_HOME:-$HOME/android/sdk}
+GRADLE=${GRADLE:-$HOME/android/gradle-8.9/bin/gradle}
+APK=android/app/build/outputs/apk/debug/app-debug.apk
+
+BUILD=1
+TITLE=""
+NOTES_FILE=""
+NOTES_TEXT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-build)   BUILD=0 ;;
+    --title)      TITLE=$2; shift ;;
+    --notes)      NOTES_FILE=$2; shift ;;
+    --notes-text) NOTES_TEXT=$2; shift ;;
+    *) echo "unknown option $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+if [ "$BUILD" = 1 ]; then
+  echo "building APK…"
+  (cd android && $GRADLE --no-daemon -q :app:assembleDebug)
+fi
+[ -f "$APK" ] || { echo "no APK at $APK (run without --no-build)" >&2; exit 1; }
+
+mkdir -p "$ROOT/uploads"
+cp "$APK" "$ROOT/halo-trial-poc.apk"
+
+# Hashes so the phone can confirm it got the build you meant.
+( cd "$ROOT" && : > SHA256SUMS
+  for f in halo-trial-poc.apk bloodgulch.map bitmaps.map; do
+    [ -f "$f" ] && sha256sum "$f" >> SHA256SUMS
+  done )
+
+[ -n "$TITLE" ] || TITLE=$(git log -1 --format=%s 2>/dev/null || echo "current build")
+COMMIT=$(git log -1 --format=%h 2>/dev/null || echo "?")
+STAMP=$(date '+%Y-%m-%d %H:%M')
+SIZE=$(du -h "$ROOT/halo-trial-poc.apk" | cut -f1)
+
+if [ -n "$NOTES_FILE" ]; then
+  NOTES=$(cat "$NOTES_FILE")
+elif [ -n "$NOTES_TEXT" ]; then
+  NOTES="<p>$NOTES_TEXT</p>"
+else
+  NOTES="<p>Reinstall this APK and report what you see.</p>"
+fi
+
+TITLE="$TITLE" NOTES="$NOTES" BUILD_LINE="build $COMMIT · $STAMP" SIZE="$SIZE" \
+python3 - "$ROOT/index.html" scripts/sideload/index.html.tmpl <<'PY'
+import html, os, sys
+out, tmpl = sys.argv[1], sys.argv[2]
+s = open(tmpl).read()
+section = "<h2>Current test — %s</h2>\n%s" % (
+    html.escape(os.environ["TITLE"]), os.environ["NOTES"])
+s = (s.replace("{{TEST_SECTION}}", section)
+      .replace("{{BUILD}}", html.escape(os.environ["BUILD_LINE"]))
+      .replace("{{APK_SIZE}}", html.escape(os.environ["SIZE"])))
+open(out, "w").write(s)
+PY
+
+# Start the server if nothing is already listening on this port.
+if ! (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | grep -q ":$PORT "; then
+  echo "starting server on $BIND:$PORT…"
+  nohup python3 scripts/serve_poc.py --root "$ROOT" --bind "$BIND" --port "$PORT" \
+      --mirror "$PWD/scratch/uploads" >> scratch/serve.log 2>&1 &
+  sleep 1
+else
+  RUNNING_ROOT=$(tr '\0' '\n' < "/proc/$(pgrep -f 'serve_poc.py' | head -1)/cmdline" 2>/dev/null \
+                 | grep -A1 -- --root | tail -1)
+  if [ -n "$RUNNING_ROOT" ] && [ "$RUNNING_ROOT" != "$ROOT" ]; then
+    echo "WARNING: a server is running with root $RUNNING_ROOT, not $ROOT." >&2
+    echo "         It will keep serving the old files. Kill it and rerun." >&2
+  fi
+fi
+
+echo "published $SIZE  ->  http://$BIND:$PORT/"
+echo "  $TITLE (build $COMMIT)"

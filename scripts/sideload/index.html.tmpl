@@ -1,0 +1,107 @@
+<!doctype html><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Halo Trial PoC</title>
+<style>
+ body{font:16px/1.55 system-ui,sans-serif;margin:0;padding:20px;
+      background:#11151c;color:#e6e9ef;max-width:44rem}
+ h1{font-size:1.35rem;margin:0 0 .2rem} h2{font-size:1rem;margin:1.6rem 0 .4rem;color:#8fb6ff}
+ a.btn,button.btn{display:block;background:#2b6cf6;color:#fff;text-decoration:none;
+       padding:14px 18px;border-radius:10px;margin:10px 0;font-weight:600;
+       border:0;width:100%;box-sizing:border-box;font:inherit;text-align:center}
+ a.btn.alt,button.btn.alt{background:#2a3242}
+ code{background:#1c2331;padding:2px 6px;border-radius:4px;font-size:.9em}
+ li{margin:.35rem 0} .muted{color:#94a0b4;font-size:.9rem}
+ .warn{background:#2a1f12;border-left:3px solid #d08a3a;padding:10px 14px;border-radius:6px}
+ .ok{background:#132a1c;border-left:3px solid #3dba6e;padding:10px 14px;border-radius:6px;margin:10px 0}
+ #drop{border:2px dashed #3a4660;border-radius:12px;padding:28px 16px;text-align:center;
+       color:#94a0b4;margin:10px 0;background:#161c27}
+ #drop.hot{border-color:#2b6cf6;color:#e6e9ef;background:#182033}
+ #file{display:none}
+</style>
+<h1>Halo Trial PoC</h1>
+<p class=muted>Private build, served over your own Tailscale network.<br>
+<span class=muted>{{BUILD}}</span></p>
+
+<a class=btn href="halo-trial-poc.apk">⬇ Download APK — reinstall ({{APK_SIZE}})</a>
+<a class="btn alt" href="bloodgulch.map">⬇ Download bloodgulch.map (13.8 MB)</a>
+<a class="btn alt" href="bitmaps.map">⬇ Download bitmaps.map (79 MB, required for textures)</a>
+
+<h2>Send a screenshot</h2>
+<p>Tap the box and pick the screenshot from your gallery. It only travels over
+Tailscale to this desktop — nothing public.</p>
+<div id=drop>
+  Tap to choose a screenshot<br>
+  <span class=muted>jpg / png / webp, up to 20 MB</span>
+</div>
+<input id=file type=file accept="image/*,.jpg,.jpeg,.png,.webp,.heic">
+<button class="btn alt" id=send type=button>Upload</button>
+<div id=out class=muted></div>
+
+{{TEST_SECTION}}
+
+<h2>Install</h2>
+<ol>
+<li>Tap the APK. Allow <b>install unknown apps</b> if prompted.</li>
+<li>Download both <code>.map</code> files if you don't have them.</li>
+<li>Launch the app → <b>Pick bloodgulch.map</b> → Downloads → the map.</li>
+<li><b>Pick bitmaps.map</b> → Downloads → bitmaps.map (copy takes a few seconds).</li>
+<li>Tap <b>Play</b>.</li>
+</ol>
+
+<h2>What you should see</h2>
+<ul>
+<li><b>Sky blue + terrain</b> → map loaded, you're in Blood Gulch.</li>
+<li><b>Magenta screen</b> → Vulkan works but no map.</li>
+<li><b>Portrait / sideways world, landscape controls</b> → known; upload a shot.</li>
+</ul>
+
+<h2>Controls</h2>
+<ul>
+<li><b>Left half</b> of screen — drag to move (virtual stick)</li>
+<li><b>Right half</b> — drag to look</li>
+<li><b>Bottom-right corner</b> — jump</li>
+<li><b>Gamepad</b> — left stick move, right stick look, A jump, B noclip</li>
+<li><b>Back gesture</b> — clean exit</li>
+</ul>
+<p class=muted>The app bundles no game data. It only reads the copy you supply.</p>
+<script>
+const drop = document.getElementById('drop');
+const file = document.getElementById('file');
+const send = document.getElementById('send');
+const out  = document.getElementById('out');
+let chosen = null;
+
+function setFile(f) {
+  chosen = f;
+  out.textContent = f ? ('Ready: ' + f.name + ' (' + Math.round(f.size/1024) + ' KB)') : '';
+  out.className = 'muted';
+}
+drop.addEventListener('click', () => file.click());
+file.addEventListener('change', () => setFile(file.files[0] || null));
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.add('hot');
+}));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.remove('hot');
+}));
+drop.addEventListener('drop', e => {
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) setFile(f);
+});
+send.addEventListener('click', async () => {
+  if (!chosen) { file.click(); return; }
+  out.textContent = 'Uploading…';
+  const fd = new FormData();
+  fd.append('file', chosen, chosen.name);
+  try {
+    const r = await fetch('/upload', { method: 'POST', body: fd });
+    const t = await r.text();
+    if (!r.ok) throw new Error(t || ('HTTP ' + r.status));
+    out.className = 'ok';
+    out.textContent = 'Got it — ' + t.trim();
+  } catch (e) {
+    out.className = 'warn';
+    out.textContent = 'Upload failed: ' + e;
+  }
+});
+</script>
