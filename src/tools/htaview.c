@@ -86,6 +86,7 @@ int main(int argc, char **argv)
     const char *fp_clip = "idle";
     int fp_mode = 0;
     int have_eye = 0, want_flash = 0, ammo = -1;
+    float shield = 1.0f, health = 1.0f;
     float eye[3] = {0.0f, 0.0f, 0.0f}, eye_yaw = 0.0f, eye_pitch = 0.0f;
     uint32_t W = 1280, H = 720, shots = 4;
     for (int i = 2; i < argc; i++) {
@@ -106,6 +107,8 @@ int main(int argc, char **argv)
             eye_pitch = strtof(argv[++i], NULL) * 0.01745329f;
         else if (!strcmp(argv[i], "--flash")) want_flash = 1;
         else if (!strcmp(argv[i], "--ammo") && i + 1 < argc) ammo = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--shield") && i + 1 < argc) shield = strtof(argv[++i], NULL);
+        else if (!strcmp(argv[i], "--health") && i + 1 < argc) health = strtof(argv[++i], NULL);
         else if (!strcmp(argv[i], "--fp")) {
             fp_mode = 1;
             if (i + 1 < argc && argv[i+1][0] != '-') fp_clip = argv[++i];
@@ -234,7 +237,9 @@ int main(int argc, char **argv)
     if (vm.loaded) {
         char herr[HTA_ERRLEN] = {0};
         hta_hud_load(&hud, &c, rm.data ? &rm : NULL, &wdef, herr, sizeof(herr));
-        if (hud.have_cross) {
+        if (hud.elem_count) {
+            hta_hud_set_shield(&hud, shield);
+            hta_hud_set_health(&hud, health);
             hta_hud_layout(&hud, W, H);
             ghud = hta_gfx_mesh_upload_dynamic(g, &hud.mesh, herr, sizeof(herr));
             if (ghud) {
@@ -243,12 +248,24 @@ int main(int argc, char **argv)
                 huddraw.vertex_count = hud.mesh.vertex_count;
                 huddraw.submeshes = hud.mesh.submeshes;
                 huddraw.submesh_count = hud.mesh.submesh_count;
-                printf("hud            reticle %.0f px, tint %.2f %.2f %.2f\n",
-                       hud.cross_px, hud.mesh.submeshes[0].tint[0],
-                       hud.mesh.submeshes[0].tint[1], hud.mesh.submeshes[0].tint[2]);
+                printf("hud            %u element(s); crosshair %s (%.0f px), unit hud %s\n",
+                       hud.elem_count, hud.have_cross ? "yes" : "no",
+                       hud.cross_px, hud.have_unit ? "yes" : "no");
+                for (uint32_t ei = 0; ei < hud.elem_count; ei++) {
+                    const hta_hud_elem *el = &hud.elem[ei];
+                    const hta_submesh *sm = &hud.mesh.submeshes[el->submesh];
+                    const float *p0 = hud.mesh.vertices[el->vertex].pos;
+                    const float *p2 = hud.mesh.vertices[el->vertex + 2].pos;
+                    printf("   elem %u anchor %u off (%.0f,%.0f) native %.0fx%.0f"
+                           " -> px (%.0f,%.0f)..(%.0f,%.0f) tint %.2f %.2f %.2f a %.2f meter %.2f\n",
+                           ei, el->anchor, el->offset[0], el->offset[1], el->w_px, el->h_px,
+                           (p0[0]+1.0f)*0.5f*W, (p0[1]+1.0f)*0.5f*H,
+                           (p2[0]+1.0f)*0.5f*W, (p2[1]+1.0f)*0.5f*H,
+                           sm->tint[0], sm->tint[1], sm->tint[2], sm->tint[3], sm->meter);
+                }
             }
         } else {
-            printf("hud            no crosshair (%s)\n", herr);
+            printf("hud            nothing to draw (%s)\n", herr);
         }
     }
 

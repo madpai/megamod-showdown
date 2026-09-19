@@ -512,12 +512,13 @@ static bool load_map(hta_android *s)
             char herr[HTA_ERRLEN] = {0};
             hta_hud_load(&s->hud, &s->cache, rm.data ? &rm : NULL, &s->weap,
                          herr, sizeof(herr));
-            if (s->hud.have_cross)
-                hta_log("[hud] reticle %.0f px, tint %.2f %.2f %.2f",
-                        s->hud.cross_px, s->hud.mesh.submeshes[0].tint[0],
-                        s->hud.mesh.submeshes[0].tint[1], s->hud.mesh.submeshes[0].tint[2]);
-            else
-                hta_log("[hud] no crosshair: %s", herr);
+            hta_log("[hud] %u element(s): crosshair %s, unit hud %s (%s)",
+                    s->hud.elem_count, s->hud.have_cross ? "yes" : "no",
+                    s->hud.have_unit ? "yes" : "no", herr);
+            /* Nothing damages the player yet, so the bars sit full. The
+             * meters themselves are live -- hta_hud_set_* drives them. */
+            hta_hud_set_shield(&s->hud, 1.0f);
+            hta_hud_set_health(&s->hud, 1.0f);
             if (s->vm.have_counter)
                 hta_log("[weapon] on-gun round counter: %u digits, submeshes %u/%u",
                         s->vm.counter_digits, s->vm.counter_submesh[0],
@@ -775,7 +776,7 @@ static void start_gfx(hta_android *s)
             s->gpu_fp = hta_gfx_mesh_upload_dynamic(s->gfx, &s->vm.mesh, err, sizeof(err));
             if (!s->gpu_fp) hta_log("[gfx] fp weapon upload FAILED: %s", err);
         }
-        if (s->hud.have_cross) {
+        if (s->hud.elem_count) {
             s->gpu_hud = hta_gfx_mesh_upload_dynamic(s->gfx, &s->hud.mesh, err, sizeof(err));
             if (!s->gpu_hud) hta_log("[gfx] hud upload FAILED: %s", err);
         }

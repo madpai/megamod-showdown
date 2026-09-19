@@ -1286,6 +1286,13 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                     }
                 }
                 memcpy(push + 64 + 16, tint, sizeof(tint));   /* the tint slot */
+                float meter[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+                if (hud->submeshes && i < hud->submesh_count &&
+                    hud->submeshes[i].meter >= 0.0f) {
+                    meter[0] = hud->submeshes[i].meter;
+                    meter[1] = 1.0f;                 /* meter mode on */
+                }
+                memcpy(push + 64 + 32, meter, sizeof(meter));  /* the ambient slot */
                 vkCmdPushConstants(cb, g->layout,
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                    0, PUSH_SIZE, push);

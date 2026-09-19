@@ -85,6 +85,53 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## Shield and health, and the spread question (2026-09-19)
+
+### Should the crosshair react to firing? No -- the shots should
+
+The owner asked. The tag answers it: the crosshair overlay has fields for
+offset, scale, colour, flash and sprite frame, and **nothing tied to firing
+error**. Halo does not bloom the reticle. It widens the cone the round goes
+down, and the trigger's error fields had been parsed and ignored since the
+weapon tag landed.
+
+The Trial's assault rifle spreads **2.00 to 6.50 degrees**, blooming over
+0.60 s of fire and settling over 1.00 s -- nine rounds at its 15/s to reach
+full. The shot direction is drawn inside the cone with the polar angle taken
+as `angle * sqrt(u)`, so rounds land evenly across the disc rather than
+bunching in the middle.
+
+### The unit HUD
+
+`unhi ui\hud\cyborg_mp`, anchored top right. Shield plate, shield meter and
+health meter; the health *background* has no bitmap in the tag, which is
+correct for multiplayer.
+
+**Meters are not sprites drawn at a width.** The meter bitmap's ALPHA is a
+fill ramp -- brightest where the bar empties last -- and Halo lights a pixel
+once the meter passes it. The HUD fragment shader discards `a <= 0` (outside
+the bar) and `a < 1 - fill` (past the fill), then draws flat in the tag's
+colour, which is lerped from the tag's empty colour to its full one. That is
+why a draining shield goes dark blue and low health goes red with no
+threshold of ours: both colours are in the tag.
+
+Two things that cost time and are easy to hit again:
+
+1. **A HUD bitmap is addressed by sequence, and Halo uses two shapes for
+   that.** The meters are sprite sheets, where a sequence holds a rectangle
+   of one sheet; the backgrounds are multi-frame bitmaps, where the sequence
+   IS the frame and covers all of it. A sprite-only lookup silently loses
+   every background. `sprite_or_frame` handles both.
+2. **Anchor offsets are measured INWARD**, not in screen direction. The
+   health meter's +29 on a top-right anchor moves it 29 to the left; the
+   shield plate's -7 lets it bleed slightly past the corner, which is what
+   Halo's plate does.
+
+Nothing damages the player yet, so the bars sit full. The meters themselves
+are live and driven by `hta_hud_set_shield` / `hta_hud_set_health`, verified
+by rendering at 1.0, 0.55 and 0.15: the shield drains from the left and
+darkens, health goes pink then red.
+
 ## A 2D HUD pass, and Halo's own crosshair (2026-09-19)
 
 The owner's verdict after the on-gun counter: *"It doesn't feel like a ready

@@ -70,31 +70,32 @@ int main(int argc, char **argv)
         return 1;
     }
     printf("    %.0f px native, uv %.4f,%.4f .. %.4f,%.4f, tint %.2f %.2f %.2f a %.2f\n",
-           h.cross_px, h.cross_uv[0], h.cross_uv[1], h.cross_uv[2], h.cross_uv[3],
-           h.mesh.submeshes[0].tint[0], h.mesh.submeshes[0].tint[1],
-           h.mesh.submeshes[0].tint[2], h.mesh.submeshes[0].tint[3]);
+           h.cross_px, h.elem[h.cross_elem].uv[0], h.elem[h.cross_elem].uv[1], h.elem[h.cross_elem].uv[2], h.elem[h.cross_elem].uv[3],
+           h.mesh.submeshes[h.elem[h.cross_elem].submesh].tint[0], h.mesh.submeshes[h.elem[h.cross_elem].submesh].tint[1],
+           h.mesh.submeshes[h.elem[h.cross_elem].submesh].tint[2], h.mesh.submeshes[h.elem[h.cross_elem].submesh].tint[3]);
 
     CHECK(h.cross_px > 8.0f && h.cross_px < 200.0f,
           "its native size is sane for a 640x480 canvas");
     /* The reticle is one sprite of a shared sheet, not the whole sheet. */
-    CHECK(h.cross_uv[2] > h.cross_uv[0] && h.cross_uv[3] > h.cross_uv[1],
+    CHECK(h.elem[h.cross_elem].uv[2] > h.elem[h.cross_elem].uv[0] && h.elem[h.cross_elem].uv[3] > h.elem[h.cross_elem].uv[1],
           "the sprite rectangle is non-empty");
-    CHECK(h.cross_uv[2] - h.cross_uv[0] < 0.95f,
+    CHECK(h.elem[h.cross_elem].uv[2] - h.elem[h.cross_elem].uv[0] < 0.95f,
           "and is a sub-rectangle, not the whole sheet");
 
     /* Halo's HUD blue, from the tag: ColorARGBInt is blue, green, red, alpha,
      * and an alpha of 0 there means opaque. Getting the byte order wrong
      * turns the reticle orange. */
-    const float *t = h.mesh.submeshes[0].tint;
+    const float *t = h.mesh.submeshes[h.elem[h.cross_elem].submesh].tint;
     CHECK(t[2] > t[0] && t[1] > t[0], "the tint is blue-dominant, not orange");
     CHECK(fabsf(t[0] - 40.0f/255.0f) < 0.02f, "red is 40");
     CHECK(fabsf(t[1] - 150.0f/255.0f) < 0.02f, "green is 150");
     CHECK(fabsf(t[2] - 255.0f/255.0f) < 0.02f, "blue is 255");
     CHECK(t[3] > 0.99f, "alpha 0 in the tag means opaque");
 
-    CHECK(h.mesh.submeshes[0].draw_mode == HTA_DRAW_ALPHA,
+    CHECK(h.mesh.submeshes[h.elem[h.cross_elem].submesh].draw_mode == HTA_DRAW_ALPHA,
           "drawn alpha-blended, since the art is a white mask");
-    CHECK(h.mesh.vertex_count == 4 && h.mesh.index_count == 6, "one quad");
+    CHECK(h.mesh.vertex_count == h.elem_count * 4 &&
+          h.mesh.index_count == h.elem_count * 6, "one quad per element");
 
     printf("\n[layout]\n");
     {
@@ -103,7 +104,8 @@ int main(int argc, char **argv)
         const uint32_t W = 2340, H = 1080;
         hta_hud_layout(&h, W, H);
         float minx = 1e9f, maxx = -1e9f, miny = 1e9f, maxy = -1e9f;
-        for (uint32_t i = 0; i < 4; i++) {
+        uint32_t cv = h.elem[h.cross_elem].vertex;
+        for (uint32_t i = cv; i < cv + 4; i++) {
             const float *p = h.mesh.vertices[i].pos;
             if (p[0] < minx) minx = p[0];
             if (p[0] > maxx) maxx = p[0];
@@ -128,20 +130,87 @@ int main(int argc, char **argv)
         /* The same reticle on a different screen must stay square and the
          * same apparent size relative to height. */
         hta_hud_layout(&h, 1080, 1080);
-        float a0 = h.mesh.vertices[1].pos[0] - h.mesh.vertices[0].pos[0];
-        float b0 = h.mesh.vertices[2].pos[1] - h.mesh.vertices[1].pos[1];
+        float a0 = h.mesh.vertices[cv+1].pos[0] - h.mesh.vertices[cv].pos[0];
+        float b0 = h.mesh.vertices[cv+2].pos[1] - h.mesh.vertices[cv+1].pos[1];
         CHECK(fabsf(a0 * 1080.0f - b0 * 1080.0f) < 1.0f,
               "still square on a square screen");
 
         /* UVs must survive layout. */
-        CHECK(fabsf(h.mesh.vertices[0].uv[0] - h.cross_uv[0]) < 1e-6f &&
-              fabsf(h.mesh.vertices[2].uv[0] - h.cross_uv[2]) < 1e-6f,
+        CHECK(fabsf(h.mesh.vertices[cv].uv[0] - h.elem[h.cross_elem].uv[0]) < 1e-6f &&
+              fabsf(h.mesh.vertices[cv+2].uv[0] - h.elem[h.cross_elem].uv[2]) < 1e-6f,
               "the sprite's UVs are kept");
 
         /* A zero-sized surface must not divide by zero or move anything. */
-        float keep = h.mesh.vertices[0].pos[0];
+        float keep = h.mesh.vertices[cv].pos[0];
         hta_hud_layout(&h, 0, 0);
-        CHECK(h.mesh.vertices[0].pos[0] == keep, "a zero-sized screen is ignored");
+        CHECK(h.mesh.vertices[cv].pos[0] == keep, "a zero-sized screen is ignored");
+    }
+
+    printf("\n[unit hud]\n");
+    CHECK(h.have_unit, "the multiplayer cyborg's unhi yields shield and health");
+    if (h.have_unit) {
+        CHECK(h.shield_meter >= 0, "there is a shield meter");
+        CHECK(h.health_meter >= 0, "there is a health meter");
+        printf("    %u elements; shield full %.2f %.2f %.2f -> empty %.2f %.2f %.2f\n",
+               h.elem_count, h.shield_max[0], h.shield_max[1], h.shield_max[2],
+               h.shield_min[0], h.shield_min[1], h.shield_min[2]);
+        printf("    health full %.2f %.2f %.2f -> empty %.2f %.2f %.2f\n",
+               h.health_max[0], h.health_max[1], h.health_max[2],
+               h.health_min[0], h.health_min[1], h.health_min[2]);
+
+        /* The unit HUD hangs off the top right in Halo, and its background
+         * must be behind its meter or the bar is hidden. */
+        CHECK(h.elem[h.shield_meter].anchor == HTA_HUD_ANCHOR_TOP_RIGHT,
+              "anchored top right, as the tag says");
+        CHECK(h.elem[h.shield_meter].submesh > 0,
+              "the shield plate is drawn before its meter");
+
+        /* Full shield is Halo's cyan; empty is the dark blue the tag gives. */
+        CHECK(h.shield_max[2] > h.shield_max[0], "a full shield is blue, not red");
+        CHECK(h.health_min[0] > h.health_min[2], "low health is red, not blue");
+
+        hta_submesh *sh = &h.mesh.submeshes[h.elem[h.shield_meter].submesh];
+        hta_submesh *he = &h.mesh.submeshes[h.elem[h.health_meter].submesh];
+
+        hta_hud_set_shield(&h, 1.0f);
+        hta_hud_set_health(&h, 1.0f);
+        CHECK(sh->meter == 1.0f, "a full shield fills its bar");
+        CHECK(fabsf(sh->tint[2] - h.shield_max[2]) < 1e-5f,
+              "and takes the tag's full colour");
+
+        hta_hud_set_shield(&h, 0.0f);
+        CHECK(sh->meter == 0.0f, "an empty shield empties it");
+        CHECK(fabsf(sh->tint[2] - h.shield_min[2]) < 1e-5f,
+              "and takes the tag's empty colour");
+
+        hta_hud_set_health(&h, 0.5f);
+        float want = h.health_min[0] + (h.health_max[0] - h.health_min[0]) * 0.5f;
+        CHECK(fabsf(he->tint[0] - want) < 1e-5f,
+              "half health lands halfway between the two colours");
+        CHECK(he->tint[3] > 0.99f, "and stays opaque");
+
+        /* Out-of-range values must clamp, not wrap or read past the bar. */
+        hta_hud_set_shield(&h, 5.0f);
+        CHECK(sh->meter == 1.0f, "an over-full shield clamps");
+        hta_hud_set_shield(&h, -3.0f);
+        CHECK(sh->meter == 0.0f, "a negative shield clamps");
+
+        /* The crosshair is not a meter and must not be treated as one. */
+        CHECK(h.mesh.submeshes[h.elem[h.cross_elem].submesh].meter < 0.0f,
+              "the crosshair is not a meter");
+
+        /* Everything must land on screen at a phone's aspect. */
+        hta_hud_layout(&h, 2340, 1080);
+        int on_screen = 1;
+        for (uint32_t i = 0; i < h.elem_count; i++)
+            for (uint32_t k = 0; k < 4; k++) {
+                const float *p = h.mesh.vertices[h.elem[i].vertex + k].pos;
+                /* The shield plate is allowed to bleed a little past the
+                 * corner, which is what it does in Halo. */
+                if (p[0] < -1.05f || p[0] > 1.05f) on_screen = 0;
+                if (p[1] < -1.05f || p[1] > 1.05f) on_screen = 0;
+            }
+        CHECK(on_screen, "every element lands on screen");
     }
 
     hta_hud_free(&h);

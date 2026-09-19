@@ -82,6 +82,9 @@ typedef struct {
      * art is white with an alpha mask, so the colour lives here rather than
      * in the texture. {0,0,0,0} means untinted. */
     float    tint[4];
+    /* HUD meters only: 0..1 fill. Negative means this is an ordinary sprite
+     * and the meter path is off. */
+    float    meter;
 } hta_submesh;
 
 #define HTA_DRAW_OPAQUE 0u
