@@ -63,7 +63,8 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
     if (scount) hta_cache_ptr_to_offset(c, sptr, &sarr);
 
     /* Regions compose the model (hull + gun + tires). Geometry 0 is often
-     * just the gun, which is why barrels were floating in the sky. */
+     * just the gun. Render verts are already in model/bind space — rest-pose
+     * skinning is identity. Object `coll` BSPs are node-local instead. */
     uint32_t geom_ids[32];
     uint32_t ngeom = 0;
     uint32_t rcount = 0, rptr = 0;
@@ -168,6 +169,7 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
             else { xform_p(d->pos, ip, ppos, prot); xform_n(d->normal, in, prot); }
             d->uv[0]=uv[0]; d->uv[1]=uv[1];
             d->lm_uv[0]=d->lm_uv[1]=0;
+
         }
 
         uint32_t first = dst->index_count, emitted = 0;
@@ -315,6 +317,242 @@ bool hta_scenario_add_objects(hta_bsp_mesh *world, const hta_cache *c,
                                      HTA_VEHICLE_ENTRY_SIZE);
     if (err && errlen)
         snprintf(err, errlen, "scenery+vehicles instanced: %u+%u", s, v);
+    return true;
+}
+
+#define HTA_MAX_COLL_NODES 64
+
+typedef struct { float m[16]; } hta_m4; /* column-major */
+
+static hta_m4 m4_id(void)
+{
+    hta_m4 r;
+    memset(&r, 0, sizeof(r));
+    r.m[0] = r.m[5] = r.m[10] = r.m[15] = 1.0f;
+    return r;
+}
+
+static hta_m4 m4_mul(hta_m4 a, hta_m4 b)
+{
+    hta_m4 o;
+    for (int col = 0; col < 4; col++)
+    for (int row = 0; row < 4; row++) {
+        o.m[col * 4 + row] =
+            a.m[0 * 4 + row] * b.m[col * 4 + 0] +
+            a.m[1 * 4 + row] * b.m[col * 4 + 1] +
+            a.m[2 * 4 + row] * b.m[col * 4 + 2] +
+            a.m[3 * 4 + row] * b.m[col * 4 + 3];
+    }
+    return o;
+}
+
+static hta_m4 m4_translate(float x, float y, float z)
+{
+    hta_m4 r = m4_id();
+    r.m[12] = x; r.m[13] = y; r.m[14] = z;
+    return r;
+}
+
+static hta_m4 m4_quat(float x, float y, float z, float w)
+{
+    hta_m4 r = m4_id();
+    float xx = x * x, yy = y * y, zz = z * z;
+    float xy = x * y, xz = x * z, yz = y * z;
+    float wx = w * x, wy = w * y, wz = w * z;
+    r.m[0] = 1.0f - 2.0f * (yy + zz);
+    r.m[1] = 2.0f * (xy + wz);
+    r.m[2] = 2.0f * (xz - wy);
+    r.m[4] = 2.0f * (xy - wz);
+    r.m[5] = 1.0f - 2.0f * (xx + zz);
+    r.m[6] = 2.0f * (yz + wx);
+    r.m[8] = 2.0f * (xz + wy);
+    r.m[9] = 2.0f * (yz - wx);
+    r.m[10] = 1.0f - 2.0f * (xx + yy);
+    return r;
+}
+
+/* Rest-pose node-to-object matrices from a GBXModel. Identity if missing. */
+static uint32_t load_rest_pose(const hta_cache *c, uint32_t model_id,
+                               hta_m4 *world, uint32_t maxn)
+{
+    if (!c || !model_id || !world || maxn == 0) return 0;
+    int32_t mi = hta_cache_find_tag_by_id(c, model_id);
+    if (mi < 0) return 0;
+    hta_tag_entry mt;
+    if (!hta_cache_tag(c, (uint32_t)mi, &mt) || mt.primary_class != HTA_TAG_MOD2)
+        return 0;
+    uint32_t moff;
+    if (!hta_cache_ptr_to_offset(c, mt.tag_data_ptr, &moff)) return 0;
+    uint32_t ncount = 0, nptr = 0, narr = 0;
+    if (!hta_read_reflexive(c, moff + HTA_MOD2_NODES, &ncount, &nptr) || ncount == 0)
+        return 0;
+    if (ncount > maxn) ncount = maxn;
+    if (!hta_cache_ptr_to_offset(c, nptr, &narr)) return 0;
+    hta_m4 local[HTA_MAX_COLL_NODES];
+    uint16_t parent[HTA_MAX_COLL_NODES];
+    for (uint32_t i = 0; i < ncount; i++) {
+        uint32_t no = narr + i * HTA_NODE_SIZE;
+        float t[3], q[4];
+        hta_rd_u16(c, no + HTA_NODE_PARENT, &parent[i]);
+        hta_rd_f32(c, no + HTA_NODE_DEF_T + 0, &t[0]);
+        hta_rd_f32(c, no + HTA_NODE_DEF_T + 4, &t[1]);
+        hta_rd_f32(c, no + HTA_NODE_DEF_T + 8, &t[2]);
+        hta_rd_f32(c, no + HTA_NODE_DEF_Q + 0, &q[0]);
+        hta_rd_f32(c, no + HTA_NODE_DEF_Q + 4, &q[1]);
+        hta_rd_f32(c, no + HTA_NODE_DEF_Q + 8, &q[2]);
+        hta_rd_f32(c, no + HTA_NODE_DEF_Q + 12, &q[3]);
+        if (!isfinite(t[0]) || !isfinite(q[3])) {
+            local[i] = m4_id();
+            parent[i] = 0xFFFF;
+            continue;
+        }
+        local[i] = m4_mul(m4_translate(t[0], t[1], t[2]), m4_quat(q[0], q[1], q[2], q[3]));
+    }
+    for (uint32_t i = 0; i < ncount; i++) {
+        hta_m4 acc = local[i];
+        uint16_t p = parent[i];
+        int guard = 0;
+        while (p != 0xFFFF && p < ncount && guard++ < 64) {
+            acc = m4_mul(local[p], acc);
+            p = parent[p];
+        }
+        world[i] = acc;
+    }
+    return ncount;
+}
+
+typedef struct {
+    const float *node; /* 16 floats or NULL */
+    const float *pos;
+    const float *rot;
+} coll_xf;
+
+static void coll_xform(float o[3], const float in[3], void *user)
+{
+    const coll_xf *x = (const coll_xf *)user;
+    float t[3] = { in[0], in[1], in[2] };
+    if (x->node) {
+        const float *M = x->node;
+        t[0] = M[0]*in[0] + M[4]*in[1] + M[8]*in[2]  + M[12];
+        t[1] = M[1]*in[0] + M[5]*in[1] + M[9]*in[2]  + M[13];
+        t[2] = M[2]*in[0] + M[6]*in[1] + M[10]*in[2] + M[14];
+    }
+    xform_p(o, t, x->pos, x->rot);
+}
+
+static uint32_t palette_collision(const hta_cache *c, uint32_t pal_arr,
+                                  uint32_t pal_count, uint16_t type,
+                                  uint32_t *out_model)
+{
+    if (out_model) *out_model = 0;
+    if (type >= pal_count) return 0;
+    uint32_t obj_id = 0;
+    if (!hta_rd_u32(c, pal_arr + (uint32_t)type * HTA_PALETTE_ENTRY_SIZE + 12u, &obj_id))
+        return 0;
+    int32_t ti = hta_cache_find_tag_by_id(c, obj_id);
+    if (ti < 0) return 0;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t)) return 0;
+    uint32_t off, cid = 0, mid = 0;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &off)) return 0;
+    hta_rd_u32(c, off + HTA_OBJECT_COLLISION_ID, &cid);
+    hta_rd_u32(c, off + HTA_OBJECT_MODEL_ID, &mid);
+    if (out_model) *out_model = mid;
+    if (!cid || cid == 0xFFFFFFFFu) return 0;
+    if (hta_cache_find_tag_by_id(c, cid) < 0) return 0;
+    return cid;
+}
+
+static uint32_t instance_coll_tag(hta_bsp_mesh *col, const hta_cache *c,
+                                  uint32_t coll_id, uint32_t model_id,
+                                  const float pos[3], const float rot[3])
+{
+    int32_t ci = hta_cache_find_tag_by_id(c, coll_id);
+    if (ci < 0) return 0;
+    hta_tag_entry ct;
+    if (!hta_cache_tag(c, (uint32_t)ci, &ct) || ct.primary_class != HTA_TAG_COLL)
+        return 0;
+    uint32_t coff;
+    if (!hta_cache_ptr_to_offset(c, ct.tag_data_ptr, &coff)) return 0;
+    uint32_t ncount = 0, nptr = 0, narr = 0;
+    if (!hta_read_reflexive(c, coff + HTA_COLL_NODES, &ncount, &nptr) || ncount == 0)
+        return 0;
+    if (ncount > HTA_MAX_COLL_NODES) ncount = HTA_MAX_COLL_NODES;
+    if (!hta_cache_ptr_to_offset(c, nptr, &narr)) return 0;
+
+    hta_m4 rest[HTA_MAX_COLL_NODES];
+    uint32_t nrest = load_rest_pose(c, model_id, rest, HTA_MAX_COLL_NODES);
+
+    uint32_t added = 0;
+    for (uint32_t ni = 0; ni < ncount; ni++) {
+        uint32_t bc = 0, bp = 0;
+        if (!hta_read_reflexive(c, narr + ni * HTA_COLL_NODE_SIZE + HTA_COLL_NODE_BSPS,
+                                &bc, &bp) || bc == 0)
+            continue;
+        uint32_t barr;
+        if (!hta_cache_ptr_to_offset(c, bp, &barr)) continue;
+        coll_xf xf;
+        xf.pos = pos;
+        xf.rot = rot;
+        xf.node = (ni < nrest) ? rest[ni].m : NULL;
+        if (bc > 8) bc = 8;
+        for (uint32_t bi = 0; bi < bc; bi++) {
+            char e[HTA_ERRLEN];
+            if (hta_coll_bsp_append(col, c, barr + bi * 96u, coll_xform, &xf, e, sizeof(e)))
+                added++;
+        }
+    }
+    return added;
+}
+
+static uint32_t add_palette_collision(hta_bsp_mesh *col, const hta_cache *c,
+                                      uint32_t place_off, uint32_t pal_off,
+                                      uint32_t entry_size)
+{
+    int32_t si = hta_cache_find_tag_by_class(c, HTA_TAG_SCNR);
+    if (si < 0) return 0;
+    hta_tag_entry st;
+    if (!hta_cache_tag(c, (uint32_t)si, &st)) return 0;
+    uint32_t scn;
+    if (!hta_cache_ptr_to_offset(c, st.tag_data_ptr, &scn)) return 0;
+    uint32_t n = 0, p = 0, pn = 0, pp = 0;
+    if (!hta_read_reflexive(c, scn + place_off, &n, &p) || n == 0) return 0;
+    if (!hta_read_reflexive(c, scn + pal_off, &pn, &pp) || pn == 0) return 0;
+    uint32_t arr, parr;
+    if (!hta_cache_ptr_to_offset(c, p, &arr) || !hta_cache_ptr_to_offset(c, pp, &parr))
+        return 0;
+    uint32_t added = 0;
+    if (n > 512) n = 512;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t e = arr + i * entry_size;
+        uint16_t type = 0;
+        float pos[3], rot[3];
+        if (!hta_rd_u16(c, e + 0, &type)) break;
+        if (!hta_rd_f32(c, e + 8, &pos[0]) || !hta_rd_f32(c, e + 12, &pos[1]) ||
+            !hta_rd_f32(c, e + 16, &pos[2])) break;
+        if (!hta_rd_f32(c, e + 20, &rot[0]) || !hta_rd_f32(c, e + 24, &rot[1]) ||
+            !hta_rd_f32(c, e + 28, &rot[2])) break;
+        uint32_t mid = 0;
+        uint32_t cid = palette_collision(c, parr, pn, type, &mid);
+        if (!cid) continue;
+        if (instance_coll_tag(col, c, cid, mid, pos, rot))
+            added++;
+    }
+    return added;
+}
+
+bool hta_scenario_add_collision(hta_bsp_mesh *col, const hta_cache *c,
+                                char *err, size_t errlen)
+{
+    if (!col || !c) { fail(err, errlen, "bad arguments"); return false; }
+    uint32_t s = add_palette_collision(col, c,
+                                       HTA_SCENARIO_SCENERY_OFF, HTA_SCENARIO_SCENERY_PAL,
+                                       HTA_SCENERY_ENTRY_SIZE);
+    uint32_t v = add_palette_collision(col, c,
+                                       HTA_SCENARIO_VEHICLES_OFF, HTA_SCENARIO_VEHICLE_PAL,
+                                       HTA_VEHICLE_ENTRY_SIZE);
+    if (err && errlen)
+        snprintf(err, errlen, "scenery+vehicle colliders: %u+%u", s, v);
     return true;
 }
 

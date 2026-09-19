@@ -1,6 +1,7 @@
 /* First-person pawn driven by Trial tag physics (globals + cyborg_mp).
- * Ground is a height query on the structure collision BSP (render mesh
- * fallback). Walls use a standing-cylinder depenetration pass.
+ * Ground is a height query on the collision mesh (structure BSP plus
+ * scenery/vehicle coll tags; render mesh fallback). Walls use a
+ * standing-cylinder depenetration pass.
  */
 #ifndef HTA_PLAYER_H
 #define HTA_PLAYER_H

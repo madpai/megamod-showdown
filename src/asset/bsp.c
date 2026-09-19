@@ -395,6 +395,132 @@ bool hta_bsp_load_first(const hta_cache *c, hta_bsp_mesh *out,
 #define HTA_COLL_EDGE_SIZE 24u
 #define HTA_COLL_VERT_SIZE 16u
 
+static bool grow_mesh(void **p, uint32_t *cap, uint32_t need, uint32_t elem)
+{
+    if (need <= *cap) return true;
+    uint32_t ncap = *cap ? *cap : 64;
+    while (ncap < need) ncap *= 2;
+    void *np = realloc(*p, (size_t)ncap * elem);
+    if (!np) return false;
+    *p = np; *cap = ncap;
+    return true;
+}
+
+static void bump_bounds(hta_bsp_mesh *dst, const float p[3])
+{
+    for (int k = 0; k < 3; k++) {
+        if (p[k] < dst->bounds_min[k]) dst->bounds_min[k] = p[k];
+        if (p[k] > dst->bounds_max[k]) dst->bounds_max[k] = p[k];
+    }
+}
+
+/* Fan-triangulate a ModelCollisionGeometryBSP whose arrays are already
+ * resolved to file offsets. `xform` may be NULL (identity). */
+static bool coll_bsp_emit(hta_bsp_mesh *dst, const hta_cache *c,
+                          uint32_t voff, uint32_t vcount,
+                          uint32_t soff, uint32_t scount,
+                          uint32_t eoff, uint32_t ecount,
+                          hta_coll_xform_fn xform, void *user)
+{
+    if (!dst || !c || vcount == 0 || scount == 0 || ecount == 0) return false;
+    if (vcount > 200000 || scount > 200000) return false;
+
+    uint32_t vcap = dst->vertex_count, icap = dst->index_count;
+    uint32_t need_v = dst->vertex_count + vcount;
+    if (!grow_mesh((void **)&dst->vertices, &vcap, need_v, sizeof(hta_vertex)))
+        return false;
+    uint32_t need_i = dst->index_count + scount * 12u;
+    if (!grow_mesh((void **)&dst->indices, &icap, need_i, sizeof(uint32_t)))
+        return false;
+
+    uint32_t base = dst->vertex_count;
+    uint32_t nidx_start = dst->index_count;
+    int seeded = dst->vertex_count > 0 || dst->index_count > 0;
+    for (uint32_t i = 0; i < vcount; i++) {
+        float ip[3], op[3];
+        if (!hta_rd_f32(c, voff + i * HTA_COLL_VERT_SIZE + 0, &ip[0]) ||
+            !hta_rd_f32(c, voff + i * HTA_COLL_VERT_SIZE + 4, &ip[1]) ||
+            !hta_rd_f32(c, voff + i * HTA_COLL_VERT_SIZE + 8, &ip[2]))
+            return false;
+        if (xform) xform(op, ip, user);
+        else { op[0] = ip[0]; op[1] = ip[1]; op[2] = ip[2]; }
+        memset(&dst->vertices[base + i], 0, sizeof(hta_vertex));
+        dst->vertices[base + i].pos[0] = op[0];
+        dst->vertices[base + i].pos[1] = op[1];
+        dst->vertices[base + i].pos[2] = op[2];
+        if (!seeded) {
+            dst->bounds_min[0] = dst->bounds_max[0] = op[0];
+            dst->bounds_min[1] = dst->bounds_max[1] = op[1];
+            dst->bounds_min[2] = dst->bounds_max[2] = op[2];
+            seeded = 1;
+        } else {
+            bump_bounds(dst, op);
+        }
+    }
+
+    uint32_t nidx = dst->index_count;
+    uint32_t loop[64];
+    for (uint32_t s = 0; s < scount; s++) {
+        uint32_t first = 0;
+        hta_rd_u32(c, soff + s * HTA_COLL_SURF_SIZE + 4, &first);
+        if (first >= ecount) continue;
+        uint32_t e = first, nv = 0;
+        for (uint32_t guard = 0; guard < 32 && nv < 64; guard++) {
+            uint32_t start=0, end=0, fwd=0, rev=0, left=0, right=0;
+            uint32_t eo = eoff + e * HTA_COLL_EDGE_SIZE;
+            hta_rd_u32(c, eo + 0, &start);
+            hta_rd_u32(c, eo + 4, &end);
+            hta_rd_u32(c, eo + 8, &fwd);
+            hta_rd_u32(c, eo + 12, &rev);
+            hta_rd_u32(c, eo + 16, &left);
+            hta_rd_u32(c, eo + 20, &right);
+            uint32_t vert, next;
+            if (left == s) { vert = start; next = fwd; }
+            else           { vert = end;   next = rev; }
+            if (vert >= vcount) break;
+            loop[nv++] = vert;
+            e = next;
+            if (e == first || e >= ecount) break;
+        }
+        if (nv < 3) continue;
+        for (uint32_t i = 1; i + 1 < nv; i++) {
+            uint32_t need = nidx + 3;
+            if (!grow_mesh((void **)&dst->indices, &icap, need, sizeof(uint32_t)))
+                return false;
+            dst->indices[nidx++] = base + loop[0];
+            dst->indices[nidx++] = base + loop[i];
+            dst->indices[nidx++] = base + loop[i + 1];
+        }
+    }
+    dst->vertex_count += vcount;
+    dst->index_count = nidx;
+    return dst->index_count > nidx_start;
+}
+
+bool hta_coll_bsp_append(hta_bsp_mesh *dst, const hta_cache *c, uint32_t cb_off,
+                         hta_coll_xform_fn xform, void *user,
+                         char *err, size_t errlen)
+{
+    if (!dst || !c) { fail(err, errlen, "bad arguments"); return false; }
+    uint32_t scount=0, sptr=0, ecount=0, eptr=0, vcount=0, vptr=0;
+    if (!hta_read_reflexive(c, cb_off + 60, &scount, &sptr) ||
+        !hta_read_reflexive(c, cb_off + 72, &ecount, &eptr) ||
+        !hta_read_reflexive(c, cb_off + 84, &vcount, &vptr)) {
+        fail(err, errlen, "object collision reflexives"); return false;
+    }
+    uint32_t soff, eoff, voff;
+    if (!hta_cache_ptr_to_offset(c, sptr, &soff) ||
+        !hta_cache_ptr_to_offset(c, eptr, &eoff) ||
+        !hta_cache_ptr_to_offset(c, vptr, &voff)) {
+        fail(err, errlen, "object collision arrays"); return false;
+    }
+    uint32_t before = dst->index_count;
+    if (!coll_bsp_emit(dst, c, voff, vcount, soff, scount, eoff, ecount, xform, user)) {
+        fail(err, errlen, "object collision emit failed"); return false;
+    }
+    return dst->index_count > before;
+}
+
 bool hta_bsp_load_collision(const hta_cache *c, hta_bsp_mesh *out,
                             char *err, size_t errlen)
 {
@@ -441,66 +567,8 @@ bool hta_bsp_load_collision(const hta_cache *c, hta_bsp_mesh *out,
     if (!bsp_ptr(&reg, sptr, &soff) || !bsp_ptr(&reg, eptr, &eoff) || !bsp_ptr(&reg, vptr, &voff)) {
         fail(err, errlen, "collision arrays"); return false;
     }
-    if (vcount == 0 || scount == 0 || ecount == 0 || vcount > 200000 || scount > 200000) {
-        fail(err, errlen, "implausible collision counts v=%u s=%u e=%u", vcount, scount, ecount);
-        return false;
-    }
-
-    out->vertices = (hta_vertex *)calloc(vcount, sizeof(hta_vertex));
-    out->indices  = (uint32_t *)calloc((size_t)scount * 12u, sizeof(uint32_t));
-    if (!out->vertices || !out->indices) { hta_bsp_free(out); return false; }
-    out->vertex_count = vcount;
-    for (uint32_t i = 0; i < vcount; i++) {
-        hta_rd_f32(c, voff + i * HTA_COLL_VERT_SIZE + 0, &out->vertices[i].pos[0]);
-        hta_rd_f32(c, voff + i * HTA_COLL_VERT_SIZE + 4, &out->vertices[i].pos[1]);
-        hta_rd_f32(c, voff + i * HTA_COLL_VERT_SIZE + 8, &out->vertices[i].pos[2]);
-        if (i == 0) {
-            out->bounds_min[0] = out->bounds_max[0] = out->vertices[i].pos[0];
-            out->bounds_min[1] = out->bounds_max[1] = out->vertices[i].pos[1];
-            out->bounds_min[2] = out->bounds_max[2] = out->vertices[i].pos[2];
-        } else {
-            for (int k = 0; k < 3; k++) {
-                float v = out->vertices[i].pos[k];
-                if (v < out->bounds_min[k]) out->bounds_min[k] = v;
-                if (v > out->bounds_max[k]) out->bounds_max[k] = v;
-            }
-        }
-    }
-
-    uint32_t nidx = 0;
-    uint32_t loop[64];
-    for (uint32_t s = 0; s < scount; s++) {
-        uint32_t first = 0;
-        hta_rd_u32(c, soff + s * HTA_COLL_SURF_SIZE + 4, &first);
-        if (first >= ecount) continue;
-        uint32_t e = first, nv = 0;
-        for (uint32_t guard = 0; guard < 32 && nv < 64; guard++) {
-            uint32_t start=0, end=0, fwd=0, rev=0, left=0, right=0;
-            uint32_t eo = eoff + e * HTA_COLL_EDGE_SIZE;
-            hta_rd_u32(c, eo + 0, &start);
-            hta_rd_u32(c, eo + 4, &end);
-            hta_rd_u32(c, eo + 8, &fwd);
-            hta_rd_u32(c, eo + 12, &rev);
-            hta_rd_u32(c, eo + 16, &left);
-            hta_rd_u32(c, eo + 20, &right);
-            uint32_t vert, next;
-            if (left == s) { vert = start; next = fwd; }
-            else           { vert = end;   next = rev; }
-            if (vert >= vcount) break;
-            loop[nv++] = vert;
-            e = next;
-            if (e == first || e >= ecount) break;
-        }
-        if (nv < 3) continue;
-        for (uint32_t i = 1; i + 1 < nv; i++) {
-            if (nidx + 3 > scount * 12u) break;
-            out->indices[nidx++] = loop[0];
-            out->indices[nidx++] = loop[i];
-            out->indices[nidx++] = loop[i + 1];
-        }
-    }
-    out->index_count = nidx;
-    if (nidx < 3) {
+    if (!coll_bsp_emit(out, c, voff, vcount, soff, scount, eoff, ecount, NULL, NULL) ||
+        out->index_count < 3) {
         fail(err, errlen, "collision BSP produced no triangles");
         hta_bsp_free(out);
         return false;

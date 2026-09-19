@@ -203,6 +203,64 @@ int main(void)
         hta_collision_free(&wcol);
     }
 
+    printf("\n[walk off a ledge]\n");
+    {
+        /* Raised pad 0..6 at z=2, canyon floor 6..12 at z=0, and the pad's
+         * vertical drop at x=6 from z=0..2. Walking off must fall, not stop
+         * as if the lip were a wall. */
+        static hta_vertex lv[8];
+        static uint32_t li[18];
+        memset(lv, 0, sizeof(lv));
+        float pts2[8][3] = {
+            {0,0,2},{6,0,2},{6,10,2},{0,10,2},
+            {6,0,0},{12,0,0},{12,10,0},{6,10,0}
+        };
+        for (int i = 0; i < 8; i++) {
+            lv[i].pos[0] = pts2[i][0];
+            lv[i].pos[1] = pts2[i][1];
+            lv[i].pos[2] = pts2[i][2];
+            lv[i].normal[2] = 1.0f;
+        }
+        uint32_t ltris[18] = {
+            0,1,2, 0,2,3,           /* pad */
+            4,5,6, 4,6,7,           /* canyon */
+            1,4,7, 1,7,2            /* vertical lip at x=6 */
+        };
+        memcpy(li, ltris, sizeof(ltris));
+        hta_bsp_mesh ledgem;
+        memset(&ledgem, 0, sizeof(ledgem));
+        ledgem.vertices = lv;
+        ledgem.vertex_count = 8;
+        ledgem.indices = li;
+        ledgem.index_count = 18;
+        ledgem.bounds_min[0] = 0; ledgem.bounds_min[1] = 0; ledgem.bounds_min[2] = 0;
+        ledgem.bounds_max[0] = 12; ledgem.bounds_max[1] = 10; ledgem.bounds_max[2] = 2;
+
+        hta_collision lcol;
+        CHECK(hta_collision_build(&lcol, &ledgem), "ledge collision builds");
+        float lx = 5.90f, ly = 5.0f;
+        hta_collision_depenetrate(&lcol, &lx, &ly, 2.0f, 0.7f, 0.2f);
+        CHECK(lx > 5.85f, "standing on the pad lip is not shoved inland");
+
+        hta_player lp;
+        hta_camera lcam;
+        hta_player_init(&lp);
+        hta_camera_init(&lcam);
+        lp.phys.radius = 0.2f;
+        lp.radius = 0.2f;
+        lp.pos[0] = 4.0f; lp.pos[1] = 5.0f; lp.pos[2] = 2.0f;
+        lp.on_ground = true;
+        lcam.yaw = 0.0f;
+        hta_player_input lin;
+        memset(&lin, 0, sizeof(lin));
+        lin.move_forward = 1.0f;
+        for (int i = 0; i < 240; i++)
+            hta_player_update(&lp, &lcam, &lcol, &lin, 1.0f / 60.0f);
+        CHECK(lp.pos[0] > 6.2f, "walking off the pad crosses the lip");
+        CHECK(lp.pos[2] < 1.5f, "walking off the pad falls toward the canyon");
+        hta_collision_free(&lcol);
+    }
+
     printf("\n[rebind after realloc]\n");
     {
         uint32_t nv = mesh.vertex_count, ni = mesh.index_count;

@@ -341,6 +341,8 @@ static bool load_map(hta_android *s)
 
     if (hta_bsp_load_collision(&s->cache, &s->coll_mesh, err, sizeof(err))) {
         s->have_coll = true;
+        if (hta_scenario_add_collision(&s->coll_mesh, &s->cache, err, sizeof(err)))
+            hta_log("[assets] %s", err);
         if (!hta_collision_build(&s->col, &s->coll_mesh))
             hta_log("[assets] collision BSP grid failed; %s", err);
         else

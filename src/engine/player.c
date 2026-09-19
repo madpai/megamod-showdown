@@ -244,6 +244,13 @@ void hta_collision_depenetrate(const hta_collision *c,
                 float nlen = sqrtf(nx*nx+ny*ny+nz*nz);
                 if (nlen < 1e-8f) continue;
                 if (fabsf(nz) / nlen >= walk) continue; /* floor/ceiling */
+                /* Ledge lips: the vertical face of the floor you are standing on
+                 * must not act as a wall, or you cannot walk off a base. A real
+                 * wall/pylon rises more than a step above the feet. */
+                float zmax = a[2];
+                if (b[2] > zmax) zmax = b[2];
+                if (d[2] > zmax) zmax = d[2];
+                if (zmax <= z0 + 0.18f) continue;
                 float q[3], p[3] = { px, py, zc };
                 closest_on_tri(a, b, d, p, q);
                 float az = q[2];
@@ -449,7 +456,7 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
         p->velocity[2] -= p->gravity * dt;
         if (p->velocity[2] < -40.0f) p->velocity[2] = -40.0f;
 
-        float ox = p->pos[0], oy = p->pos[1], oz = p->pos[2];
+        float oz = p->pos[2];
         p->pos[0] += p->velocity[0] * dt;
         p->pos[1] += p->velocity[1] * dt;
         p->pos[2] += p->velocity[2] * dt;
@@ -458,18 +465,9 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
 
         float gz;
         if (col && col->built) {
-            /* Slide along walls instead of riding up their faces. */
-            if (!hta_collision_ground(col, p->pos[0], p->pos[1], probe_z, &gz)) {
-                if (hta_collision_ground(col, p->pos[0], oy, probe_z, &gz))
-                    p->pos[1] = oy;
-                else if (hta_collision_ground(col, ox, p->pos[1], probe_z, &gz))
-                    p->pos[0] = ox;
-                else {
-                    p->pos[0] = ox;
-                    p->pos[1] = oy;
-                    hta_collision_ground(col, ox, oy, probe_z, &gz);
-                }
-            }
+            /* Steep faces are walls (depenetrate), not floors. No walkable
+             * triangle at the new XY means a drop — fall, do not slide back
+             * onto the pad (that was the invisible wall at base edges). */
             float ph = p->phys.coll_stand + (p->phys.coll_crouch - p->phys.coll_stand) * p->crouch_t;
             float bx = p->pos[0], by = p->pos[1];
             hta_collision_depenetrate(col, &p->pos[0], &p->pos[1], p->pos[2], ph, p->radius);

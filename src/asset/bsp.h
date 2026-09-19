@@ -137,6 +137,13 @@ void hta_bsp_free(hta_bsp_mesh *m);
 bool hta_bsp_load_collision(const hta_cache *c, hta_bsp_mesh *out,
                             char *err, size_t errlen);
 
+/* Flatten one ModelCollisionGeometryBSP (object `coll` tag, cache pointers)
+ * onto `dst`, running each vertex through `xform` if given. */
+typedef void (*hta_coll_xform_fn)(float out[3], const float in[3], void *user);
+bool hta_coll_bsp_append(hta_bsp_mesh *dst, const hta_cache *c, uint32_t cb_off,
+                         hta_coll_xform_fn xform, void *user,
+                         char *err, size_t errlen);
+
 /* Reads up to max player spawn points from the scenario. Returns count read. */
 uint32_t hta_scenario_spawns(const hta_cache *c, hta_spawn_point *out, uint32_t max);
 

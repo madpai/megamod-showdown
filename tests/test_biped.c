@@ -2,6 +2,7 @@
 #include "asset/cache.h"
 #include "asset/biped.h"
 #include "asset/bsp.h"
+#include "asset/model.h"
 #include "asset/weapon.h"
 #include "engine/player.h"
 #include <stdio.h>
@@ -83,8 +84,59 @@ int main(int argc, char **argv)
     CHECK(hta_bsp_load_collision(&c, &coll, err, sizeof(err)), "collision BSP extracts");
     CHECK(coll.vertex_count > 100 && coll.index_count > 300, "collision mesh is non-trivial");
     printf("  collision %u verts %u tris\n", coll.vertex_count, coll.index_count / 3);
+    uint32_t struct_tris = coll.index_count / 3;
+    CHECK(hta_scenario_add_collision(&coll, &c, err, sizeof(err)), "object colliders append");
+    printf("  %s  now %u verts %u tris\n", err, coll.vertex_count, coll.index_count / 3);
+    CHECK(coll.index_count / 3 > struct_tris + 50, "scenery/vehicles add collision tris");
     hta_collision col;
-    CHECK(hta_collision_build(&col, &coll), "collision grid from BSP");
+    CHECK(hta_collision_build(&col, &coll), "collision grid from BSP + objects");
+    {
+        /* First Blood Gulch warthog sits at (28.86, -90.76, 0.30). A downward
+         * ray must hit the hull, not the canyon floor. */
+        float orig[3] = { 28.861f, -90.757f, 5.0f };
+        float dir[3]  = { 0.0f, 0.0f, -1.0f };
+        float t = 0, hit[3], nrm[3];
+        CHECK(hta_collision_ray(&col, orig, dir, 20.0f, &t, hit, nrm),
+              "ray down onto the red-base warthog hits");
+        CHECK(hit[2] > 0.55f, "hit is the hull/turret, not the ground");
+        int pushed = 0;
+        for (int k = 0; k < 8; k++) {
+            float ang = (float)k * 0.785398f;
+            float o[3] = { 28.861f + cosf(ang) * 2.5f,
+                           -90.757f + sinf(ang) * 2.5f, 0.80f };
+            float d[3] = { -cosf(ang), -sinf(ang), 0.0f };
+            float ht, h[3], n[3];
+            if (!hta_collision_ray(&col, o, d, 4.0f, &ht, h, n)) continue;
+            if (fabsf(n[2]) > 0.55f) continue; /* floor/roof */
+            float wx = h[0] - n[0] * 0.05f, wy = h[1] - n[1] * 0.05f;
+            float x0 = wx, y0 = wy;
+            hta_collision_depenetrate(&col, &wx, &wy, h[2] - 0.25f, 0.7f, 0.2f);
+            float dd = sqrtf((wx - x0) * (wx - x0) + (wy - y0) * (wy - y0));
+            if (dd > 0.10f) { pushed = 1; break; }
+        }
+        CHECK(pushed, "pill overlapping a warthog side is pushed out");
+    }
+    {
+        /* Red-base pad is z≈1.70; canyon floor in front is z≈0.1.
+         * Walking off the lip must fall, not stick on an invisible wall. */
+        hta_player lp;
+        hta_camera lcam;
+        hta_player_init(&lp);
+        hta_player_apply_physics(&lp, &phys);
+        hta_camera_init(&lcam);
+        lp.pos[0] = 41.54f;
+        lp.pos[1] = -82.79f;
+        lp.pos[2] = 1.705f;
+        lp.on_ground = true;
+        lcam.yaw = -1.5708f; /* -Y, toward the canyon */
+        hta_player_input lin;
+        memset(&lin, 0, sizeof(lin));
+        lin.move_forward = 1.0f;
+        for (int i = 0; i < 300; i++)
+            hta_player_update(&lp, &lcam, &col, &lin, 1.0f / 60.0f);
+        CHECK(lp.pos[1] < -84.5f, "walks off the red-base pad toward the canyon");
+        CHECK(lp.pos[2] < 1.2f, "falls off the red-base pad instead of sticking");
+    }
     hta_collision_free(&col);
     hta_bsp_free(&coll);
 

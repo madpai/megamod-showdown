@@ -15,6 +15,16 @@
 #define HTA_SCENARIO_VEHICLE_PAL   0x24Cu
 
 #define HTA_OBJECT_MODEL_ID        0x34u  /* Object.model TagDependency.tag_id */
+#define HTA_OBJECT_COLLISION_ID    0x7Cu  /* Object.collision_model tag_id */
+#define HTA_MOD2_FLAGS             0x000u
+#define HTA_MOD2_NODES             0x0B8u
+#define HTA_NODE_SIZE              156u
+#define HTA_NODE_PARENT            36u
+#define HTA_NODE_DEF_T             40u
+#define HTA_NODE_DEF_Q             52u
+#define HTA_COLL_NODES             0x28Cu
+#define HTA_COLL_NODE_SIZE         64u
+#define HTA_COLL_NODE_BSPS         52u
 #define HTA_MOD2_REGIONS           0x0C4u
 #define HTA_MOD2_GEOMETRIES        0x0D0u
 #define HTA_MOD2_SHADERS           0x0DCu
@@ -48,6 +58,11 @@ bool hta_model_instance(hta_bsp_mesh *world, const hta_cache *c,
 bool hta_scenario_add_objects(hta_bsp_mesh *world, const hta_cache *c,
                               const hta_resource_map *bitmaps,
                               char *err, size_t errlen);
+
+/* Append each scenery/vehicle collision BSP (rest pose) onto `col`.
+ * Call after hta_bsp_load_collision and before hta_collision_build. */
+bool hta_scenario_add_collision(hta_bsp_mesh *col, const hta_cache *c,
+                                char *err, size_t errlen);
 
 /* Sky dome in model space (drawn camera-relative). */
 bool hta_sky_load(hta_bsp_mesh *out, const hta_cache *c,
