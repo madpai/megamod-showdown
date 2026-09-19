@@ -47,7 +47,7 @@ cp "$APK" "$ROOT/halo-trial-poc.apk"
 
 # Hashes so the phone can confirm it got the build you meant.
 ( cd "$ROOT" && : > SHA256SUMS
-  for f in halo-trial-poc.apk bloodgulch.map bitmaps.map; do
+  for f in halo-trial-poc.apk bloodgulch.map bitmaps.map sounds.map; do
     [ -f "$f" ] && sha256sum "$f" >> SHA256SUMS
   done )
 
