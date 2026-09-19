@@ -240,6 +240,7 @@ int main(int argc, char **argv)
         if (hud.elem_count) {
             hta_hud_set_shield(&hud, shield);
             hta_hud_set_health(&hud, health);
+            hta_hud_set_ammo(&hud, ammo >= 0 ? (float)ammo / 60.0f : 1.0f);
             hta_hud_layout(&hud, W, H);
             ghud = hta_gfx_mesh_upload_dynamic(g, &hud.mesh, herr, sizeof(herr));
             if (ghud) {
@@ -251,6 +252,7 @@ int main(int argc, char **argv)
                 printf("hud            %u element(s); crosshair %s (%.0f px), unit hud %s\n",
                        hud.elem_count, hud.have_cross ? "yes" : "no",
                        hud.cross_px, hud.have_unit ? "yes" : "no");
+                printf("               ammo block %s\n", hud.have_ammo ? "yes" : "no");
                 for (uint32_t ei = 0; ei < hud.elem_count; ei++) {
                     const hta_hud_elem *el = &hud.elem[ei];
                     const hta_submesh *sm = &hud.mesh.submeshes[el->submesh];

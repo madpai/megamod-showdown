@@ -215,6 +215,34 @@ int main(int argc, char **argv)
         CHECK(on_screen, "every element lands on screen");
     }
 
+    printf("\n[weapon ammo block]\n");
+    CHECK(h.have_ammo, "the weapon's wphi yields an ammo meter");
+    if (h.have_ammo) {
+        hta_hud_elem *ae = &h.elem[h.ammo_meter];
+        hta_submesh *am = &h.mesh.submeshes[ae->submesh];
+        printf("    pip grid %.0fx%.0f native, anchor %u, extra scale %.2f\n",
+               ae->w_px, ae->h_px, ae->anchor, ae->extra_scale);
+        /* Halo's assault rifle shows its magazine as a grid of pips, one per
+         * round, so the sprite has to be wide enough to hold sixty. */
+        CHECK(ae->w_px > 100.0f, "the pip grid is a wide sprite, not a bar");
+        CHECK(ae->anchor == HTA_HUD_ANCHOR_TOP_LEFT, "anchored top left");
+        CHECK(ae->extra_scale < 1.0f, "drawn at the measured weapon-HUD scale");
+
+        /* The plate and outline come from the child HUD chain and must be
+         * behind the pips. */
+        CHECK(h.elem_count >= 7, "the child hud contributed its plate too");
+        CHECK(ae->submesh > 0, "something is drawn before the pips");
+
+        hta_hud_set_ammo(&h, 1.0f);
+        CHECK(am->meter == 1.0f, "a full magazine fills the grid");
+        hta_hud_set_ammo(&h, 0.0f);
+        CHECK(am->meter == 0.0f, "an empty one empties it");
+        hta_hud_set_ammo(&h, 0.5f);
+        CHECK(fabsf(am->meter - 0.5f) < 1e-5f, "and half fills half of it");
+        hta_hud_set_ammo(&h, 9.0f);
+        CHECK(am->meter == 1.0f, "an over-full magazine clamps");
+    }
+
     hta_hud_free(&h);
     CHECK(h.mesh.vertices == NULL, "free clears the mesh");
 

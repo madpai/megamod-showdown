@@ -16,6 +16,26 @@
 #define XOVER_COLOR         36u   /* ColorARGBInt: blue, green, red, alpha */
 #define XOVER_SEQUENCE      70u
 #define XHAIR_TYPE_AIM       0u
+/* WeaponHUDInterface element lists. Note these panels are laid out
+ * DIFFERENTLY from the unit HUD's -- same idea, different offsets, and
+ * reusing the unit HUD's numbers here reads colour out of the flash fields. */
+#define WPHI_CHILD_HUD       0u   /* TagDependency; tag id at +12 */
+#define WPHI_ANCHOR         60u
+#define WPHI_STATICS        96u
+#define WPHI_METERS        108u
+/* WeaponHUDInterfaceStaticElement (180) */
+#define WSTAT_SIZE         180u
+#define WSTAT_OFFSET        36u
+#define WSTAT_BITMAP        72u
+#define WSTAT_COLOR         88u
+#define WSTAT_SEQUENCE     120u
+/* WeaponHUDInterfaceMeter (180) */
+#define WMETER_SIZE        180u
+#define WMETER_OFFSET       36u
+#define WMETER_BITMAP       72u
+#define WMETER_COLOR_MIN    88u
+#define WMETER_COLOR_MAX    92u
+#define WMETER_SEQUENCE    106u
 
 /* UnitHUDInterface (1388). Every panel shares a shape, so these are the
  * starts; the field offsets inside a panel are below. All five struct sizes
@@ -107,6 +127,7 @@ static int add_elem(hta_hud *h, uint32_t tex, const hta_bitmap_sprite *sp,
     e->offset[0] = (float)off_x;
     e->offset[1] = (float)off_y;
     e->anchor = anchor;
+    e->extra_scale = 1.0f;
     e->uv[0] = sp->u0; e->uv[1] = sp->v0;
     e->uv[2] = sp->u1; e->uv[3] = sp->v1;
     return (int)h->elem_count++;
@@ -128,6 +149,45 @@ static bool sprite_or_frame(const hta_cache *c, uint32_t bm, uint16_t seq,
     out->u0 = 0.0f; out->u1 = 1.0f;
     out->v0 = 0.0f; out->v1 = 1.0f;
     return true;
+}
+
+/* A HUD element described by explicit field offsets, because the weapon and
+ * unit HUD panels are shaped differently. */
+static int add_tag_elem(hta_hud *h, const hta_cache *c,
+                        const hta_resource_map *bitmaps,
+                        uint32_t e, uint32_t bitmap_off, uint32_t offset_off,
+                        uint32_t color_off, uint32_t seq_off,
+                        uint8_t anchor, float meter, float out_color[4])
+{
+    uint32_t bm = 0;
+    if (!hta_rd_u32(c, e + bitmap_off + 12u, &bm) || !bm) return -1;
+    uint16_t seq = 0;
+    hta_rd_u16(c, e + seq_off, &seq);
+    hta_bitmap_sprite sp;
+    if (!sprite_or_frame(c, bm, seq, &sp)) return -1;
+    uint32_t tex = hta_mesh_intern_bitmap(&h->mesh, c, bitmaps, bm, sp.bitmap_index);
+    if (tex == ~0u) return -1;
+
+    int16_t ax = 0, ay = 0;
+    hta_rd_u16(c, e + offset_off + 0u, (uint16_t *)&ax);
+    hta_rd_u16(c, e + offset_off + 2u, (uint16_t *)&ay);
+
+    uint8_t col[4] = {255, 255, 255, 0};
+    hta_rd_bytes(c, e + color_off, col, 4);
+    float tint[4];
+    unpack_color(col, tint);
+    /* An all-zero colour means "use the HUD's own", not "draw it black".
+     * The assault rifle's ammo plate carries exactly that. */
+    if (col[0] == 0 && col[1] == 0 && col[2] == 0) {
+        tint[0] = 40.0f/255.0f; tint[1] = 150.0f/255.0f; tint[2] = 1.0f;
+        tint[3] = 1.0f;
+    }
+    if (out_color) memcpy(out_color, tint, 4 * sizeof(float));
+
+    return add_elem(h, tex, &sp,
+                    (float)h->mesh.textures[tex].width,
+                    (float)h->mesh.textures[tex].height,
+                    ax, ay, anchor, tint, meter);
 }
 
 /* One panel of a unit HUD: its bitmap, sprite, offset and colour. */
@@ -280,6 +340,64 @@ static void load_unit(hta_hud *h, const hta_cache *c,
     h->have_unit = (h->shield_meter >= 0 || h->health_meter >= 0);
 }
 
+/* The weapon's ammo block, and whatever its `child hud` chain adds. Halo
+ * draws the assault rifle's magazine as a grid of pips -- a meter like the
+ * shield -- sitting on a plate that the child HUD supplies. */
+static void load_weapon_hud(hta_hud *h, const hta_cache *c,
+                            const hta_resource_map *bitmaps, uint32_t wphi,
+                            int depth)
+{
+    if (!wphi || depth > 3) return;
+    int32_t ti = hta_cache_find_tag_by_id(c, wphi);
+    hta_tag_entry t;
+    uint32_t base = 0;
+    if (ti < 0 || !hta_cache_tag(c, (uint32_t)ti, &t) || t.indexed) return;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return;
+
+    uint16_t anchor16 = 0;
+    hta_rd_u16(c, base + WPHI_ANCHOR, &anchor16);
+    uint8_t anchor = (uint8_t)anchor16;
+
+    /* The plate and outline the child HUD draws sit UNDER this weapon's own
+     * pips, so take the child first. */
+    uint32_t child = 0;
+    if (hta_rd_u32(c, base + WPHI_CHILD_HUD + 12u, &child) && child &&
+        child != 0xFFFFFFFFu)
+        load_weapon_hud(h, c, bitmaps, child, depth + 1);
+
+    uint32_t n = 0, p = 0, off = 0;
+    if (hta_read_reflexive(c, base + WPHI_STATICS, &n, &p) && n &&
+        hta_cache_ptr_to_offset(c, p, &off)) {
+        for (uint32_t k = 0; k < n; k++) {
+            int ei = add_tag_elem(h, c, bitmaps, off + k * WSTAT_SIZE,
+                                  WSTAT_BITMAP, WSTAT_OFFSET, WSTAT_COLOR,
+                                  WSTAT_SEQUENCE, anchor, -1.0f, NULL);
+            if (ei >= 0) h->elem[ei].extra_scale = HTA_HUD_WEAPON_SCALE;
+        }
+    }
+
+    if (hta_read_reflexive(c, base + WPHI_METERS, &n, &p) && n &&
+        hta_cache_ptr_to_offset(c, p, &off)) {
+        for (uint32_t k = 0; k < n; k++) {
+            float cmax[4];
+            int ei = add_tag_elem(h, c, bitmaps, off + k * WMETER_SIZE,
+                                  WMETER_BITMAP, WMETER_OFFSET,
+                                  WMETER_COLOR_MAX, WMETER_SEQUENCE,
+                                  anchor, 1.0f, cmax);
+            if (ei >= 0) h->elem[ei].extra_scale = HTA_HUD_WEAPON_SCALE;
+            if (ei < 0 || h->ammo_meter >= 0) continue;
+            uint8_t raw[4];
+            float cmin[4];
+            hta_rd_bytes(c, off + k * WMETER_SIZE + WMETER_COLOR_MIN, raw, 4);
+            unpack_color(raw, cmin);
+            h->ammo_meter = ei;
+            memcpy(h->ammo_min, cmin, 3 * sizeof(float));
+            memcpy(h->ammo_max, cmax, 3 * sizeof(float));
+            h->have_ammo = true;
+        }
+    }
+}
+
 bool hta_hud_load(hta_hud *h, const hta_cache *c, const hta_resource_map *bitmaps,
                   const hta_weapon_def *weap, char *err, size_t errlen)
 {
@@ -290,6 +408,7 @@ bool hta_hud_load(hta_hud *h, const hta_cache *c, const hta_resource_map *bitmap
     memset(h, 0, sizeof(*h));
     h->shield_meter = -1;
     h->health_meter = -1;
+    h->ammo_meter = -1;
 
     h->mesh.textures = (hta_bsp_texture *)calloc(16, sizeof(hta_bsp_texture));
     if (!h->mesh.textures) {
@@ -298,11 +417,24 @@ bool hta_hud_load(hta_hud *h, const hta_cache *c, const hta_resource_map *bitmap
     }
 
     load_unit(h, c, bitmaps);
+
+    /* A weapon and its HUD interface share a tag path in Halo. */
+    uint32_t wphi = 0;
+    for (uint32_t i = 0; i < c->tag_count; i++) {
+        hta_tag_entry t;
+        if (!hta_cache_tag(c, i, &t) || t.indexed) continue;
+        if (t.primary_class != HTA_FOURCC('w','p','h','i')) continue;
+        char path[192];
+        if (!hta_cache_tag_path(c, &t, path, sizeof(path))) continue;
+        if (strcmp(path, weap->path) == 0) { wphi = t.tag_id; break; }
+    }
+    load_weapon_hud(h, c, bitmaps, wphi, 0);
     load_crosshair(h, c, bitmaps, weap);
 
     if (err && errlen) {
-        snprintf(err, errlen, "crosshair %s, unit hud %s",
-                 h->have_cross ? "yes" : "no", h->have_unit ? "yes" : "no");
+        snprintf(err, errlen, "crosshair %s, unit hud %s, ammo %s",
+                 h->have_cross ? "yes" : "no", h->have_unit ? "yes" : "no",
+                 h->have_ammo ? "yes" : "no");
     }
     h->loaded = true;
     return true;
@@ -333,6 +465,12 @@ void hta_hud_set_health(hta_hud *h, float fraction)
 {
     if (!h) return;
     set_meter(h, h->health_meter, fraction, h->health_min, h->health_max);
+}
+
+void hta_hud_set_ammo(hta_hud *h, float fraction)
+{
+    if (!h) return;
+    set_meter(h, h->ammo_meter, fraction, h->ammo_min, h->ammo_max);
 }
 
 /* Where an anchor corner sits, and which way offsets and the sprite run from
@@ -368,7 +506,8 @@ void hta_hud_layout(hta_hud *h, uint32_t screen_w, uint32_t screen_h)
 
         /* The element's anchor-side corner sits at the anchor plus its
          * offset, and the sprite grows from there into the screen. */
-        float w = e->w_px * scale, hh = e->h_px * scale;
+        float es = e->extra_scale > 0.0f ? e->extra_scale : 1.0f;
+        float w = e->w_px * scale * es, hh = e->h_px * scale * es;
         float cx = ox + e->offset[0] * scale * (gx != 0.0f ? gx : 1.0f);
         float cy = oy + e->offset[1] * scale * (gy != 0.0f ? gy : 1.0f);
         float x0, y0;

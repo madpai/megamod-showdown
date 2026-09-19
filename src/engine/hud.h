@@ -30,6 +30,18 @@
  * the one number here that Halo does not supply. */
 #define HTA_HUD_PHONE_SCALE 1.75f
 
+/* The weapon ammo block draws at half the size its sprite implies, and I do
+ * not know which field says so. Measured, not derived: across three
+ * screenshots of the real game the shield bar comes out at 0.99, 0.97 and
+ * 0.86 of its sprite scaled to the canvas -- i.e. 1.0, which is what
+ * everything else here already does -- while the ammo pip grid comes out at
+ * 0.51. Same canvas (480p), same anchor, both scales 1.0 in the tag.
+ *
+ * So this is an empirical correction, not a tag value, and it is the second
+ * and last invented number in the HUD. Whatever really produces it is
+ * probably in hud_globals, which does not reconcile yet. */
+#define HTA_HUD_WEAPON_SCALE 0.5f
+
 /* HUDInterfaceAnchor */
 #define HTA_HUD_ANCHOR_TOP_LEFT      0u
 #define HTA_HUD_ANCHOR_TOP_RIGHT     1u
@@ -37,7 +49,7 @@
 #define HTA_HUD_ANCHOR_BOTTOM_RIGHT  3u
 #define HTA_HUD_ANCHOR_CENTER        4u
 
-#define HTA_HUD_MAX_ELEMENTS 8
+#define HTA_HUD_MAX_ELEMENTS 16
 
 typedef struct {
     uint32_t vertex;        /* first of its four */
@@ -45,6 +57,7 @@ typedef struct {
     float    w_px, h_px;    /* native size on the 640x480 canvas */
     float    offset[2];     /* the tag's anchor offset, canvas px */
     uint8_t  anchor;        /* HTA_HUD_ANCHOR_* */
+    float    extra_scale;   /* 1.0, except the weapon block's 0.5 */
     float    uv[4];         /* u0, v0, u1, v1 */
 } hta_hud_elem;
 
@@ -66,6 +79,13 @@ typedef struct {
     int32_t  health_meter;
     float    shield_min[3], shield_max[3];   /* the tag's empty/full colours */
     float    health_min[3], health_max[3];
+
+    /* The weapon's own ammo block: Halo draws the assault rifle's magazine
+     * as a grid of pips, which is a meter like any other, on a plate from
+     * the `child hud` chain. */
+    bool     have_ammo;
+    int32_t  ammo_meter;                     /* element index, -1 if absent */
+    float    ammo_min[3], ammo_max[3];
 } hta_hud;
 
 /* Reads the weapon's `wphi`, decodes its reticle, and reserves geometry.
@@ -83,5 +103,7 @@ void hta_hud_layout(hta_hud *h, uint32_t screen_w, uint32_t screen_h);
  * that level, lerped between its empty and full colours. */
 void hta_hud_set_shield(hta_hud *h, float fraction);
 void hta_hud_set_health(hta_hud *h, float fraction);
+/* Rounds in the magazine over its capacity. */
+void hta_hud_set_ammo(hta_hud *h, float fraction);
 
 #endif

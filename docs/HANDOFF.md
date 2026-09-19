@@ -158,14 +158,51 @@ HUD an even smaller share of the width than Halo's 4:3 ever did, and the
 owner's verdict on the faithful version was "the tiniest saddest HUD". This
 is a deliberate departure and the only invented number in the HUD.
 
+### The ammo block (2026-09-19)
+
+The assault rifle's magazine is a **grid of pips** -- 3 rows of 20, one per
+round, which is why the sprite is 227x53 -- and it is a METER like the
+shield, so the same machinery drives it.
+
+The chain matters: a `wphi` has a **`child hud`** dependency, and the plate
+and outline behind the pips come from it. `weapons\assault rifle` ->
+`ui\hud\master rounds` -> `ui\hud\master`. Walk it first so the child's
+plate is drawn under this weapon's pips.
+
+Weapon HUD panels are laid out **differently from the unit HUD's** -- same
+idea, different offsets. Reusing the unit HUD's numbers here reads colour out
+of the flash fields.
+
+An **all-zero colour means "use the HUD's own"**, not "draw it black". The
+assault rifle's ammo plate carries exactly that.
+
+The AR has **no number elements**: its rounds are the pips. The numeric
+readouts (total ammo, grenades) live on the child `ui\hud\master rounds`,
+and they have no bitmap of their own -- the glyphs come from a `hud#`
+(hud_number) tag reached through `hudg`, which does not reconcile yet
+(1098 vs 1104). That is the next piece.
+
+### Two scales, one of them measured not derived
+
+Worth knowing before trusting either:
+
+- The shield bar draws at **1.0x** its sprite scaled to the 480p canvas.
+  Measured across three screenshots of the real game: 0.99, 0.97, 0.86.
+  So the faithful HUD scale was right all along.
+- The ammo pip grid draws at **0.51x**. Same canvas, same anchor, both width
+  and height scales 1.0 in the tag. Nothing found yet says why.
+
+`HTA_HUD_WEAPON_SCALE` (0.5) is therefore an empirical correction, not a tag
+value, and `HTA_HUD_PHONE_SCALE` (1.75) is a deliberate enlargement for a
+handset. Those two are the only invented numbers in the HUD and both are
+named and commented as such.
+
 ### Still missing from Halo's HUD
 
-The **ammo block top-left** (rounds, grenade count, the pip grid, and the
-"hold X to swap" prompt) and the **motion tracker bottom-left**. Both are
-real tags -- the ammo elements are the weapon `wphi`'s static/number/meter
-elements, the tracker is in the `unhi` -- and both now have a 2D pass to
-ride on. The plain white "60 / 180" the Java HUD draws is a placeholder for
-the first of those.
+The **numeric readouts** (total ammo, grenade count) and the **motion
+tracker bottom-left**. The numbers need the `hud#` glyph tag; the tracker is
+in the `unhi`. The plain white "60 / 180" the Java HUD draws still stands in
+for the reserve count, which the pip grid does not show.
 
 ## A 2D HUD pass, and Halo's own crosshair (2026-09-19)
 

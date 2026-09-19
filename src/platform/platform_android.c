@@ -512,9 +512,10 @@ static bool load_map(hta_android *s)
             char herr[HTA_ERRLEN] = {0};
             hta_hud_load(&s->hud, &s->cache, rm.data ? &rm : NULL, &s->weap,
                          herr, sizeof(herr));
-            hta_log("[hud] %u element(s): crosshair %s, unit hud %s (%s)",
+            hta_log("[hud] %u element(s): crosshair %s, unit hud %s, ammo %s (%s)",
                     s->hud.elem_count, s->hud.have_cross ? "yes" : "no",
-                    s->hud.have_unit ? "yes" : "no", herr);
+                    s->hud.have_unit ? "yes" : "no",
+                    s->hud.have_ammo ? "yes" : "no", herr);
             /* Nothing damages the player yet, so the bars sit full. The
              * meters themselves are live -- hta_hud_set_* drives them. */
             hta_hud_set_shield(&s->hud, 1.0f);
@@ -1021,8 +1022,12 @@ void android_main(struct android_app *app)
                     hta_viewmodel_play(&state.vm, HTA_VM_RELOAD);
             }
         }
-        /* The gun carries its own round counter; keep it honest. */
+        /* The gun carries its own round counter, and the HUD carries the
+         * same magazine as a grid of pips. */
         hta_viewmodel_set_counter(&state.vm, (uint32_t)state.ammo.loaded);
+        if (state.ammo.mag_max > 0)
+            hta_hud_set_ammo(&state.hud,
+                             (float)state.ammo.loaded / (float)state.ammo.mag_max);
         if (state.ammo.reload_done)
             hta_log("[weapon] reloaded: %d / %d", state.ammo.loaded, state.ammo.reserve);
         /* The animation graph fires a snd! id when a clip crosses its sound
