@@ -14,6 +14,13 @@ void hta_collision_free(hta_collision *c)
     memset(c, 0, sizeof(*c));
 }
 
+void hta_collision_set_slope(hta_collision *c, float max_slope_radians)
+{
+    if (!c) return;
+    float nz = cosf(max_slope_radians);
+    if (nz > 0.1f && nz < 0.999f) c->walkable_nz = nz;
+}
+
 bool hta_collision_build(hta_collision *c, const hta_bsp_mesh *mesh)
 {
     if (!c || !mesh || !mesh->vertices || !mesh->indices || mesh->index_count < 3) return false;
@@ -246,6 +253,15 @@ void hta_collision_depenetrate(const hta_collision *c,
                 float nlen = sqrtf(nx*nx+ny*ny+nz*nz);
                 if (nlen < 1e-8f) continue;
                 if (fabsf(nz) / nlen >= walk) continue; /* floor/ceiling */
+                /* Overhangs and sloped ceilings must not shove the pawn
+                 * sideways. Their normal's horizontal part is arbitrary, so
+                 * the push direction is meaningless -- and pushing on it is
+                 * what made the base doorways impassable unless you crouched:
+                 * standing, the pill's probe height reached the sloped roof;
+                 * ducking dropped below it. Headroom is a vertical limit, not
+                 * a lateral one. Winding is consistent here (floors read
+                 * nz ~ +0.9, ceilings ~ -0.96), so the sign is meaningful. */
+                if (nz / nlen < -0.10f) continue;
                 /* Ledge lips: the vertical face of the floor you are standing on
                  * must not act as a wall, or you cannot walk off a base. A real
                  * wall/pylon rises more than a step above the feet. */

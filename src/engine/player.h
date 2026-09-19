@@ -26,6 +26,12 @@ typedef struct {
 } hta_collision;
 
 bool hta_collision_build(hta_collision *c, const hta_bsp_mesh *mesh);
+
+/* Point the grid at the biped tag's own slope limit. Without this the grid
+ * keeps its 60-degree default, so a host test simulates different physics
+ * than the device -- which is how the base-doorway headroom bug hid from the
+ * suite. Call it right after building, wherever real tag physics exist. */
+void hta_collision_set_slope(hta_collision *c, float max_slope_radians);
 void hta_collision_free(hta_collision *c);
 /* Call after the mesh vertex/index arrays have been realloc'd (e.g. scenery
  * append). The grid still refers to the original triangle range. */

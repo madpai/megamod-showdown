@@ -90,6 +90,7 @@ int main(int argc, char **argv)
     CHECK(coll.index_count / 3 > struct_tris + 50, "scenery/vehicles add collision tris");
     hta_collision col;
     CHECK(hta_collision_build(&col, &coll), "collision grid from BSP + objects");
+    hta_collision_set_slope(&col, phys.max_slope);   /* match the device */
     {
         /* First Blood Gulch warthog sits at (28.86, -90.76, 0.30). A downward
          * ray must hit the hull, not the canyon floor. */
@@ -136,6 +137,42 @@ int main(int argc, char **argv)
             hta_player_update(&lp, &lcam, &col, &lin, 1.0f / 60.0f);
         CHECK(lp.pos[1] < -84.5f, "walks off the red-base pad toward the canyon");
         CHECK(lp.pos[2] < 1.2f, "falls off the red-base pad instead of sticking");
+    }
+
+    /* Standing must not be shoved back by an overhanging roof. The base
+     * entrances lean over the doorway at 55-70 degrees; those faces point
+     * DOWN, and treating them as walls pushed the pawn horizontally, so you
+     * could only get in crouched. Sweeping the map, 204 floor cells blocked a
+     * standing pawn while leaving a crouching one free; the fix took that to
+     * 49. Ceilings limit headroom, they do not push sideways. */
+    {
+        uint32_t standing_blocked = 0, crouch_blocked = 0, sampled = 0;
+        for (float y = -120.0f; y <= -106.0f; y += 0.20f)
+        for (float x =  98.0f;  x <= 112.0f; x += 0.20f) {
+            float gz;
+            if (!hta_collision_ground(&col, x, y, 40.0f, &gz)) continue;
+            sampled++;
+            float sx = x, sy = y;
+            hta_collision_depenetrate(&col, &sx, &sy, gz + 0.02f,
+                                      phys.coll_stand, phys.radius);
+            float cx = x, cy = y;
+            hta_collision_depenetrate(&col, &cx, &cy, gz + 0.02f,
+                                      phys.coll_crouch, phys.radius);
+            float ds = sqrtf((sx-x)*(sx-x) + (sy-y)*(sy-y));
+            float dc = sqrtf((cx-x)*(cx-x) + (cy-y)*(cy-y));
+            if (ds > 0.001f && dc <= 0.001f) standing_blocked++;
+            if (dc > 0.001f) crouch_blocked++;
+        }
+        printf("  base entrance: %u floor cells, %u block standing only, %u block crouching\n",
+               sampled, standing_blocked, crouch_blocked);
+        CHECK(sampled > 100, "sampled the base entrance area");
+        /* 12 before the overhang fix, 2 after. The two that remain are wall
+         * corners, not roofs: near-vertical faces rising from the floor that
+         * the mid-height probe catches standing but misses crouched. A proper
+         * segment-vs-triangle test would clear them; 4 leaves room for that
+         * without letting the 12 back in. */
+        CHECK(standing_blocked <= 4,
+              "standing is not shoved back where crouching walks free");
     }
     hta_collision_free(&col);
     hta_bsp_free(&coll);

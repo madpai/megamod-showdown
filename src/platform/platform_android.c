@@ -397,7 +397,7 @@ static bool load_map(hta_android *s)
         if (hta_player_physics_load(&phys, &s->cache, err, sizeof(err))) {
             hta_player_apply_physics(&s->player, &phys);
             s->cam.fov_y = phys.fov_y;
-            s->col.walkable_nz = cosf(phys.max_slope);
+            hta_collision_set_slope(&s->col, phys.max_slope);
             hta_log("[player] cyborg_mp run %.2f wu/s jump %.2f cam %.2f r %.2f slope %.0f deg",
                     phys.run_forward, phys.jump_speed, phys.cam_stand, phys.radius,
                     phys.max_slope * (180.0f / 3.14159265f));

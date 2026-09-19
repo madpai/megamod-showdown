@@ -188,6 +188,36 @@ a gun.
 - Gamepad / BACK-to-exit not confirmed on device
 - FP arms are lit by the world light only; Halo lights the viewmodel separately
 
+### Headroom / overhangs (fixed 2026-09-18, confirmed by the owner on device)
+
+Standing, you could not get into a base doorway unless you crouched. Cause:
+`hta_collision_depenetrate` treated **downward-facing** faces as walls and pushed the
+pawn horizontally out of them. Blood Gulch's entrances lean over the door at 55-70
+degrees; standing, the pill's mid-height probe reached the sloped roof, and ducking
+dropped below it. A ceiling is a vertical limit, not a lateral one, so faces with unit
+`nz < -0.10` are now skipped for horizontal push. Winding is consistent in the
+collision BSP (floors read `nz ~ +0.9`, ceilings `~ -0.96`), so the sign is meaningful.
+
+Sweeping every floor cell on the map for "standing is pushed, crouching is not":
+**204 cells before, 49 after**. `tests/test_biped.c` pins the base entrance (12 -> 2).
+
+The two that remain there are wall corners, not roofs, and they point at the real
+remaining weakness: the pill test probes the closest point on a triangle from a
+**single point at mid-height**, then clamps into `[feet, feet+height]`. That is not a
+cylinder-vs-triangle test. A proper segment-vs-triangle closest point would clear
+them. Worth doing before netcode, since the server will need the same test.
+
+There is still **no head clamp**: nothing stops you walking into a space shorter than
+0.7 wu, you just are not shoved out of it any more.
+
+### Test fidelity: set the slope, or you are testing different physics
+
+`hta_collision_build` defaults `walkable_nz` to 0.5 (60 degrees). The biped tag says
+45 degrees (`cos = 0.7071`). Only `platform_android.c` used to override it, so every
+host test simulated a more forgiving pawn than the device -- which is exactly how the
+doorway bug hid from a green suite. Call `hta_collision_set_slope(&col, phys.max_slope)`
+after building, wherever real tag physics are available.
+
 ### Collision notes the next agent should not re-break
 
 - Walk-off: do **not** restore "no walkable ground → slide XY back". That was the
