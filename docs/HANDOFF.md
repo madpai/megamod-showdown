@@ -80,7 +80,7 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 - **Animated first-person AR**: right hand, lower-right, barrel forward, left hand on
   the foregrip, hands and gun skinned from the Trial tags. Full reload plays.
 
-`HTA_MAP=... scripts/verify.sh` is **31/31**. `test_player` 45 checks, `test_biped` 25,
+`HTA_MAP=... scripts/verify.sh` is **31/31**. `test_player` 53 checks, `test_biped` 27,
 `test_anim` 46.
 
 ---
