@@ -268,7 +268,6 @@ void hta_collision_depenetrate(const hta_collision *c,
     float z0 = z_feet;
     float z1 = z_feet + (height > 1e-4f ? height : 0.7f);
     float r = radius;
-    float r2 = r * r;
     /* Deepest penetration per pass so a triangle listed in several grid
      * cells cannot shove the pawn several times in one frame. */
     for (int iter = 0; iter < 3; iter++) {
@@ -304,11 +303,45 @@ void hta_collision_depenetrate(const hta_collision *c,
                 if (b[2] > zmax) zmax = b[2];
                 if (d[2] > zmax) zmax = d[2];
                 if (zmax <= z0 + 0.18f) continue;
+
+                /* The crown of the pawn is rounded, not a flat disc.
+                 *
+                 * A flat-topped cylinder meets an overhead lip a full radius
+                 * early -- and on a descending ramp the floor is still
+                 * (radius * slope) higher back there, so it bangs its head on
+                 * a lip it would comfortably clear a step later. That is a
+                 * 0.12 wu penalty at this radius on a 30-degree ramp, against
+                 * clearances measured in millimetres: it is what stops you
+                 * walking down the base ramp standing while a crouch strolls
+                 * through.
+                 *
+                 * So cap the body with a hemisphere of the same radius: below
+                 * z1 - r it is the full-radius cylinder it always was, and
+                 * within the cap the usable radius narrows to zero at the
+                 * crown. Only faces that live entirely in that top band are
+                 * affected -- a wall reaching any lower still blocks at full
+                 * radius, so pylons, hog flanks and base walls are untouched.
+                 *
+                 * Widest-point rule: measure the radius at the LOWEST part of
+                 * the face that is in the cap, which is where it bites most. */
+                float zmin = a[2];
+                if (b[2] < zmin) zmin = b[2];
+                if (d[2] < zmin) zmin = d[2];
+                float cap_base = z1 - r;
+                if (cap_base < z0) cap_base = z0;
+                float reff = r;
+                if (zmin > cap_base) {
+                    float up = zmin - cap_base;
+                    if (up >= r) continue;      /* clears the crown entirely */
+                    reff = sqrtf(r * r - up * up);
+                }
+                float reff2 = reff * reff;
+
                 float qx = px, qy = py;
                 int inside = 0;
                 float dist2 = tri_slab_xy_dist(a, b, d, px, py, z0, z1,
                                                &qx, &qy, &inside);
-                if (dist2 >= r2) continue;
+                if (dist2 >= reff2) continue;
                 float dx = px - qx, dy = py - qy;
                 if (inside) dist2 = 0.0f;
                 float hx, hy, hl, push;
@@ -319,10 +352,10 @@ void hta_collision_depenetrate(const hta_collision *c,
                     if (hl < 1e-5f) continue;
                     hx /= hl;
                     hy /= hl;
-                    push = r;
+                    push = reff;
                 } else {
                     float dist = sqrtf(dist2);
-                    push = r - dist;
+                    push = reff - dist;
                     hx = dx;
                     hy = dy;
                     hl = sqrtf(hx * hx + hy * hy);

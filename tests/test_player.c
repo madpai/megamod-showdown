@@ -404,6 +404,85 @@ int main(void)
         hta_collision_free(&rcol);
     }
 
+    /* A lip over a descending ramp: the base ramp, in miniature.
+     *
+     * The pawn is a cylinder with a ROUNDED crown, not a flat disc. A flat top
+     * meets an overhead lip a full radius early, and on a ramp the floor is
+     * still (radius * slope) higher back there -- 0.12 wu here -- so it bangs
+     * its head on a lip it clears completely a step later. The clearance at
+     * the lip is 0.76 against a 0.70 pawn: it fits, and must be allowed to.
+     *
+     * Crouching must not be the only way through; that was the report. */
+    printf("\n[lip over a ramp]\n");
+    {
+        static hta_vertex pv[12];
+        static uint32_t   pi[18];
+        memset(pv, 0, sizeof(pv));
+        const float sl = 0.6f;          /* ~31-degree ramp descending along +X */
+        const float lipx = 2.1f;        /* lip face here; clearance 0.76 under it */
+        #define GZ(X) (2.0f - sl * (X))
+        float pp[12][3] = {
+            /* ramp */
+            {0,0,GZ(0)}, {6,0,GZ(6)}, {6,6,GZ(6)}, {0,6,GZ(0)},
+            /* the lip's vertical front face, 1.50 .. 1.70, normal toward -X */
+            {lipx,0,1.50f}, {lipx,0,1.70f}, {lipx,6,1.70f}, {lipx,6,1.50f},
+            /* the slab underside beyond it: a ceiling, correctly ignored */
+            {lipx,0,1.50f}, {6,0,1.50f}, {6,6,1.50f}, {lipx,6,1.50f},
+        };
+        for (int i = 0; i < 12; i++) {
+            pv[i].pos[0] = pp[i][0];
+            pv[i].pos[1] = pp[i][1];
+            pv[i].pos[2] = pp[i][2];
+            pv[i].normal[2] = 1.0f;
+        }
+        uint32_t ptris[18] = { 0,1,2, 0,2,3,  4,5,6, 4,6,7,  8,10,9, 8,11,10 };
+        memcpy(pi, ptris, sizeof(ptris));
+        hta_bsp_mesh lipm;
+        memset(&lipm, 0, sizeof(lipm));
+        lipm.vertices = pv;
+        lipm.vertex_count = 12;
+        lipm.indices = pi;
+        lipm.index_count = 18;
+        lipm.bounds_min[0] = 0; lipm.bounds_min[1] = 0; lipm.bounds_min[2] = -2;
+        lipm.bounds_max[0] = 6; lipm.bounds_max[1] = 6; lipm.bounds_max[2] = 2;
+
+        hta_collision lcol2;
+        CHECK(hta_collision_build(&lcol2, &lipm), "lip collision builds");
+        hta_collision_set_slope(&lcol2, 45.0f * 0.01745329f);
+
+        /* Clearance under the lip really is more than a standing pawn needs:
+         * if it were not, being blocked would be correct. */
+        CHECK(1.50f - GZ(lipx) > 0.70f, "the lip is high enough to walk under");
+
+        float got[2] = {0.0f, 0.0f};
+        for (int crouched = 0; crouched < 2; crouched++) {
+            hta_player lp2;
+            hta_camera lc2;
+            hta_player_init(&lp2);
+            hta_camera_init(&lc2);
+            lp2.phys.radius = 0.2f;
+            lp2.radius = 0.2f;
+            lp2.phys.coll_stand = 0.70f;
+            lp2.phys.coll_crouch = 0.50f;
+            lp2.pos[0] = 0.5f; lp2.pos[1] = 3.0f; lp2.pos[2] = GZ(0.5f);
+            lp2.on_ground = true;
+            lc2.yaw = 0.0f;                 /* +X, down the ramp and under the lip */
+            hta_player_input li2;
+            memset(&li2, 0, sizeof(li2));
+            li2.move_forward = 1.0f;
+            li2.crouch = crouched ? true : false;
+            for (int i = 0; i < 600; i++)
+                hta_player_update(&lp2, &lc2, &lcol2, &li2, 1.0f / 120.0f);
+            got[crouched] = lp2.pos[0];
+            printf("  %s reached x %.3f (lip at %.2f)\n",
+                   crouched ? "crouching:" : "standing: ", lp2.pos[0], lipx);
+        }
+        CHECK(got[1] > 3.5f, "crouching gets under the lip");
+        CHECK(got[0] > 3.5f, "STANDING gets under the lip too");
+        #undef GZ
+        hta_collision_free(&lcol2);
+    }
+
     printf("\n[rebind after realloc]\n");
     {
         uint32_t nv = mesh.vertex_count, ni = mesh.index_count;

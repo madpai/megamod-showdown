@@ -85,7 +85,34 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
-## Slopes: what changed this session (2026-09-19)
+## The pawn's crown is rounded (2026-09-19)
+
+The ramp block was **not** the slope fix below — that was real and separate. The
+reporter's coordinates pinned it exactly: stuck at **x 99.574, y -159.34**, head
+at 1.511, against `tri 5530/5531` — the base floor slab's vertical leading edge,
+spanning z **1.50 .. 1.70**. The standing column topped out 11 mm inside it. The
+crouch column tops at 1.31 and strolls through, which is what the owner saw.
+
+`scratch/walkramp.c`-style simulation reproduces it on the real map to the
+millimetre, so this was never a measuring artefact.
+
+**Why 11 mm mattered.** A flat-topped cylinder meets an overhead lip a full
+radius early. On a descending ramp the floor is still `radius * slope` higher
+back there -- 0.20 * 0.6 = **0.12 wu** here -- so the pawn bangs its head on a
+lip it clears completely one step later. Clearance at the lip itself is 0.815
+against a 0.70 pawn: it fits, easily. The shape was wrong, not the geometry.
+
+**Fix:** cap the body with a hemisphere of the same radius. Below `z1 - r` it is
+the full-radius cylinder it always was; inside the cap the usable radius narrows
+to zero at the crown (`reff = sqrt(r^2 - (zmin - cap_base)^2)`, measured at the
+LOWEST part of the face in the cap, where it bites hardest). A face reaching any
+lower than the cap still blocks at full radius, so walls, pylons and hog flanks
+are untouched -- `test_player`'s wall and chest-height-roof checks pin that.
+
+Pinned by `tests/test_player.c` `[lip over a ramp]`: with a flat top the standing
+pawn stops dead at `lip_x - radius` while the crouching one walks through.
+
+## Slopes: also this session (2026-09-19)
 
 The owner reported a doorway that **fits going up and not going down**. That
 asymmetry is not geometry — it is the integrator, and it reproduces on a bare
