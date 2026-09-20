@@ -104,6 +104,18 @@ uint32_t hta_scenario_spawns(const hta_cache *c, hta_spawn_point *out, uint32_t 
     return n;
 }
 
+void hta_submesh_init(hta_submesh *sm)
+{
+    if (!sm) return;
+    memset(sm, 0, sizeof(*sm));
+    sm->albedo_tex    = ~0u;
+    sm->lightmap_tex  = ~0u;
+    sm->detail_tex    = ~0u;
+    sm->detail2_tex   = ~0u;
+    sm->lightmap_index = 0xFFFFu;
+    sm->meter = -1.0f;
+}
+
 void hta_bsp_free(hta_bsp_mesh *m)
 {
     if (!m) return;

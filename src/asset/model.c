@@ -328,17 +328,21 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
             hta_rd_u32(c, sarr + (uint32_t)sh * 32u + 12u, &shader_id);
 
         hta_submesh *sm = &dst->submeshes[dst->submesh_count];
-        memset(sm, 0, sizeof(*sm));
+        hta_submesh_init(sm);
         sm->first_index = first;
         sm->index_count = emitted;
         sm->shader_tag_id = shader_id;
         sm->lightmap_index = 0xFFFFu;
-        sm->albedo_tex = ~0u;
-        sm->lightmap_tex = ~0u;
         sm->draw_mode = hta_shader_draw_mode(c, shader_id);
         if (sky && sm->draw_mode == HTA_DRAW_SKIP) sm->draw_mode = HTA_DRAW_OPAQUE;
         uint32_t base_bm = hta_shader_base_bitmap(c, shader_id);
         if (base_bm) sm->albedo_tex = hta_mesh_intern_bitmap(dst, c, bitmaps, base_bm, 0);
+        float dscale = 0.0f;
+        uint32_t det_bm = hta_shader_detail_bitmap(c, shader_id, &dscale);
+        if (det_bm) {
+            uint32_t dt = hta_mesh_intern_bitmap(dst, c, bitmaps, det_bm, 0);
+            if (dt != ~0u) { sm->detail_tex = dt; sm->detail_scale = dscale; }
+        }
 
         dst->vertex_count += vcount;
         dst->index_count += emitted;

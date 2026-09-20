@@ -110,6 +110,13 @@ typedef struct {
     float    empty[4];
 } hta_submesh;
 
+/* Clears a submesh to sane defaults. Use this rather than memset: several
+ * of the texture slots mean "none" at ~0u, and 0 is a VALID texture index.
+ * Leaving a zeroed detail_tex behind had the renderer bind each mesh's
+ * first texture as its own detail map and multiply it in, which halved the
+ * brightness of every weapon and every piece of scenery. */
+void hta_submesh_init(hta_submesh *sm);
+
 #define HTA_DRAW_OPAQUE 0u
 #define HTA_DRAW_ALPHA  1u
 #define HTA_DRAW_ADD    2u

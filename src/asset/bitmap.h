@@ -38,6 +38,13 @@
 /* ShaderTransparentGlass reconciles at 480. Its FIRST bitmap dependency is
  * the reflection cube map, which is not what the surface looks like -- the
  * needler's glowing needles came out textured with a dark grey cubemap. */
+/* ShaderModel reconciles at 440. Every model detail map in the Trial uses
+ * the same "double biased multiply" the environment shader does, so they
+ * share one code path. The `detail mask` at 214 -- which channel of the
+ * multipurpose map gates it -- is not read yet. */
+#define HTA_SOSO_DETAIL_SCALE 216u
+#define HTA_SOSO_DETAIL       220u
+
 #define HTA_SGLA_BACKGROUND_TINT 100u
 #define HTA_SGLA_DIFFUSE         344u
 /* ShaderEnvironment reconciles at 836. The detail maps are what give Halo's

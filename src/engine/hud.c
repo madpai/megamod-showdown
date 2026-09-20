@@ -140,7 +140,7 @@ static int add_elem(hta_hud *h, uint32_t tex, const hta_bitmap_sprite *sp,
     memcpy(&h->mesh.indices[base_i], tri, sizeof(tri));
 
     hta_submesh *sm = &h->mesh.submeshes[base_s];
-    memset(sm, 0, sizeof(*sm));
+    hta_submesh_init(sm);
     sm->first_index = base_i;
     sm->index_count = 6;
     sm->albedo_tex = tex;

@@ -186,6 +186,43 @@ int main(int argc, char **argv)
     CHECK(checked == 3, "all three zooming weapons are in the roster");
     CHECK(zoomers == 3, "and nothing else claims to zoom");
 
+    printf("\n[detail maps on models]\n");
+    {
+        /* A submesh with no detail map must say ~0u, not 0. Zero is a
+         * VALID texture index, and leaving it there had the renderer bind
+         * each mesh's first texture as its own detail map and multiply it
+         * in -- which quietly halved the brightness of every weapon and
+         * every piece of scenery. The memset that clears a submesh does
+         * not do this for you. */
+        int weapons_seen = 0, with_detail = 0, bad = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def w;
+            if (!hta_weapon_load_id(&c, have_bitmaps ? &bm : NULL, ids[i], &w,
+                                    NULL, err, sizeof(err))) continue;
+            hta_viewmodel vm;
+            if (!hta_viewmodel_load(&vm, &c, have_bitmaps ? &bm : NULL, &w,
+                                    err, sizeof(err))) continue;
+            weapons_seen++;
+            for (uint32_t k = 0; k < vm.mesh.submesh_count; k++) {
+                const hta_submesh *sm = &vm.mesh.submeshes[k];
+                if (sm->detail_tex == ~0u) {
+                    if (sm->detail_scale != 0.0f) bad++;   /* scale with no map */
+                    continue;
+                }
+                with_detail++;
+                if (sm->detail_scale <= 0.0f) bad++;       /* map with no scale */
+                if (sm->detail_tex >= vm.mesh.texture_count) bad++;
+            }
+            hta_viewmodel_free(&vm);
+        }
+        printf("  %d submesh(es) across %d weapons carry a detail map\n",
+               with_detail, weapons_seen);
+        CHECK(!bad, "no submesh claims a detail map it does not have");
+        /* The cyborg's first-person hands have one, so every weapon does. */
+        CHECK(with_detail >= weapons_seen,
+              "the hands' detail map reaches every weapon");
+    }
+
     printf("\n[the needler wears its magazine]\n");
     {
         /* Halo poses the needler's sixteen needle bones with an OVERLAY

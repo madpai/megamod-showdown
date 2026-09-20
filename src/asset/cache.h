@@ -59,6 +59,7 @@ enum {
 #define HTA_TAG_MATG HTA_FOURCC('m','a','t','g')
 #define HTA_TAG_LSND HTA_FOURCC('l','s','n','d')
 #define HTA_TAG_SGLA HTA_FOURCC('s','g','l','a')
+#define HTA_TAG_SOSO HTA_FOURCC('s','o','s','o')
 
 typedef struct {
     uint32_t primary_class, secondary_class, tertiary_class;

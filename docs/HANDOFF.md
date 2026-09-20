@@ -364,6 +364,50 @@ frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
 Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
 need weapon state we do not track yet.
 
+## Model detail maps, and a zeroed index that halved everything (2026-09-20)
+
+### `hta_submesh_init`, and why memset is not enough
+
+Filling in `shader_model` detail maps turned up a bug the detail work had
+been carrying since it landed.
+
+`model.c` cleared each new submesh with `memset` and then reset
+`albedo_tex` and `lightmap_tex` to `~0u` -- but **not** `detail_tex`, which
+was therefore left at **0. Zero is a valid texture index.** The renderer
+duly bound each mesh's own first texture as every submesh's detail map and
+multiplied it in at `det * 2`. With the assault rifle's first texture
+averaging 58/255, that is a multiply by roughly 0.45: every weapon, every
+piece of scenery and every vehicle had been running at HALF brightness.
+That was most of "the weapons are a bit dark in general".
+
+`hta_submesh_init` now clears a submesh to the right defaults -- `~0u` for
+all four texture slots, `0xFFFF` for the lightmap index, `-1` for the meter
+-- and `model.c`, `viewmodel.c`, `hud.c` and `gun.c` all use it. Do not go
+back to `memset` for these: several slots mean "none" at `~0u`, and the
+compiler will not tell you.
+
+`tests/test_weapons.c` pins the invariant: a submesh may not claim a detail
+map it does not have, in either direction.
+
+### And the detail maps themselves
+
+34 of Blood Gulch's 117 model shaders carry one, `ShaderModel` keeping it
+at scale 216 / map 220 (the struct reconciles at 440). Every one of them
+uses the same **double biased multiply** the environment shader does, so
+`hta_shader_detail_bitmap` just learned a second pair of offsets and the
+shader path is shared.
+
+The ones that show: `characters\cyborg\fp\shaders\rubber hands` (6x) and
+`armor hands` (10x) -- which is to say the hands on EVERY weapon -- plus
+the warthog, ghost, banshee, gun turret, the flamethrower's body and the
+fuel rod gun.
+
+Still unread: the `detail mask` at 214, which names the channel of the
+multipurpose map that gates the detail ("reflection mask", "self-illumination
+mask", and their inverses). Half the model detail maps ask for one. The
+Trial's first-person multipurpose maps are all zeros, so masking them would
+currently change nothing on the weapon you are holding.
+
 ## The first-person weapon was never lit (2026-09-20)
 
 Owner: "the rifle screen is supposed to be much brighter... I think the
@@ -1459,6 +1503,7 @@ after building, wherever real tag physics are available.
 | Mipmap generation | `src/gfx/gfx_vulkan.c` `downsample` / `upload_rgba_mips` |
 | Glass shaders (`sgla`) | `src/asset/bitmap.c` draw mode + diffuse map |
 | Viewmodel lighting | `shaders/mesh.frag` lit path, `gfx_vulkan.c` viewmodel push |
+| Submesh defaults | `src/asset/bsp.c` `hta_submesh_init` |
 | Rounds counter | `src/engine/hud.c` `load_numbers` |
 | Object attachments / looping sounds | `src/asset/effect.c` `hta_object_loop_sound` |
 | Continuous voices | `src/engine/audio.c` `hta_audio_loop` |

@@ -246,6 +246,7 @@ void hta_gun_build_mesh(hta_gun *g)
     g->mesh.submesh_count = 1;
     g->mesh.submeshes[0].first_index = 0;
     g->mesh.submeshes[0].index_count = n * 6;
+    hta_submesh_init(&g->mesh.submeshes[0]);
     g->mesh.submeshes[0].albedo_tex = 0;
     g->mesh.submeshes[0].lightmap_tex = ~0u;
     /* A decal is a hole in a sheet of alpha, not a square of paint. Drawn

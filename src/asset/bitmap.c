@@ -318,16 +318,29 @@ uint32_t hta_shader_detail_bitmap(const hta_cache *c, uint32_t shader_tag_id,
     if (ti < 0) return 0;
     hta_tag_entry t;
     if (!hta_cache_tag(c, (uint32_t)ti, &t)) return 0;
-    /* Only the environment shader; the object shaders layer differently. */
-    if (t.primary_class != HTA_TAG_SENV) return 0;
     uint32_t off;
     if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &off)) return 0;
 
+    /* The environment shader and the model shader both layer a detail map
+     * over the base; they just keep it in different places. 34 of Blood
+     * Gulch's 117 model shaders have one, the cyborg's first-person hands
+     * among them -- which is to say every weapon you hold. */
+    uint32_t map_off, scale_off;
+    if (t.primary_class == HTA_TAG_SENV) {
+        map_off = HTA_SENV_PRIMARY_DETAIL;
+        scale_off = HTA_SENV_PRIMARY_DETAIL_SCALE;
+    } else if (t.primary_class == HTA_TAG_SOSO) {
+        map_off = HTA_SOSO_DETAIL;
+        scale_off = HTA_SOSO_DETAIL_SCALE;
+    } else {
+        return 0;
+    }
+
     uint32_t id = 0;
     float scale = 0.0f;
-    if (!hta_rd_u32(c, off + HTA_SENV_PRIMARY_DETAIL + 0x0C, &id)) return 0;
+    if (!hta_rd_u32(c, off + map_off + 0x0C, &id)) return 0;
     if (!id || id == 0xFFFFFFFFu) return 0;
-    hta_rd_f32(c, off + HTA_SENV_PRIMARY_DETAIL_SCALE, &scale);
+    hta_rd_f32(c, off + scale_off, &scale);
     /* A zero scale means "once across the surface", which for a detail map
      * is never what is wanted; Halo's own default is 1. */
     if (!(scale > 0.0f)) scale = 1.0f;

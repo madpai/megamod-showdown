@@ -204,7 +204,7 @@ static void setup_flash(hta_viewmodel *vm, const hta_cache *c,
     memcpy(&vm->mesh.indices[base_i], tris, sizeof(tris));
 
     hta_submesh *sm = &vm->mesh.submeshes[vm->mesh.submesh_count++];
-    memset(sm, 0, sizeof(*sm));
+    hta_submesh_init(sm);
     sm->first_index = base_i;
     sm->index_count = 6;
     sm->albedo_tex = tex;
