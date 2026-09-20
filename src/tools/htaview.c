@@ -447,8 +447,8 @@ int main(int argc, char **argv)
                 float up2[3] = { 0.0f, 0.0f, 1.0f };
                 hta_particles_burst(&parts, (uint32_t)burst_recipe, at, up2);
                 for (float el = 0.0f; el < fly; el += 1.0f / 60.0f)
-                    hta_particles_update(&parts, &cam, 1.0f / 60.0f);
-                hta_particles_update(&parts, &cam, 0.0f);
+                    hta_particles_update(&parts, NULL, &cam, 1.0f / 60.0f);
+                hta_particles_update(&parts, NULL, &cam, 0.0f);
                 printf("particles      %u alive after %.2f s\n",
                        hta_particles_count(&parts), fly);
             }

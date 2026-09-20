@@ -22,6 +22,7 @@
 #include "../asset/bitmap.h"
 #include "../asset/effect.h"
 #include "camera.h"
+#include "player.h"
 
 #define HTA_PART_TYPES    12u
 #define HTA_PART_PER_TYPE 16u
@@ -34,6 +35,11 @@ typedef struct {
     float age, life;
     float radius0, radius1;   /* Halo grows a particle over its life */
     float fade_in, fade_out;  /* seconds */
+    /* From the particle's own `pphy`. Gravity is SIGNED: negative falls,
+     * positive rises -- a spent casing is -1.0 and plasma residue is
+     * +0.05, which is why one drops and the other drifts up. */
+    float gravity, drag, elasticity;
+    bool  collides;
     bool  alive;
 } hta_particle;
 
@@ -57,6 +63,8 @@ typedef struct {
     float    speed_min, speed_max, spread;
     float    radius_min, radius_max;
     float    life, fade_in, fade_out;
+    float    gravity, drag, elasticity;
+    bool     collides;
 } hta_particle_emit;
 
 typedef struct {
@@ -106,8 +114,12 @@ bool hta_particles_build(hta_particles *p, char *err, size_t errlen);
 void hta_particles_burst(hta_particles *p, uint32_t recipe,
                          const float origin[3], const float dir[3]);
 
-/* Fly, age out, and re-face the camera. The caller re-uploads the vertices. */
-void hta_particles_update(hta_particles *p, const hta_camera *cam, float dt);
+/* Fly, bounce, age out, and re-face the camera. `col` may be NULL; only
+ * particles whose physics tag says "collides with structures" use it, which
+ * is brass and debris rather than smoke. The caller re-uploads the
+ * vertices. */
+void hta_particles_update(hta_particles *p, const hta_collision *col,
+                          const hta_camera *cam, float dt);
 
 uint32_t hta_particles_count(const hta_particles *p);
 

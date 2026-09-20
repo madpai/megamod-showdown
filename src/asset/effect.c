@@ -30,6 +30,15 @@
 #define EFFP_VELOCITY_CONE 140u   /* Angle, radians */
 /* Particle (356) */
 #define PART_BITMAP          4u   /* TagDependency; tag id at +12 */
+#define PART_PHYSICS        20u   /* TagDependency -> pphy */
+
+/* PointPhysics, 64, reconciles. */
+#define PPHY_FLAGS           0u
+#define PPHY_FLAG_COLLIDES   0x2u   /* collides with structures */
+#define PPHY_FLAG_NO_GRAVITY 0x20u
+#define PPHY_AIR_GRAVITY    12u
+#define PPHY_AIR_FRICTION   36u
+#define PPHY_ELASTICITY     48u
 #define PART_LIFESPAN       56u   /* float bounds */
 #define PART_FADE_IN        64u
 #define PART_FADE_OUT       68u
@@ -262,6 +271,27 @@ static bool read_particle(const hta_cache *c, uint32_t base, uint32_t qk,
     hta_rd_f32(c, qk + EFFP_VELOCITY_CONE, &out->spread);
     hta_rd_u16(c, qk + EFFP_COUNT, (uint16_t *)&out->count_min);
     hta_rd_u16(c, qk + EFFP_COUNT + 2u, (uint16_t *)&out->count_max);
+
+    /* How it moves once it is in the air, from the particle's own physics
+     * tag. Without this everything shares one gravity and nothing collides:
+     * smoke fell like brass and brass floated like smoke. */
+    uint32_t phys = 0;
+    if (hta_rd_u32(c, pb + PART_PHYSICS + 12u, &phys) &&
+        phys && phys != 0xFFFFFFFFu) {
+        int32_t phi = hta_cache_find_tag_by_id(c, phys);
+        hta_tag_entry pht;
+        uint32_t phb;
+        if (phi >= 0 && hta_cache_tag(c, (uint32_t)phi, &pht) &&
+            hta_cache_ptr_to_offset(c, pht.tag_data_ptr, &phb)) {
+            uint32_t flags = 0;
+            hta_rd_u32(c, phb + PPHY_FLAGS, &flags);
+            hta_rd_f32(c, phb + PPHY_AIR_GRAVITY, &out->gravity);
+            hta_rd_f32(c, phb + PPHY_AIR_FRICTION, &out->drag);
+            hta_rd_f32(c, phb + PPHY_ELASTICITY, &out->elasticity);
+            if (flags & PPHY_FLAG_NO_GRAVITY) out->gravity = 0.0f;
+            out->collides = (flags & PPHY_FLAG_COLLIDES) != 0;
+        }
+    }
 
     char marker[32];
     if (!location_marker(c, base, loc, marker)) marker[0] = '\0';

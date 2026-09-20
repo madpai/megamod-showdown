@@ -7,9 +7,13 @@
 
 /* Halo's own, and what the player and the projectiles fall at. */
 #define PART_GRAVITY 3.4f
-/* Smoke and sparks slow down in air; without this they fly forever in a
- * straight line and read as debris rather than a plume. */
-#define PART_DRAG 1.6f
+
+/* Halo's `air friction` is 200 for muzzle smoke and 900 for a spent
+ * casing. Those are not units of ours, so they are divided into a
+ * per-second damping. The divisor is chosen so smoke keeps the 1.6/s that
+ * looked right before any of this was read from tags -- it preserves what
+ * was already verified and scales everything else against it. */
+#define PART_DRAG_SCALE 125.0f
 
 void hta_particles_init(hta_particles *p)
 {
@@ -152,6 +156,10 @@ uint32_t hta_particles_add_marker(hta_particles *p, const hta_cache *c,
         em->life      = ep.lifespan > 0.01f ? ep.lifespan : 0.5f;
         em->fade_in   = ep.fade_in;
         em->fade_out  = ep.fade_out;
+        em->gravity    = ep.gravity;
+        em->drag       = ep.drag / PART_DRAG_SCALE;
+        em->elasticity = ep.elasticity;
+        em->collides   = ep.collides;
     }
     if (!rec.emit_count) return HTA_PART_NO_RECIPE;
 
@@ -256,13 +264,18 @@ void hta_particles_burst(hta_particles *p, uint32_t recipe,
             q->radius1 = em->radius_max;
             q->fade_in = em->fade_in;
             q->fade_out = em->fade_out;
+            q->gravity = em->gravity;
+            q->drag = em->drag;
+            q->elasticity = em->elasticity;
+            q->collides = em->collides;
             q->alive = true;
             spawned++;
         }
     }
 }
 
-void hta_particles_update(hta_particles *p, const hta_camera *cam, float dt)
+void hta_particles_update(hta_particles *p, const hta_collision *col,
+                          const hta_camera *cam, float dt)
 {
     if (!p || !p->loaded) return;
     if (dt < 0.0f) dt = 0.0f;
@@ -280,13 +293,42 @@ void hta_particles_update(hta_particles *p, const hta_camera *cam, float dt)
             q->age += dt;
             if (q->age >= q->life) { q->alive = false; hide_slot(p, slot); continue; }
 
-            float drag = 1.0f - PART_DRAG * dt;
-            if (drag < 0.0f) drag = 0.0f;
-            for (int k = 0; k < 3; k++) {
-                q->pos[k] += q->vel[k] * dt;
-                q->vel[k] *= drag;
+            float damp = 1.0f - q->drag * dt;
+            if (damp < 0.0f) damp = 0.0f;
+
+            float step[3];
+            for (int k = 0; k < 3; k++) step[k] = q->vel[k] * dt;
+
+            /* Brass and debris bounce off the world; smoke drifts through
+             * it. Which is which is the particle's own physics flag. */
+            if (q->collides && col) {
+                float len = sqrtf(step[0]*step[0] + step[1]*step[1] +
+                                  step[2]*step[2]);
+                if (len > 1e-5f) {
+                    float ray[3] = { step[0]/len, step[1]/len, step[2]/len };
+                    float t = 0.0f, hit[3], nrm[3];
+                    if (hta_collision_ray(col, q->pos, ray, len, &t, hit, nrm)) {
+                        float vn = q->vel[0]*nrm[0] + q->vel[1]*nrm[1] +
+                                   q->vel[2]*nrm[2];
+                        for (int k = 0; k < 3; k++) {
+                            /* Reflect, and keep only what the tag's
+                             * elasticity says survives the bounce. */
+                            q->vel[k] = (q->vel[k] - 2.0f * vn * nrm[k])
+                                      * q->elasticity;
+                            q->pos[k] = hit[k] + nrm[k] * 0.01f;
+                        }
+                        step[0] = step[1] = step[2] = 0.0f;
+                    }
+                }
             }
-            q->vel[2] -= PART_GRAVITY * dt * 0.25f;   /* smoke barely falls */
+
+            for (int k = 0; k < 3; k++) {
+                q->pos[k] += step[k];
+                q->vel[k] *= damp;
+            }
+            /* Signed: a casing is -1.0 and falls, plasma residue is +0.05
+             * and drifts up. */
+            q->vel[2] += q->gravity * PART_GRAVITY * dt;
 
             float life = q->age / q->life;
             float radius = q->radius0 + (q->radius1 - q->radius0) * life;

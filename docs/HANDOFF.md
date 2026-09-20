@@ -401,12 +401,30 @@ Five weapons eject and four do not, which is exactly the human/covenant
 split -- the plasma rifle, plasma pistol, needler and flamethrower have no
 brass and no ejection marker.
 
-### Known rough edge
+### Every particle has its own physics (the rough edge, closed)
 
-Particles all share one gravity, tuned for smoke (a quarter of the
-player's). A casing therefore falls more slowly than it should. Halo hangs
-a `pphy` physics tag off each `part`; reading it would give every particle
-its own gravity and drag.
+Each `part` names a `pphy` (PointPhysics, 64, reconciles) at Particle+20,
+and it settles both rough edges at once:
+
+```
+flags +0    bit 1 "collides with structures", bit 5 "no gravity"
+air gravity scale +12      air friction +36      elasticity +48
+```
+
+**Gravity is SIGNED.** A spent casing is **-1.00** and falls at full
+gravity; muzzle smoke is **-0.02** and barely falls; plasma residue is
+**+0.05** and RISES. Across the roster's firing effects: 6 falling, 34
+floating, 71 rising. Reading the sign as a magnitude would have smoke
+dropping like brass.
+
+Collision comes from the same flag. Brass bounces off the world with the
+tag's own elasticity (0.35) and smoke drifts through it, which is why only
+6 of 111 particles ever touch the collision grid.
+
+Air friction is 200 for smoke and 900 for brass, in units that are not
+ours. `PART_DRAG_SCALE` (125) divides them into a per-second damping,
+chosen so smoke keeps the 1.6/s that had already been verified by eye --
+it preserves what was known good and scales everything else against it.
 
 ## Impact particles, and the walk bob (2026-09-20)
 

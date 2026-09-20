@@ -37,7 +37,7 @@ int main(int argc, char **argv)
         CHECK(!p.loaded, "an empty system is not loaded");
         float o[3] = {0,0,0}, d[3] = {0,0,1};
         hta_particles_burst(&p, 0, o, d);
-        hta_particles_update(&p, NULL, 1.0f / 60.0f);
+        hta_particles_update(&p, NULL, NULL, 1.0f / 60.0f);
         CHECK(hta_particles_count(&p) == 0, "bursting one changes nothing");
         hta_particles_free(&p);
         hta_particles_free(&p);
@@ -122,7 +122,7 @@ int main(int argc, char **argv)
         CHECK(alive <= p.type_count * HTA_PART_PER_TYPE, "and never past its slots");
 
         /* They must move, and they must all die. */
-        hta_particles_update(&p, NULL, 1.0f / 60.0f);
+        hta_particles_update(&p, NULL, NULL, 1.0f / 60.0f);
         float moved = 0.0f;
         for (uint32_t k = 0; k < HTA_PART_MAX; k++)
             if (p.live[k].alive)
@@ -131,7 +131,7 @@ int main(int argc, char **argv)
 
         float t = 0.0f;
         for (int k = 0; k < 60 * 30; k++) {
-            hta_particles_update(&p, NULL, 1.0f / 60.0f);
+            hta_particles_update(&p, NULL, NULL, 1.0f / 60.0f);
             t += 1.0f / 60.0f;
             if (!hta_particles_count(&p)) break;
         }
@@ -192,6 +192,64 @@ int main(int argc, char **argv)
 
         hta_particles_free(&p);
         break;
+    }
+
+    printf("\n[every particle has its own physics]\n");
+    {
+        /* Each `part` names a `pphy`, and the difference is the whole
+         * point: a spent casing falls at full gravity and bounces off the
+         * world, muzzle smoke barely falls and drifts through it, and
+         * plasma residue RISES. Gravity is signed. */
+        int saw_falling = 0, saw_floating = 0, saw_rising = 0, saw_collides = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def w;
+            if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err)))
+                continue;
+            uint32_t np = hta_effect_particle_count(&c, w.firing_fx_id);
+            for (uint32_t q = 0; q < np; q++) {
+                hta_effect_particle ep;
+                if (!hta_effect_particle_at(&c, w.firing_fx_id, q, &ep)) continue;
+                if (ep.gravity < -0.5f) saw_falling++;
+                else if (ep.gravity < 0.0f) saw_floating++;
+                else if (ep.gravity > 0.0f) saw_rising++;
+                if (ep.collides) saw_collides++;
+            }
+        }
+        printf("  %d falling, %d floating, %d rising, %d colliding\n",
+               saw_falling, saw_floating, saw_rising, saw_collides);
+        CHECK(saw_falling > 0, "something falls at full gravity");
+        CHECK(saw_floating > 0, "something barely falls");
+        CHECK(saw_rising > 0, "and something rises");
+        CHECK(saw_collides > 0, "and something collides with the world");
+
+        /* And it has to reach the simulation, not just the tag. */
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def w;
+            if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err)))
+                continue;
+            if (!strstr(w.path, "assault rifle")) continue;
+            hta_particles p;
+            hta_particles_init(&p);
+            uint32_t ej = hta_particles_add_marker(&p, &c, &bm, w.firing_fx_id,
+                                                    "primary ejection");
+            if (ej == HTA_PART_NO_RECIPE) break;
+            hta_particles_build(&p, err, sizeof(err));
+            float o[3] = { 0, 0, 10.0f }, side[3] = { 1, 0, 0 };
+            hta_particles_burst(&p, ej, o, side);
+            float start_z = 0.0f;
+            int found = 0;
+            for (uint32_t k = 0; k < HTA_PART_MAX; k++)
+                if (p.live[k].alive && !found) { start_z = p.live[k].pos[2]; found = 1; }
+            for (int k = 0; k < 30; k++)
+                hta_particles_update(&p, NULL, NULL, 1.0f / 60.0f);
+            float end_z = start_z;
+            for (uint32_t k = 0; k < HTA_PART_MAX; k++)
+                if (p.live[k].alive) { end_z = p.live[k].pos[2]; break; }
+            printf("  a casing falls %.3f m in half a second\n", start_z - end_z);
+            CHECK(start_z - end_z > 0.05f, "brass actually falls");
+            hta_particles_free(&p);
+            break;
+        }
     }
 
     printf("\n[spent brass]\n");

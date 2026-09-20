@@ -1535,7 +1535,8 @@ void android_main(struct android_app *app)
             hta_viewmodel_set_move(&state.vm, speed / run);
         }
 
-        hta_particles_update(&state.parts, &state.cam, dt);
+        hta_particles_update(&state.parts, state.col.built ? &state.col : NULL,
+                             &state.cam, dt);
 
         if (state.gun.dirty && state.gfx) {
             char err[HTA_ERRLEN];

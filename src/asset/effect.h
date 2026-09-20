@@ -48,6 +48,13 @@ typedef struct {
     float    speed_min, speed_max;      /* world units a second */
     float    spread;                    /* velocity cone half-angle, radians */
     uint16_t create_in, create;         /* HTA_FX_IN_* / HTA_FX_CAM_* */
+    /* From the `pphy` the particle's `part` names (PointPhysics, 64, which
+     * reconciles). Smoke floats and passes through walls; a spent casing
+     * falls and bounces off them. */
+    float    gravity;                   /* air gravity scale, 0 = floats */
+    float    drag;                      /* air friction */
+    float    elasticity;                /* bounce, 0 = sticks */
+    bool     collides;                  /* "collides with structures" */
 } hta_effect_particle;
 
 /* Walk every particle an effect spawns, in order. `index` runs 0 .. the
