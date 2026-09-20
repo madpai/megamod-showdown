@@ -168,8 +168,21 @@ int main(int argc, char **argv)
     }
     if (!hta_bsp_load_textures(&c, rm.data ? &rm : NULL, &mesh, err, sizeof(err)))
         printf("textures       failed: %s\n", err);
-    else
-        printf("textures       %u unique decoded\n", mesh.texture_count);
+    else {
+        uint32_t big = 0, small = 0xFFFFFFFFu;
+        uint64_t texbytes = 0;
+        for (uint32_t i = 0; i < mesh.texture_count; i++) {
+            uint32_t m = mesh.textures[i].width > mesh.textures[i].height
+                       ? mesh.textures[i].width : mesh.textures[i].height;
+            if (m > big) big = m;
+            if (m < small) small = m;
+            texbytes += (uint64_t)mesh.textures[i].width *
+                        mesh.textures[i].height * 4u;
+        }
+        printf("textures       %u unique decoded, %u..%u px, %.1f MiB RGBA\n",
+               mesh.texture_count, mesh.texture_count ? small : 0, big,
+               texbytes / (1024.0 * 1024.0));
+    }
     if (hta_scenario_add_objects(&mesh, &c, rm.data ? &rm : NULL, err, sizeof(err)))
         printf("objects        %s  (%u verts, %u submeshes)\n", err, mesh.vertex_count, mesh.submesh_count);
     hta_bsp_mesh sky;
@@ -284,6 +297,7 @@ int main(int argc, char **argv)
             hta_hud_set_shield(&hud, shield);
             hta_hud_set_health(&hud, health);
             hta_hud_set_ammo(&hud, ammo >= 0 ? (float)ammo / 60.0f : 1.0f);
+            hta_hud_set_zoom(&hud, zoom_level);
             hta_hud_layout(&hud, W, H);
             ghud = hta_gfx_mesh_upload_dynamic(g, &hud.mesh, herr, sizeof(herr));
             if (ghud) {
@@ -393,6 +407,9 @@ int main(int argc, char **argv)
                         : 0.0f;
                 hta_transform local[HTA_ANIM_MAX_NODES], world[HTA_ANIM_MAX_NODES];
                 if (hta_anim_sample(&vm.graph, (uint32_t)fp_anim, f, local)) {
+                    /* Same composition the game does, so --ammo previews
+                     * what the device actually draws. */
+                    hta_viewmodel_apply_ammo(&vm, local);
                     hta_anim_world(&vm.graph, local, world);
                     hta_viewmodel_pose(&vm, world);
                 }

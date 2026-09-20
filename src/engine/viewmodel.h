@@ -113,6 +113,11 @@ void hta_viewmodel_play(hta_viewmodel *vm, hta_vm_state s);
  * has no first-person flash particle. */
 void hta_viewmodel_flash(hta_viewmodel *vm);
 
+/* Compose the ammunition overlay onto a sampled base pose, in place. Called
+ * by hta_viewmodel_update; exposed so a tool that drives the graph itself
+ * previews exactly what the game draws. Harmless without an overlay. */
+void hta_viewmodel_apply_ammo(const hta_viewmodel *vm, hta_transform *local);
+
 /* How full the magazine is, 0..1, for weapons that show it on the model.
  * Harmless on a weapon without an ammunition overlay. */
 void hta_viewmodel_set_ammo(hta_viewmodel *vm, float fraction);

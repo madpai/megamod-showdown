@@ -130,8 +130,15 @@ static void setup_flash(hta_viewmodel *vm, const hta_cache *c,
      * marker sits is the model's. Ask the effect first so we never hardcode
      * "primary trigger" for a weapon whose tag says otherwise. */
     hta_effect_particle flash;
-    if (!hta_effect_fp_flash(c, weap->firing_fx_id, "primary trigger", &flash))
-        return;
+    if (!hta_effect_fp_flash(c, weap->firing_fx_id, "primary trigger", &flash)) {
+        /* Almost every weapon hangs its flash off `primary trigger`. The
+         * flamethrower hangs its first-person flame off `spawn fire`
+         * instead, which is why it had none at all. Falling back to any
+         * marker costs nothing: the scorer still requires a first-person
+         * additive particle, and the marker has to exist on the model. */
+        if (!hta_effect_fp_flash(c, weap->firing_fx_id, NULL, &flash))
+            return;
+    }
 
     char node_name[32];
     float offset[3];
@@ -309,6 +316,38 @@ void hta_viewmodel_free(hta_viewmodel *vm)
 {
     if (!vm) return;
     free_partial(vm);
+}
+
+/* The needler's needles are posed by an overlay clip rather than by whatever
+ * the gun is doing, so they stay put through firing, reloading and the melee
+ * swing. Only the nodes the overlay actually keyframes are taken -- the rest
+ * of a sampled overlay is its own default pose, which would flatten the
+ * arms. */
+void hta_viewmodel_apply_ammo(const hta_viewmodel *vm, hta_transform *local)
+{
+    if (!vm || !local || vm->clip_ammo < 0) return;
+    hta_transform over[HTA_ANIM_MAX_NODES], rest[HTA_ANIM_MAX_NODES];
+    if (!hta_anim_sample(&vm->graph, (uint32_t)vm->clip_ammo, vm->ammo_frame, over))
+        return;
+    if (!hta_anim_sample(&vm->graph, (uint32_t)vm->clip_ammo, 0.0f, rest))
+        return;
+
+    /* An overlay is a DELTA, not a pose. Substituting its absolute values
+     * throws the base clip away: the needler's needles vanished at a full
+     * magazine and reappeared as a single clump as it emptied, because the
+     * overlay's own frame 0 is nowhere near where the idle holds them.
+     *
+     * The delta is what the clip has moved since its own first frame, so at
+     * frame 0 this is exactly the identity and the base pose survives
+     * untouched. That is the property to check if this ever looks wrong. */
+    for (uint32_t i = 0; i < vm->graph.node_count; i++) {
+        if (!hta_anim_animates(&vm->graph, (uint32_t)vm->clip_ammo, i)) continue;
+        hta_transform inv, delta, posed;
+        hta_xf_inverse(&inv, &rest[i]);
+        hta_xf_mul(&delta, &over[i], &inv);
+        hta_xf_mul(&posed, &delta, &local[i]);
+        local[i] = posed;
+    }
 }
 
 void hta_viewmodel_set_ammo(hta_viewmodel *vm, float fraction)
@@ -495,20 +534,7 @@ void hta_viewmodel_update(hta_viewmodel *vm, float dt)
     hta_transform local[HTA_ANIM_MAX_NODES], world[HTA_ANIM_MAX_NODES];
     if (!hta_anim_sample(&vm->graph, (uint32_t)ci, vm->frame, local)) return;
 
-    /* The needler's needles are posed by an overlay clip rather than by
-     * whatever the gun is doing, so they stay retracted through firing,
-     * reloading and the melee swing. Only the nodes the overlay actually
-     * keyframes are taken -- the rest of a sampled overlay is its own
-     * default pose, which would flatten the arms. */
-    if (vm->clip_ammo >= 0) {
-        hta_transform over[HTA_ANIM_MAX_NODES];
-        if (hta_anim_sample(&vm->graph, (uint32_t)vm->clip_ammo,
-                            vm->ammo_frame, over)) {
-            for (uint32_t i = 0; i < vm->graph.node_count; i++)
-                if (hta_anim_animates(&vm->graph, (uint32_t)vm->clip_ammo, i))
-                    local[i] = over[i];
-        }
-    }
+    hta_viewmodel_apply_ammo(vm, local);
 
     hta_anim_world(&vm->graph, local, world);
     hta_viewmodel_pose(vm, world);

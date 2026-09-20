@@ -1,5 +1,6 @@
 #include "projectile.h"
 #include "../asset/model.h"
+#include "../asset/effect.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -12,6 +13,7 @@
 #define PROJ_AIR_GRAVITY      460u
 #define PROJ_INITIAL_VELOCITY 484u   /* world units per TICK */
 #define PROJ_FINAL_VELOCITY   488u
+#define PROJ_EFFECT           428u   /* TagDependency -> effe, the detonation */
 #define OBJ_MODEL              40u   /* TagDependency -> mod2 */
 
 /* Halo's own, and what the player falls at in player.c. */
@@ -78,6 +80,15 @@ bool hta_projectiles_equip(hta_projectiles *p, const hta_cache *c,
     hta_rd_f32(c, base + PROJ_FINAL_VELOCITY, &v1);
     if (!(v0 > 0.0f)) return false;
     if (!(v1 > 0.0f)) v1 = v0;
+
+    /* The bang and the char mark. A rocket's decal is 1.25 world units --
+     * reusing a bullet hole's 3.5 cm for an explosion is why they did not
+     * read as explosions. */
+    uint32_t det_fx = 0;
+    hta_rd_u32(c, base + PROJ_EFFECT + 12u, &det_fx);
+    if (det_fx && det_fx != 0xFFFFFFFFu)
+        hta_effect_detonation(c, det_fx, &p->detonation_snd, &p->blast_radius,
+                              &p->decal_id);
 
     p->proj_tag_id   = weap->projectile_id;
     p->speed_initial = v0 * HTA_TICKS_PER_SECOND;

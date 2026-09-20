@@ -392,6 +392,9 @@ static float zoom_magnification(const hta_weapon_def *w, int level)
 static void apply_zoom(hta_android *s)
 {
     hta_player_set_zoom(&s->player, zoom_magnification(&s->weap, s->zoom_level));
+    /* And the scope furniture: the sniper's brackets and reticle ticks are
+     * per zoom level in its HUD tag. */
+    hta_hud_set_zoom(&s->hud, s->zoom_level);
 }
 
 /* Step to the next zoom level, wrapping back to none. Weapons the tag gives
@@ -468,6 +471,33 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
     /* Impacts are this projectile's, so forget the last weapon's. */
     memset(s->impact_known, 0, sizeof(s->impact_known));
 
+    /* And the art its marks are drawn with. A rocket chars; a rifle leaves
+     * a hole. Halo hangs the decal off the impact effect, so take the first
+     * material response that names one -- the marks were a flat 1x1 square
+     * until now. */
+    {
+        uint32_t decal = s->proj.decal_id;
+        if (!decal) {
+            for (uint8_t m = 0; m < 33u && !decal; m++) {
+                uint32_t fx = hta_projectile_response_effect(&s->cache,
+                                                             s->weap.projectile_id, m);
+                if (fx) hta_effect_detonation(&s->cache, fx, NULL, NULL, &decal);
+            }
+        }
+        uint32_t bm = hta_decal_bitmap(&s->cache, decal);
+        hta_bitmap img;
+        memset(&img, 0, sizeof(img));
+        char derr[HTA_ERRLEN];
+        if (bm && hta_bitmap_decode(&s->cache, s->bitmaps_ok ? &s->bitmaps_rm : NULL,
+                                    bm, 0, &img, derr, sizeof(derr))) {
+            hta_gun_set_decal(&s->gun, img.rgba, img.width, img.height);
+            hta_log("[weapon] impact decal %ux%u", img.width, img.height);
+            hta_bitmap_free(&img);
+        } else {
+            hta_gun_set_decal(&s->gun, NULL, 0, 0);
+        }
+    }
+
     /* The weapon's own round, if it is an object rather than a particle.
      * Most of the roster has nothing to draw, which is not a failure. */
     if (s->gpu_proj) { hta_gfx_mesh_free(s->gfx, s->gpu_proj); s->gpu_proj = NULL; }
@@ -476,8 +506,10 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
         if (hta_projectiles_equip(&s->proj, &s->cache,
                                   s->bitmaps_ok ? &s->bitmaps_rm : NULL,
                                   &s->weap, perr, sizeof(perr))) {
-            hta_log("[weapon] projectile: %u verts, %.1f wu/s, range %.0f",
-                    s->proj.verts_each, s->proj.speed_initial, s->proj.range);
+            hta_log("[weapon] projectile: %u verts, %.1f wu/s, range %.0f, "
+                    "blast %.2f", s->proj.verts_each, s->proj.speed_initial,
+                    s->proj.range, s->proj.blast_radius);
+            if (s->proj.detonation_snd) bank_get(s, s->proj.detonation_snd);
             if (s->gfx)
                 s->gpu_proj = hta_gfx_mesh_upload_dynamic(s->gfx, &s->proj.mesh,
                                                           perr, sizeof(perr));
@@ -1315,8 +1347,14 @@ void android_main(struct android_app *app)
             hta_projectiles_update(&state.proj,
                                    state.col.built ? &state.col : NULL, dt);
             if (state.proj.detonated) {
-                hta_gun_add_mark(&state.gun, state.proj.hit, state.proj.hit_normal);
-                play_impact(&state, state.proj.hit_material);
+                hta_gun_add_mark(&state.gun, state.proj.hit, state.proj.hit_normal,
+                                 state.proj.blast_radius);
+                /* An explosion has a bang of its own; a round that does not
+                 * falls back to what the surface it hit sounds like. */
+                if (state.proj.detonation_snd)
+                    play_tag(&state, state.proj.detonation_snd, 1.0f);
+                else
+                    play_impact(&state, state.proj.hit_material);
             }
         }
 
@@ -1345,7 +1383,10 @@ void android_main(struct android_app *app)
                 huddraw.submeshes = state.hud.mesh.submeshes;
                 huddraw.submesh_count = state.hud.mesh.submesh_count;
             }
-            if (state.gpu_fp) {
+            /* Scoped means looking THROUGH the weapon, so Halo takes it
+             * off the screen entirely while zoomed. Without this the sniper
+             * reads as a magnified view with a rifle in front of it. */
+            if (state.gpu_fp && state.zoom_level == 0) {
                 vmdraw.mesh = state.gpu_fp;
                 vmdraw.vertices = state.vm.posed;
                 vmdraw.vertex_count = state.vm.mesh.vertex_count;
@@ -1361,7 +1402,7 @@ void android_main(struct android_app *app)
             if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh,
                               state.gpu_sky, state.gpu_fx,
                               state.gpu_proj ? &projdraw : NULL,
-                              state.gpu_fp ? &vmdraw : NULL,
+                              vmdraw.mesh ? &vmdraw : NULL,
                               state.gpu_hud ? &huddraw : NULL)) {
                 hta_log("[app] surface lost; rebuilding renderer");
                 stop_gfx(&state);

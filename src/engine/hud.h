@@ -49,7 +49,7 @@
 #define HTA_HUD_ANCHOR_BOTTOM_RIGHT  3u
 #define HTA_HUD_ANCHOR_CENTER        4u
 
-#define HTA_HUD_MAX_ELEMENTS 16
+#define HTA_HUD_MAX_ELEMENTS 48
 
 typedef struct {
     uint32_t vertex;        /* first of its four */
@@ -59,6 +59,10 @@ typedef struct {
     uint8_t  anchor;        /* HTA_HUD_ANCHOR_* */
     float    extra_scale;   /* 1.0, except the weapon block's 0.5 */
     float    uv[4];         /* u0, v0, u1, v1 */
+    /* 0 draws always; N draws only while scoped at that zoom level. The
+     * sniper's scope brackets and reticle ticks are flagged "show only when
+     * zoomed" in its tag, and are grouped per level. */
+    int8_t   zoom_level;
 } hta_hud_elem;
 
 typedef struct {
@@ -83,6 +87,9 @@ typedef struct {
     /* The weapon's own ammo block: Halo draws the assault rifle's magazine
      * as a grid of pips, which is a meter like any other, on a plate from
      * the `child hud` chain. */
+    /* Which zoom level is up, 0 unzoomed. Hides and shows scope furniture. */
+    int      zoom_level;
+
     bool     have_ammo;
     int32_t  ammo_meter;                     /* element index, -1 if absent */
     float    ammo_min[3], ammo_max[3];
@@ -105,5 +112,9 @@ void hta_hud_set_shield(hta_hud *h, float fraction);
 void hta_hud_set_health(hta_hud *h, float fraction);
 /* Rounds in the magazine over its capacity. */
 void hta_hud_set_ammo(hta_hud *h, float fraction);
+
+/* Which zoom level the weapon is at, 0 for unzoomed. Shows that level's
+ * scope furniture and hides every other level's. */
+void hta_hud_set_zoom(hta_hud *h, int level);
 
 #endif

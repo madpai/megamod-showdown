@@ -447,8 +447,25 @@ uint32_t hta_bitmap_sequence_count(const hta_cache *c, uint32_t tag_id)
     return n;
 }
 
+uint32_t hta_bitmap_sprite_count(const hta_cache *c, uint32_t tag_id, uint32_t seq)
+{
+    uint32_t off = 0, n = 0;
+    if (!c || !sequences_of(c, tag_id, &off, &n) || seq >= n) return 0;
+    uint32_t sc = 0, sp = 0;
+    if (!hta_read_reflexive(c, off + seq * HTA_BITM_SEQ_SIZE + HTA_BITM_SEQ_SPRITES,
+                            &sc, &sp))
+        return 0;
+    return sc;
+}
+
 bool hta_bitmap_sprite_at(const hta_cache *c, uint32_t tag_id, uint32_t seq,
                           hta_bitmap_sprite *out)
+{
+    return hta_bitmap_sprite_in(c, tag_id, seq, 0, out);
+}
+
+bool hta_bitmap_sprite_in(const hta_cache *c, uint32_t tag_id, uint32_t seq,
+                          uint32_t index, hta_bitmap_sprite *out)
 {
     if (!c || !out) return false;
     memset(out, 0, sizeof(*out));
@@ -459,7 +476,8 @@ bool hta_bitmap_sprite_at(const hta_cache *c, uint32_t tag_id, uint32_t seq,
     if (!hta_read_reflexive(c, off + seq * HTA_BITM_SEQ_SIZE + HTA_BITM_SEQ_SPRITES,
                             &sc, &sp))
         return false;
-    if (!sc || !hta_cache_ptr_to_offset(c, sp, &so)) return false;
+    if (!sc || index >= sc || !hta_cache_ptr_to_offset(c, sp, &so)) return false;
+    so += index * HTA_BITM_SPRITE_SIZE;
 
     uint16_t bi = 0;
     if (!hta_rd_u16(c, so, &bi)) return false;

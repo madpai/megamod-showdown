@@ -364,6 +364,116 @@ frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
 Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
 need weapon state we do not track yet.
 
+## The scope, the needles again, explosions and real decals (2026-09-20)
+
+### Overlays are DELTAS, and the needler proved it
+
+The needler shipped inverted: needles gone at a full magazine, reappearing
+as a clump at one spot as it emptied. `hta_viewmodel_apply_ammo` was
+SUBSTITUTING the overlay's absolute node values, which throws the base clip
+away -- the ammunition clip's own frame 0 is nowhere near where the idle
+holds the needles.
+
+An overlay is what the clip has moved **since its own first frame**:
+
+```
+delta_i = overlay[frame] . overlay[0]^-1
+local_i = delta_i . local_i        (for nodes the overlay keyframes)
+```
+
+**The invariant to check if this ever looks wrong again: at frame 0 the
+overlay must change nothing at all.** `tests/test_weapons.c` measures that
+drift and requires it to be zero. Do not re-derive this by staring at node
+positions; the absolute values at either end of the clip look plausible
+both ways round.
+
+`htaview` drove the graph itself and never called `hta_viewmodel_update`,
+so `--ammo` previewed something the device never drew. Both now go through
+`hta_viewmodel_apply_ammo`.
+
+### The sniper is scoped, not just magnified
+
+Everything in a weapon's `wphi` flagged **"show only when zoomed"** (overlay
+flags at crosshair-overlay+72, bit 2) is scope furniture. The sniper has
+six such elements per zoom level: reticle ticks from
+`sniper_scope_crosshairs2` (2x) and `_sm` (8x), plus a magnification label.
+
+Two things the tag does not say outright:
+
+- **Which level a block belongs to.** There is no field. The Nth zoom-only
+  block of a given crosshair type is taken as level N. That is the only
+  assumption in `load_scope`.
+- **Which sprite.** The label's sequence is not one sprite but TWO side by
+  side in one 64x64 sheet -- "2x" at u 0..0.391 and "8x" at 0.391..0.797 --
+  so the zoom LEVEL picks the sprite within the sequence, not the sequence.
+  `hta_bitmap_sprite_at` only ever returned a sequence's first sprite;
+  `hta_bitmap_sprite_in` and `hta_bitmap_sprite_count` are new for this.
+  Drawing sprite 0 at both levels put "2x" on screen while scoped to eight.
+
+An overlay flagged **"not a sprite"** (bit 1) addresses a whole bitmap FRAME
+by its sequence index; the reticle ticks are all of those.
+
+Halo also takes the weapon off the screen while scoped, which is most of
+what makes it read as a scope rather than a zoom. The platform skips the
+viewmodel when `zoom_level > 0`.
+
+**Watch the HUD's texture table.** It was `calloc(16, ...)` while elements
+were capped at 16; the scope's three extra bitmaps overran it and showed up
+as a double free in `test_hud`, nowhere near the cause. It is
+`HTA_HUD_MAX_ELEMENTS` now. Interning past the end of that table corrupts
+the heap silently.
+
+### Explosions
+
+A rocket detonating did nothing audible or visible beyond a bullet-sized
+mark, because the rocket's projectile has **no material-response sounds at
+all** -- its bang is a PART of its detonation effect, beside the damage, the
+light, the particle system and the decal:
+
+```
+weapons\rocket launcher\effects\rocket explosion
+   snd! sound\sfx\weapons\frag grenade\expl
+   pctl weapons\frag grenade\effects\explosion med
+   deca effects\decals\bullet holes\grenade char
+   ligh weapons\frag grenade\explosion
+```
+
+`hta_effect_detonation` reads the sound, the decal and its radius out of an
+effect's parts. A rocket's `grenade char` is **1.25 world units**; impact
+marks had a hardcoded 0.035 half-width, which is why an explosion pricked
+the wall instead of charring it. Marks carry their own size now.
+
+Still missing: the particle system and the light. Those need a particle
+engine, which this does not have.
+
+### Impact marks use Halo's decal art
+
+They were a flat **1x1 grey pixel** -- literally `malloc(4)` in `gun.c`.
+Every material response names a decal: `dirt pistol` 64x64 for bullets,
+`plasma burn` 32x32, `flame thrower char`, `grenade char` for the rocket.
+`hta_gun_set_decal` takes a copy and `hta_gun_build_mesh` uses it.
+
+One decal per weapon, chosen on equip: the projectile's own detonation
+decal if it has one, else the first material response that names one. Note
+the rocket's material 0 response is a BLOOD SPLAT, so the detonation decal
+has to win -- ordering matters here.
+
+### Textures are not being downscaled
+
+Asked and checked: Blood Gulch decodes **31 unique environment textures,
+8 to 1024 px, 8.1 MiB of RGBA** -- the Trial's own art at full size, base
+mip. `htaview` prints the range now. There is no higher-resolution art
+being skipped; Trial textures are simply 2003 textures.
+
+### The flamethrower has a flame again
+
+Its first-person flame particle hangs off `spawn fire`, not `primary
+trigger`, so `setup_flash` found nothing. It now falls back to any marker
+when the trigger marker has none -- still first-person and still additive.
+All nine weapons have a flash. A real flame JET is a particle system and
+remains out of reach; this is one quad at the nozzle, restarted every shot,
+shrinking over the particle's 1.5 s life.
+
 ## Needles that deplete, and rockets you can watch fly (2026-09-20)
 
 The last two of the owner's six.
@@ -1056,6 +1166,10 @@ after building, wherever real tag physics are available.
 | Rocket preview | `htaview --weapon "rocket launcher" --fly 0.05` |
 | Model node lookup | `src/asset/model.c` `hta_model_has_node` |
 | Scope magnification | `src/engine/player.c` `hta_player_set_zoom` |
+| Scope furniture from `wphi` | `src/engine/hud.c` `load_scope` |
+| Sprite within a sequence | `src/asset/bitmap.c` `hta_bitmap_sprite_in` |
+| Detonation sound / decal | `src/asset/effect.c` `hta_effect_detonation` |
+| Impact-mark art | `src/engine/gun.c` `hta_gun_set_decal` |
 | Object attachments / looping sounds | `src/asset/effect.c` `hta_object_loop_sound` |
 | Continuous voices | `src/engine/audio.c` `hta_audio_loop` |
 | Tag physics tests | `tests/test_biped.c` (needs `HTA_MAP`) |

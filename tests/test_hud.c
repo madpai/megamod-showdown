@@ -298,6 +298,71 @@ int main(int argc, char **argv)
                with_cross, with_ammo);
     }
 
+    printf("\n[the sniper's scope]\n");
+    {
+        /* Everything in the weapon's HUD tag flagged "show only when
+         * zoomed": the reticle ticks and the magnification label. They are
+         * grouped per zoom level, and only the level in use is drawn. */
+        uint32_t ids[32];
+        uint32_t n = hta_weapon_list_playable(&c, ids, 32);
+        int found = 0;
+        for (uint32_t i = 0; i < n; i++) {
+            hta_weapon_def wd;
+            if (!hta_weapon_load_id(&c, &bm, ids[i], &wd, NULL, err, sizeof(err)))
+                continue;
+            hta_hud wh;
+            memset(&wh, 0, sizeof(wh));
+            if (!hta_hud_load(&wh, &c, &bm, &wd, err, sizeof(err))) continue;
+
+            int scoped = 0, lvl1 = 0, lvl2 = 0;
+            for (uint32_t k = 0; k < wh.elem_count; k++) {
+                if (!wh.elem[k].zoom_level) continue;
+                scoped++;
+                if (wh.elem[k].zoom_level == 1) lvl1++;
+                if (wh.elem[k].zoom_level == 2) lvl2++;
+            }
+            if (strstr(wd.path, "sniper")) {
+                found = 1;
+                printf("  sniper: %u elements, %d scope (%d at 2x, %d at 8x)\n",
+                       wh.elem_count, scoped, lvl1, lvl2);
+                CHECK(scoped > 0, "the sniper has scope furniture");
+                CHECK(lvl1 > 0 && lvl2 > 0, "and a set for each of its two levels");
+                CHECK(wd.zoom_levels == 2, "which is how many levels it has");
+
+                /* Hidden means collapsed to a point, not left on screen. */
+                hta_hud_set_zoom(&wh, 0);
+                hta_hud_layout(&wh, 1920, 1080);
+                int shown = 0;
+                for (uint32_t k = 0; k < wh.elem_count; k++) {
+                    if (!wh.elem[k].zoom_level) continue;
+                    const hta_vertex *v = &wh.mesh.vertices[wh.elem[k].vertex];
+                    if (v[0].pos[0] != v[2].pos[0] || v[0].pos[1] != v[2].pos[1])
+                        shown++;
+                }
+                CHECK(shown == 0, "unzoomed draws none of it");
+
+                hta_hud_set_zoom(&wh, 1);
+                hta_hud_layout(&wh, 1920, 1080);
+                int at1 = 0, wrong = 0;
+                for (uint32_t k = 0; k < wh.elem_count; k++) {
+                    if (!wh.elem[k].zoom_level) continue;
+                    const hta_vertex *v = &wh.mesh.vertices[wh.elem[k].vertex];
+                    bool drawn = v[0].pos[0] != v[2].pos[0] || v[0].pos[1] != v[2].pos[1];
+                    if (!drawn) continue;
+                    if (wh.elem[k].zoom_level == 1) at1++; else wrong++;
+                }
+                CHECK(at1 == lvl1, "2x draws its own set");
+                CHECK(wrong == 0, "and nothing from the other level");
+            } else {
+                /* Only a weapon that zooms has any. */
+                if (wd.zoom_levels == 0)
+                    CHECK(scoped == 0, "a weapon that cannot zoom has no scope");
+            }
+            hta_hud_free(&wh);
+        }
+        CHECK(found, "the sniper is in the roster");
+    }
+
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

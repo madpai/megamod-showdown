@@ -120,6 +120,72 @@ static bool events_of(const hta_cache *c, uint32_t effect_tag_id,
     return true;
 }
 
+#define DECAL_RADIUS 24u   /* float bounds, world units */
+#define DECAL_MAP   216u   /* TagDependency -> bitm */
+
+uint32_t hta_decal_bitmap(const hta_cache *c, uint32_t decal_tag_id)
+{
+    if (!c || !decal_tag_id || decal_tag_id == 0xFFFFFFFFu) return 0;
+    int32_t ti = hta_cache_find_tag_by_id(c, decal_tag_id);
+    if (ti < 0) return 0;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t)) return 0;
+    uint32_t base;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return 0;
+    uint32_t bm = 0;
+    if (!hta_rd_u32(c, base + DECAL_MAP + 12u, &bm)) return 0;
+    return (bm == 0xFFFFFFFFu) ? 0 : bm;
+}
+
+bool hta_effect_detonation(const hta_cache *c, uint32_t effect_tag_id,
+                           uint32_t *out_sound, float *out_decal_radius,
+                           uint32_t *out_decal)
+{
+    if (out_sound) *out_sound = 0;
+    if (out_decal_radius) *out_decal_radius = 0.0f;
+    if (out_decal) *out_decal = 0;
+    if (!c || !effect_tag_id) return false;
+
+    uint32_t ev_off = 0, ev_count = 0, base = 0;
+    if (!events_of(c, effect_tag_id, &ev_off, &ev_count, &base)) return false;
+
+    bool any = false;
+    for (uint32_t e = 0; e < ev_count; e++) {
+        uint32_t pc = 0, pp = 0, po = 0;
+        if (!hta_read_reflexive(c, ev_off + e * EFFEVENT_SIZE + EFFEVENT_PARTS,
+                                &pc, &pp))
+            continue;
+        if (!pc || !hta_cache_ptr_to_offset(c, pp, &po)) continue;
+
+        for (uint32_t k = 0; k < pc; k++) {
+            uint32_t pk = po + k * EFFPART_SIZE;
+            uint32_t cls = 0, id = 0;
+            hta_rd_u32(c, pk + EFFPART_TYPE_CLASS, &cls);
+            if (!hta_rd_u32(c, pk + EFFPART_TYPE + 12u, &id)) continue;
+            if (!id || id == 0xFFFFFFFFu) continue;
+
+            if (cls == HTA_FOURCC('s','n','d','!')) {
+                if (out_sound && !*out_sound) { *out_sound = id; any = true; }
+            } else if (cls == HTA_FOURCC('d','e','c','a')) {
+                if (out_decal && !*out_decal) { *out_decal = id; any = true; }
+                if (!out_decal_radius || *out_decal_radius > 0.0f) continue;
+                int32_t di = hta_cache_find_tag_by_id(c, id);
+                if (di < 0) continue;
+                hta_tag_entry dt;
+                if (!hta_cache_tag(c, (uint32_t)di, &dt)) continue;
+                uint32_t db;
+                if (!hta_cache_ptr_to_offset(c, dt.tag_data_ptr, &db)) continue;
+                float r0 = 0.0f, r1 = 0.0f;
+                hta_rd_f32(c, db + DECAL_RADIUS, &r0);
+                hta_rd_f32(c, db + DECAL_RADIUS + 4u, &r1);
+                float r = r1 > r0 ? r1 : r0;
+                if (r > 0.0f) { *out_decal_radius = r; any = true; }
+            }
+        }
+    }
+    return any;
+}
+
 uint32_t hta_effect_first_sound(const hta_cache *c, uint32_t effect_tag_id)
 {
     uint32_t ev_off = 0, ev_count = 0;
@@ -155,10 +221,11 @@ static bool location_marker(const hta_cache *c, uint32_t effect_base,
     return true;
 }
 
-bool hta_effect_fp_flash(const hta_cache *c, uint32_t effect_tag_id,
-                         const char *marker_name, hta_effect_particle *out)
+static bool pick_particle(const hta_cache *c, uint32_t effect_tag_id,
+                          const char *marker_name, bool first_person_only,
+                          hta_effect_particle *out)
 {
-    if (!out || !marker_name) return false;
+    if (!out) return false;
     memset(out, 0, sizeof(*out));
 
     uint32_t ev_off = 0, ev_count = 0, base = 0;
@@ -187,8 +254,9 @@ bool hta_effect_fp_flash(const hta_cache *c, uint32_t effect_tag_id,
 
             /* Underwater variants are a different particle entirely. */
             if (create_in != HTA_FX_IN_ANY && create_in != HTA_FX_IN_AIR) continue;
-            /* What the other player sees is not what we see. */
-            if (create == HTA_FX_CAM_THIRD) continue;
+            /* What the other player sees is not what we see -- unless we
+             * are looking for something that happens out in the world. */
+            if (first_person_only && create == HTA_FX_CAM_THIRD) continue;
 
             /* A count of 0 never spawns. The tags carry several
              * switched-off size variants that way, and they are usually
@@ -199,8 +267,8 @@ bool hta_effect_fp_flash(const hta_cache *c, uint32_t effect_tag_id,
             if (cmax <= 0) continue;
 
             char marker[32];
-            if (!location_marker(c, base, loc, marker)) continue;
-            if (strcmp(marker, marker_name) != 0) continue;
+            if (!location_marker(c, base, loc, marker)) marker[0] = '\0';
+            if (marker_name && strcmp(marker, marker_name) != 0) continue;
 
             int32_t pti = hta_cache_find_tag_by_id(c, part_id);
             if (pti < 0) continue;
@@ -271,6 +339,19 @@ bool hta_effect_fp_flash(const hta_cache *c, uint32_t effect_tag_id,
     return found;
 }
 
+bool hta_effect_fp_flash(const hta_cache *c, uint32_t effect_tag_id,
+                         const char *marker_name, hta_effect_particle *out)
+{
+    /* A NULL marker means any marker -- still first-person and additive. */
+    return pick_particle(c, effect_tag_id, marker_name, true, out);
+}
+
+bool hta_effect_blast(const hta_cache *c, uint32_t effect_tag_id,
+                      hta_effect_particle *out)
+{
+    return pick_particle(c, effect_tag_id, NULL, false, out);
+}
+
 /* MaterialEffects (140): effects@0.
  * MaterialEffectsMaterialEffect (28): materials@0.
  * MaterialEffectsMaterialEffectMaterial (48): effect@0, sound@16. */
@@ -319,6 +400,13 @@ uint32_t hta_material_effect_sound(const hta_cache *c, uint32_t foot_tag_id,
 uint32_t hta_projectile_impact_sound(const hta_cache *c, uint32_t projectile_id,
                                      uint8_t material)
 {
+    return hta_effect_first_sound(c, hta_projectile_response_effect(c, projectile_id,
+                                                                    material));
+}
+
+uint32_t hta_projectile_response_effect(const hta_cache *c, uint32_t projectile_id,
+                                        uint8_t material)
+{
     if (!c || !projectile_id || projectile_id == 0xFFFFFFFFu) return 0;
     if (material >= 33u) return 0;
     int32_t ti = hta_cache_find_tag_by_id(c, projectile_id);
@@ -337,5 +425,5 @@ uint32_t hta_projectile_impact_sound(const hta_cache *c, uint32_t projectile_id,
                         + PROJ_RESPONSE_EFFECT + 12u, &fx))
         return 0;
     if (!fx || fx == 0xFFFFFFFFu) return 0;
-    return hta_effect_first_sound(c, fx);
+    return fx;
 }

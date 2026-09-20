@@ -238,6 +238,38 @@ int main(int argc, char **argv)
                     CHECK(needles == 16, "sixteen needles");
                     CHECK(arms == 0, "and no arm bones, which it must not move");
 
+                    /* THE invariant. An overlay is a delta from its own
+                     * first frame, so at a full magazine it must change
+                     * nothing at all. Substituting the overlay's absolute
+                     * values instead made the needles vanish when full and
+                     * reappear as a clump as the gun emptied. */
+                    {
+                        hta_transform a[HTA_ANIM_MAX_NODES], b[HTA_ANIM_MAX_NODES];
+                        int32_t idle = vm.clip[HTA_VM_IDLE];
+                        CHECK(idle >= 0, "the needler has an idle to overlay onto");
+                        hta_anim_sample(&vm.graph, (uint32_t)idle, 0.0f, a);
+                        memcpy(b, a, sizeof(hta_transform) * vm.graph.node_count);
+                        hta_viewmodel_set_ammo(&vm, 1.0f);
+                        hta_viewmodel_apply_ammo(&vm, b);
+                        float drift = 0.0f;
+                        for (uint32_t k = 0; k < vm.graph.node_count; k++)
+                            for (int q = 0; q < 3; q++)
+                                drift += fabsf(a[k].t[q] - b[k].t[q]);
+                        printf("    full-magazine overlay drift %.6f\n", drift);
+                        CHECK(drift < 1e-4f,
+                              "a full magazine leaves the base pose untouched");
+
+                        /* And an empty one must not. */
+                        memcpy(b, a, sizeof(hta_transform) * vm.graph.node_count);
+                        hta_viewmodel_set_ammo(&vm, 0.0f);
+                        hta_viewmodel_apply_ammo(&vm, b);
+                        drift = 0.0f;
+                        for (uint32_t k = 0; k < vm.graph.node_count; k++)
+                            for (int q = 0; q < 3; q++)
+                                drift += fabsf(a[k].t[q] - b[k].t[q]);
+                        CHECK(drift > 1e-3f, "and an empty one moves the needles");
+                    }
+
                     /* And the pose really differs between full and empty. */
                     uint32_t nv = vm.hands_verts + vm.gun_verts;
                     float *full = (float *)malloc((size_t)nv * 3 * sizeof(float));
@@ -286,11 +318,13 @@ int main(int argc, char **argv)
         if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err))) continue;
         hta_effect_particle f;
         if (!hta_effect_fp_flash(&c, w.firing_fx_id, "primary trigger", &f)) {
-            /* The flamethrower's is a three-to-five particle jet, not a
-             * flash, and one quad would misrepresent it. */
+            /* The flamethrower hangs its first-person flame off `spawn
+             * fire` rather than `primary trigger`, so the viewmodel falls
+             * back to any marker. Nothing else needs to. */
             CHECK(strstr(w.path, "flamethrower") != NULL,
-                  "only the flamethrower has no single-quad flash");
-            continue;
+                  "only the flamethrower uses another marker");
+            CHECK(hta_effect_fp_flash(&c, w.firing_fx_id, NULL, &f),
+                  "  and it does have one there");
         }
         float radius = (f.radius_min + f.radius_max) * 0.5f;
         printf("  %-16s %.3f m radius, %.3f s\n", leaf(w.path), radius, f.lifespan);
@@ -304,7 +338,7 @@ int main(int argc, char **argv)
         }
         flashes++;
     }
-    CHECK(flashes + 1 == (int)count, "every weapon but the flamethrower flashes");
+    CHECK(flashes == (int)count, "every weapon flashes");
 
     printf("\n[every weapon makes a noise]\n");
     /* Almost every weapon's gunshot hangs off its trigger's firing effect.

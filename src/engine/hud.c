@@ -12,10 +12,17 @@
 #define XHAIR_BITMAP        36u   /* TagDependency; tag id at +12 */
 #define XHAIR_OVERLAYS      52u
 /* WeaponHUDInterfaceCrosshairOverlay (108) */
+#define XOVER_SIZE         108u   /* WeaponHUDInterfaceCrosshairOverlay */
 #define XOVER_OFFSET         0u   /* Point2DInt: two int16 */
 #define XOVER_COLOR         36u   /* ColorARGBInt: blue, green, red, alpha */
 #define XOVER_SEQUENCE      70u
 #define XHAIR_TYPE_AIM       0u
+#define XHAIR_TYPE_ZOOM      1u
+/* WeaponHUDInterfaceCrosshairOverlayFlags */
+#define XOVER_FLAGS         72u
+#define XOVER_NOT_A_SPRITE  0x02u
+#define XOVER_ONLY_ZOOMED   0x04u
+#define XOVER_NOT_ZOOMED    0x40u
 /* WeaponHUDInterface element lists. Note these panels are laid out
  * DIFFERENTLY from the unit HUD's -- same idea, different offsets, and
  * reusing the unit HUD's numbers here reads colour out of the flash fields. */
@@ -129,6 +136,7 @@ static int add_elem(hta_hud *h, uint32_t tex, const hta_bitmap_sprite *sp,
     e->offset[1] = (float)off_y;
     e->anchor = anchor;
     e->extra_scale = 1.0f;
+    e->zoom_level = 0;
     e->uv[0] = sp->u0; e->uv[1] = sp->v0;
     e->uv[2] = sp->u1; e->uv[3] = sp->v1;
     return (int)h->elem_count++;
@@ -269,6 +277,11 @@ static void load_crosshair(hta_hud *h, const hta_cache *c,
         hta_rd_u16(c, oof + XOVER_OFFSET + 2u, (uint16_t *)&ay);
         hta_rd_u16(c, oof + XOVER_SEQUENCE, &seq);
         hta_rd_bytes(c, oof + XOVER_COLOR, col, 4);
+        /* The sniper's first aim block is its plain reticle; its later ones
+         * are scope ticks, which belong to load_scope. */
+        uint32_t oflags = 0;
+        hta_rd_u32(c, oof + XOVER_FLAGS, &oflags);
+        if (oflags & XOVER_ONLY_ZOOMED) continue;
 
         hta_bitmap_sprite sp;
         if (!hta_bitmap_sprite_at(c, bm, seq, &sp)) continue;
@@ -286,6 +299,112 @@ static void load_crosshair(hta_hud *h, const hta_cache *c,
         h->cross_px = h->elem[ei].w_px > h->elem[ei].h_px
                     ? h->elem[ei].w_px : h->elem[ei].h_px;
         h->have_cross = true;
+    }
+}
+
+/* The scope: everything in the weapon's HUD tag flagged "show only when
+ * zoomed".
+ *
+ * The sniper carries two `zoom overlay` blocks and two only-zoomed `aim`
+ * blocks, one pair per zoom level, and the tag has no field naming which
+ * level a block belongs to -- so the Nth zoom-only block of a given type is
+ * taken as level N. That is the one assumption here; everything else is the
+ * tag's.
+ *
+ * A `zoom overlay` is the magnification label. Its sequence is not one
+ * sprite but TWO side by side in the same 64x64 sheet -- "2x" at u 0..0.391
+ * and "8x" at 0.391..0.797 -- so the zoom level picks the SPRITE, not the
+ * sequence. Drawing sprite 0 at both levels put "2x" on the screen while
+ * scoped to eight.
+ *
+ * An overlay flagged "not a sprite" addresses a whole bitmap FRAME by its
+ * sequence index instead; the scope's reticle ticks are all of those.
+ */
+static void load_scope(hta_hud *h, const hta_cache *c,
+                       const hta_resource_map *bitmaps,
+                       const hta_weapon_def *weap)
+{
+    uint32_t wphi = weap->hud_interface_id;
+    if (!wphi) return;
+    int32_t ti = hta_cache_find_tag_by_id(c, wphi);
+    hta_tag_entry wt;
+    uint32_t base = 0;
+    if (ti < 0 || !hta_cache_tag(c, (uint32_t)ti, &wt) ||
+        !hta_cache_ptr_to_offset(c, wt.tag_data_ptr, &base)) return;
+
+    uint32_t xc = 0, xp = 0, xo = 0;
+    if (!hta_read_reflexive(c, base + WPHI_CROSSHAIRS, &xc, &xp) || !xc) return;
+    if (!hta_cache_ptr_to_offset(c, xp, &xo)) return;
+
+    int seen_zoom = 0, seen_aim = 0;
+    for (uint32_t k = 0; k < xc; k++) {
+        uint32_t e = xo + k * XHAIR_SIZE;
+        uint16_t type = 0;
+        uint32_t bm = 0;
+        hta_rd_u16(c, e + XHAIR_TYPE, &type);
+        if (type != XHAIR_TYPE_AIM && type != XHAIR_TYPE_ZOOM) continue;
+        if (!hta_rd_u32(c, e + XHAIR_BITMAP + 12u, &bm) || !bm) continue;
+
+        uint32_t oc = 0, op = 0, oof = 0;
+        if (!hta_read_reflexive(c, e + XHAIR_OVERLAYS, &oc, &op) || !oc) continue;
+        if (!hta_cache_ptr_to_offset(c, op, &oof)) continue;
+
+        /* Which level this block belongs to, decided once for the block so
+         * every overlay in it shows and hides together. */
+        int level = 0;
+        for (uint32_t q = 0; q < oc && !level; q++) {
+            uint32_t f = 0;
+            hta_rd_u32(c, oof + q * XOVER_SIZE + XOVER_FLAGS, &f);
+            if (f & XOVER_ONLY_ZOOMED)
+                level = (type == XHAIR_TYPE_ZOOM) ? ++seen_zoom : ++seen_aim;
+        }
+        if (!level) continue;
+
+        for (uint32_t q = 0; q < oc; q++) {
+            uint32_t ov = oof + q * XOVER_SIZE;
+            uint32_t f = 0;
+            hta_rd_u32(c, ov + XOVER_FLAGS, &f);
+            if (!(f & XOVER_ONLY_ZOOMED)) continue;
+
+            int16_t ax = 0, ay = 0;
+            uint16_t seq = 0;
+            uint8_t col[4] = {255, 255, 255, 0};
+            hta_rd_u16(c, ov + XOVER_OFFSET + 0u, (uint16_t *)&ax);
+            hta_rd_u16(c, ov + XOVER_OFFSET + 2u, (uint16_t *)&ay);
+            hta_rd_u16(c, ov + XOVER_SEQUENCE, &seq);
+            hta_rd_bytes(c, ov + XOVER_COLOR, col, 4);
+
+            hta_bitmap_sprite sp;
+            if (f & XOVER_NOT_A_SPRITE) {
+                /* A whole frame, addressed by the sequence index. */
+                uint32_t frames = hta_bitmap_frame_count(c, bm);
+                if (seq >= frames) continue;
+                sp.bitmap_index = seq;
+                sp.u0 = 0.0f; sp.u1 = 1.0f;
+                sp.v0 = 0.0f; sp.v1 = 1.0f;
+            } else if (type == XHAIR_TYPE_ZOOM) {
+                /* The magnification label: the level chooses the sprite. */
+                uint32_t nsp = hta_bitmap_sprite_count(c, bm, seq);
+                uint32_t want = (uint32_t)(level - 1);
+                if (want >= nsp) want = nsp ? nsp - 1u : 0u;
+                if (!hta_bitmap_sprite_in(c, bm, seq, want, &sp)) continue;
+            } else if (!sprite_or_frame(c, bm, seq, &sp)) {
+                continue;
+            }
+
+            uint32_t tex = hta_mesh_intern_bitmap(&h->mesh, c, bitmaps, bm,
+                                                  sp.bitmap_index);
+            if (tex == ~0u) continue;
+            float tint[4];
+            unpack_color(col, tint);
+
+            int ei = add_elem(h, tex, &sp,
+                              (float)h->mesh.textures[tex].width,
+                              (float)h->mesh.textures[tex].height,
+                              ax, ay, HTA_HUD_ANCHOR_CENTER, tint, -1.0f);
+            if (ei < 0) return;             /* out of element slots */
+            h->elem[ei].zoom_level = (int8_t)level;
+        }
     }
 }
 
@@ -411,7 +530,11 @@ bool hta_hud_load(hta_hud *h, const hta_cache *c, const hta_resource_map *bitmap
     h->health_meter = -1;
     h->ammo_meter = -1;
 
-    h->mesh.textures = (hta_bsp_texture *)calloc(16, sizeof(hta_bsp_texture));
+    /* One slot per element is always enough, and interning past the end of
+     * this table corrupts the heap silently -- the scope's three extra
+     * bitmaps overran a 16-entry table and turned up as a double free. */
+    h->mesh.textures = (hta_bsp_texture *)calloc(HTA_HUD_MAX_ELEMENTS,
+                                                 sizeof(hta_bsp_texture));
     if (!h->mesh.textures) {
         if (err) snprintf(err, errlen, "oom");
         return false;
@@ -421,6 +544,7 @@ bool hta_hud_load(hta_hud *h, const hta_cache *c, const hta_resource_map *bitmap
 
     load_weapon_hud(h, c, bitmaps, weap->hud_interface_id, 0);
     load_crosshair(h, c, bitmaps, weap);
+    load_scope(h, c, bitmaps, weap);
 
     if (err && errlen) {
         snprintf(err, errlen, "crosshair %s, unit hud %s, ammo %s",
@@ -480,6 +604,12 @@ static void anchor_origin(uint8_t anchor, float w, float h,
     }
 }
 
+void hta_hud_set_zoom(hta_hud *h, int level)
+{
+    if (!h) return;
+    h->zoom_level = level > 0 ? level : 0;
+}
+
 void hta_hud_layout(hta_hud *h, uint32_t screen_w, uint32_t screen_h)
 {
     if (!h || !h->mesh.vertices || !screen_w || !screen_h) return;
@@ -492,6 +622,15 @@ void hta_hud_layout(hta_hud *h, uint32_t screen_w, uint32_t screen_h)
 
     for (uint32_t i = 0; i < h->elem_count; i++) {
         hta_hud_elem *e = &h->elem[i];
+        /* Scope furniture belongs to one zoom level. Collapsing the quad
+         * rather than skipping the draw keeps the index buffer fixed. */
+        if (e->zoom_level && e->zoom_level != h->zoom_level) {
+            for (uint32_t k = 0; k < 4; k++) {
+                hta_vertex *v = &h->mesh.vertices[e->vertex + k];
+                v->pos[0] = v->pos[1] = v->pos[2] = 0.0f;
+            }
+            continue;
+        }
         float ox, oy, gx, gy;
         anchor_origin(e->anchor, fw, fh, &ox, &oy, &gx, &gy);
 

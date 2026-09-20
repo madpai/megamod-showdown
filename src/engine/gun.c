@@ -40,7 +40,26 @@ void hta_gun_free(hta_gun *g)
 {
     if (!g) return;
     hta_bsp_free(&g->mesh);
+    free(g->decal_rgba);
     memset(g, 0, sizeof(*g));
+}
+
+void hta_gun_set_decal(hta_gun *g, const uint8_t *rgba, uint32_t w, uint32_t h)
+{
+    if (!g) return;
+    free(g->decal_rgba);
+    g->decal_rgba = NULL;
+    g->decal_w = g->decal_h = 0;
+    if (rgba && w && h) {
+        size_t bytes = (size_t)w * h * 4u;
+        g->decal_rgba = (uint8_t *)malloc(bytes);
+        if (g->decal_rgba) {
+            memcpy(g->decal_rgba, rgba, bytes);
+            g->decal_w = w;
+            g->decal_h = h;
+        }
+    }
+    g->dirty = 1;
 }
 
 void hta_gun_update(hta_gun *g, float dt)
@@ -117,13 +136,15 @@ int hta_gun_fire(hta_gun *g, const hta_collision *col, const hta_camera *cam)
     if (!hta_collision_ray_material(col, cam->pos, dir, HTA_GUN_RANGE, &t, hit, nrm,
                                     &g->hit_material))
         return 1; /* shot fired, missed */
-    hta_gun_add_mark(g, hit, nrm);
+    hta_gun_add_mark(g, hit, nrm, HTA_MARK_SIZE);
     return 1;
 }
 
-void hta_gun_add_mark(hta_gun *g, const float hit[3], const float nrm[3])
+void hta_gun_add_mark(hta_gun *g, const float hit[3], const float nrm[3],
+                      float size)
 {
     if (!g || !hit || !nrm) return;
+    if (!(size > 0.0f)) size = HTA_MARK_SIZE;
     uint32_t i = g->next % HTA_GUN_MAX_HITS;
     g->hits[i].pos[0] = hit[0] + nrm[0] * 0.02f;
     g->hits[i].pos[1] = hit[1] + nrm[1] * 0.02f;
@@ -131,6 +152,7 @@ void hta_gun_add_mark(hta_gun *g, const float hit[3], const float nrm[3])
     g->hits[i].nrm[0] = nrm[0];
     g->hits[i].nrm[1] = nrm[1];
     g->hits[i].nrm[2] = nrm[2];
+    g->hits[i].size = size;
     g->next++;
     if (g->n < HTA_GUN_MAX_HITS) g->n++;
     g->dirty = 1;
@@ -175,15 +197,30 @@ void hta_gun_build_mesh(hta_gun *g)
     g->mesh.textures = (hta_bsp_texture *)calloc(1, sizeof(hta_bsp_texture));
     if (!g->mesh.vertices || !g->mesh.indices || !g->mesh.submeshes || !g->mesh.textures)
         return;
-    uint8_t *px = (uint8_t *)malloc(4);
-    if (px) { px[0] = 32; px[1] = 28; px[2] = 24; px[3] = 255; }
-    g->mesh.textures[0].rgba = px;
-    g->mesh.textures[0].width = g->mesh.textures[0].height = 1;
-    g->mesh.textures[0].tag_id = 1;
+    /* Halo's own decal art when we have it -- the marks were a flat 1x1
+     * square before, which is why bullet holes did not look like holes. */
+    if (g->decal_rgba && g->decal_w && g->decal_h) {
+        size_t bytes = (size_t)g->decal_w * g->decal_h * 4u;
+        uint8_t *px = (uint8_t *)malloc(bytes);
+        if (px) {
+            memcpy(px, g->decal_rgba, bytes);
+            g->mesh.textures[0].rgba = px;
+            g->mesh.textures[0].width = g->decal_w;
+            g->mesh.textures[0].height = g->decal_h;
+            g->mesh.textures[0].tag_id = 1;
+        }
+    }
+    if (!g->mesh.textures[0].rgba) {
+        uint8_t *px = (uint8_t *)malloc(4);
+        if (px) { px[0] = 32; px[1] = 28; px[2] = 24; px[3] = 255; }
+        g->mesh.textures[0].rgba = px;
+        g->mesh.textures[0].width = g->mesh.textures[0].height = 1;
+        g->mesh.textures[0].tag_id = 1;
+    }
     g->mesh.texture_count = 1;
 
-    const float S = 0.035f;
     for (uint32_t i = 0; i < n; i++) {
+        const float S = g->hits[i].size > 0.0f ? g->hits[i].size : HTA_MARK_SIZE;
         const float *p = g->hits[i].pos;
         float N[3] = { g->hits[i].nrm[0], g->hits[i].nrm[1], g->hits[i].nrm[2] };
         float up[3] = { 0, 0, 1 };

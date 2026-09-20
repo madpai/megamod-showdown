@@ -10,9 +10,14 @@
 #define HTA_GUN_COOLDOWN 0.14f
 #define HTA_GUN_RANGE    180.0f
 
+/* The half-width of a bullet's mark. An explosion's comes from its own
+ * decal tag instead -- a rocket's `grenade char` is 1.25 world units. */
+#define HTA_MARK_SIZE 0.035f
+
 typedef struct {
     float pos[3];
     float nrm[3];
+    float size;      /* half-width in world units */
 } hta_hitmark;
 
 typedef struct {
@@ -36,6 +41,12 @@ typedef struct {
     /* What the last round hit, so the caller can play that material's own
      * impact. HTA_MATERIAL_NONE when it missed or hit something unknown. */
     uint8_t  hit_material;
+
+    /* The decal marks are drawn with: Halo's own bullet-hole or scorch
+     * art, RGBA, owned here. Without one the marks fall back to a flat
+     * dark square, which is what they used to be. */
+    uint8_t *decal_rgba;
+    uint32_t decal_w, decal_h;
 } hta_gun;
 
 /* Take the trigger's error fields. Without this the gun keeps its defaults
@@ -66,8 +77,14 @@ int  hta_gun_fire(hta_gun *g, const hta_collision *col, const hta_camera *cam);
 int  hta_gun_launch(hta_gun *g, const hta_camera *cam, float out_dir[3]);
 
 /* Record an impact mark anywhere. hta_gun_fire does this for a hitscan
- * round; a projectile's detonation goes through here. */
-void hta_gun_add_mark(hta_gun *g, const float hit[3], const float nrm[3]);
+ * round at HTA_MARK_SIZE; a projectile's detonation goes through here with
+ * its own decal's radius, so a rocket chars a wall rather than pricking it. */
+void hta_gun_add_mark(hta_gun *g, const float hit[3], const float nrm[3],
+                      float size);
+
+/* The art the impact marks use. Takes a copy; pass NULL to go back to the
+ * flat square. Marks already on the wall pick it up on the next rebuild. */
+void hta_gun_set_decal(hta_gun *g, const uint8_t *rgba, uint32_t w, uint32_t h);
 
 void hta_gun_update(hta_gun *g, float dt);
 /* Rebuilds g->mesh from impact marks. Call when dirty before GPU upload. */

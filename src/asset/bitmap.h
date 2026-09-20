@@ -117,6 +117,14 @@ uint32_t hta_bitmap_sequence_count(const hta_cache *c, uint32_t tag_id);
 bool hta_bitmap_sprite_at(const hta_cache *c, uint32_t tag_id, uint32_t seq,
                           hta_bitmap_sprite *out);
 
+/* How many sprites a sequence holds, and sprite `index` of it. A sequence
+ * is not always one sprite: the sniper's scope labels live as "2x" and "8x"
+ * side by side in a single sequence, and which one is drawn is the zoom
+ * level. */
+uint32_t hta_bitmap_sprite_count(const hta_cache *c, uint32_t tag_id, uint32_t seq);
+bool hta_bitmap_sprite_in(const hta_cache *c, uint32_t tag_id, uint32_t seq,
+                          uint32_t index, hta_bitmap_sprite *out);
+
 /* Decode a raw pixel blob (used by unit tests; no cache involved). */
 bool hta_bitmap_decode_pixels(uint16_t format, uint32_t w, uint32_t h,
                               const uint8_t *src, uint32_t src_len,

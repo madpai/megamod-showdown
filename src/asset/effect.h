@@ -80,6 +80,29 @@ uint32_t hta_effect_first_sound(const hta_cache *c, uint32_t effect_tag_id);
 bool hta_effect_fp_flash(const hta_cache *c, uint32_t effect_tag_id,
                          const char *marker_name, hta_effect_particle *out);
 
+/* The blast of a detonation: the widest particle this effect actually
+ * spawns that adds light to the frame, whatever camera it is meant for.
+ *
+ * Same scoring as hta_effect_fp_flash and for the same reason -- one quad
+ * standing in for a burst -- but without the first-person filter, because
+ * an explosion is a thing in the world. Returns false when the effect has
+ * no additive particle, which is most of them. */
+bool hta_effect_blast(const hta_cache *c, uint32_t effect_tag_id,
+                      hta_effect_particle *out);
+
+/* What a detonation leaves behind. Halo hangs the bang and the scorch off
+ * the effect's PARTS, beside the damage, the light and the particle system:
+ * a rocket's explosion names `frag grenade\expl` and the `grenade char`
+ * decal. Either output may come back 0 -- a bullet impact has no decal of
+ * its own -- and the radius is the decal tag's own, so an explosion marks
+ * the wall the size Halo says rather than the size of a bullet hole. */
+bool hta_effect_detonation(const hta_cache *c, uint32_t effect_tag_id,
+                           uint32_t *out_sound, float *out_decal_radius,
+                           uint32_t *out_decal);
+
+/* The bitmap a `deca` draws with (decal+216). */
+uint32_t hta_decal_bitmap(const hta_cache *c, uint32_t decal_tag_id);
+
 /* `foot` (material_effects): the sound this biped makes stepping on that
  * MaterialType. Group 0 is the walk set. Returns 0 when the material has no
  * sound of its own -- plenty do not, and silence is the right answer. */
@@ -92,5 +115,10 @@ uint32_t hta_material_effect_sound(const hta_cache *c, uint32_t foot_tag_id,
  * response -- a shield or rubber makes no impact noise. */
 uint32_t hta_projectile_impact_sound(const hta_cache *c, uint32_t projectile_id,
                                      uint8_t material);
+
+/* The `effe` this projectile plays on that MaterialType, or 0. The sound
+ * above is that effect's; the decal it leaves is in the same place. */
+uint32_t hta_projectile_response_effect(const hta_cache *c, uint32_t projectile_id,
+                                        uint8_t material);
 
 #endif

@@ -55,6 +55,13 @@ typedef struct {
     uint32_t     verts_each;
     bool         loaded;
 
+    /* What its detonation sounds like and how wide a mark it leaves, both
+     * from the projectile's own detonation effect. Either may be absent:
+     * a needle pops, a bullet does neither. */
+    uint32_t detonation_snd;
+    float    blast_radius;
+    uint32_t decal_id;       /* `deca` the blast leaves, 0 if none */
+
     /* Where the last projectile went off, for the caller's impact sound and
      * scorch. Valid for the update that set `detonated`. */
     bool     detonated;
