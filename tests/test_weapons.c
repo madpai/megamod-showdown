@@ -250,6 +250,38 @@ int main(int argc, char **argv)
                     {
                         /* Measured on the idle, which is how it is held. */
                         hta_viewmodel_play(&vm, HTA_VM_IDLE);
+
+                        /* THE invariant: the idle already holds the complete
+                         * needle rack, so a FULL magazine must leave the base
+                         * pose alone. The clip is a delta away from its own
+                         * LAST frame, which makes that true by construction.
+                         * Referencing it to frame 0 instead splayed the
+                         * needles as the magazine emptied. */
+                        {
+                            hta_transform a[HTA_ANIM_MAX_NODES];
+                            hta_transform b[HTA_ANIM_MAX_NODES];
+                            int32_t idle = vm.clip[HTA_VM_IDLE];
+                            hta_anim_sample(&vm.graph, (uint32_t)idle, 0.0f, a);
+                            memcpy(b, a, sizeof(hta_transform) * vm.graph.node_count);
+                            hta_viewmodel_set_ammo(&vm, 1.0f);
+                            hta_viewmodel_apply_ammo(&vm, b);
+                            float drift = 0.0f;
+                            for (uint32_t k = 0; k < vm.graph.node_count; k++)
+                                for (int q = 0; q < 3; q++)
+                                    drift += fabsf(a[k].t[q] - b[k].t[q]);
+                            printf("    full-magazine drift %.6f\n", drift);
+                            CHECK(drift < 1e-4f,
+                                  "a full magazine leaves the idle's rack untouched");
+                            memcpy(b, a, sizeof(hta_transform) * vm.graph.node_count);
+                            hta_viewmodel_set_ammo(&vm, 0.0f);
+                            hta_viewmodel_apply_ammo(&vm, b);
+                            drift = 0.0f;
+                            for (uint32_t k = 0; k < vm.graph.node_count; k++)
+                                for (int q = 0; q < 3; q++)
+                                    drift += fabsf(a[k].t[q] - b[k].t[q]);
+                            CHECK(drift > 1e-3f, "and an empty one moves them");
+                        }
+
                         uint32_t nv = vm.hands_verts + vm.gun_verts;
                         int prev = -1, falls = 0, steps = 0;
                         int at_full = 0, at_empty = 0;

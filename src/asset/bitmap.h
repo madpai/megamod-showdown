@@ -35,6 +35,11 @@
 
 /* ShaderEnvironment.base_map TagDependency, after the 40-byte Shader header. */
 #define HTA_SENV_BASE_MAP  0x88u
+/* ShaderTransparentGlass reconciles at 480. Its FIRST bitmap dependency is
+ * the reflection cube map, which is not what the surface looks like -- the
+ * needler's glowing needles came out textured with a dark grey cubemap. */
+#define HTA_SGLA_BACKGROUND_TINT 100u
+#define HTA_SGLA_DIFFUSE         344u
 /* ShaderEnvironment reconciles at 836. The detail maps are what give Halo's
  * ground its texture up close -- without them a grass shader is one flat
  * repeat of a low-resolution base map. */

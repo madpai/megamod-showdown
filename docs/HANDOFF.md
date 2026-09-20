@@ -364,6 +364,68 @@ frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
 Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
 need weapon state we do not track yet.
 
+## The needler was invisible, not broken (2026-09-20)
+
+### `sgla` was never handled, so the needles were dark
+
+Three rounds of "the needler looks wrong" all had the same root cause, and
+it was not the animation.
+
+`weapons\needler\shaders\needler luminous` is a **`sgla`**
+(shader_transparent_glass) -- the glowing crystal needles. Nothing handled
+that class, so:
+
+- `hta_shader_draw_mode` fell through to **OPAQUE**, drawing lit crystal as
+  solid dark spikes; and
+- `hta_shader_base_bitmap`'s generic "first `bitm` dependency" scan picked
+  the **reflection cube map**, because in `ShaderTransparentGlass` (480,
+  reconciles) that comes before the diffuse map at 344.
+
+So the needles were dark spikes wearing a grey cubemap, against a dark gun.
+They now draw ADDITIVE with their diffuse map. Additive is a stand-in: we
+have no refraction and no cube-map reflection, and what the eye reads on
+these is the glow.
+
+**Every earlier visual judgement about the needler was made on needles that
+were nearly invisible.** That is why the animation was "fixed" twice in the
+wrong direction. Fix the shading before trusting the animation.
+
+### And then the animation, correctly
+
+With the needles visible it took one render to settle: **the idle pose
+already holds the complete rack.** That is what a loaded needler looks
+like. So the ammunition clip is a delta away from FULL, and its full end is
+its **last** frame:
+
+```
+delta_i = overlay[frame] . overlay[LAST]^-1
+local_i = delta_i . local_i
+ammo_frame = fraction * last
+```
+
+At a full magazine this is the identity by construction, so the idle's rack
+survives untouched -- `tests/test_weapons.c` measures that drift and
+requires zero. Referencing the delta to frame 0 (the spent end) instead
+splayed the needles outward as the magazine emptied, which is the artifact
+to recognise. Needle vertices above the gun now fall 762 -> 250 across the
+magazine, monotonically.
+
+Three wrong readings on this one clip. The order that works: make it
+visible, compare against a reference screenshot, and only then reason about
+frames.
+
+### Mipmaps are for surfaces that minify
+
+The rifle's round counter went dim and smeared the moment mipmaps landed:
+its digits are small additive quads, and a lower level averages them with
+the black around them.
+
+**Dynamic meshes never minify** -- the viewmodel and the HUD are drawn at a
+fixed size a few centimetres from the eye -- so `upload_mesh` now mips only
+static meshes (`vslots == 0`). The world keeps its chain; the LCD and the
+HUD font are sharp again. This is also why a packed atlas and mipmaps do
+not mix: with no padding between cells, lower levels bleed across them.
+
 ## Meters draw their empty half, and mipmaps (2026-09-20)
 
 ### The pip grid was not depleting at all
@@ -1335,7 +1397,8 @@ after building, wherever real tag physics are available.
 | Detail maps | `src/asset/bitmap.c` `hta_shader_detail_bitmap`, `shaders/mesh.frag` |
 | HUD font digits | `src/asset/font.c` |
 | Meter empty colour | `shaders/hud.frag`, `hta_submesh.empty` |
-| Mipmap generation | `src/gfx/gfx_vulkan.c` `downsample` / `upload_rgba` |
+| Mipmap generation | `src/gfx/gfx_vulkan.c` `downsample` / `upload_rgba_mips` |
+| Glass shaders (`sgla`) | `src/asset/bitmap.c` draw mode + diffuse map |
 | Rounds counter | `src/engine/hud.c` `load_numbers` |
 | Object attachments / looping sounds | `src/asset/effect.c` `hta_object_loop_sound` |
 | Continuous voices | `src/engine/audio.c` `hta_audio_loop` |

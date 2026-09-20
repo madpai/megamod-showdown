@@ -374,6 +374,16 @@ uint32_t hta_shader_base_bitmap(const hta_cache *c, uint32_t shader_tag_id)
             id && id != 0xFFFFFFFFu) return id;
     }
 
+    /* Glass: the diffuse map is the surface. Falling through to the generic
+     * scan picks the REFLECTION cube map instead, because it comes first. */
+    if (t.primary_class == HTA_TAG_SGLA) {
+        uint32_t id = 0;
+        if (hta_rd_u32(c, off + HTA_SGLA_DIFFUSE + 0x0C, &id) &&
+            id && id != 0xFFFFFFFFu) return id;
+        if (hta_rd_u32(c, off + HTA_SGLA_BACKGROUND_TINT + 0x0C, &id) &&
+            id && id != 0xFFFFFFFFu) return id;
+    }
+
     /* Generic: first TagDependency whose class fourcc is 'bitm' in the first
      * 512 bytes of the shader. Covers soso / schi / scex well enough. */
     for (uint32_t rel = 0x28; rel + 16 <= 512; rel += 4) {
@@ -402,6 +412,13 @@ uint8_t hta_shader_draw_mode(const hta_cache *c, uint32_t shader_tag_id)
     if (strstr(path, "black")) return HTA_DRAW_SKIP;
     if (strstr(path, "light") || strstr(path, "teleporter") || strstr(path, "shield"))
         return HTA_DRAW_ADD;
+    /* Transparent glass is never opaque. The needler's needles are a
+     * `sgla` -- "needler luminous" -- and drawn opaque they came out as
+     * dark solid spikes instead of the lit crystal they are. Additive is
+     * the honest stand-in: we have no refraction or cube-map reflection,
+     * and what the eye reads on these is the glow. */
+    if (t.primary_class == HTA_TAG_SGLA) return HTA_DRAW_ADD;
+
     if (t.primary_class == HTA_TAG_SCHI || t.primary_class == HTA_TAG_SCEX) {
         /* Ask the tag rather than the tag's name. Shader base is 40 bytes,
          * so a chicago shader's framebuffer blend function sits at +44.

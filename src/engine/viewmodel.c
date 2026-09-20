@@ -326,24 +326,36 @@ void hta_viewmodel_free(hta_viewmodel *vm)
 void hta_viewmodel_apply_ammo(const hta_viewmodel *vm, hta_transform *local)
 {
     if (!vm || !local || vm->clip_ammo < 0) return;
-    hta_transform over[HTA_ANIM_MAX_NODES];
+
+    const hta_animation *a = &vm->graph.anims[vm->clip_ammo];
+    float last = (float)(a->frame_count > 0 ? a->frame_count - 1 : 0);
+
+    hta_transform over[HTA_ANIM_MAX_NODES], full[HTA_ANIM_MAX_NODES];
     if (!hta_anim_sample(&vm->graph, (uint32_t)vm->clip_ammo, vm->ammo_frame, over))
         return;
+    if (!hta_anim_sample(&vm->graph, (uint32_t)vm->clip_ammo, last, full))
+        return;
 
-    /* The clip POSES the needle bones outright; it does not offset them.
+    /* The clip is a DELTA away from a full magazine, and its full end is
+     * its LAST frame.
      *
-     * Reading it as an additive delta looks principled and is wrong: it
-     * throws the needles out into a splayed mess at an empty magazine,
-     * because the ammunition clip and the idle hold those bones in quite
-     * different places. Compare the posed bounding box, not the node
-     * translations, if this is ever in doubt.
+     * The idle already holds the complete needle rack -- that is what the
+     * gun looks like loaded -- so a full magazine has to leave the base
+     * pose exactly alone. Referencing the delta to the clip's last frame
+     * makes that true by construction: at a full magazine this is the
+     * identity. Referencing it to frame 0 instead (the spent end) threw the
+     * needles out into a splayed fan as the magazine emptied.
      *
-     * Only the nodes the clip actually keyframes are taken. The rest of a
-     * sampled overlay is its own default pose, which would flatten the
-     * arms. */
-    for (uint32_t i = 0; i < vm->graph.node_count; i++)
-        if (hta_anim_animates(&vm->graph, (uint32_t)vm->clip_ammo, i))
-            local[i] = over[i];
+     * Only the nodes the clip keyframes are touched; the rest of a sampled
+     * overlay is its own default pose, which would flatten the arms. */
+    for (uint32_t i = 0; i < vm->graph.node_count; i++) {
+        if (!hta_anim_animates(&vm->graph, (uint32_t)vm->clip_ammo, i)) continue;
+        hta_transform inv, delta, posed;
+        hta_xf_inverse(&inv, &full[i]);
+        hta_xf_mul(&delta, &over[i], &inv);
+        hta_xf_mul(&posed, &delta, &local[i]);
+        local[i] = posed;
+    }
 }
 
 void hta_viewmodel_set_ammo(hta_viewmodel *vm, float fraction)

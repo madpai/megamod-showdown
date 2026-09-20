@@ -145,6 +145,9 @@ static void gfail(char *err, size_t n, const char *fmt, ...)
     if (_r != VK_SUCCESS) { gfail(err, errlen, "%s failed (VkResult %d)", what, (int)_r); return false; } \
 } while (0)
 
+static bool upload_rgba_mips(hta_gfx *g, const uint8_t *rgba, uint32_t w, uint32_t h,
+                             bool want_mips, hta_vk_tex *out,
+                             char *err, size_t errlen);
 static bool upload_rgba(hta_gfx *g, const uint8_t *rgba, uint32_t w, uint32_t h,
                         hta_vk_tex *out, char *err, size_t errlen);
 
@@ -896,9 +899,16 @@ static void destroy_tex(hta_gfx *g, hta_vk_tex *t)
 static bool upload_rgba(hta_gfx *g, const uint8_t *rgba, uint32_t w, uint32_t h,
                         hta_vk_tex *out, char *err, size_t errlen)
 {
+    return upload_rgba_mips(g, rgba, w, h, true, out, err, errlen);
+}
+
+static bool upload_rgba_mips(hta_gfx *g, const uint8_t *rgba, uint32_t w, uint32_t h,
+                             bool want_mips, hta_vk_tex *out,
+                             char *err, size_t errlen)
+{
     memset(out, 0, sizeof(*out));
     if (!rgba || w == 0 || h == 0) { gfail(err, errlen, "empty texture"); return false; }
-    uint32_t levels = mip_levels(w, h);
+    uint32_t levels = want_mips ? mip_levels(w, h) : 1u;
     if (!make_image_mips(g, w, h, VK_FORMAT_R8G8B8A8_UNORM,
                          VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                          VK_IMAGE_ASPECT_COLOR_BIT, levels,
@@ -1114,9 +1124,18 @@ static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
     if (m->tex_count) {
         m->tex = (hta_vk_tex *)calloc(m->tex_count, sizeof(hta_vk_tex));
         if (!m->tex) { hta_gfx_mesh_free(g, m); gfail(err, errlen, "oom"); return NULL; }
+        /* Mipmaps are for surfaces that MINIFY. The world does; the
+         * viewmodel and the HUD never do -- they are drawn at a fixed size
+         * a few centimetres from the eye -- and mipping them only costs
+         * sharpness. The rifle's round counter is the case that showed it:
+         * its digits are small additive quads, a lower level averaged them
+         * with the black around them, and the readout came out dim and
+         * smeared. A dynamic mesh is exactly the set that never minifies. */
+        bool want_mips = (vslots == 0);
         for (uint32_t i = 0; i < m->tex_count; i++) {
             const hta_bsp_texture *t = &mesh->textures[i];
-            if (!t->rgba || !upload_rgba(g, t->rgba, t->width, t->height, &m->tex[i], err, errlen)) {
+            if (!t->rgba || !upload_rgba_mips(g, t->rgba, t->width, t->height,
+                                              want_mips, &m->tex[i], err, errlen)) {
                 hta_gfx_mesh_free(g, m);
                 return NULL;
             }
