@@ -87,6 +87,7 @@ int main(int argc, char **argv)
     int fp_mode = 0;
     int have_eye = 0, want_flash = 0, ammo = -1;
     const char *want_weapon = NULL;
+    int zoom_level = 0;
     float shield = 1.0f, health = 1.0f;
     float eye[3] = {0.0f, 0.0f, 0.0f}, eye_yaw = 0.0f, eye_pitch = 0.0f;
     uint32_t W = 1280, H = 720, shots = 4;
@@ -108,6 +109,7 @@ int main(int argc, char **argv)
             eye_pitch = strtof(argv[++i], NULL) * 0.01745329f;
         else if (!strcmp(argv[i], "--flash")) want_flash = 1;
         else if (!strcmp(argv[i], "--weapon") && i + 1 < argc) want_weapon = argv[++i];
+        else if (!strcmp(argv[i], "--zoom") && i + 1 < argc) zoom_level = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--ammo") && i + 1 < argc) ammo = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--shield") && i + 1 < argc) shield = strtof(argv[++i], NULL);
         else if (!strcmp(argv[i], "--health") && i + 1 < argc) health = strtof(argv[++i], NULL);
@@ -304,6 +306,13 @@ int main(int argc, char **argv)
     uint32_t drawn = 0;
     hta_spawn_point spawn;
     int have_spawn = hta_scenario_spawns(&c, &spawn, 1) > 0;
+    if (zoom_level > 0 && wdef.zoom_levels > 0) {
+        float t = wdef.zoom_levels > 1
+                ? (float)(zoom_level - 1) / (float)(wdef.zoom_levels - 1) : 0.0f;
+        float mag = wdef.zoom_mag[0] + (wdef.zoom_mag[1] - wdef.zoom_mag[0]) * t;
+        if (mag > 1.0f) cam.fov_y /= mag;
+        printf("zoom           level %d -> %.1fx\n", zoom_level, mag);
+    }
     if (fp_mode || have_eye) {
         cam.znear = 0.02f;
         cam.zfar  = radius * 12.0f;

@@ -155,6 +155,58 @@ int main(void)
         CHECK(hta_audio_active_voices(&a) == 0, "an unknown clip id plays nothing");
     }
 
+    printf("\n[continuous sounds]\n");
+    {
+        /* The flamethrower's roar is a looping sound on the weapon object,
+         * held for as long as the trigger is. */
+        hta_audio a;
+        hta_audio_init(&a, 22050, 1);
+        int16_t tone[8];
+        for (int i = 0; i < 8; i++) tone[i] = (int16_t)(i < 4 ? 8000 : -8000);
+        uint32_t clip = hta_audio_add_clip(&a, tone, 8, 22050, 1);
+
+        int16_t out[64];
+        hta_audio_loop(&a, 1u, clip, 1.0f);
+        hta_audio_mix(&a, out, 64);
+        CHECK(hta_audio_active_voices(&a) == 1, "a loop starts one voice");
+        int silent = 1;
+        for (int i = 0; i < 64; i++) if (out[i] != 0) silent = 0;
+        CHECK(!silent, "and sounds past the end of an 8-frame clip");
+
+        /* Asking again while it runs must not restart or stack it. */
+        for (int i = 0; i < 4; i++) {
+            hta_audio_loop(&a, 1u, clip, 1.0f);
+            hta_audio_mix(&a, out, 64);
+        }
+        CHECK(hta_audio_active_voices(&a) == 1, "asking again does not stack voices");
+
+        hta_audio_loop_stop(&a, 1u);
+        hta_audio_mix(&a, out, 64);
+        CHECK(hta_audio_active_voices(&a) == 0, "releasing the trigger stops it");
+        silent = 1;
+        for (int i = 0; i < 64; i++) if (out[i] != 0) silent = 0;
+        CHECK(silent, "and it goes quiet");
+
+        hta_audio_loop_stop(&a, 1u);
+        hta_audio_mix(&a, out, 64);
+        CHECK(hta_audio_active_voices(&a) == 0, "stopping it twice is harmless");
+
+        /* A loop must survive a storm of one-shots rather than being stolen. */
+        hta_audio_loop(&a, 7u, clip, 1.0f);
+        hta_audio_mix(&a, out, 64);
+        for (int i = 0; i < HTA_AUDIO_MAX_VOICES * 3; i++) {
+            hta_audio_play(&a, clip, 1.0f);
+            hta_audio_mix(&a, out, 4);
+        }
+        int loop_alive = 0;
+        for (uint32_t i = 0; i < HTA_AUDIO_MAX_VOICES; i++)
+            if (a.voices[i].active && a.voices[i].loop == 7u) loop_alive = 1;
+        CHECK(loop_alive, "one-shots never steal the continuous voice");
+        hta_audio_loop_stop(&a, 7u);
+        hta_audio_mix(&a, out, 8);
+        CHECK(hta_audio_active_voices(&a) == 0, "and it still stops on demand");
+    }
+
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

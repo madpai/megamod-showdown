@@ -123,6 +123,11 @@ typedef struct {
     } bank[HTA_SND_MAX_BANK];
     uint32_t bank_count;
     uint32_t fire_snd;       /* snd! id of the weapon's gunshot, 0 if none */
+    /* A weapon whose firing effect has no sound at all roars continuously
+     * instead: the flamethrower. Held for as long as the trigger is. */
+    uint32_t fire_loop_snd;
+    float    fire_loop_gain;
+    bool     fire_loop_on;
     uint32_t empty_snd;      /* the click when the magazine is out */
     uint32_t foot_snd[33];   /* per MaterialType, resolved on first use */
     uint8_t  foot_known[33];
@@ -134,6 +139,9 @@ typedef struct {
     uint32_t weapon_count;
     uint32_t weapon_slot;
     bool     hud_swap;
+    bool     hud_zoom;
+    int      zoom_level;     /* 0 = not zoomed */
+    float    base_fov;
     bool     bitmaps_ok;
     uint32_t rng;
 
@@ -340,6 +348,61 @@ static void play_tag(hta_android *s, uint32_t tag_id, float gain)
     hta_audio_play(&s->audio, s->bank[b].clip[pick], gain);
 }
 
+/* The one continuous voice we keep; any non-zero id would do. */
+#define HTA_LOOP_FIRE 1u
+
+/* Starts or stops the weapon's continuous firing sound. Calling this every
+ * frame while the trigger is held is the intended use -- the mixer leaves a
+ * running loop alone rather than restarting it. */
+static void fire_loop(hta_android *s, bool on)
+{
+    if (!s->fire_loop_snd) return;
+    if (on) {
+        int b = bank_get(s, s->fire_loop_snd);
+        if (b < 0) return;
+        hta_audio_loop(&s->audio, HTA_LOOP_FIRE, s->bank[b].clip[0],
+                       s->fire_loop_gain);
+        s->fire_loop_on = true;
+    } else if (s->fire_loop_on) {
+        hta_audio_loop_stop(&s->audio, HTA_LOOP_FIRE);
+        s->fire_loop_on = false;
+    }
+}
+
+/* Magnification at a zoom level. Halo spreads the tag's first and last
+ * magnification evenly across however many levels the weapon has, so the
+ * sniper's two become 2x and 8x and the pistol's single one is just 2x. */
+static float zoom_magnification(const hta_weapon_def *w, int level)
+{
+    if (!w || level <= 0 || level > w->zoom_levels) return 1.0f;
+    if (w->zoom_levels == 1) return w->zoom_mag[0] > 1.0f ? w->zoom_mag[0] : 1.0f;
+    float t = (float)(level - 1) / (float)(w->zoom_levels - 1);
+    float m = w->zoom_mag[0] + (w->zoom_mag[1] - w->zoom_mag[0]) * t;
+    return m > 1.0f ? m : 1.0f;
+}
+
+static void apply_zoom(hta_android *s)
+{
+    float base = s->base_fov > 0.1f ? s->base_fov : s->player.phys.fov_y;
+    float mag = zoom_magnification(&s->weap, s->zoom_level);
+    s->cam.fov_y = base / mag;
+}
+
+/* Step to the next zoom level, wrapping back to none. Weapons the tag gives
+ * no zoom simply have nothing to step through. */
+static void cycle_zoom(hta_android *s)
+{
+    if (s->weap.zoom_levels <= 0) return;
+    int was = s->zoom_level;
+    s->zoom_level = (s->zoom_level + 1) % (s->weap.zoom_levels + 1);
+    apply_zoom(s);
+    uint32_t snd = (s->zoom_level > was || (was && !s->zoom_level))
+                 ? (s->zoom_level ? s->weap.zoom_in_snd_id : s->weap.zoom_out_snd_id)
+                 : s->weap.zoom_in_snd_id;
+    if (snd) { bank_get(s, snd); play_tag(s, snd, 1.0f); }
+    hta_log("[weapon] zoom %dx", (int)zoom_magnification(&s->weap, s->zoom_level));
+}
+
 /* Put a weapon in the player's hands.
  *
  * Everything the game shows and hears about a weapon comes from its own
@@ -372,12 +435,34 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
      * effect, among that effect's parts. */
     s->fire_snd = hta_effect_first_sound(&s->cache, s->weap.firing_fx_id);
     if (s->fire_snd) bank_get(s, s->fire_snd);
+
+    /* The flamethrower's firing effect has no sound in it at all: its roar
+     * is a looping sound attached to the weapon OBJECT's `primary trigger`.
+     * Only reach for that when the effect gives us nothing, because the
+     * plasma pistol hangs its overcharge whine on the same marker. */
+    fire_loop(s, false);
+    s->fire_loop_snd = 0;
+    s->fire_loop_gain = 1.0f;
+    if (!s->fire_snd) {
+        hta_loop_sound ls;
+        if (hta_object_loop_sound(&s->cache, weap_tag_id, "primary trigger", &ls)) {
+            s->fire_loop_snd = ls.loop ? ls.loop : ls.start;
+            s->fire_loop_gain = ls.gain;
+            if (s->fire_loop_snd) {
+                bank_get(s, s->fire_loop_snd);
+                hta_log("[weapon] continuous firing sound 0x%08X", s->fire_loop_snd);
+            }
+        }
+    }
     s->empty_snd = hta_effect_first_sound(&s->cache, s->weap.empty_fx_id);
     if (s->empty_snd) bank_get(s, s->empty_snd);
     /* Impacts are this projectile's, so forget the last weapon's. */
     memset(s->impact_known, 0, sizeof(s->impact_known));
 
     hta_ammo_init(&s->ammo, &s->weap);
+    /* A new weapon comes up unzoomed, and takes its own field of view. */
+    s->zoom_level = 0;
+    apply_zoom(s);
 
     /* Rebuild the viewmodel and everything hanging off it. */
     if (s->gpu_fp) { hta_gfx_mesh_free(s->gfx, s->gpu_fp); s->gpu_fp = NULL; }
@@ -619,6 +704,7 @@ static bool load_map(hta_android *s)
         if (hta_player_physics_load(&phys, &s->cache, err, sizeof(err))) {
             hta_player_apply_physics(&s->player, &phys);
             s->cam.fov_y = phys.fov_y;
+            s->base_fov = phys.fov_y;
             hta_collision_set_slope(&s->col, phys.max_slope);
             hta_log("[player] cyborg_mp run %.2f wu/s jump %.2f cam %.2f r %.2f slope %.0f deg",
                     phys.run_forward, phys.jump_speed, phys.cam_stand, phys.radius,
@@ -763,6 +849,7 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
         if (code == AKEYCODE_BUTTON_Y && down) { s->hud_reload = true; return 1; }
         if (code == AKEYCODE_BUTTON_R1 && down) { s->hud_melee = true; return 1; }
         if (code == AKEYCODE_BUTTON_L1 && down) { s->hud_swap = true; return 1; }
+        if (code == AKEYCODE_BUTTON_THUMBR && down) { s->hud_zoom = true; return 1; }
         if (code == AKEYCODE_BUTTON_B && down) {
             s->player.noclip = !s->player.noclip;
             hta_log("[input] noclip %s", s->player.noclip ? "ON" : "OFF");
@@ -1033,6 +1120,13 @@ Java_net_hta_halotrial_GameActivity_nativeHudSwap(JNIEnv *env, jclass cls)
     if (g_android) g_android->hud_swap = true;
 }
 
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudZoom(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    if (g_android) g_android->hud_zoom = true;
+}
+
 void android_main(struct android_app *app)
 {
     static hta_android state;
@@ -1109,6 +1203,11 @@ void android_main(struct android_app *app)
             }
         }
 
+        if (state.hud_zoom) {
+            state.hud_zoom = false;
+            cycle_zoom(&state);
+        }
+
         /* A swing takes the weapon out of the fight until it finishes, so
          * the rest of this frame's trigger work has to know about it. */
         bool swinging = state.vm.loaded && state.vm.state == HTA_VM_MELEE;
@@ -1140,6 +1239,13 @@ void android_main(struct android_app *app)
                     hta_viewmodel_play(&state.vm, HTA_VM_RELOAD);
             }
         }
+        /* A continuous weapon sounds while the trigger is actually doing
+         * something, and goes quiet the moment it is released, the magazine
+         * runs out, or a swing takes the weapon out of the fight. */
+        fire_loop(&state, in.fire && !swinging &&
+                          state.ammo.phase == HTA_AMMO_READY &&
+                          state.ammo.loaded >= state.ammo.per_shot);
+
         /* The gun carries its own round counter, and the HUD carries the
          * same magazine as a grid of pips. */
         hta_viewmodel_set_counter(&state.vm, (uint32_t)state.ammo.loaded);

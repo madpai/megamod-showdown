@@ -8,8 +8,21 @@
 
 /* Clip names in the Trial's FP graphs. Matched as case-insensitive substrings
  * so "first-person reload-full" and "first-person reload-full2" both resolve. */
-static const char *const CLIP_NAME[HTA_VM_STATE_COUNT] = {
-    "ready", "idle", "firing", "reload", "melee"
+/* Weapons do not agree on what to call their clips, and a slot has to try
+ * every spelling its weapon might use. The assault rifle is the ONLY one in
+ * the Trial that says "firing"; every other weapon says "fire-1", so a
+ * single name left ten weapons with no firing animation at all.
+ *
+ * Order matters: the match is a substring, and "fire" alone would also hit
+ * the plasma weapons' "misfire-1", so the specific spellings come first.
+ * The same goes for reload, where "reload-full" is preferred over
+ * "reload-empty" when a weapon has both. */
+static const char *const CLIP_NAMES[HTA_VM_STATE_COUNT][4] = {
+    { "ready",       NULL,           NULL,     NULL },
+    { "idle",        NULL,           NULL,     NULL },
+    { "fire-1",      "firing",       "fire-2", NULL },
+    { "reload-full", "reload-empty", "reload", NULL },
+    { "melee",       NULL,           NULL,     NULL },
 };
 
 static void free_partial(hta_viewmodel *vm)
@@ -253,8 +266,11 @@ bool hta_viewmodel_load(hta_viewmodel *vm, const hta_cache *c,
     if (!vm->posed) { free_partial(vm); if (err) snprintf(err, errlen, "oom"); return false; }
     memcpy(vm->posed, vm->mesh.vertices, (size_t)vm->mesh.vertex_count * sizeof(hta_vertex));
 
-    for (int i = 0; i < HTA_VM_STATE_COUNT; i++)
-        vm->clip[i] = hta_anim_find(&vm->graph, CLIP_NAME[i]);
+    for (int i = 0; i < HTA_VM_STATE_COUNT; i++) {
+        vm->clip[i] = -1;
+        for (int k = 0; k < 4 && CLIP_NAMES[i][k] && vm->clip[i] < 0; k++)
+            vm->clip[i] = hta_anim_find(&vm->graph, CLIP_NAMES[i][k]);
+    }
     if (vm->clip[HTA_VM_IDLE] < 0) {
         if (err) snprintf(err, errlen, "graph '%s' has no idle clip", vm->graph.path);
         free_partial(vm);

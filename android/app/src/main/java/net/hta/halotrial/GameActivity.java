@@ -139,6 +139,7 @@ public class GameActivity extends NativeActivity {
     static native void nativeHudReload();
     static native void nativeHudMelee();
     static native void nativeHudSwap();
+    static native void nativeHudZoom();
     static native String nativeDebugText();
     static native String nativeAmmoText();
 
@@ -152,6 +153,7 @@ public class GameActivity extends NativeActivity {
         private final Paint reloadP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint meleeP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint swapP = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint zoomP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint debug = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint ammo = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -163,8 +165,9 @@ public class GameActivity extends NativeActivity {
         private float reloadCx, reloadCy, reloadR;
         private float meleeCx, meleeCy, meleeR;
         private float swapCx, swapCy, swapR;
+        private float zoomCx, zoomCy, zoomR;
         private int stickPtr = -1, firePtr = -1, jumpPtr = -1, crouchPtr = -1;
-        private int reloadPtr = -1, meleePtr = -1, swapPtr = -1;
+        private int reloadPtr = -1, meleePtr = -1, swapPtr = -1, zoomPtr = -1;
         private final float[] lastX = new float[16];
         private final float[] lastY = new float[16];
 
@@ -182,6 +185,7 @@ public class GameActivity extends NativeActivity {
             reloadP.setColor(0xCCB08420);
             meleeP.setColor(0xCC6E3BA8);
             swapP.setColor(0xCC2E7D6B);
+            zoomP.setColor(0xCC3C5A8C);
             label.setColor(0xFFFFFFFF);
             ammo.setColor(0xF2FFFFFF);
             ammo.setTextAlign(Paint.Align.RIGHT);
@@ -217,6 +221,9 @@ public class GameActivity extends NativeActivity {
             swapR = m * 0.058f;
             swapCx = w * 0.60f;
             swapCy = h * 0.90f;
+            zoomR = m * 0.058f;
+            zoomCx = w * 0.625f;
+            zoomCy = h * 0.72f;
             label.setTextSize(m * 0.032f);
             ammo.setTextSize(m * 0.085f);
             excludeFromSystemGestures();
@@ -271,6 +278,9 @@ public class GameActivity extends NativeActivity {
                 } else if (in(x, y, swapCx, swapCy, swapR * 1.15f) && swapPtr < 0) {
                     swapPtr = id;
                     GameActivity.nativeHudSwap();
+                } else if (in(x, y, zoomCx, zoomCy, zoomR * 1.15f) && zoomPtr < 0) {
+                    zoomPtr = id;
+                    GameActivity.nativeHudZoom();
                 } else if ((in(x, y, stickCx, stickCy, stickR * 1.4f) || x < getWidth() * 0.38f)
                         && stickPtr < 0) {
                     stickPtr = id;
@@ -304,6 +314,7 @@ public class GameActivity extends NativeActivity {
                     reloadPtr = -1;
                     meleePtr = -1;
                     swapPtr = -1;
+                    zoomPtr = -1;
                 } else {
                     if (id == stickPtr) releaseStick();
                     if (id == firePtr) releaseFire();
@@ -312,6 +323,7 @@ public class GameActivity extends NativeActivity {
                     if (id == reloadPtr) reloadPtr = -1;
                     if (id == meleePtr) meleePtr = -1;
                     if (id == swapPtr) swapPtr = -1;
+                    if (id == zoomPtr) zoomPtr = -1;
                 }
                 break;
             default:
@@ -397,6 +409,10 @@ public class GameActivity extends NativeActivity {
             c.drawCircle(swapCx, swapCy, swapR, swapP);
             c.drawCircle(swapCx, swapCy, swapR, ring);
             c.drawText("SWAP", swapCx, swapCy + label.getTextSize() * 0.35f, label);
+
+            c.drawCircle(zoomCx, zoomCy, zoomR, zoomP);
+            c.drawCircle(zoomCx, zoomCy, zoomR, ring);
+            c.drawText("ZOOM", zoomCx, zoomCy + label.getTextSize() * 0.35f, label);
 
             /* Ammo, big and bottom-right: loaded / reserve, "--" while the
              * magazine is out. */

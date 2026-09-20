@@ -30,6 +30,7 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_sound "$HTA_MAP" >/dev/null 2>&1; then ok "snd! tags + Xbox ADPCM from Trial data"; else bad "snd! tags + Xbox ADPCM from Trial data"; fi
   if ./build-host/test_ammo "$HTA_MAP" >/dev/null 2>&1; then ok "magazine values from the Trial weapon tag"; else bad "magazine values from the Trial weapon tag"; fi
   if ./build-host/test_hud "$HTA_MAP" >/dev/null 2>&1; then ok "crosshair from the weapon HUD tag"; else bad "crosshair from the weapon HUD tag"; fi
+  if ./build-host/test_weapons "$HTA_MAP" >/dev/null 2>&1; then ok "roster animations + zoom from the weapon tags"; else bad "roster animations + zoom from the weapon tags"; fi
 fi
 
 # Optional: validate against the user's own Trial data if HTA_MAP points at it.

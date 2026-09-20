@@ -108,6 +108,10 @@ bool hta_weapon_load_id(const hta_cache *c, const hta_resource_map *bitmaps,
     hta_cache_tag_path(c, &t, def->path, sizeof(def->path));
 
     def->hud_interface_id = rddep(c, off + HTA_WEAP_HUD_INTERFACE);
+    def->zoom_levels = rdi16(c, off + HTA_WEAP_ZOOM_LEVELS);
+    if (def->zoom_levels < 0 || def->zoom_levels > 8) def->zoom_levels = 0;
+    def->zoom_mag[0] = rdf(c, off + HTA_WEAP_ZOOM_MAG);
+    def->zoom_mag[1] = rdf(c, off + HTA_WEAP_ZOOM_MAG + 4u);
     def->fp_model_id     = rddep(c, off + HTA_WEAP_FP_MODEL);
     def->fp_anim_id      = rddep(c, off + HTA_WEAP_FP_ANIM);
     def->pickup_snd_id   = rddep(c, off + HTA_WEAP_PICKUP_SND);

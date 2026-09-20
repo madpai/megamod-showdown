@@ -159,6 +159,54 @@ int main(int argc, char **argv)
         CHECK(b.loaded == 1, "and the round is not consumed");
     }
 
+    printf("\n[reloading one round at a time]\n");
+    {
+        /* Halo's shotgun loads a single shell per 0.40 s. Asking the player
+         * to request each one is not how it plays: one reload keeps going
+         * until the magazine is full. */
+        hta_weapon_def w = fake(12, 60, 24, 1, 1, 0.4f);
+        hta_ammo a;
+        hta_ammo_init(&a, &w);
+        CHECK(a.per_reload == 1, "this weapon loads one round a go");
+        for (int i = 0; i < 8; i++) hta_ammo_shoot(&a);
+        CHECK(a.loaded == 4, "four left after eight shots");
+
+        CHECK(hta_ammo_reload(&a), "a reload starts");
+        CHECK(a.chaining, "and knows it has more to do");
+        int began = 0;
+        for (int i = 0; i < 600; i++) {
+            hta_ammo_update(&a, 1.0f / 60.0f);
+            if (a.reload_began) began++;
+            if (a.phase == HTA_AMMO_READY && a.loaded >= a.mag_max) break;
+        }
+        printf("  one request loaded to %d/%d over %d shells\n",
+               a.loaded, a.mag_max, began);
+        CHECK(a.loaded == 12, "one request fills the magazine");
+        CHECK(began == 7, "a shell at a time, and each one re-plays the clip");
+        CHECK(!a.chaining, "and it stops when full");
+
+        /* Firing mid-chain must interrupt it: one shell is enough to shoot. */
+        hta_ammo b;
+        hta_ammo_init(&b, &w);
+        for (int i = 0; i < 8; i++) hta_ammo_shoot(&b);
+        hta_ammo_reload(&b);
+        hta_ammo_update(&b, 0.41f);          /* one shell in */
+        CHECK(b.loaded == 5, "one shell loaded");
+        CHECK(b.chaining, "still chaining");
+        hta_ammo_shoot(&b);
+        CHECK(!b.chaining, "firing cancels the rest of the reload");
+        hta_ammo_update(&b, 2.0f);
+        CHECK(b.loaded == 4, "and it stops where it was");
+
+        /* A weapon that reloads its whole magazine must not chain. */
+        hta_weapon_def full = fake(60, 180, 240, 1, 60, 3.4f);
+        hta_ammo cfull;
+        hta_ammo_init(&cfull, &full);
+        hta_ammo_shoot(&cfull);
+        hta_ammo_reload(&cfull);
+        CHECK(!cfull.chaining, "a full-magazine reload has nothing to chain");
+    }
+
     if (argc < 2) {
         printf("\n  skip: no map path (pass bloodgulch.map for the tag check)\n");
         printf("\n%d checks, %d failures\n", checks, failures);
@@ -187,6 +235,31 @@ int main(int argc, char **argv)
         CHECK(a.reserve == 180, "and 180 spare, which is Halo's 60+180");
         CHECK(a.reload_time > 2.0f && a.reload_time < 5.0f,
               "the tagged reload time is plausible");
+
+        /* And the Trial's shotgun really is a shell at a time. */
+        uint32_t ids[32];
+        uint32_t n = hta_weapon_list_playable(&c, ids, 32);
+        int found_shotgun = 0;
+        for (uint32_t i = 0; i < n; i++) {
+            hta_weapon_def sw;
+            if (!hta_weapon_load_id(&c, NULL, ids[i], &sw, NULL, NULL, 0)) continue;
+            if (!strstr(sw.path, "shotgun")) continue;
+            hta_ammo sa;
+            hta_ammo_init(&sa, &sw);
+            printf("    shotgun: %d rounds, %d per reload, %.2f s each\n",
+                   sa.mag_max, sa.per_reload, sa.reload_time);
+            CHECK(sa.per_reload == 1, "the shotgun loads one shell at a time");
+            found_shotgun = 1;
+            /* Emptying and reloading it must fill up from one request. */
+            while (hta_ammo_shoot(&sa)) { }
+            hta_ammo_reload(&sa);
+            for (int k = 0; k < 2000; k++) {
+                hta_ammo_update(&sa, 1.0f / 60.0f);
+                if (sa.phase == HTA_AMMO_READY && !sa.chaining) break;
+            }
+            CHECK(sa.loaded == sa.mag_max, "and refills completely from one request");
+        }
+        CHECK(found_shotgun, "the shotgun is in the roster");
 
         /* Empty it and reload with real numbers. */
         int shots = 0;

@@ -44,6 +44,28 @@ typedef struct {
     uint8_t  orientation;    /* 0 screen facing, 1 parallel to direction */
 } hta_effect_particle;
 
+/* One track of a looping sound (`lsnd`). */
+typedef struct {
+    uint32_t start, loop, end;   /* `snd!` ids, 0 where the track has none */
+    float    gain;
+} hta_loop_sound;
+
+/* The looping sound attached to an object's marker, if it has one.
+ *
+ * Halo hangs continuous sounds off the OBJECT, not the firing effect: the
+ * flamethrower's firing effect has no sound at all, and its roar is an
+ * `lsnd` attached to `primary trigger`, scaled by the trigger's function.
+ * Object attachments are at object+320, 72 bytes each; `lsnd` keeps its
+ * tracks at +60, 160 bytes each. Both structs reconcile.
+ *
+ * The first `lsnd` on that marker wins. That is the firing sound on the
+ * flamethrower; on the plasma pistol the same marker carries the overcharge
+ * whine, which is why callers should only reach for this when the weapon's
+ * own firing effect has no sound of its own.
+ */
+bool hta_object_loop_sound(const hta_cache *c, uint32_t object_tag_id,
+                           const char *marker, hta_loop_sound *out);
+
 /* The first `snd!` this effect plays, or 0. */
 uint32_t hta_effect_first_sound(const hta_cache *c, uint32_t effect_tag_id);
 

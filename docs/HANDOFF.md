@@ -364,6 +364,110 @@ frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
 Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
 need weapon state we do not track yet.
 
+## The whole roster: firing clips, shotgun shells, zoom, the flamethrower (2026-09-19)
+
+Owner's list: *"all of the weapons need firing animations. Also the shotgun when
+I click reload reloads one shell at a time awkwardly. Also the sniper I cant
+zoom in... look at the screenshot, whatever this gun is looks weird. Need sounds
+for some as well like the flamethrower."* Five items, all tag questions.
+
+### Only the assault rifle calls its fire clip "firing"
+
+Every other weapon names it `fire-1`. We looked up exactly one name per state,
+so ten of eleven weapons silently had no firing animation. `CLIP_NAMES` in
+`src/engine/viewmodel.c` is now a table of fallbacks per state, tried in order:
+
+```
+fire   : "fire-1", "firing", "fire-2"
+reload : "reload-full", "reload-empty", "reload"
+```
+
+**Order matters.** A bare `"fire"` would substring-match the plasma weapons'
+`misfire-1`, which is the overheat cough, not the shot. Keep the specific
+names first and never add a bare `"fire"`.
+
+10 of 11 weapons now have a fire clip. The flamethrower genuinely has none in
+its `antr` -- Bungie animated it as a held pose plus a particle jet.
+
+### The shotgun loads one shell at a time, and that is correct
+
+`rounds reloaded 1`, `reload time 0.40 s`, straight from the tag. What was
+missing is that one request should keep going. `hta_ammo` gained `chaining`:
+set when `per_reload < mag_max`, re-armed at the end of each shell in
+`hta_ammo_update`, and cleared when full or when the trigger is pulled.
+
+Firing mid-chain does not merely cancel it -- it **fires**. `hta_ammo_shoot`
+drops the weapon back to `READY` when a chained reload is running and there is
+a round in it, because one shell in the gun is enough to shoot with. Without
+that the phase check refuses the shot and the gun feels stuck. A magazine
+weapon (`per_reload == mag_max`, so `chaining` is false) is still
+uninterruptible, which keeps the AR behaving as it did.
+
+### Zoom is three weapons, and only one of them twice
+
+`zoom levels` at `weap+986`, `zoom magnification range` at `+988` (a bounds
+field: two floats). In the Trial only the **pistol (2x)**, the **rocket
+launcher (2x)** and the **sniper rifle (2x / 8x)** zoom at all; everything
+else is 0 levels and must not divide the field of view by anything.
+`zoom_magnification()` spreads the tagged first and last magnification evenly
+across the levels, so the sniper's two come out 2x and 8x. ZOOM button and
+gamepad THUMBR cycle 0 -> 1 -> ... -> 0.
+
+### The weird-looking gun is the plasma cannon, and it is faithful
+
+Its geometry is *smaller* than the sniper's (0.21 x 0.09 x 0.37 against
+0.50 x 0.08 x 0.41). It looks wrong because of where its own animation puts
+it: hanging `z -0.50..-0.13` at `x 0.05..0.26`, i.e. half a metre below the
+eye and 5 cm forward, jammed against the camera. It is the detached turret
+gun. Blood Gulch really does place it -- see below -- so it stays in the
+rotation. Dropping it would be a roster filter, not a fix.
+
+### What Blood Gulch actually places
+
+`Scenario+900` is the netgame equipment reflexive, 144 bytes an entry, with an
+`item collection` dependency at **+80**. Each `itmc` has permutations at +0,
+84 bytes each, with the `item` dependency at **+36**. Walking that gives the
+eight weapons the map spawns: shotgun, assault rifle, plasma rifle, pistol,
+rocket launcher, sniper rifle, **flamethrower and plasma cannon**. Both of the
+odd ones are legitimately there.
+
+### The flamethrower's roar is an object attachment, not a shot
+
+Its firing effect `weapons\flamethrower\effects\flame thrower jet` has one
+event with **zero parts**, and `WeaponTriggerFiringEffect` has no sound field
+at all -- so `hta_effect_first_sound` correctly returns nothing. Halo hangs
+continuous sounds off the **object**:
+
+- `Object+320` attachments, 72 bytes each: `type` dependency at +0 (which
+  accepts `lsnd` among others), `marker` TagString at +16, `primary scale`
+  function at +48.
+- `SoundLooping+60` tracks, 160 bytes each: `start` at +48, `loop` at +64,
+  `end` at +80, `gain` at +4. Both structs reconcile (84 and 160).
+
+The flamethrower carries `sound\sfx\weapons\flamethrower\fire_ft` on
+`primary trigger`, whose loop track is `flamethrower\fire`. `hta_object_loop_sound`
+in `src/asset/effect.c` reads it.
+
+**Only fall back to the attachment when the firing effect has no sound.** The
+plasma pistol hangs `plasma rifle\charge` -- its *overcharge* whine -- on the
+same marker, and looping that on every shot would be wrong. Across the whole
+roster exactly one weapon has no effect sound and exactly one has a usable
+loop, and they are the same weapon; `tests/test_weapons.c` pins that.
+
+The mixer learned continuous voices for this: `hta_audio_loop(a, id, clip,
+gain)` and `hta_audio_loop_stop(a, id)`, routed through the same SPSC request
+ring (a request whose clip is `HTA_AUDIO_NO_CLIP` is a stop). Asking for a
+running loop again leaves it alone rather than restarting it, so the caller
+can just call it every frame while the trigger is held. Looping voices are
+excluded from voice stealing -- cutting a continuous sound is far more
+audible than clipping a gunshot's tail.
+
+### New test
+
+`tests/test_weapons.c` (needs `HTA_MAP`) walks the playable roster and checks
+every weapon's animation slots, the three zoom weapons' tagged magnifications,
+and the firing-sound split above.
+
 ## The counter on the gun, and a strip bug it uncovered (2026-09-19)
 
 **Confirmed on the S24+:** magazine, reload and muzzle flash all work; the
@@ -793,6 +897,9 @@ after building, wherever real tag physics are available.
 | Map / bitmap picker | `android/.../SetupActivity.java` |
 | Android glue | `src/platform/platform_android.c` |
 | Animation + skinning tests | `tests/test_anim.c` (needs `HTA_MAP`) |
+| Roster: clips, zoom, firing sounds | `tests/test_weapons.c` (needs `HTA_MAP`) |
+| Object attachments / looping sounds | `src/asset/effect.c` `hta_object_loop_sound` |
+| Continuous voices | `src/engine/audio.c` `hta_audio_loop` |
 | Tag physics tests | `tests/test_biped.c` (needs `HTA_MAP`) |
 
 **Reading Invader's JSON:** count a field with `"bounds": true` as **two** values. Missing

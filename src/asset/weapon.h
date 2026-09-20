@@ -22,6 +22,9 @@
  * tag paths: the rocket launcher's is "rocket_launcher" and the
  * flamethrower's is "flame thrower". */
 #define HTA_WEAP_HUD_INTERFACE 1152u /* TagDependency -> wphi */
+#define HTA_WEAP_ZOOM_LEVELS   986u  /* int16: 0 means this weapon cannot zoom */
+#define HTA_WEAP_ZOOM_MAG      988u  /* two floats: magnification at the first
+                                      * level and at the last */
 #define HTA_WEAP_FP_MODEL     0x45Cu  /* TagDependency -> mod2 */
 #define HTA_WEAP_FP_ANIM      0x46Cu  /* TagDependency -> antr */
 #define HTA_WEAP_HUD          0x480u  /* TagDependency -> wphi */
@@ -71,6 +74,10 @@ typedef struct {
     uint32_t fp_model_id;    /* the weapon mesh: gun only, no arms */
     uint32_t fp_anim_id;     /* antr: the merged hands+gun skeleton */
     uint32_t pickup_snd_id, zoom_in_snd_id, zoom_out_snd_id;
+    /* Only the pistol, the rocket launcher and the sniper zoom in the
+     * Trial, and only the sniper has two levels. Everything else is 0. */
+    int      zoom_levels;
+    float    zoom_mag[2];    /* magnification at the first and last level */
 
     float    rof;            /* shots per second (final) */
     float    cooldown;       /* 1/rof */

@@ -34,6 +34,10 @@ typedef struct {
 
     hta_ammo_phase phase;
     float timer;           /* seconds left in the current reload */
+    /* A weapon that reloads one round at a time keeps going until it is
+     * full. Halo's shotgun loads a single shell per 0.40 s, and making the
+     * player ask for each one is not how it plays. Firing cancels it. */
+    bool  chaining;
 
     /* One-shot events, true for the update in which they happened. The
      * caller clears nothing: each is recomputed every call. */
@@ -54,8 +58,13 @@ bool hta_ammo_shoot(hta_ammo *a);
  * there is nothing in reserve. */
 bool hta_ammo_reload(hta_ammo *a);
 
-/* Advances a running reload. */
+/* Advances a running reload, and starts the next round of a partial reload
+ * when the weapon loads fewer rounds than the magazine holds. */
 void hta_ammo_update(hta_ammo *a, float dt);
+
+/* Stop a chained reload where it is, keeping what has been loaded. Firing
+ * does this in Halo: one shell in the gun is enough to shoot with. */
+void hta_ammo_cancel_reload(hta_ammo *a);
 
 /* Fraction of the current reload completed, 0..1 (1 when not reloading). */
 float hta_ammo_reload_progress(const hta_ammo *a);

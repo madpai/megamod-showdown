@@ -33,6 +33,72 @@
 #define PART_ORIENTATION   172u
 #define PART_BLEND         218u
 
+#define OBJ_ATTACHMENTS    320u
+#define ATTACH_SIZE         72u
+#define ATTACH_TYPE          0u   /* TagDependency; tag id at +12 */
+#define ATTACH_MARKER       16u   /* TagString */
+
+#define LSND_TRACKS         60u
+#define LSNDTRACK_SIZE     160u
+#define LSNDTRACK_GAIN       4u
+#define LSNDTRACK_START     48u   /* TagDependency; tag id at +12 */
+#define LSNDTRACK_LOOP      64u
+#define LSNDTRACK_END       80u
+
+static bool first_track(const hta_cache *c, uint32_t lsnd_id, hta_loop_sound *out)
+{
+    int32_t ti = hta_cache_find_tag_by_id(c, lsnd_id);
+    if (ti < 0) return false;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t)) return false;
+    if (t.primary_class != HTA_TAG_LSND) return false;
+
+    uint32_t base;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return false;
+    uint32_t count = 0, ptr = 0, off = 0;
+    if (!hta_read_reflexive(c, base + LSND_TRACKS, &count, &ptr)) return false;
+    if (!count || !hta_cache_ptr_to_offset(c, ptr, &off)) return false;
+
+    memset(out, 0, sizeof(*out));
+    hta_rd_u32(c, off + LSNDTRACK_START + 12u, &out->start);
+    hta_rd_u32(c, off + LSNDTRACK_LOOP  + 12u, &out->loop);
+    hta_rd_u32(c, off + LSNDTRACK_END   + 12u, &out->end);
+    if (!hta_rd_f32(c, off + LSNDTRACK_GAIN, &out->gain)) out->gain = 1.0f;
+    /* A track left at zero gain is Halo's default of full, not silence. */
+    if (out->gain <= 0.0f) out->gain = 1.0f;
+    return out->loop != 0u || out->start != 0u;
+}
+
+bool hta_object_loop_sound(const hta_cache *c, uint32_t object_tag_id,
+                           const char *marker, hta_loop_sound *out)
+{
+    if (!c || !out || !object_tag_id) return false;
+    int32_t ti = hta_cache_find_tag_by_id(c, object_tag_id);
+    if (ti < 0) return false;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t)) return false;
+
+    uint32_t base;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return false;
+    uint32_t count = 0, ptr = 0, off = 0;
+    if (!hta_read_reflexive(c, base + OBJ_ATTACHMENTS, &count, &ptr)) return false;
+    if (!count || !hta_cache_ptr_to_offset(c, ptr, &off)) return false;
+
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t e = off + i * ATTACH_SIZE;
+        if (marker && *marker) {
+            char name[32];
+            if (!hta_rd_bytes(c, e + ATTACH_MARKER, name, 31)) continue;
+            name[31] = '\0';
+            if (strcmp(name, marker) != 0) continue;
+        }
+        uint32_t id = 0;
+        if (!hta_rd_u32(c, e + ATTACH_TYPE + 12u, &id) || !id) continue;
+        if (first_track(c, id, out)) return true;
+    }
+    return false;
+}
+
 static bool events_of(const hta_cache *c, uint32_t effect_tag_id,
                       uint32_t *out_off, uint32_t *out_count, uint32_t *out_base)
 {

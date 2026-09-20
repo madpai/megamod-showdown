@@ -108,6 +108,10 @@ else()
     target_link_libraries(test_anim PRIVATE hta_engine m)
     add_test(NAME anim COMMAND test_anim)
 
+    add_executable(test_weapons tests/test_weapons.c)
+    target_link_libraries(test_weapons PRIVATE hta_engine m)
+    add_test(NAME weapons COMMAND test_weapons)
+
     add_executable(test_hud tests/test_hud.c)
     target_link_libraries(test_hud PRIVATE hta_engine m)
     add_test(NAME hud COMMAND test_hud)

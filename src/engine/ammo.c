@@ -39,6 +39,16 @@ bool hta_ammo_shoot(hta_ammo *a)
     if (!a) return false;
     a->spent = false;
     a->dry = false;
+    /* A shell-at-a-time weapon fires the moment it has one round in it:
+     * pulling the trigger abandons the rest of the reload rather than being
+     * refused by it. That is what makes the shotgun playable. A weapon that
+     * reloads a whole magazine is not interruptible this way. */
+    if (a->phase == HTA_AMMO_RELOADING && a->chaining &&
+        a->loaded >= a->per_shot) {
+        a->chaining = false;
+        a->phase = HTA_AMMO_READY;
+        a->timer = 0.0f;
+    }
     if (a->phase != HTA_AMMO_READY) return false;
     if (a->loaded < a->per_shot) {
         a->dry = true;
@@ -46,6 +56,7 @@ bool hta_ammo_shoot(hta_ammo *a)
     }
     a->loaded -= a->per_shot;
     a->spent = true;
+    a->chaining = false;
     return true;
 }
 
@@ -59,13 +70,22 @@ bool hta_ammo_reload(hta_ammo *a)
     a->phase = HTA_AMMO_RELOADING;
     a->timer = a->reload_time;
     a->reload_began = true;
+    /* Only worth chaining when one go does not fill the magazine. */
+    a->chaining = (a->per_reload < a->mag_max);
     return true;
+}
+
+void hta_ammo_cancel_reload(hta_ammo *a)
+{
+    if (!a) return;
+    a->chaining = false;
 }
 
 void hta_ammo_update(hta_ammo *a, float dt)
 {
     if (!a) return;
     a->reload_done = false;
+    a->reload_began = false;
     if (a->phase != HTA_AMMO_RELOADING) return;
 
     a->timer -= dt;
@@ -80,6 +100,15 @@ void hta_ammo_update(hta_ammo *a, float dt)
     a->timer = 0.0f;
     a->phase = HTA_AMMO_READY;
     a->reload_done = true;
+
+    /* Keep going until the magazine is full or the reserve is out. */
+    if (a->chaining && a->loaded < a->mag_max && a->reserve > 0) {
+        a->phase = HTA_AMMO_RELOADING;
+        a->timer = a->reload_time;
+        a->reload_began = true;
+    } else {
+        a->chaining = false;
+    }
 }
 
 float hta_ammo_reload_progress(const hta_ammo *a)

@@ -30,6 +30,9 @@ typedef struct {
 typedef struct {
     uint32_t clip;
     float    gain;
+    /* 0 for a one-shot. Non-zero names a continuous sound the caller owns;
+     * a request whose clip is HTA_AUDIO_NO_CLIP stops that one. */
+    uint32_t loop;
 } hta_audio_req;
 
 typedef struct {
@@ -37,6 +40,7 @@ typedef struct {
     uint64_t phase;     /* 32.32 fixed point, in source frames */
     uint64_t step;
     float    gain;
+    uint32_t loop;      /* 0 for a one-shot voice */
     bool     active;
 } hta_audio_voice;
 
@@ -65,6 +69,17 @@ uint32_t hta_audio_add_clip(hta_audio *a, const int16_t *samples, uint32_t frame
 
 /* Game thread. Never blocks; drops the request if the ring is full. */
 void hta_audio_play(hta_audio *a, uint32_t clip, float gain);
+
+/* Starts a continuous sound, or leaves it running if `id` already sounds --
+ * calling this every frame while a trigger is held is the intended use. The
+ * id is any non-zero value the caller picks, one per continuous sound.
+ *
+ * Halo needs this for the flamethrower: its roar is a looping sound attached
+ * to the weapon object, not a shot fired once per round. */
+void hta_audio_loop(hta_audio *a, uint32_t id, uint32_t clip, float gain);
+
+/* Stops it. Harmless if that id is not playing. */
+void hta_audio_loop_stop(hta_audio *a, uint32_t id);
 
 /* Audio thread. Writes `frames` interleaved frames, overwriting `out`. */
 void hta_audio_mix(hta_audio *a, int16_t *out, uint32_t frames);

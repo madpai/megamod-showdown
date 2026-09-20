@@ -57,6 +57,7 @@ enum {
 #define HTA_TAG_SKY  HTA_FOURCC('s','k','y',' ')
 #define HTA_TAG_BIPD HTA_FOURCC('b','i','p','d')
 #define HTA_TAG_MATG HTA_FOURCC('m','a','t','g')
+#define HTA_TAG_LSND HTA_FOURCC('l','s','n','d')
 
 typedef struct {
     uint32_t primary_class, secondary_class, tertiary_class;

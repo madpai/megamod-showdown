@@ -28,9 +28,8 @@ uint32_t hta_audio_add_clip(hta_audio *a, const int16_t *samples, uint32_t frame
     return i;
 }
 
-void hta_audio_play(hta_audio *a, uint32_t clip, float gain)
+static void push(hta_audio *a, uint32_t clip, float gain, uint32_t loop)
 {
-    if (!a || clip >= a->clip_count) return;
     uint32_t w = atomic_load_explicit(&a->wr, memory_order_relaxed);
     uint32_t r = atomic_load_explicit(&a->rd, memory_order_acquire);
     if (w - r >= HTA_AUDIO_REQ_RING) {
@@ -41,7 +40,26 @@ void hta_audio_play(hta_audio *a, uint32_t clip, float gain)
     }
     a->ring[w & (HTA_AUDIO_REQ_RING - 1u)].clip = clip;
     a->ring[w & (HTA_AUDIO_REQ_RING - 1u)].gain = gain;
+    a->ring[w & (HTA_AUDIO_REQ_RING - 1u)].loop = loop;
     atomic_store_explicit(&a->wr, w + 1u, memory_order_release);
+}
+
+void hta_audio_play(hta_audio *a, uint32_t clip, float gain)
+{
+    if (!a || clip >= a->clip_count) return;
+    push(a, clip, gain, 0u);
+}
+
+void hta_audio_loop(hta_audio *a, uint32_t id, uint32_t clip, float gain)
+{
+    if (!a || !id || clip >= a->clip_count) return;
+    push(a, clip, gain, id);
+}
+
+void hta_audio_loop_stop(hta_audio *a, uint32_t id)
+{
+    if (!a || !id) return;
+    push(a, HTA_AUDIO_NO_CLIP, 0.0f, id);
 }
 
 /* A free voice, or else the one with the least left to play -- stealing the
@@ -55,6 +73,9 @@ static uint32_t pick_voice(hta_audio *a)
     uint64_t least_left = ~0ull;
     for (uint32_t i = 0; i < HTA_AUDIO_MAX_VOICES; i++) {
         const hta_audio_voice *v = &a->voices[i];
+        /* A continuous sound has no end to be close to, and cutting one is
+         * far more audible than clipping the tail off a gunshot. */
+        if (v->loop) continue;
         uint64_t played = v->phase >> 32;
         uint64_t total = a->clips[v->clip].frames;
         uint64_t left = (played >= total) ? 0ull : total - played;
@@ -71,7 +92,22 @@ static void drain_requests(hta_audio *a)
     while (r != w) {
         hta_audio_req req = a->ring[r & (HTA_AUDIO_REQ_RING - 1u)];
         r++;
-        if (req.clip >= a->clip_count) continue;
+        if (req.loop) {
+            hta_audio_voice *have = NULL;
+            for (uint32_t i = 0; i < HTA_AUDIO_MAX_VOICES; i++)
+                if (a->voices[i].active && a->voices[i].loop == req.loop)
+                    have = &a->voices[i];
+            if (req.clip >= a->clip_count) {          /* a stop request */
+                if (have) { have->active = false; have->loop = 0u; }
+                continue;
+            }
+            if (have) {                               /* already running */
+                if (have->clip == req.clip) { have->gain = req.gain; continue; }
+                have->active = false; have->loop = 0u;
+            }
+        } else if (req.clip >= a->clip_count) {
+            continue;
+        }
         const hta_audio_clip *c = &a->clips[req.clip];
         uint32_t vi = pick_voice(a);
         hta_audio_voice *v = &a->voices[vi];
@@ -79,6 +115,7 @@ static void drain_requests(hta_audio *a)
         v->phase = 0;
         v->step = ((uint64_t)c->rate << 32) / (uint64_t)a->out_rate;
         v->gain = req.gain;
+        v->loop = req.loop;
         v->active = true;
         a->started++;
     }
@@ -100,12 +137,17 @@ void hta_audio_mix(hta_audio *a, int16_t *out, uint32_t frames)
 
         for (uint32_t f = 0; f < frames; f++) {
             uint64_t idx = v->phase >> 32;
-            if (idx >= c->frames) { v->active = false; break; }
+            if (idx >= c->frames) {
+                if (!v->loop) { v->active = false; break; }
+                v->phase %= (uint64_t)c->frames << 32;
+                idx = v->phase >> 32;
+            }
 
             /* Linear interpolation between source frames. The last frame has
              * no successor, so hold it rather than reading past the clip. */
             uint32_t i0 = (uint32_t)idx;
-            uint32_t i1 = (i0 + 1u < c->frames) ? i0 + 1u : i0;
+            /* The last frame of a loop is followed by its first. */
+            uint32_t i1 = (i0 + 1u < c->frames) ? i0 + 1u : (v->loop ? 0u : i0);
             float t = (float)(uint32_t)(v->phase & 0xFFFFFFFFu) / 4294967296.0f;
 
             for (uint8_t ch = 0; ch < oc; ch++) {
