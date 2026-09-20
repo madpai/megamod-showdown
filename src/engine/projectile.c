@@ -14,6 +14,17 @@
 #define PROJ_INITIAL_VELOCITY 484u   /* world units per TICK */
 #define PROJ_FINAL_VELOCITY   488u
 #define PROJ_EFFECT           428u   /* TagDependency -> effe, the detonation */
+#define PROJ_TIMER_STARTS     384u   /* ProjectileDetonationTimerStarts */
+#define PROJ_RESPONSES        576u   /* TagReflexive, 160 bytes an entry */
+#define PROJ_RESPONSE_SIZE    160u
+#define PROJ_RESPONSE_KIND      2u   /* ProjectileResponse: 2 == reflect */
+#define PROJ_RESPONSE_REFLECT   2u
+
+/* How much of its speed a grenade keeps off a wall. Halo's projectiles
+ * carry no elasticity of their own -- the `pphy` that gives a spent casing
+ * its bounce belongs to PARTICLES, not to these -- so this is chosen, and
+ * is the fourth invented number in the project. */
+#define PROJ_BOUNCE 0.35f
 #define OBJ_MODEL              40u   /* TagDependency -> mod2 */
 
 /* Halo's own, and what the player falls at in player.c. */
@@ -57,12 +68,22 @@ bool hta_projectiles_equip(hta_projectiles *p, const hta_cache *c,
                            const hta_weapon_def *weap, char *err, size_t errlen)
 {
     if (!p || !c || !weap) return false;
+    return hta_projectiles_equip_projectile(p, c, bitmaps, weap->projectile_id,
+                                            err, errlen);
+}
+
+bool hta_projectiles_equip_projectile(hta_projectiles *p, const hta_cache *c,
+                                      const hta_resource_map *bitmaps,
+                                      uint32_t projectile_id,
+                                      char *err, size_t errlen)
+{
+    if (!p || !c) return false;
     hta_bsp_free(&p->mesh);
     free(p->base);
     memset(p, 0, sizeof(*p));
 
-    if (!weap->projectile_id) return false;
-    int32_t ti = hta_cache_find_tag_by_id(c, weap->projectile_id);
+    if (!projectile_id) return false;
+    int32_t ti = hta_cache_find_tag_by_id(c, projectile_id);
     if (ti < 0) return false;
     hta_tag_entry t;
     if (!hta_cache_tag(c, (uint32_t)ti, &t)) return false;
@@ -78,7 +99,8 @@ bool hta_projectiles_equip(hta_projectiles *p, const hta_cache *c,
     float v0 = 0.0f, v1 = 0.0f;
     hta_rd_f32(c, base + PROJ_INITIAL_VELOCITY, &v0);
     hta_rd_f32(c, base + PROJ_FINAL_VELOCITY, &v1);
-    if (!(v0 > 0.0f)) return false;
+    /* A grenade's own initial velocity is 0.00: in Halo the throw comes
+     * from the player. Such a projectile is still perfectly loadable. */
     if (!(v1 > 0.0f)) v1 = v0;
 
     /* The bang and the char mark. A rocket's decal is 1.25 world units --
@@ -94,7 +116,7 @@ bool hta_projectiles_equip(hta_projectiles *p, const hta_cache *c,
                           &p->blast_damage);
     }
 
-    p->proj_tag_id   = weap->projectile_id;
+    p->proj_tag_id   = projectile_id;
     p->speed_initial = v0 * HTA_TICKS_PER_SECOND;
     p->speed_final   = v1 * HTA_TICKS_PER_SECOND;
     hta_rd_f32(c, base + PROJ_MAX_RANGE, &p->range);
@@ -102,6 +124,25 @@ bool hta_projectiles_equip(hta_projectiles *p, const hta_cache *c,
     /* The timer is a range; Halo rolls inside it. The low end is soon
      * enough and keeps this deterministic. */
     hta_rd_f32(c, base + PROJ_TIMER, &p->timer);
+    hta_rd_u16(c, base + PROJ_TIMER_STARTS, &p->timer_starts);
+
+    /* Does it bounce or does it go off? Every material the Trial's
+     * grenades can hit answers "reflect". */
+    {
+        uint32_t n = 0, rp = 0, ro = 0;
+        if (hta_read_reflexive(c, base + PROJ_RESPONSES, &n, &rp) && n &&
+            hta_cache_ptr_to_offset(c, rp, &ro)) {
+            uint32_t reflect = 0;
+            for (uint32_t m = 0; m < n && m < 33u; m++) {
+                uint16_t kind = 0;
+                hta_rd_u16(c, ro + m * PROJ_RESPONSE_SIZE + PROJ_RESPONSE_KIND,
+                           &kind);
+                if (kind == PROJ_RESPONSE_REFLECT) reflect++;
+            }
+            /* If most surfaces reflect it, it is a thing that bounces. */
+            p->bounces = reflect * 2u > n;
+        }
+    }
 
     /* The intern table has to exist before anything can be appended into
      * this mesh -- without it every submesh comes out with no texture and
@@ -155,6 +196,12 @@ bool hta_projectiles_equip(hta_projectiles *p, const hta_cache *c,
 void hta_projectiles_fire(hta_projectiles *p, const float origin[3],
                           const float dir[3])
 {
+    hta_projectiles_throw(p, origin, dir, 0.0f);
+}
+
+void hta_projectiles_throw(hta_projectiles *p, const float origin[3],
+                           const float dir[3], float speed)
+{
     if (!p || !p->loaded || !origin || !dir) return;
     float len = sqrtf(dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
     if (!(len > 1e-6f)) return;
@@ -176,6 +223,17 @@ void hta_projectiles_fire(hta_projectiles *p, const float origin[3],
         q->pos[k] = origin[k];
         q->dir[k] = dir[k] / len;
     }
+    q->speed = speed > 0.0f ? speed : 0.0f;
+    /* Armed at once, or not until it has bounced or settled.
+     *
+     * `detonation timer starts` only means anything for something that can
+     * bounce. The needler's needles say "when at rest" and never come to
+     * rest -- they fly until they hit -- so for a projectile that does not
+     * reflect, the countdown runs from launch, which is the 0.75 s a
+     * needle lives in Halo. */
+    q->fuse = (p->timer > 0.0f &&
+               (!p->bounces || p->timer_starts == HTA_PROJ_TIMER_IMMEDIATELY))
+            ? p->timer : -1.0f;
     q->alive = true;
 }
 
@@ -258,7 +316,7 @@ void hta_projectiles_update(hta_projectiles *p, const hta_collision *col, float 
 
         q->age += dt;
 
-        float speed = speed_at(p, q->travelled);
+        float speed = q->speed > 0.0f ? q->speed : speed_at(p, q->travelled);
         float step = speed * dt;
 
         /* Gravity bends the path rather than changing the heading's length:
@@ -278,6 +336,30 @@ void hta_projectiles_update(hta_projectiles *p, const hta_collision *col, float 
             uint8_t material = 0;
             if (col && hta_collision_ray_material(col, q->pos, ray, len,
                                                   &t, hit, nrm, &material)) {
+                if (p->bounces) {
+                    /* Off the wall, not against it. The fuse starts here if
+                     * the tag says "after first bounce", which is what the
+                     * frag grenade says. */
+                    float vel[3];
+                    for (int k = 0; k < 3; k++) vel[k] = move[k] / dt;
+                    float vn = vel[0]*nrm[0] + vel[1]*nrm[1] + vel[2]*nrm[2];
+                    float out[3];
+                    for (int k = 0; k < 3; k++)
+                        out[k] = (vel[k] - 2.0f * vn * nrm[k]) * PROJ_BOUNCE;
+                    float ol = sqrtf(out[0]*out[0] + out[1]*out[1] + out[2]*out[2]);
+                    for (int k = 0; k < 3; k++) {
+                        q->pos[k] = hit[k] + nrm[k] * 0.03f;
+                        q->dir[k] = ol > 1e-4f ? out[k] / ol : nrm[k];
+                    }
+                    q->speed = ol;
+                    q->fall = 0.0f;
+                    q->bounces++;
+                    if (q->fuse < 0.0f && p->timer > 0.0f &&
+                        p->timer_starts == HTA_PROJ_TIMER_AFTER_BOUNCE)
+                        q->fuse = p->timer;
+                    pose_one(p, i, q);
+                    continue;
+                }
                 p->detonated = true;
                 for (int k = 0; k < 3; k++) {
                     p->hit[k] = hit[k];
@@ -295,10 +377,32 @@ void hta_projectiles_update(hta_projectiles *p, const hta_collision *col, float 
             q->travelled += len;
         }
 
-        /* Out of range, or the detonation timer ran out -- the needler's
-         * needles go off after 0.75 s whether or not they hit anything. */
-        if ((p->range > 0.0f && q->travelled >= p->range) ||
-            (p->timer > 0.0f && q->age >= p->timer)) {
+        /* A grenade that has stopped rolling arms itself: the plasma
+         * grenade's fuse starts "when at rest". */
+        if (q->fuse < 0.0f && p->timer > 0.0f &&
+            p->timer_starts == HTA_PROJ_TIMER_AT_REST &&
+            q->bounces > 0 && speed < 0.5f)
+            q->fuse = p->timer;
+
+        /* The fuse, once it is running. */
+        if (q->fuse >= 0.0f) {
+            q->fuse -= dt;
+            if (q->fuse <= 0.0f) {
+                p->detonated = true;
+                for (int k = 0; k < 3; k++) {
+                    p->hit[k] = q->pos[k];
+                    p->hit_normal[k] = (k == 2) ? 1.0f : 0.0f;
+                }
+                p->hit_material = HTA_MATERIAL_NONE;
+                q->alive = false;
+                hide_one(p, i);
+                continue;
+            }
+        }
+
+        /* Out of range -- the needler's needles expire whether or not they
+         * hit anything. A grenade has no range and waits for its fuse. */
+        if (p->range > 0.0f && q->travelled >= p->range) {
             q->alive = false;
             hide_one(p, i);
             continue;

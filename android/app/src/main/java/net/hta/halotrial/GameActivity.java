@@ -140,6 +140,7 @@ public class GameActivity extends NativeActivity {
     static native void nativeHudMelee();
     static native void nativeHudSwap();
     static native void nativeHudZoom();
+    static native void nativeHudGrenade();
     static native String nativeDebugText();
     static native String nativeAmmoText();
 
@@ -166,8 +167,10 @@ public class GameActivity extends NativeActivity {
         private float meleeCx, meleeCy, meleeR;
         private float swapCx, swapCy, swapR;
         private float zoomCx, zoomCy, zoomR;
+        private float nadeCx, nadeCy, nadeR;
         private int stickPtr = -1, firePtr = -1, jumpPtr = -1, crouchPtr = -1;
         private int reloadPtr = -1, meleePtr = -1, swapPtr = -1, zoomPtr = -1;
+        private int nadePtr = -1;
         private final float[] lastX = new float[16];
         private final float[] lastY = new float[16];
 
@@ -224,6 +227,9 @@ public class GameActivity extends NativeActivity {
             zoomR = m * 0.058f;
             zoomCx = w * 0.625f;
             zoomCy = h * 0.72f;
+            nadeR = m * 0.058f;
+            nadeCx = w * 0.725f;
+            nadeCy = h * 0.90f;
             label.setTextSize(m * 0.032f);
             ammo.setTextSize(m * 0.085f);
             excludeFromSystemGestures();
@@ -281,6 +287,9 @@ public class GameActivity extends NativeActivity {
                 } else if (in(x, y, zoomCx, zoomCy, zoomR * 1.15f) && zoomPtr < 0) {
                     zoomPtr = id;
                     GameActivity.nativeHudZoom();
+                } else if (in(x, y, nadeCx, nadeCy, nadeR * 1.15f) && nadePtr < 0) {
+                    nadePtr = id;
+                    GameActivity.nativeHudGrenade();
                 } else if ((in(x, y, stickCx, stickCy, stickR * 1.4f) || x < getWidth() * 0.38f)
                         && stickPtr < 0) {
                     stickPtr = id;
@@ -315,6 +324,7 @@ public class GameActivity extends NativeActivity {
                     meleePtr = -1;
                     swapPtr = -1;
                     zoomPtr = -1;
+                    nadePtr = -1;
                 } else {
                     if (id == stickPtr) releaseStick();
                     if (id == firePtr) releaseFire();
@@ -324,6 +334,7 @@ public class GameActivity extends NativeActivity {
                     if (id == meleePtr) meleePtr = -1;
                     if (id == swapPtr) swapPtr = -1;
                     if (id == zoomPtr) zoomPtr = -1;
+                    if (id == nadePtr) nadePtr = -1;
                 }
                 break;
             default:
@@ -413,6 +424,9 @@ public class GameActivity extends NativeActivity {
             c.drawCircle(zoomCx, zoomCy, zoomR, zoomP);
             c.drawCircle(zoomCx, zoomCy, zoomR, ring);
             c.drawText("ZOOM", zoomCx, zoomCy + label.getTextSize() * 0.35f, label);
+            c.drawCircle(nadeCx, nadeCy, nadeR, zoomP);
+            c.drawCircle(nadeCx, nadeCy, nadeR, ring);
+            c.drawText("NADE", nadeCx, nadeCy + label.getTextSize() * 0.35f, label);
 
             /* Ammo, big and bottom-right: loaded / reserve, "--" while the
              * magazine is out. */

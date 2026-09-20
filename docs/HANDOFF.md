@@ -364,6 +364,51 @@ frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
 Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
 need weapon state we do not track yet.
 
+## Grenades (2026-09-20)
+
+`globals` +296 keeps the grenade table, 68 bytes an entry: how many you may
+carry, how many you spawn with in multiplayer, and the projectile. Blood
+Gulch gives you **two frags of a possible four**.
+
+Grenades are not a weapon's ammunition, so
+`hta_projectiles_equip_projectile` loads one straight from a projectile tag
+rather than through a `weap`.
+
+### What makes a grenade a grenade
+
+Two fields, both already in the projectile tag:
+
+- **`ProjectileMaterialResponse`** (160 bytes, response at **+2**): every
+  material the Trial's grenades can hit answers **reflect**, not detonate.
+  Read at +0 you get the FLAGS instead and every grenade looks like it
+  vanishes on contact.
+- **`detonation timer starts`** at **+384**: the frag says *after first
+  bounce* (0.5 s), the plasma says *when at rest* (2.0 s).
+
+**`detonation timer starts` only means anything for something that
+bounces.** The needler's needles also say "when at rest" and never come to
+rest -- they fly until they hit -- so for a projectile that does not
+reflect the countdown runs from launch, which is the 0.75 s a needle lives.
+Honouring the field blindly made needles immortal.
+
+### The throw is invented
+
+**The fourth invented number.** The frag's own initial velocity is
+**0.00**, because in Halo the throw comes from the player and the player's
+throw strength is an engine constant that is not in the data.
+`HTA_GRENADE_THROW` is 9 world units a second, which lands one about
+twenty-five out on a flat throw.
+
+The bounce damping (`PROJ_BOUNCE`, 0.35) is chosen too: the `pphy` that
+gives a spent casing its elasticity belongs to PARTICLES, and projectiles
+carry none.
+
+### A nesting bug worth knowing about
+
+The world-space dynamic mesh uploads had drifted inside `if (s->gun.n)`,
+which meant projectiles and their particles were only uploaded once you had
+already shot a wall and made a scorch mark. Fixed; they are unconditional.
+
 ## Health, shield and consequences (2026-09-20)
 
 The bars had been sitting full since they were drawn. They move now, and
@@ -1747,6 +1792,7 @@ after building, wherever real tag physics are available.
 | Walk bob | `src/engine/viewmodel.c` `apply_move` |
 | Positional sound | `platform_android.c` `play_tag_at`, `hta_audio_play_pan` |
 | Health / shield / falling | `src/engine/vitals.c`, `tests/test_vitals.c` |
+| Grenades | `globals`+296, `hta_projectiles_equip_projectile` |
 | Blast damage | `src/asset/effect.c` `hta_effect_damage` |
 | Casing ejection | `viewmodel.c` `eject_pos`, `hta_particles_add_marker` |
 | Map material scan | `platform_android.c` `map_material[]` |

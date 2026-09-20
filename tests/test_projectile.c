@@ -178,6 +178,57 @@ int main(int argc, char **argv)
         break;
     }
 
+    printf("\n[grenades bounce and fuse]\n");
+    {
+        /* Grenades come from the globals table at +296, not from a weapon.
+         * The frag REFLECTS off everything and its fuse does not start
+         * until it has bounced; the plasma's starts when it comes to rest. */
+        int32_t gi = hta_cache_find_tag_by_class(&c, HTA_TAG_MATG);
+        hta_tag_entry gt;
+        uint32_t gb = 0;
+        CHECK(gi >= 0 && hta_cache_tag(&c, (uint32_t)gi, &gt) &&
+              hta_cache_ptr_to_offset(&c, gt.tag_data_ptr, &gb),
+              "the globals tag opens");
+        uint32_t n = 0, gp = 0, goff = 0;
+        CHECK(hta_read_reflexive(&c, gb + 296u, &n, &gp) && n >= 2 &&
+              hta_cache_ptr_to_offset(&c, gp, &goff),
+              "and lists two grenade types");
+
+        uint32_t proj = 0;
+        int16_t mx = 0, sp = 0;
+        hta_rd_u16(&c, goff + 0u, (uint16_t *)&mx);
+        hta_rd_u16(&c, goff + 2u, (uint16_t *)&sp);
+        hta_rd_u32(&c, goff + 52u + 12u, &proj);
+        printf("    frag: carry %d, spawn with %d\n", mx, sp);
+        CHECK(mx == 4, "you may carry four");
+        CHECK(sp == 2, "and spawn with two");
+
+        hta_projectiles g;
+        hta_projectiles_init(&g);
+        CHECK(hta_projectiles_equip_projectile(&g, &c, NULL, proj, err, sizeof(err)),
+              "the frag grenade loads");
+        CHECK(g.bounces, "it bounces rather than going off on contact");
+        CHECK(g.timer_starts == HTA_PROJ_TIMER_AFTER_BOUNCE,
+              "and its fuse starts after the first bounce");
+        CHECK(g.blast_damage > 0.0f, "with a blast that can hurt you");
+
+        /* Thrown into empty space it must NOT arm: no bounce, no fuse. */
+        float o[3] = { 0, 0, 5 }, d[3] = { 1, 0, 0.3f };
+        hta_projectiles_throw(&g, o, d, 9.0f);
+        CHECK(hta_projectiles_count(&g) == 1, "one in the air");
+        for (int k = 0; k < 60 * 5; k++)
+            hta_projectiles_update(&g, NULL, 1.0f / 60.0f);
+        CHECK(hta_projectiles_count(&g) == 1,
+              "and with nothing to bounce off it never arms");
+        CHECK(g.live[0].fuse < 0.0f, "its fuse has not started");
+
+        /* It must still be a thrown object: gravity pulls it down. */
+        CHECK(g.live[0].pos[2] < 5.0f, "gravity brings it down");
+        CHECK(g.live[0].pos[0] > 1.0f, "and the throw carried it forward");
+
+        hta_projectiles_free(&g);
+    }
+
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

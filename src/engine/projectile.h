@@ -29,12 +29,20 @@
 /* Halo keeps projectile velocities per tick, at 30 ticks a second. */
 #define HTA_TICKS_PER_SECOND 30.0f
 
+/* ProjectileDetonationTimerStarts, at proj+384. */
+#define HTA_PROJ_TIMER_IMMEDIATELY 0u
+#define HTA_PROJ_TIMER_AFTER_BOUNCE 1u
+#define HTA_PROJ_TIMER_AT_REST 2u
+
 typedef struct {
     float pos[3];
     float dir[3];        /* unit */
+    float speed;         /* wu/s; a thrown grenade carries its own */
     float travelled;     /* world units, for the speed ramp and the range */
     float age;           /* seconds, for the detonation timer */
+    float fuse;          /* seconds left once armed; < 0 until then */
     float fall;          /* downward speed picked up from gravity, wu/s */
+    uint32_t bounces;
     bool  alive;
 } hta_projectile;
 
@@ -47,6 +55,12 @@ typedef struct {
     float    range;                        /* world units; 0 = unlimited */
     float    timer;                        /* seconds; 0 = none */
     float    gravity_scale;
+    /* A grenade REFLECTS off the world instead of going off against it,
+     * and its fuse does not start until it has. `ProjectileMaterialResponse`
+     * is 160 bytes with the response at +2: every material the Trial's
+     * grenades can hit says "reflect". */
+    bool     bounces;
+    uint16_t timer_starts;   /* HTA_PROJ_TIMER_* */
 
     /* One mesh, HTA_PROJ_MAX copies of the model. `base` is the model in its
      * own space; `mesh.vertices` is what the renderer sees. */
@@ -87,6 +101,19 @@ bool hta_projectiles_equip(hta_projectiles *p, const hta_cache *c,
 /* Launch one. Ignored when the weapon has no drawable projectile. */
 void hta_projectiles_fire(hta_projectiles *p, const float origin[3],
                           const float dir[3]);
+
+/* Launch one at a speed of the caller's choosing rather than the tag's.
+ * A thrown grenade needs this: its projectile's own initial velocity is
+ * 0.00, because in Halo the throw comes from the player, not the tag. */
+void hta_projectiles_throw(hta_projectiles *p, const float origin[3],
+                           const float dir[3], float speed);
+
+/* Load a projectile straight, rather than through a weapon -- the grenades
+ * come from the globals table, not from anything you are holding. */
+bool hta_projectiles_equip_projectile(hta_projectiles *p, const hta_cache *c,
+                                      const hta_resource_map *bitmaps,
+                                      uint32_t projectile_id,
+                                      char *err, size_t errlen);
 
 /* Fly, collide and expire. Sets `detonated` for the update in which one
  * went off. Re-poses the mesh, so the caller re-uploads the vertices. */

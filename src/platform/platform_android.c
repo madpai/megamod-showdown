@@ -150,6 +150,14 @@ typedef struct {
 
     /* Rounds you can watch fly: the rocket and the needle. */
     hta_projectiles proj;
+    /* And the grenades, which come from the globals table rather than
+     * from anything you are holding. */
+    hta_projectiles nades;
+    hta_gfx_mesh   *gpu_nades;
+    uint32_t        nade_recipe;
+    uint32_t        nade_snd;
+    int             nade_count;
+    int             nade_max;
     /* And the smoke and fire their detonation throws out, plus the dust a
      * bullet kicks up. Blood Gulch is made of four materials, so four
      * impact effects cover every surface a round can land on. */
@@ -167,6 +175,7 @@ typedef struct {
     float    dry_cooldown;   /* stops an empty trigger clicking every frame */
     bool     hud_reload;
     bool     hud_melee;
+    bool     hud_grenade;
     bool          have_mesh;
     bool          have_sky;
     bool          have_coll;
@@ -368,6 +377,16 @@ static void play_tag(hta_android *s, uint32_t tag_id, float gain)
     hta_audio_play(&s->audio, s->bank[b].clip[pick], gain);
 }
 
+/* How hard a grenade is thrown.
+ *
+ * INVENTED -- the fourth number in this project that is. The frag
+ * grenade's own projectile tag says an initial velocity of 0.00, because
+ * in Halo the throw comes from the player rather than the tag, and the
+ * player's throw strength is an engine constant that is not in the data.
+ * Nine world units a second puts one about twenty-five out on a flat
+ * throw, which is roughly the distance it goes in the real game. */
+#define HTA_GRENADE_THROW 9.0f
+
 /* How far a world sound carries.
  *
  * INVENTED, and the third number in this project that is. Halo keeps a
@@ -566,6 +585,7 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
 
     /* The weapon's own round, if it is an object rather than a particle.
      * Most of the roster has nothing to draw, which is not a failure. */
+    if (s->gpu_nades) { hta_gfx_mesh_free(s->gfx, s->gpu_nades); s->gpu_nades = NULL; }
     if (s->gpu_parts) { hta_gfx_mesh_free(s->gfx, s->gpu_parts); s->gpu_parts = NULL; }
     if (s->gpu_proj) { hta_gfx_mesh_free(s->gfx, s->gpu_proj); s->gpu_proj = NULL; }
     {
@@ -614,6 +634,12 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
             s->casing_recipe = hta_particles_add_marker(&s->parts, &s->cache, pbm,
                                                         s->weap.firing_fx_id,
                                                         "primary ejection");
+        /* The grenade blast, which is the same whatever you are holding. */
+        s->nade_recipe = HTA_PART_NO_RECIPE;
+        if (s->nades.det_effect)
+            s->nade_recipe = hta_particles_add(&s->parts, &s->cache, pbm,
+                                               s->nades.det_effect);
+        if (s->nade_snd) bank_get(s, s->nade_snd);
         if (hta_particles_build(&s->parts, perr, sizeof(perr))) {
             hta_log("[weapon] particles: %u type(s), %u recipe(s)",
                     s->parts.type_count, s->parts.recipe_count);
@@ -887,6 +913,39 @@ static bool load_map(hta_android *s)
             hta_player_apply_physics(&s->player, &phys);
             s->cam.fov_y = phys.fov_y;
             s->base_fov = phys.fov_y;
+            /* The grenades. `globals` keeps a table of them at +296,
+             * 68 bytes an entry: how many you may carry, how many you
+             * spawn with in multiplayer, and the projectile itself. */
+            {
+                int32_t gi = hta_cache_find_tag_by_class(&s->cache, HTA_TAG_MATG);
+                hta_tag_entry gt;
+                uint32_t gb;
+                if (gi >= 0 && hta_cache_tag(&s->cache, (uint32_t)gi, &gt) &&
+                    hta_cache_ptr_to_offset(&s->cache, gt.tag_data_ptr, &gb)) {
+                    uint32_t n = 0, p2 = 0, off = 0;
+                    if (hta_read_reflexive(&s->cache, gb + 296u, &n, &p2) && n &&
+                        hta_cache_ptr_to_offset(&s->cache, p2, &off)) {
+                        int16_t mx = 0, sp = 0;
+                        uint32_t proj = 0;
+                        hta_rd_u16(&s->cache, off + 0u, (uint16_t *)&mx);
+                        hta_rd_u16(&s->cache, off + 2u, (uint16_t *)&sp);
+                        hta_rd_u32(&s->cache, off + 52u + 12u, &proj);
+                        char gerr[HTA_ERRLEN];
+                        if (proj && hta_projectiles_equip_projectile(
+                                &s->nades, &s->cache,
+                                s->bitmaps_rm.data ? &s->bitmaps_rm : NULL,
+                                proj, gerr, sizeof(gerr))) {
+                            s->nade_max = mx > 0 ? mx : 4;
+                            s->nade_count = sp > 0 ? sp : 2;
+                            s->nade_snd = s->nades.detonation_snd;
+                            hta_log("[player] %d frag grenade(s) of %d, "
+                                    "fuse %.2fs after the bounce, blast %.0f",
+                                    s->nade_count, s->nade_max,
+                                    s->nades.timer, s->nades.blast_damage);
+                        }
+                    }
+                }
+            }
             if (hta_vitals_load(&s->vitals, &s->cache))
                 hta_log("[player] %.0f health, %.0f shield, back in %.1fs at %.0f%%/s"
                         "; a fall hurts past %.1f wu/s and kills at %.1f",
@@ -1038,6 +1097,7 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
         if (code == AKEYCODE_BUTTON_R1 && down) { s->hud_melee = true; return 1; }
         if (code == AKEYCODE_BUTTON_L1 && down) { s->hud_swap = true; return 1; }
         if (code == AKEYCODE_BUTTON_THUMBR && down) { s->hud_zoom = true; return 1; }
+        if (code == AKEYCODE_BUTTON_L2 && down) { s->hud_grenade = true; return 1; }
         if (code == AKEYCODE_BUTTON_B && down) {
             s->player.noclip = !s->player.noclip;
             hta_log("[input] noclip %s", s->player.noclip ? "ON" : "OFF");
@@ -1122,13 +1182,19 @@ static void start_gfx(hta_android *s)
         if (s->gun.n) {
             hta_gun_build_mesh(&s->gun);
             s->gpu_fx = hta_gfx_mesh_upload(s->gfx, &s->gun.mesh, err, sizeof(err));
+        }
+        /* The world-space dynamic meshes. These are NOT conditional on
+         * there being scorch marks -- they were, briefly, which meant
+         * rockets and their smoke only appeared once you had shot a wall. */
         if (s->proj.loaded && s->proj.mesh.index_count)
             s->gpu_proj = hta_gfx_mesh_upload_dynamic(s->gfx, &s->proj.mesh,
                                                       err, sizeof(err));
         if (s->parts.loaded && s->parts.mesh.index_count)
             s->gpu_parts = hta_gfx_mesh_upload_dynamic(s->gfx, &s->parts.mesh,
                                                        err, sizeof(err));
-        }
+        if (s->nades.loaded && s->nades.mesh.index_count)
+            s->gpu_nades = hta_gfx_mesh_upload_dynamic(s->gfx, &s->nades.mesh,
+                                                       err, sizeof(err));
         if (s->have_fp) {
             s->gpu_fp = hta_gfx_mesh_upload_dynamic(s->gfx, &s->vm.mesh, err, sizeof(err));
             if (!s->gpu_fp) hta_log("[gfx] fp weapon upload FAILED: %s", err);
@@ -1148,6 +1214,7 @@ static void stop_gfx(hta_android *s)
 {
     if (s->gpu_hud) { hta_gfx_mesh_free(s->gfx, s->gpu_hud); s->gpu_hud = NULL; }
     if (s->gpu_fp) { hta_gfx_mesh_free(s->gfx, s->gpu_fp); s->gpu_fp = NULL; }
+    if (s->gpu_nades) { hta_gfx_mesh_free(s->gfx, s->gpu_nades); s->gpu_nades = NULL; }
     if (s->gpu_parts) { hta_gfx_mesh_free(s->gfx, s->gpu_parts); s->gpu_parts = NULL; }
     if (s->gpu_proj) { hta_gfx_mesh_free(s->gfx, s->gpu_proj); s->gpu_proj = NULL; }
     if (s->gpu_fx) { hta_gfx_mesh_free(s->gfx, s->gpu_fx); s->gpu_fx = NULL; }
@@ -1321,6 +1388,12 @@ Java_net_hta_halotrial_GameActivity_nativeHudZoom(JNIEnv *env, jclass cls)
 {
     (void)env; (void)cls;
     if (g_android) g_android->hud_zoom = true;
+}
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudGrenade(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    if (g_android) g_android->hud_grenade = true;
 }
 
 void android_main(struct android_app *app)
@@ -1528,6 +1601,55 @@ void android_main(struct android_app *app)
         }
         hta_audio_android_poll(&state.audio);
         hta_viewmodel_update(&state.vm, dt);
+        /* Throw a grenade. It leaves from the eye, forward and a little
+         * up, the way Halo lobs one. */
+        if (state.hud_grenade) {
+            state.hud_grenade = false;
+            if (state.nades.loaded && state.nade_count > 0 && !swinging) {
+                float fwd[3], up[3];
+                hta_camera_forward(&state.cam, fwd);
+                hta_camera_up(&state.cam, up);
+                float at[3], dir[3];
+                for (int k = 0; k < 3; k++) {
+                    at[k] = state.cam.pos[k] + fwd[k] * 0.4f;
+                    dir[k] = fwd[k] + up[k] * 0.25f;
+                }
+                hta_projectiles_throw(&state.nades, at, dir, HTA_GRENADE_THROW);
+                state.nade_count--;
+                hta_log("[player] grenade away, %d left", state.nade_count);
+            }
+        }
+        if (state.nades.loaded) {
+            hta_projectiles_update(&state.nades,
+                                   state.col.built ? &state.col : NULL, dt);
+            if (state.nades.detonated) {
+                hta_gun_add_mark(&state.gun, state.nades.hit,
+                                 state.nades.hit_normal,
+                                 state.nades.blast_radius);
+                if (state.nade_snd)
+                    play_tag_at(&state, state.nade_snd, state.nades.hit, 1.0f);
+                if (state.nade_recipe != HTA_PART_NO_RECIPE)
+                    hta_particles_burst(&state.parts, state.nade_recipe,
+                                        state.nades.hit, state.nades.hit_normal);
+                if (state.vitals.loaded && state.nades.blast_damage > 0.0f) {
+                    float dx = state.cam.pos[0] - state.nades.hit[0];
+                    float dy = state.cam.pos[1] - state.nades.hit[1];
+                    float dz = state.cam.pos[2] - state.nades.hit[2];
+                    float dist = sqrtf(dx*dx + dy*dy + dz*dz);
+                    float r = state.nades.blast_damage_radius;
+                    if (dist < r) {
+                        float core = state.nades.blast_core;
+                        float f = 1.0f;
+                        if (dist > core && r > core)
+                            f = 1.0f - (dist - core) / (r - core);
+                        if (f > 0.0f)
+                            hta_vitals_damage(&state.vitals,
+                                              state.nades.blast_damage * f);
+                    }
+                }
+            }
+        }
+
         /* Rounds in flight. A detonation leaves the same scorch and plays
          * the same material impact a hitscan round would. */
         if (state.proj.loaded) {
@@ -1621,12 +1743,18 @@ void android_main(struct android_app *app)
                 vmdraw.vertex_count = state.vm.mesh.vertex_count;
                 for (int k = 0; k < 3; k++) vmdraw.offset[k] = state.weap.fp_offset[k];
             }
-            hta_gfx_dynamic dynlist[2];
+            hta_gfx_dynamic dynlist[3];
             uint32_t dyncount = 0;
             if (state.gpu_proj) {
                 dynlist[dyncount].mesh = state.gpu_proj;
                 dynlist[dyncount].vertices = state.proj.mesh.vertices;
                 dynlist[dyncount].vertex_count = state.proj.mesh.vertex_count;
+                dyncount++;
+            }
+            if (state.gpu_nades) {
+                dynlist[dyncount].mesh = state.gpu_nades;
+                dynlist[dyncount].vertices = state.nades.mesh.vertices;
+                dynlist[dyncount].vertex_count = state.nades.mesh.vertex_count;
                 dyncount++;
             }
             if (state.gpu_parts) {
@@ -1691,6 +1819,7 @@ done:
     hta_collision_free(&state.col);
     hta_gun_free(&state.gun);
     hta_projectiles_free(&state.proj);
+    hta_projectiles_free(&state.nades);
     hta_particles_free(&state.parts);
     hta_bsp_free(&state.mesh);
     hta_bsp_free(&state.sky);
