@@ -47,24 +47,30 @@ static void hide_slot(hta_particles *p, uint32_t slot)
     }
 }
 
-bool hta_particles_load(hta_particles *p, const hta_cache *c,
-                        const hta_resource_map *bitmaps,
-                        uint32_t effect_tag_id, char *err, size_t errlen)
+uint32_t hta_particles_add(hta_particles *p, const hta_cache *c,
+                           const hta_resource_map *bitmaps,
+                           uint32_t effect_tag_id)
 {
-    if (!p || !c) return false;
-    hta_bsp_free(&p->mesh);
-    memset(p, 0, sizeof(*p));
-    p->rng = 0x9E3779B9u;
-    if (!effect_tag_id) return false;
+    if (!p || !c || !effect_tag_id) return HTA_PART_NO_RECIPE;
+    if (p->recipe_count >= HTA_PART_RECIPES) return HTA_PART_NO_RECIPE;
+    if (!p->mesh.textures) {
+        p->mesh.textures = (hta_bsp_texture *)calloc(HTA_PART_TYPES,
+                                                     sizeof(hta_bsp_texture));
+        if (!p->mesh.textures) return HTA_PART_NO_RECIPE;
+    }
+
+    /* An effect already added is the same recipe; impacts share heavily. */
+    for (uint32_t r = 0; r < p->recipe_count; r++)
+        if (p->recipe[r].effect_id == effect_tag_id) return r;
 
     uint32_t n = hta_effect_particle_count(c, effect_tag_id);
-    if (!n) return false;
+    if (!n) return HTA_PART_NO_RECIPE;
 
-    p->mesh.textures = (hta_bsp_texture *)calloc(HTA_PART_TYPES,
-                                                 sizeof(hta_bsp_texture));
-    if (!p->mesh.textures) return false;
+    hta_particle_recipe rec;
+    memset(&rec, 0, sizeof(rec));
+    rec.effect_id = effect_tag_id;
 
-    for (uint32_t i = 0; i < n && p->type_count < HTA_PART_TYPES; i++) {
+    for (uint32_t i = 0; i < n && rec.emit_count < HTA_PART_EMITS; i++) {
         hta_effect_particle ep;
         if (!hta_effect_particle_at(c, effect_tag_id, i, &ep)) continue;
         /* Underwater and space variants are a different effect entirely,
@@ -73,65 +79,78 @@ bool hta_particles_load(hta_particles *p, const hta_cache *c,
         if (ep.create == HTA_FX_CAM_FIRST) continue;
         if (ep.count_max <= 0) continue;        /* never spawns */
 
-        uint32_t t = p->type_count;
-        uint32_t tex = hta_mesh_intern_bitmap(&p->mesh, c, bitmaps,
-                                              ep.bitmap_id, 0);
-        if (tex == ~0u) continue;
+        /* Share a type with anything already using this bitmap. */
+        uint32_t t = ~0u;
+        for (uint32_t k = 0; k < p->type_count; k++)
+            if (p->type[k].bitmap_id == ep.bitmap_id) { t = k; break; }
+        if (t == ~0u) {
+            if (p->type_count >= HTA_PART_TYPES) continue;
+            uint32_t tex = hta_mesh_intern_bitmap(&p->mesh, c, bitmaps,
+                                                  ep.bitmap_id, 0);
+            if (tex == ~0u) continue;
+            t = p->type_count;
+            p->type[t].bitmap_id = ep.bitmap_id;
+            p->type[t].tex = tex;
+            p->type[t].blend = ep.blend;
 
-        p->type[t].bitmap_id = ep.bitmap_id;
-        p->type[t].tex = tex;
-        p->type[t].blend = ep.blend;
-
-        /* A particle bitmap with no alpha channel cannot be alpha-blended:
-         * it would draw as an opaque square of its own black background.
-         * The rocket's lens flare is exactly that -- `flares_generic` is a
-         * format with no alpha, so every texel decodes to 255 -- and Halo
-         * reads such art additively, where black contributes nothing.
-         * Measured rather than assumed: scan what we actually decoded. */
-        if (p->type[t].blend != HTA_FX_BLEND_ADD) {
-            const hta_bsp_texture *bt = &p->mesh.textures[tex];
-            bool has_alpha = false;
-            if (bt->rgba) {
-                size_t px = (size_t)bt->width * bt->height;
-                for (size_t q = 0; q < px; q++)
-                    if (bt->rgba[q * 4u + 3u] < 250u) { has_alpha = true; break; }
+            uint32_t seqs = hta_bitmap_sequence_count(c, ep.bitmap_id);
+            for (uint32_t sq = 0; sq < seqs && p->type[t].sprite_count < 8; sq++) {
+                hta_bitmap_sprite sp;
+                if (!hta_bitmap_sprite_at(c, ep.bitmap_id, sq, &sp)) continue;
+                if (sp.bitmap_index != 0) continue;   /* the sheet we interned */
+                if (sp.u1 <= sp.u0 || sp.v1 <= sp.v0) continue;
+                p->type[t].sprite[p->type[t].sprite_count++] = sp;
             }
-            if (!has_alpha) p->type[t].blend = HTA_FX_BLEND_ADD;
-        }
-        uint32_t seqs = hta_bitmap_sequence_count(c, ep.bitmap_id);
-        for (uint32_t s = 0; s < seqs && p->type[t].sprite_count < 8; s++) {
-            hta_bitmap_sprite sp;
-            if (!hta_bitmap_sprite_at(c, ep.bitmap_id, s, &sp)) continue;
-            if (sp.bitmap_index != 0) continue;   /* the sheet we interned */
-            if (sp.u1 <= sp.u0 || sp.v1 <= sp.v0) continue;
-            p->type[t].sprite[p->type[t].sprite_count++] = sp;
-        }
-        if (!p->type[t].sprite_count) {
-            /* Not a sheet: the whole bitmap is the particle. */
-            p->type[t].sprite[0].bitmap_index = 0;
-            p->type[t].sprite[0].u0 = 0.0f; p->type[t].sprite[0].u1 = 1.0f;
-            p->type[t].sprite[0].v0 = 0.0f; p->type[t].sprite[0].v1 = 1.0f;
-            p->type[t].sprite_count = 1;
+            if (!p->type[t].sprite_count) {
+                /* Not a sheet: the whole bitmap is the particle. */
+                p->type[t].sprite[0].bitmap_index = 0;
+                p->type[t].sprite[0].u0 = 0.0f; p->type[t].sprite[0].u1 = 1.0f;
+                p->type[t].sprite[0].v0 = 0.0f; p->type[t].sprite[0].v1 = 1.0f;
+                p->type[t].sprite_count = 1;
+            }
+
+            /* A particle bitmap with no alpha channel cannot be
+             * alpha-blended: it would draw as an opaque square of its own
+             * black background. The rocket's lens flare is exactly that --
+             * `flares_generic` is a format with no alpha, so every texel
+             * decodes to 255 -- and Halo reads such art additively, where
+             * black contributes nothing. Measured, not assumed. */
+            if (p->type[t].blend != HTA_FX_BLEND_ADD) {
+                const hta_bsp_texture *bt = &p->mesh.textures[tex];
+                bool has_alpha = false;
+                if (bt->rgba) {
+                    size_t px = (size_t)bt->width * bt->height;
+                    for (size_t q = 0; q < px; q++)
+                        if (bt->rgba[q * 4u + 3u] < 250u) { has_alpha = true; break; }
+                }
+                if (!has_alpha) p->type[t].blend = HTA_FX_BLEND_ADD;
+            }
+            p->type_count++;
         }
 
-        p->count_min[t] = ep.count_min;
-        p->count_max[t] = ep.count_max;
-        p->speed_min[t] = ep.speed_min;
-        p->speed_max[t] = ep.speed_max;
-        p->spread[t]    = ep.spread > 0.0f ? ep.spread : 1.0f;
-        p->radius_min[t] = ep.radius_min;
-        p->radius_max[t] = ep.radius_max > ep.radius_min ? ep.radius_max
-                                                         : ep.radius_min;
-        p->life[t]      = ep.lifespan > 0.01f ? ep.lifespan : 0.5f;
-        p->fade_in[t]   = ep.fade_in;
-        p->fade_out[t]  = ep.fade_out;
-        p->type_count++;
+        hta_particle_emit *em = &rec.emit[rec.emit_count++];
+        em->type = (uint8_t)t;
+        em->count_min = ep.count_min;
+        em->count_max = ep.count_max;
+        em->speed_min = ep.speed_min;
+        em->speed_max = ep.speed_max;
+        em->spread    = ep.spread > 0.0f ? ep.spread : 1.0f;
+        em->radius_min = ep.radius_min;
+        em->radius_max = ep.radius_max > ep.radius_min ? ep.radius_max
+                                                       : ep.radius_min;
+        em->life      = ep.lifespan > 0.01f ? ep.lifespan : 0.5f;
+        em->fade_in   = ep.fade_in;
+        em->fade_out  = ep.fade_out;
     }
-    if (!p->type_count) {
-        hta_bsp_free(&p->mesh);
-        memset(p, 0, sizeof(*p));
-        return false;
-    }
+    if (!rec.emit_count) return HTA_PART_NO_RECIPE;
+
+    p->recipe[p->recipe_count] = rec;
+    return p->recipe_count++;
+}
+
+bool hta_particles_build(hta_particles *p, char *err, size_t errlen)
+{
+    if (!p || !p->type_count) return false;
 
     /* One slot per particle, grouped by type so a type is one submesh. */
     uint32_t slots = p->type_count * HTA_PART_PER_TYPE;
@@ -139,8 +158,6 @@ bool hta_particles_load(hta_particles *p, const hta_cache *c,
     p->mesh.indices  = (uint32_t *)calloc((size_t)slots * 6u, sizeof(uint32_t));
     p->mesh.submeshes = (hta_submesh *)calloc(p->type_count, sizeof(hta_submesh));
     if (!p->mesh.vertices || !p->mesh.indices || !p->mesh.submeshes) {
-        hta_bsp_free(&p->mesh);
-        memset(p, 0, sizeof(*p));
         if (err) snprintf(err, errlen, "out of memory building particles");
         return false;
     }
@@ -191,19 +208,24 @@ static void cone_dir(hta_particles *p, const float dir[3], float spread,
         out[k] = dir[k]*ct + (r[k]*ca + u[k]*sa) * st;
 }
 
-void hta_particles_burst(hta_particles *p, const float origin[3],
-                         const float dir[3])
+void hta_particles_burst(hta_particles *p, uint32_t recipe,
+                         const float origin[3], const float dir[3])
 {
     if (!p || !p->loaded || !origin) return;
+    if (recipe >= p->recipe_count) return;
     float d[3] = { 0.0f, 0.0f, 1.0f };
     if (dir) {
         float l = sqrtf(dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
         if (l > 1e-6f) for (int k = 0; k < 3; k++) d[k] = dir[k] / l;
     }
 
-    for (uint32_t t = 0; t < p->type_count; t++) {
-        int lo = p->count_min[t] > 0 ? p->count_min[t] : 0;
-        int hi = p->count_max[t] > lo ? p->count_max[t] : lo;
+    const hta_particle_recipe *rec = &p->recipe[recipe];
+    for (uint32_t ei = 0; ei < rec->emit_count; ei++) {
+        const hta_particle_emit *em = &rec->emit[ei];
+        uint32_t t = em->type;
+        if (t >= p->type_count) continue;
+        int lo = em->count_min > 0 ? em->count_min : 0;
+        int hi = em->count_max > lo ? em->count_max : lo;
         int want = lo + (int)(frand(p) * (float)(hi - lo + 1));
         if (want > (int)HTA_PART_PER_TYPE) want = (int)HTA_PART_PER_TYPE;
 
@@ -215,15 +237,14 @@ void hta_particles_burst(hta_particles *p, const float origin[3],
             memset(q, 0, sizeof(*q));
             for (int k = 0; k < 3; k++) q->pos[k] = origin[k];
             float v[3];
-            cone_dir(p, d, p->spread[t], v);
-            float speed = p->speed_min[t] +
-                          (p->speed_max[t] - p->speed_min[t]) * frand(p);
+            cone_dir(p, d, em->spread, v);
+            float speed = em->speed_min + (em->speed_max - em->speed_min) * frand(p);
             for (int k = 0; k < 3; k++) q->vel[k] = v[k] * speed;
-            q->life = p->life[t];
-            q->radius0 = p->radius_min[t];
-            q->radius1 = p->radius_max[t];
-            q->fade_in = p->fade_in[t];
-            q->fade_out = p->fade_out[t];
+            q->life = em->life;
+            q->radius0 = em->radius_min;
+            q->radius1 = em->radius_max;
+            q->fade_in = em->fade_in;
+            q->fade_out = em->fade_out;
             q->alive = true;
             spawned++;
         }

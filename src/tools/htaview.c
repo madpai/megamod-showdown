@@ -25,6 +25,7 @@
 #include "engine/viewmodel.h"
 #include "engine/projectile.h"
 #include "engine/particle.h"
+#include "asset/effect.h"
 #include "engine/hud.h"
 #include "asset/biped.h"
 #include "gfx/gfx.h"
@@ -89,6 +90,7 @@ int main(int argc, char **argv)
     int fp_mode = 0;
     int have_eye = 0, want_flash = 0, ammo = -1;
     float fly = -1.0f;
+    int burst_recipe = 0;
     const char *want_weapon = NULL;
     int zoom_level = 0;
     float shield = 1.0f, health = 1.0f;
@@ -115,6 +117,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--zoom") && i + 1 < argc) zoom_level = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--ammo") && i + 1 < argc) ammo = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--fly") && i + 1 < argc) fly = strtof(argv[++i], NULL);
+        else if (!strcmp(argv[i], "--burst") && i + 1 < argc) burst_recipe = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--shield") && i + 1 < argc) shield = strtof(argv[++i], NULL);
         else if (!strcmp(argv[i], "--health") && i + 1 < argc) health = strtof(argv[++i], NULL);
         else if (!strcmp(argv[i], "--fp")) {
@@ -277,17 +280,37 @@ int main(int argc, char **argv)
                 gproj.vertex_count = proj.mesh.vertex_count;
                 if (!gproj.mesh) printf("projectile     upload failed: %s\n", err);
                 /* And whatever its detonation throws out. */
-                if (proj.det_effect &&
-                    hta_particles_load(&parts, &c, rm.data ? &rm : NULL,
-                                       proj.det_effect, err, sizeof(err))) {
-                    printf("particles      %u type(s), %u slots\n",
-                           parts.type_count, parts.mesh.vertex_count / 4u);
-                    gpart.mesh = hta_gfx_mesh_upload_dynamic(g, &parts.mesh,
-                                                             err, sizeof(err));
-                }
             } else {
                 printf("projectile     none to draw for this weapon\n");
             }
+
+            /* Particles are not the projectile's: a hitscan weapon has no
+             * round to draw and still kicks dust off what it hits. */
+            if (proj.det_effect)
+                hta_particles_add(&parts, &c, rm.data ? &rm : NULL,
+                              proj.det_effect);
+            /* And the impacts, for the materials Blood Gulch is made
+             * of: sand, stone, thick metal, plastic. */
+            {
+                const uint8_t mats[4] = { 1u, 2u, 7u, 27u };
+                for (int mi = 0; mi < 4; mi++) {
+                    uint32_t fx = hta_projectile_response_effect(
+                        &c, wdef.projectile_id, mats[mi]);
+                    if (fx) hta_particles_add(&parts, &c,
+                                      rm.data ? &rm : NULL, fx);
+                }
+            }
+            if (hta_particles_build(&parts, err, sizeof(err))) {
+                printf("particles      %u type(s), %u slots\n",
+                       parts.type_count, parts.mesh.vertex_count / 4u);
+                gpart.mesh = hta_gfx_mesh_upload_dynamic(g, &parts.mesh,
+                                                 err, sizeof(err));
+            }
+
+        }
+    }
+    {
+        {
         }
     }
 
@@ -420,9 +443,9 @@ int main(int argc, char **argv)
                 hta_camera_forward(&cam, fwd2);
                 float at[3];
                 for (int k = 0; k < 3; k++)
-                    at[k] = cam.pos[k] + fwd2[k] * 3.0f;
+                    at[k] = cam.pos[k] + fwd2[k] * 1.1f;
                 float up2[3] = { 0.0f, 0.0f, 1.0f };
-                hta_particles_burst(&parts, at, up2);
+                hta_particles_burst(&parts, (uint32_t)burst_recipe, at, up2);
                 for (float el = 0.0f; el < fly; el += 1.0f / 60.0f)
                     hta_particles_update(&parts, &cam, 1.0f / 60.0f);
                 hta_particles_update(&parts, &cam, 0.0f);

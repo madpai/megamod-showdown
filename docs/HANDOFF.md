@@ -364,6 +364,48 @@ frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
 Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
 need weapon state we do not track yet.
 
+## Impact particles, and the walk bob (2026-09-20)
+
+### Bullets kick up dust now
+
+The gap left when particles landed. Every projectile carries **33 material
+responses**, and the assault rifle has ~30 DISTINCT impact effects across
+them -- far too many to load.
+
+What makes it affordable: **Blood Gulch is made of four materials.** Its
+5940 collision triangles are sand (41%), stone (23%), thick metal (26%) and
+a little plastic (4%). The platform scans `col.tri_material` once at load
+and only ever adds the impact effects for the materials the map actually
+contains. 33 effects per weapon becomes 4.
+
+For that, `hta_particles` now separates **types** (a bitmap, a blend, its
+sprites) from **recipes** (one effect's list of what to throw, how many, how
+fast). Effects share art heavily: the rifle's four impacts come out as 4
+recipes over 8 shared types. Loading is two-phase -- `hta_particles_add`
+for each effect, then `hta_particles_build` once -- because the mesh cannot
+be sized until every type is known, and re-interning a texture mid-game
+would move it under the buffer the GPU is reading.
+
+Sand throws a soft dust puff; stone throws visible sparks. That difference
+is the tag's, not ours.
+
+### The weapon sways as you walk
+
+Every Trial weapon carries a `first-person moving` overlay -- 25 frames
+that translate the rig's root and flex the support arm -- and nothing was
+playing it. It is Halo's walk bob, and without it standing still and
+running looked identical.
+
+Composed as a delta from the clip's own first frame, weighted by how fast
+the player is going, so **standing still is exactly the base pose** and
+there is no seam when you stop. The cycle runs faster the faster you go and
+eases back to neutral rather than freezing mid-stride.
+
+The travel is the tag's own and is subtle: **3.4 mm** at a full run. Do not
+"fix" that by scaling it up without evidence; the clip says what it says.
+Note the clip LOOPS -- frames 0 and 25 are identical -- so comparing either
+end alone shows nothing at all, which is the trap if you go looking.
+
 ## Particles (2026-09-20)
 
 The thing the flamethrower and the rocket explosion had been waiting on.
@@ -1596,6 +1638,8 @@ after building, wherever real tag physics are available.
 | Submesh defaults | `src/asset/bsp.c` `hta_submesh_init` |
 | Detail mask | `src/asset/bitmap.c` `hta_shader_multipurpose`, `shaders/mesh.frag` |
 | Particles | `src/engine/particle.c`, `.h`, `tests/test_particle.c` |
+| Walk bob | `src/engine/viewmodel.c` `apply_move` |
+| Map material scan | `platform_android.c` `map_material[]` |
 | Effect particle walk | `src/asset/effect.c` `hta_effect_particle_at` |
 | Rounds counter | `src/engine/hud.c` `load_numbers` |
 | Object attachments / looping sounds | `src/asset/effect.c` `hta_object_loop_sound` |

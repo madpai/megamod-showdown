@@ -41,6 +41,9 @@ typedef struct {
     /* What the last round hit, so the caller can play that material's own
      * impact. HTA_MATERIAL_NONE when it missed or hit something unknown. */
     uint8_t  hit_material;
+    /* Where the last round landed, so the caller can throw the material's
+     * own sparks and dust there. Valid when hit_material is not NONE. */
+    float    last_hit[3], last_nrm[3];
 
     /* The decal marks are drawn with: Halo's own bullet-hole or scorch
      * art, RGBA, owned here. Without one the marks fall back to a flat

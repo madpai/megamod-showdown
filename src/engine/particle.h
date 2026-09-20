@@ -23,9 +23,11 @@
 #include "../asset/effect.h"
 #include "camera.h"
 
-#define HTA_PART_TYPES     6u
-#define HTA_PART_PER_TYPE 24u
+#define HTA_PART_TYPES    12u
+#define HTA_PART_PER_TYPE 16u
 #define HTA_PART_MAX      (HTA_PART_TYPES * HTA_PART_PER_TYPE)
+#define HTA_PART_RECIPES   8u   /* a detonation plus one per map material */
+#define HTA_PART_EMITS     8u   /* particle entries in one effect */
 
 typedef struct {
     float pos[3], vel[3];
@@ -45,18 +47,30 @@ typedef struct {
     uint32_t sprite_count;
 } hta_particle_type;
 
+/* One particle entry of an effect: which type to throw, how many, how fast.
+ * Kept apart from the type because several effects share the same art --
+ * every impact in the Trial throws the same sparks and the same smoke, and
+ * one texture serves them all. */
 typedef struct {
-    hta_particle       live[HTA_PART_MAX];
-    hta_particle_type  type[HTA_PART_TYPES];
-    uint32_t           type_count;
+    uint8_t  type;
+    int16_t  count_min, count_max;
+    float    speed_min, speed_max, spread;
+    float    radius_min, radius_max;
+    float    life, fade_in, fade_out;
+} hta_particle_emit;
 
-    /* What each type spawns, straight from the effect. */
-    int16_t  count_min[HTA_PART_TYPES], count_max[HTA_PART_TYPES];
-    float    speed_min[HTA_PART_TYPES], speed_max[HTA_PART_TYPES];
-    float    spread[HTA_PART_TYPES];
-    float    radius_min[HTA_PART_TYPES], radius_max[HTA_PART_TYPES];
-    float    life[HTA_PART_TYPES];
-    float    fade_in[HTA_PART_TYPES], fade_out[HTA_PART_TYPES];
+typedef struct {
+    uint32_t          effect_id;
+    hta_particle_emit emit[HTA_PART_EMITS];
+    uint32_t          emit_count;
+} hta_particle_recipe;
+
+typedef struct {
+    hta_particle        live[HTA_PART_MAX];
+    hta_particle_type   type[HTA_PART_TYPES];
+    uint32_t            type_count;
+    hta_particle_recipe recipe[HTA_PART_RECIPES];
+    uint32_t            recipe_count;
 
     hta_bsp_mesh mesh;
     uint32_t     rng;
@@ -66,16 +80,23 @@ typedef struct {
 void hta_particles_init(hta_particles *p);
 void hta_particles_free(hta_particles *p);
 
-/* Build the types an effect spawns. False (and everything cleared) when the
- * effect has no particles we can draw, which is not an error. */
-bool hta_particles_load(hta_particles *p, const hta_cache *c,
-                        const hta_resource_map *bitmaps,
-                        uint32_t effect_tag_id, char *err, size_t errlen);
+/* Two phases, because the mesh cannot be sized until every type is known
+ * and re-interning a texture mid-game would move it under the buffer the
+ * GPU is reading.
+ *
+ * Add each effect you will ever spawn, then build once. `hta_particles_add`
+ * returns a recipe index to pass to burst, or HTA_PART_NO_RECIPE when the
+ * effect has nothing drawable -- which is not an error. */
+#define HTA_PART_NO_RECIPE 0xFFFFFFFFu
+uint32_t hta_particles_add(hta_particles *p, const hta_cache *c,
+                           const hta_resource_map *bitmaps,
+                           uint32_t effect_tag_id);
+bool hta_particles_build(hta_particles *p, char *err, size_t errlen);
 
-/* Throw one effect's worth of particles from a point, biased along `dir`
- * (a surface normal for an impact). Ignored when nothing is loaded. */
-void hta_particles_burst(hta_particles *p, const float origin[3],
-                         const float dir[3]);
+/* Throw one recipe's worth of particles from a point, biased along `dir`
+ * (a surface normal for an impact). Ignored for an unknown recipe. */
+void hta_particles_burst(hta_particles *p, uint32_t recipe,
+                         const float origin[3], const float dir[3]);
 
 /* Fly, age out, and re-face the camera. The caller re-uploads the vertices. */
 void hta_particles_update(hta_particles *p, const hta_camera *cam, float dt);

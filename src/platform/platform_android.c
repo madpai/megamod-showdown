@@ -149,8 +149,14 @@ typedef struct {
 
     /* Rounds you can watch fly: the rocket and the needle. */
     hta_projectiles proj;
-    /* And the smoke and fire their detonation throws out. */
+    /* And the smoke and fire their detonation throws out, plus the dust a
+     * bullet kicks up. Blood Gulch is made of four materials, so four
+     * impact effects cover every surface a round can land on. */
     hta_particles   parts;
+    uint32_t        det_recipe;
+    uint32_t        impact_recipe[33];
+    uint8_t         map_material[33];      /* the ones this map contains */
+    uint32_t        map_material_count;
 
     hta_ammo ammo;
     float    dry_cooldown;   /* stops an empty trigger clicking every frame */
@@ -519,18 +525,33 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
                 s->gpu_proj = hta_gfx_mesh_upload_dynamic(s->gfx, &s->proj.mesh,
                                                           perr, sizeof(perr));
         }
-        /* What its detonation throws out. Built once here, because
-         * interning a texture mid-game would move the mesh under the
-         * buffer the GPU is reading. */
+        /* Everything this weapon will ever throw: its detonation, and one
+         * impact effect per material the MAP actually contains. Built once
+         * here, because interning a texture mid-game would move the mesh
+         * under the buffer the GPU is reading. */
         if (s->gpu_parts) {
             hta_gfx_mesh_free(s->gfx, s->gpu_parts);
             s->gpu_parts = NULL;
         }
-        if (s->proj.det_effect &&
-            hta_particles_load(&s->parts, &s->cache,
-                               s->bitmaps_ok ? &s->bitmaps_rm : NULL,
-                               s->proj.det_effect, perr, sizeof(perr))) {
-            hta_log("[weapon] detonation particles: %u type(s)", s->parts.type_count);
+        hta_particles_free(&s->parts);
+        hta_particles_init(&s->parts);
+        s->det_recipe = HTA_PART_NO_RECIPE;
+        for (uint32_t m = 0; m < 33u; m++) s->impact_recipe[m] = HTA_PART_NO_RECIPE;
+
+        const hta_resource_map *pbm = s->bitmaps_ok ? &s->bitmaps_rm : NULL;
+        if (s->proj.det_effect)
+            s->det_recipe = hta_particles_add(&s->parts, &s->cache, pbm,
+                                              s->proj.det_effect);
+        for (uint32_t k = 0; k < s->map_material_count; k++) {
+            uint8_t m = s->map_material[k];
+            uint32_t fx = hta_projectile_response_effect(&s->cache,
+                                                         s->weap.projectile_id, m);
+            if (fx) s->impact_recipe[m] = hta_particles_add(&s->parts, &s->cache,
+                                                            pbm, fx);
+        }
+        if (hta_particles_build(&s->parts, perr, sizeof(perr))) {
+            hta_log("[weapon] particles: %u type(s), %u recipe(s)",
+                    s->parts.type_count, s->parts.recipe_count);
             if (s->gfx)
                 s->gpu_parts = hta_gfx_mesh_upload_dynamic(s->gfx, &s->parts.mesh,
                                                            perr, sizeof(perr));
@@ -742,6 +763,24 @@ static bool load_map(hta_android *s)
             hta_log("[assets] collision grid failed to build; player will free-fly");
         else
             hta_log("[assets] collision grid %ux%u cells (render mesh)", s->col.nx, s->col.ny);
+    }
+
+    /* Which materials this map is actually made of. Blood Gulch is four:
+     * sand, stone, thick metal and a little plastic. Knowing them turns 33
+     * impact effects per weapon into four, which is what makes per-material
+     * impact particles affordable at all. */
+    s->map_material_count = 0;
+    if (s->col.built && s->col.tri_material) {
+        uint8_t seen[33];
+        memset(seen, 0, sizeof(seen));
+        for (uint32_t i = 0; i < s->col.tri_count; i++) {
+            uint8_t m = s->col.tri_material[i];
+            if (m < 33u) seen[m] = 1;
+        }
+        for (uint32_t m = 0; m < 33u; m++)
+            if (seen[m] && s->map_material_count < 33u)
+                s->map_material[s->map_material_count++] = (uint8_t)m;
+        hta_log("[assets] %u material(s) in this map", s->map_material_count);
     }
 
     if (hta_scenario_add_objects(&s->mesh, &s->cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL, err, sizeof(err)))
@@ -1331,6 +1370,13 @@ void android_main(struct android_app *app)
                     hta_gun_fire(&state.gun, state.col.built ? &state.col : NULL,
                                  &state.cam);
                     play_impact(&state, state.gun.hit_material);
+                    /* And the dust the round kicks off that surface. */
+                    if (state.gun.hit_material < 33u &&
+                        state.impact_recipe[state.gun.hit_material]
+                            != HTA_PART_NO_RECIPE)
+                        hta_particles_burst(&state.parts,
+                                            state.impact_recipe[state.gun.hit_material],
+                                            state.gun.last_hit, state.gun.last_nrm);
                 }
                 hta_viewmodel_play(&state.vm, HTA_VM_FIRE);
                 hta_viewmodel_flash(&state.vm);
@@ -1390,8 +1436,8 @@ void android_main(struct android_app *app)
                 else
                     play_impact(&state, state.proj.hit_material);
                 /* Thrown out along the surface it hit. */
-                hta_particles_burst(&state.parts, state.proj.hit,
-                                    state.proj.hit_normal);
+                hta_particles_burst(&state.parts, state.det_recipe,
+                                    state.proj.hit, state.proj.hit_normal);
             }
         }
 

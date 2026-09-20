@@ -153,6 +153,10 @@ void hta_gun_add_mark(hta_gun *g, const float hit[3], const float nrm[3],
     g->hits[i].nrm[1] = nrm[1];
     g->hits[i].nrm[2] = nrm[2];
     g->hits[i].size = size;
+    for (int k = 0; k < 3; k++) {
+        g->last_hit[k] = hit[k];
+        g->last_nrm[k] = nrm[k];
+    }
     g->next++;
     if (g->n < HTA_GUN_MAX_HITS) g->n++;
     g->dirty = 1;

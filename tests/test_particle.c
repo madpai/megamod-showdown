@@ -4,6 +4,7 @@
 #include "engine/projectile.h"
 #include "asset/cache.h"
 #include "asset/weapon.h"
+#include "asset/effect.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,7 +36,7 @@ int main(int argc, char **argv)
         hta_particles_init(&p);
         CHECK(!p.loaded, "an empty system is not loaded");
         float o[3] = {0,0,0}, d[3] = {0,0,1};
-        hta_particles_burst(&p, o, d);
+        hta_particles_burst(&p, 0, o, d);
         hta_particles_update(&p, NULL, 1.0f / 60.0f);
         CHECK(hta_particles_count(&p) == 0, "bursting one changes nothing");
         hta_particles_free(&p);
@@ -88,11 +89,13 @@ int main(int argc, char **argv)
 
         hta_particles p;
         hta_particles_init(&p);
-        CHECK(hta_particles_load(&p, &c, &bm, proj.det_effect, err, sizeof(err)),
-              "whose particles load");
+        uint32_t det = hta_particles_add(&p, &c, &bm, proj.det_effect);
+        CHECK(det != HTA_PART_NO_RECIPE, "whose particles load");
+        CHECK(hta_particles_build(&p, err, sizeof(err)), "and the mesh builds");
         printf("    %u type(s), %u slots\n", p.type_count,
                p.mesh.vertex_count / 4u);
         CHECK(p.type_count >= 2, "a flare and a smoke plume at least");
+        CHECK(p.recipe_count == 1, "one recipe for one effect");
         CHECK(p.mesh.submesh_count == p.type_count, "one submesh per type");
         CHECK(p.mesh.vertex_count == p.type_count * HTA_PART_PER_TYPE * 4u,
               "and a fixed slot per particle");
@@ -112,7 +115,7 @@ int main(int argc, char **argv)
         CHECK(no_alpha_is_add, "nothing without alpha is left alpha-blended");
 
         float o[3] = { 0, 0, 0 }, up[3] = { 0, 0, 1 };
-        hta_particles_burst(&p, o, up);
+        hta_particles_burst(&p, det, o, up);
         uint32_t alive = hta_particles_count(&p);
         printf("    burst -> %u alive\n", alive);
         CHECK(alive > 0, "a burst throws particles");
@@ -137,12 +140,57 @@ int main(int argc, char **argv)
         CHECK(t < 10.0f, "and none outlives its tagged life by much");
 
         /* Bursting far more than there is room for must not overflow. */
-        for (int k = 0; k < 40; k++) hta_particles_burst(&p, o, up);
+        for (int k = 0; k < 40; k++) hta_particles_burst(&p, det, o, up);
         CHECK(hta_particles_count(&p) <= p.type_count * HTA_PART_PER_TYPE,
               "repeated bursts stay inside the slots");
 
         hta_particles_free(&p);
         hta_projectiles_free(&proj);
+        break;
+    }
+
+    printf("\n[impacts share their art]\n");
+    for (uint32_t i = 0; i < count; i++) {
+        hta_weapon_def w;
+        if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err))) continue;
+        if (!strstr(w.path, "assault rifle")) continue;
+
+        /* Blood Gulch is made of four materials. Adding an impact effect
+         * per material is what makes bullets throw dust and sparks, and
+         * they share their particle art heavily -- which is the point of
+         * keeping types apart from recipes. */
+        const uint8_t mats[4] = { 1u, 2u, 7u, 27u };   /* sand, stone, metal, plastic */
+        hta_particles p;
+        hta_particles_init(&p);
+        uint32_t recipes = 0;
+        for (int m = 0; m < 4; m++) {
+            uint32_t fx = hta_projectile_response_effect(&c, w.projectile_id, mats[m]);
+            if (!fx) continue;
+            if (hta_particles_add(&p, &c, &bm, fx) != HTA_PART_NO_RECIPE) recipes++;
+        }
+        CHECK(hta_particles_build(&p, err, sizeof(err)), "the impact set builds");
+        printf("    %u recipe(s) over %u shared type(s)\n", recipes, p.type_count);
+        CHECK(recipes >= 3, "the map's materials each get one");
+        CHECK(p.type_count <= HTA_PART_TYPES, "within the type budget");
+        CHECK(p.type_count < recipes * HTA_PART_EMITS,
+              "and they share art rather than each bringing its own");
+
+        /* Every recipe must actually throw something. */
+        float o[3] = { 0, 0, 0 }, up[3] = { 0, 0, 1 };
+        int all_throw = 1;
+        for (uint32_t r = 0; r < recipes; r++) {
+            for (uint32_t k = 0; k < HTA_PART_MAX; k++) p.live[k].alive = false;
+            hta_particles_burst(&p, r, o, up);
+            if (!hta_particles_count(&p)) all_throw = 0;
+        }
+        CHECK(all_throw, "and every one of them throws particles");
+
+        /* An unknown recipe must be ignored, not read off the end. */
+        for (uint32_t k = 0; k < HTA_PART_MAX; k++) p.live[k].alive = false;
+        hta_particles_burst(&p, 99u, o, up);
+        CHECK(hta_particles_count(&p) == 0, "an unknown recipe throws nothing");
+
+        hta_particles_free(&p);
         break;
     }
 
