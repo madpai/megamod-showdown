@@ -94,17 +94,21 @@ uint32_t hta_particles_add_marker(hta_particles *p, const hta_cache *c,
         if (ep.count_max <= 0) continue;        /* never spawns */
         if (marker && strcmp(ep.marker, marker) != 0) continue;
 
-        /* Share a type with anything already using this bitmap. */
+        /* Share a type with anything already using this bitmap IN THIS
+         * COLOUR. Same art tinted differently is a different type. */
+        uint32_t tint = hta_tint_pack(ep.tint);
         uint32_t t = ~0u;
         for (uint32_t k = 0; k < p->type_count; k++)
-            if (p->type[k].bitmap_id == ep.bitmap_id) { t = k; break; }
+            if (p->type[k].bitmap_id == ep.bitmap_id &&
+                p->type[k].tint == tint) { t = k; break; }
         if (t == ~0u) {
             if (p->type_count >= HTA_PART_TYPES) continue;
-            uint32_t tex = hta_mesh_intern_bitmap(&p->mesh, c, bitmaps,
-                                                  ep.bitmap_id, 0);
+            uint32_t tex = hta_mesh_intern_bitmap_tinted(&p->mesh, c, bitmaps,
+                                                         ep.bitmap_id, 0, tint);
             if (tex == ~0u) continue;
             t = p->type_count;
             p->type[t].bitmap_id = ep.bitmap_id;
+            p->type[t].tint = tint;
             p->type[t].tex = tex;
             p->type[t].blend = ep.blend;
 
@@ -171,8 +175,14 @@ bool hta_particles_build(hta_particles *p, char *err, size_t errlen)
 {
     if (!p || !p->type_count) return false;
 
-    /* One slot per particle, grouped by type so a type is one submesh. */
-    uint32_t slots = p->type_count * HTA_PART_PER_TYPE;
+    /* One slot per particle, grouped by type so a type is one submesh.
+     * The fixed pool is shared out here: a load with two types gets deep
+     * pools, a load with seventeen gets shallow ones, and the geometry is
+     * the same either way. */
+    p->per_type = HTA_PART_MAX / p->type_count;
+    if (p->per_type > HTA_PART_PER_TYPE) p->per_type = HTA_PART_PER_TYPE;
+    if (p->per_type < HTA_PART_PER_TYPE_MIN) p->per_type = HTA_PART_PER_TYPE_MIN;
+    uint32_t slots = p->type_count * p->per_type;
     p->mesh.vertices = (hta_vertex *)calloc((size_t)slots * 4u, sizeof(hta_vertex));
     p->mesh.indices  = (uint32_t *)calloc((size_t)slots * 6u, sizeof(uint32_t));
     p->mesh.submeshes = (hta_submesh *)calloc(p->type_count, sizeof(hta_submesh));
@@ -188,8 +198,8 @@ bool hta_particles_build(hta_particles *p, char *err, size_t errlen)
     for (uint32_t t = 0; t < p->type_count; t++) {
         hta_submesh *sm = &p->mesh.submeshes[t];
         hta_submesh_init(sm);
-        sm->first_index = t * HTA_PART_PER_TYPE * 6u;
-        sm->index_count = HTA_PART_PER_TYPE * 6u;
+        sm->first_index = t * p->per_type * 6u;
+        sm->index_count = p->per_type * 6u;
         sm->albedo_tex = p->type[t].tex;
         sm->draw_mode = (p->type[t].blend == HTA_FX_BLEND_ADD) ? HTA_DRAW_ADD
                                                                : HTA_DRAW_ALPHA;
@@ -246,11 +256,11 @@ void hta_particles_burst(hta_particles *p, uint32_t recipe,
         int lo = em->count_min > 0 ? em->count_min : 0;
         int hi = em->count_max > lo ? em->count_max : lo;
         int want = lo + (int)(frand(p) * (float)(hi - lo + 1));
-        if (want > (int)HTA_PART_PER_TYPE) want = (int)HTA_PART_PER_TYPE;
+        if (want > (int)p->per_type) want = (int)p->per_type;
 
-        uint32_t base = t * HTA_PART_PER_TYPE;
+        uint32_t base = t * p->per_type;
         for (int spawned = 0, slot = 0;
-             spawned < want && slot < (int)HTA_PART_PER_TYPE; slot++) {
+             spawned < want && slot < (int)p->per_type; slot++) {
             hta_particle *q = &p->live[base + (uint32_t)slot];
             if (q->alive) continue;            /* a burst never cuts one short */
             memset(q, 0, sizeof(*q));
@@ -285,8 +295,8 @@ void hta_particles_update(hta_particles *p, const hta_collision *col,
     if (cam) { hta_camera_right(cam, right); hta_camera_up(cam, up); }
 
     for (uint32_t t = 0; t < p->type_count; t++) {
-        for (uint32_t s = 0; s < HTA_PART_PER_TYPE; s++) {
-            uint32_t slot = t * HTA_PART_PER_TYPE + s;
+        for (uint32_t s = 0; s < p->per_type; s++) {
+            uint32_t slot = t * p->per_type + s;
             hta_particle *q = &p->live[slot];
             if (!q->alive) { hide_slot(p, slot); continue; }
 
@@ -380,6 +390,9 @@ void hta_particles_update(hta_particles *p, const hta_collision *col,
 #define PCTL_PSTATE_BITMAP     48u   /* TagDependency */
 #define PCTL_PSTATE_RADIUS    128u   /* radius multiplier */
 #define PCTL_PSTATE_BLEND     226u
+/* ColorARGB, alpha first: the colour is the three floats after it. */
+#define PCTL_PSTATE_COLOR_LOW  96u
+#define PCTL_PSTATE_COLOR_HIGH 112u
 
 uint32_t hta_particles_add_system(hta_particles *p, const hta_cache *c,
                                   const hta_resource_map *bitmaps,
@@ -439,6 +452,13 @@ uint32_t hta_particles_add_system(hta_particles *p, const hta_cache *c,
     uint32_t bitmap = 0;
     uint16_t blend = HTA_FX_BLEND_ADD;
     float rmin = 1e9f, rmax = 0.0f;
+    /* The colour of the states that are actually visible. A `pctl` state is
+     * a point on a life curve -- the flamethrower's runs invisible, orange,
+     * brighter orange, then dead smoke -- and the two dead ends store all
+     * zeros. Averaging those in would drag the flame towards black; the
+     * flame's colour is what it is while it is burning. */
+    float tint[3] = { 0.0f, 0.0f, 0.0f };
+    uint32_t tinted = 0;
     for (uint32_t k = 0; k < pc; k++) {
         uint32_t pb = po + k * PCTL_PSTATE_SIZE;
         float rm = 0.0f;
@@ -446,6 +466,21 @@ uint32_t hta_particles_add_system(hta_particles *p, const hta_cache *c,
         if (rm > 0.0f) {
             if (rm < rmin) rmin = rm;
             if (rm > rmax) rmax = rm;
+        }
+        {
+            float mid[3];
+            float sum = 0.0f;
+            for (int q = 0; q < 3; q++) {
+                float lo = 0.0f, hi = 0.0f;
+                hta_rd_f32(c, pb + PCTL_PSTATE_COLOR_LOW  + 4u + 4u * (uint32_t)q, &lo);
+                hta_rd_f32(c, pb + PCTL_PSTATE_COLOR_HIGH + 4u + 4u * (uint32_t)q, &hi);
+                mid[q] = (lo + hi) * 0.5f;
+                sum += mid[q];
+            }
+            if (sum > 0.0f) {
+                for (int q = 0; q < 3; q++) tint[q] += mid[q];
+                tinted++;
+            }
         }
         if (!bitmap) {
             uint32_t bm = 0;
@@ -458,17 +493,23 @@ uint32_t hta_particles_add_system(hta_particles *p, const hta_cache *c,
     }
     if (!bitmap) return HTA_PART_NO_RECIPE;
     if (rmin > rmax) { rmin = 0.1f; rmax = 0.4f; }
+    if (tinted) { for (int q = 0; q < 3; q++) tint[q] /= (float)tinted; }
+    else        { tint[0] = tint[1] = tint[2] = 1.0f; }
+    uint32_t tpack = hta_tint_pack(tint);
 
-    /* Share a type with anything already using this bitmap. */
+    /* Share a type with anything already using this bitmap in this colour. */
     uint32_t ty = ~0u;
     for (uint32_t k = 0; k < p->type_count; k++)
-        if (p->type[k].bitmap_id == bitmap) { ty = k; break; }
+        if (p->type[k].bitmap_id == bitmap && p->type[k].tint == tpack)
+            { ty = k; break; }
     if (ty == ~0u) {
         if (p->type_count >= HTA_PART_TYPES) return HTA_PART_NO_RECIPE;
-        uint32_t tex = hta_mesh_intern_bitmap(&p->mesh, c, bitmaps, bitmap, 0);
+        uint32_t tex = hta_mesh_intern_bitmap_tinted(&p->mesh, c, bitmaps,
+                                                     bitmap, 0, tpack);
         if (tex == ~0u) return HTA_PART_NO_RECIPE;
         ty = p->type_count;
         p->type[ty].bitmap_id = bitmap;
+        p->type[ty].tint = tpack;
         p->type[ty].tex = tex;
         p->type[ty].blend = (uint8_t)blend;
         uint32_t seqs = hta_bitmap_sequence_count(c, bitmap);
@@ -521,7 +562,7 @@ void hta_particles_emit(hta_particles *p, uint32_t recipe,
 
     rec->accum += rec->rate * dt;
     /* Never let a hitch dump a whole second of flame at once. */
-    if (rec->accum > (float)HTA_PART_PER_TYPE) rec->accum = (float)HTA_PART_PER_TYPE;
+    if (rec->accum > (float)p->per_type) rec->accum = (float)p->per_type;
     while (rec->accum >= 1.0f) {
         rec->accum -= 1.0f;
         hta_particles_burst(p, recipe, origin, dir);

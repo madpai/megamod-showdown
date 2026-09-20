@@ -150,7 +150,12 @@ static void setup_flash(hta_viewmodel *vm, const hta_cache *c,
     int32_t node = hta_anim_node_index(&vm->graph, node_name);
     if (node < 0) return;
 
-    uint32_t tex = hta_mesh_intern_bitmap(&vm->mesh, c, bitmaps, flash.bitmap_id, 0);
+    /* Tinted, because Halo's flash art is white and the colour is on the
+     * effect: the needler's is magenta, the flamethrower's blue-and-orange
+     * pair are its pilot light and its flame. */
+    uint32_t tex = hta_mesh_intern_bitmap_tinted(&vm->mesh, c, bitmaps,
+                                                 flash.bitmap_id, 0,
+                                                 hta_tint_pack(flash.tint));
     if (tex == ~0u) return;
 
     /* Collect the sprite variants that live on the sheet we interned. Halo

@@ -24,15 +24,24 @@
 #include "camera.h"
 #include "player.h"
 
-#define HTA_PART_TYPES    12u
-/* Sixteen was enough for a burst -- an explosion throws a dozen and they are
- * gone in a second. A continuous weapon is not a burst: the flamethrower
- * asks for 60 a second that live a second each, so a pool of 16 gave it a
- * dotted line instead of a jet. Sixty-four covers it with room to spare,
- * and costs 768 quads of dynamic geometry across every type at once. */
-#define HTA_PART_PER_TYPE 64u
-#define HTA_PART_MAX      (HTA_PART_TYPES * HTA_PART_PER_TYPE)
-#define HTA_PART_RECIPES   8u   /* a detonation plus one per map material */
+/* The pool is a fixed 768 quads DIVIDED among the types, not a fixed depth
+ * per type multiplied by them.
+ *
+ * Those two were the same thing while every recipe was a burst. They stopped
+ * being the same thing twice over in one session: tinting split each colour
+ * of the same sheet into its own type (the rocket launcher went from 8 types
+ * to 17, and 12 was the whole budget), and the flamethrower's continuous jet
+ * wants 60 particles of ONE type alive at once where a burst wanted a dozen.
+ * Dividing instead gives the flamethrower's two types 64 slots each and the
+ * rocket launcher's seventeen 45 each, out of the same geometry.
+ *
+ * HTA_PART_PER_TYPE is the ceiling; hta_particles.per_type is what a given
+ * load actually got, and is what the slot arithmetic uses. */
+#define HTA_PART_TYPES    24u
+#define HTA_PART_MAX     768u
+#define HTA_PART_PER_TYPE 64u   /* the deepest any one type can be */
+#define HTA_PART_PER_TYPE_MIN 8u
+#define HTA_PART_RECIPES  16u   /* a detonation, the jet, one per material */
 #define HTA_PART_EMITS     8u   /* particle entries in one effect */
 
 typedef struct {
@@ -50,6 +59,11 @@ typedef struct {
 
 typedef struct {
     uint32_t bitmap_id;
+    /* The colour Halo multiplies this sprite by, 0xRRGGBB, baked into the
+     * interned texture. It is part of the type's identity: the needler
+     * fires magenta shards and throws white smoke off the SAME sheet, and
+     * sharing one type between them would paint the smoke magenta. */
+    uint32_t tint;
     uint32_t tex;             /* index into mesh.textures */
     uint8_t  blend;           /* HTA_FX_BLEND_* */
     /* A particle bitmap is usually a sheet of variants; Halo picks one per
@@ -84,6 +98,9 @@ typedef struct {
 } hta_particle_recipe;
 
 typedef struct {
+    /* Slots a type got, fixed by hta_particles_build. Type t owns
+     * live[t * per_type .. (t+1) * per_type). */
+    uint32_t            per_type;
     hta_particle        live[HTA_PART_MAX];
     hta_particle_type   type[HTA_PART_TYPES];
     uint32_t            type_count;

@@ -28,6 +28,8 @@
 #define EFFP_TYPE           84u   /* TagDependency; tag id at +12 */
 #define EFFP_RADIUS        160u   /* float bounds */
 #define EFFP_VELOCITY_CONE 140u   /* Angle, radians */
+#define EFFP_TINT_LOW      176u   /* ColorARGB: a, r, g, b */
+#define EFFP_TINT_HIGH     192u
 /* Particle (356) */
 #define PART_BITMAP          4u   /* TagDependency; tag id at +12 */
 #define PART_PHYSICS        20u   /* TagDependency -> pphy */
@@ -361,6 +363,19 @@ static bool read_particle(const hta_cache *c, uint32_t base, uint32_t qk,
     hta_rd_u16(c, qk + EFFP_COUNT, (uint16_t *)&out->count_min);
     hta_rd_u16(c, qk + EFFP_COUNT + 2u, (uint16_t *)&out->count_max);
 
+    /* The tint, midway between the bounds. ColorARGB puts alpha first, so
+     * the colour is the three floats after it. A tag that asks for nothing
+     * stores all zeros, which would paint the sprite black -- read that as
+     * "no tint" rather than as a colour. */
+    for (int k = 0; k < 3; k++) {
+        float lo = 0.0f, hi = 0.0f;
+        hta_rd_f32(c, qk + EFFP_TINT_LOW  + 4u + 4u * (uint32_t)k, &lo);
+        hta_rd_f32(c, qk + EFFP_TINT_HIGH + 4u + 4u * (uint32_t)k, &hi);
+        out->tint[k] = (lo + hi) * 0.5f;
+    }
+    if (out->tint[0] <= 0.0f && out->tint[1] <= 0.0f && out->tint[2] <= 0.0f)
+        out->tint[0] = out->tint[1] = out->tint[2] = 1.0f;
+
     /* How it moves once it is in the air, from the particle's own physics
      * tag. Without this everything shares one gravity and nothing collides:
      * smoke fell like brass and brass floated like smoke. */
@@ -550,6 +565,19 @@ static bool pick_particle(const hta_cache *c, uint32_t effect_tag_id,
             out->lifespan = ls1 > ls0 ? ls1 : ls0;
             out->radius_min = r0;
             out->radius_max = rmax;
+            /* The colour, midway between the bounds. Flash art is white;
+             * what makes the needler's flash magenta and the plasma
+             * pistol's green is this tint, not the bitmap. All zeros means
+             * the tag asks for no tint, which is not the same as black. */
+            for (int q = 0; q < 3; q++) {
+                float lo = 0.0f, hi = 0.0f;
+                hta_rd_f32(c, qk + EFFP_TINT_LOW  + 4u + 4u * (uint32_t)q, &lo);
+                hta_rd_f32(c, qk + EFFP_TINT_HIGH + 4u + 4u * (uint32_t)q, &hi);
+                out->tint[q] = (lo + hi) * 0.5f;
+            }
+            if (out->tint[0] <= 0.0f && out->tint[1] <= 0.0f &&
+                out->tint[2] <= 0.0f)
+                out->tint[0] = out->tint[1] = out->tint[2] = 1.0f;
             snprintf(out->marker, sizeof(out->marker), "%s", marker);
             found = true;
         }

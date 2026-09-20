@@ -5,6 +5,7 @@
 #include "asset/cache.h"
 #include "asset/weapon.h"
 #include "asset/effect.h"
+#include "asset/bitmap.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -97,7 +98,7 @@ int main(int argc, char **argv)
         CHECK(p.type_count >= 2, "a flare and a smoke plume at least");
         CHECK(p.recipe_count == 1, "one recipe for one effect");
         CHECK(p.mesh.submesh_count == p.type_count, "one submesh per type");
-        CHECK(p.mesh.vertex_count == p.type_count * HTA_PART_PER_TYPE * 4u,
+        CHECK(p.mesh.vertex_count == p.type_count * p.per_type * 4u,
               "and a fixed slot per particle");
 
         /* Art with no alpha channel cannot be alpha-blended: it would draw
@@ -119,7 +120,7 @@ int main(int argc, char **argv)
         uint32_t alive = hta_particles_count(&p);
         printf("    burst -> %u alive\n", alive);
         CHECK(alive > 0, "a burst throws particles");
-        CHECK(alive <= p.type_count * HTA_PART_PER_TYPE, "and never past its slots");
+        CHECK(alive <= p.type_count * p.per_type, "and never past its slots");
 
         /* They must move, and they must all die. */
         hta_particles_update(&p, NULL, NULL, 1.0f / 60.0f);
@@ -141,7 +142,7 @@ int main(int argc, char **argv)
 
         /* Bursting far more than there is room for must not overflow. */
         for (int k = 0; k < 40; k++) hta_particles_burst(&p, det, o, up);
-        CHECK(hta_particles_count(&p) <= p.type_count * HTA_PART_PER_TYPE,
+        CHECK(hta_particles_count(&p) <= p.type_count * p.per_type,
               "repeated bursts stay inside the slots");
 
         hta_particles_free(&p);
@@ -350,13 +351,100 @@ int main(int argc, char **argv)
 
             /* A dropped frame must not dump a second of flame at once. */
             hta_particles_emit(&p, jet, o, dir, 10.0f);
-            CHECK(hta_particles_count(&p) <= HTA_PART_PER_TYPE,
+            CHECK(hta_particles_count(&p) <= p.per_type,
                   "  a long frame cannot flood the pool");
 
             hta_particles_free(&p);
         }
         printf("  %d weapon(s) spray a particle system\n", systems);
         CHECK(systems == 1, "exactly one of them: the flamethrower");
+    }
+
+
+    printf("\n[particles are tinted, not white]\n");
+    {
+        /* Halo ships white sprite art and puts the colour on the EFFECT:
+         * the needler's shards and the plasma pistol's bolt are the same
+         * kind of bitmap multiplied by magenta and green. Drawing them
+         * untinted is what made every weapon throw white sparks. */
+        int coloured = 0, plain = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def w;
+            if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err)))
+                continue;
+            hta_particles p;
+            hta_particles_init(&p);
+            if (hta_particles_add(&p, &c, &bm, w.firing_fx_id)
+                    == HTA_PART_NO_RECIPE) { hta_particles_free(&p); continue; }
+            for (uint32_t t = 0; t < p.type_count; t++) {
+                if (p.type[t].tint == 0xFFFFFFu) { plain++; continue; }
+                coloured++;
+                printf("  %-16s %06X\n", strrchr(w.path, '\\') + 1,
+                       p.type[t].tint);
+                /* Black is not a tint: a tag that asks for nothing stores
+                 * all zeros, and reading that as a colour would paint the
+                 * sprite out of existence. */
+                CHECK(p.type[t].tint != 0u, "  and never black");
+            }
+            hta_particles_free(&p);
+        }
+        printf("  %d tinted type(s), %d left white\n", coloured, plain);
+        CHECK(coloured > 0, "some particles carry a colour");
+        CHECK(plain > 0, "and some are meant to stay white");
+    }
+
+    printf("\n[the needler is magenta and the plasma pistol is green]\n");
+    {
+        /* Named weapons, because a tint that is merely non-white proves
+         * nothing about whether the channels are in the right order. */
+        struct { const char *name; int r, g, b; } want[] = {
+            { "needler",      1, 0, 1 },   /* magenta: R and B high, G low */
+            { "plasma pistol", 1, 1, 0 },  /* green-yellow: G high, B low */
+        };
+        for (unsigned q = 0; q < sizeof(want) / sizeof(want[0]); q++) {
+            int saw = 0;
+            for (uint32_t i = 0; i < count; i++) {
+                hta_weapon_def w;
+                if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err)))
+                    continue;
+                const char *leaf = strrchr(w.path, '\\');
+                if (!leaf || strcmp(leaf + 1, want[q].name) != 0) continue;
+                hta_particles p;
+                hta_particles_init(&p);
+                hta_particles_add(&p, &c, &bm, w.firing_fx_id);
+                for (uint32_t t = 0; t < p.type_count && !saw; t++) {
+                    uint32_t tn = p.type[t].tint;
+                    int ch[3] = { (int)((tn >> 16) & 0xFF),
+                                  (int)((tn >>  8) & 0xFF),
+                                  (int)( tn        & 0xFF) };
+                    int ok = 1;
+                    for (int k = 0; k < 3; k++) {
+                        int high = (k == 0) ? want[q].r
+                                 : (k == 1) ? want[q].g : want[q].b;
+                        if (high  && ch[k] < 160) ok = 0;
+                        if (!high && ch[k] > 120) ok = 0;
+                    }
+                    if (ok) { saw = 1; printf("  %s %06X\n", want[q].name, tn); }
+                }
+                hta_particles_free(&p);
+            }
+            CHECK(saw, want[q].name);
+        }
+    }
+
+    printf("\n[a tint is a cache key, not just a colour]\n");
+    {
+        /* Two tints that differ in the third decimal must share one type.
+         * The plasma pistol writes the same green five ways, and at full
+         * precision each took a type and its own copy of the sheet. */
+        float a[3] = { 0.960f, 1.0f, 0.170f };
+        float b[3] = { 0.957f, 1.0f, 0.160f };
+        float wht[3] = { 1.0f, 1.0f, 1.0f };
+        CHECK(hta_tint_pack(a) == hta_tint_pack(b),
+              "near-identical tints quantise together");
+        CHECK(hta_tint_pack(wht) == 0xFFFFFFu, "white packs to white");
+        float over[3] = { 2.0f, -1.0f, 0.0f };
+        CHECK(hta_tint_pack(over) == 0xFF0000u, "out-of-range clamps");
     }
 
     printf("\n%d checks, %d failures\n", checks, failures);

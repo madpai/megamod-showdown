@@ -120,6 +120,21 @@ uint32_t hta_mesh_intern_bitmap(hta_bsp_mesh *mesh, const hta_cache *c,
                                 const hta_resource_map *bitmaps,
                                 uint32_t tag_id, uint32_t index);
 
+/* The same, multiplied by a colour. `tint` is 0xRRGGBB; 0xFFFFFF is the
+ * plain call above and shares its slot. A tinted copy is its own slot, so
+ * the needler's magenta shards and something else's white use of the same
+ * sheet do not fight over one decode. Alpha is untouched -- it is the
+ * sprite's shape, and on the additive path its brightness. */
+uint32_t hta_mesh_intern_bitmap_tinted(hta_bsp_mesh *mesh, const hta_cache *c,
+                                       const hta_resource_map *bitmaps,
+                                       uint32_t tag_id, uint32_t index,
+                                       uint32_t tint);
+
+/* Pack a 0..1 float colour into the 0xRRGGBB a tinted intern takes. Values
+ * are clamped and quantised to 8 bits, which is what makes two tints that
+ * differ in the third decimal share one texture instead of two. */
+uint32_t hta_tint_pack(const float rgb[3]);
+
 uint8_t hta_shader_draw_mode(const hta_cache *c, uint32_t shader_tag_id);
 
 /* `shader_transparent_chicago` numeric counter limit: nonzero means the

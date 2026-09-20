@@ -85,6 +85,67 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## Every particle was white (2026-09-20)
+
+The needler threw white sparks. So did the plasma pistol, and so did the
+flamethrower. None of that art is coloured: **Halo ships white sprites and
+puts the colour on the effect**, as `tint lower bound` / `tint upper bound`
+on each `EffectParticle` (+176 and +192, ColorARGB so **alpha first**).
+EffectParticle reconciles at 232, so these are definition-derived rather than
+probed, and the values confirm it -- the needler's shards are 0.98, 0.18,
+1.00, the plasma pistol's bolt is green, the flamethrower carries a blue
+pilot light and an orange flame.
+
+We take the midpoint of the two bounds. All zeros means "no tint", **not**
+black: read literally it paints the sprite out of existence.
+
+### Tinting without touching the shader
+
+The push constants are full -- `mat4` plus four `vec4` is exactly the 128
+bytes Vulkan guarantees -- and a per-vertex colour would have widened the
+format for the BSP as well, which is by far the biggest mesh. So the tint is
+**baked into the decoded pixels** and becomes part of the texture cache key:
+`hta_mesh_intern_bitmap_tinted(mesh, c, bitmaps, id, index, 0xRRGGBB)`. The
+plain call is that with 0xFFFFFF and shares its slot. Alpha is untouched: it
+is the sprite's shape, and on the additive path its brightness.
+
+The muzzle flash goes through the same call, which is what makes the
+needler's flash magenta and the plasma pistol's green.
+
+**`hta_tint_pack` quantises to EIGHT levels a channel, not 256.** That is not
+sloppiness, it is the cache key doing its job: the plasma pistol tints its
+six particles F5FF2B, F5FF32, F4FF21, F4FF20 and F4FF28 -- one green written
+five ways -- and at full precision each took its own particle type and its
+own copy of the sheet.
+
+### The pool is now divided, not multiplied
+
+`HTA_PART_MAX` used to be `TYPES * PER_TYPE`. Those were the same thing while
+every recipe was a burst, and stopped being the same thing twice in one
+session: tinting splits each colour of one sheet into its own type (the
+rocket launcher went 8 -> 17 types against a budget of 12), and the
+flamethrower's jet wants 60 particles of ONE type alive at once.
+
+So the pool is a fixed **768 quads shared out at build time**:
+`per_type = 768 / type_count`, clamped to 8..64. The flamethrower's two types
+get 64 each; the rocket launcher's twelve (on Blood Gulch's four materials)
+get 64 each as well; a 24-type load would get 32. `hta_particles.per_type` is
+what the slot arithmetic uses -- `HTA_PART_PER_TYPE` is only the ceiling now,
+so **do not go back to using it for slot maths**.
+
+Worst case on the real map is the rocket launcher at 12 types / 6 recipes,
+against budgets of 24 and 16.
+
+### New tests
+
+- some particles carry a colour and some are meant to stay white
+- the needler is magenta and the plasma pistol is green **by channel**, which
+  is what catches an ARGB/RGBA mix-up that a merely-non-white tint would not
+- near-identical tints quantise to the same key; white packs to white;
+  out-of-range clamps
+
+---
+
 ## The flamethrower sprays a particle system (2026-09-20)
 
 The flamethrower had a flame that was one muzzle-flash quad and a handful of

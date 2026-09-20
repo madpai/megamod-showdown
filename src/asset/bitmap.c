@@ -472,28 +472,72 @@ uint8_t hta_shader_draw_mode(const hta_cache *c, uint32_t shader_tag_id)
     return HTA_DRAW_OPAQUE;
 }
 
-uint32_t hta_mesh_intern_bitmap(hta_bsp_mesh *mesh, const hta_cache *c,
-                                const hta_resource_map *bitmaps,
-                                uint32_t tag_id, uint32_t index)
+uint32_t hta_tint_pack(const float rgb[3])
+{
+    if (!rgb) return 0xFFFFFFu;
+    uint32_t p = 0;
+    for (int k = 0; k < 3; k++) {
+        float v = rgb[k];
+        if (!(v > 0.0f)) v = 0.0f;      /* NaN lands here too */
+        if (v > 1.0f) v = 1.0f;
+        /* EIGHT levels a channel, not 256. The tint is a cache key as much
+         * as a colour, and the plasma pistol's six particles are tinted
+         * F5FF2B, F5FF32, F4FF21, F4FF20 and F4FF28 -- the same green,
+         * written five ways. At full precision each took its own particle
+         * type and its own copy of the sheet, and twelve types is the whole
+         * budget. Rounding to eighths makes them one. */
+        uint32_t q = (uint32_t)(v * 7.0f + 0.5f);
+        p = (p << 8) | ((q * 255u + 3u) / 7u);
+    }
+    return p;
+}
+
+uint32_t hta_mesh_intern_bitmap_tinted(hta_bsp_mesh *mesh, const hta_cache *c,
+                                       const hta_resource_map *bitmaps,
+                                       uint32_t tag_id, uint32_t index,
+                                       uint32_t tint)
 {
     if (!tag_id || tag_id == 0xFFFFFFFFu || !mesh || !mesh->textures) return ~0u;
+    tint &= 0xFFFFFFu;
     for (uint32_t i = 0; i < mesh->texture_count; i++) {
         if (mesh->textures[i].tag_id == tag_id &&
-            mesh->textures[i].index == index) return i;
+            mesh->textures[i].index == index &&
+            mesh->textures[i].tint == tint) return i;
     }
     if (mesh->texture_count >= MAX_TEX) return ~0u;
     hta_bitmap bm;
     char err[HTA_ERRLEN];
     if (!hta_bitmap_decode(c, bitmaps, tag_id, index, &bm, err, sizeof(err)))
         return ~0u;
+    if (tint != 0xFFFFFFu && bm.rgba) {
+        const uint32_t r = (tint >> 16) & 0xFFu;
+        const uint32_t g = (tint >>  8) & 0xFFu;
+        const uint32_t b =  tint        & 0xFFu;
+        size_t n = (size_t)bm.width * bm.height;
+        for (size_t i = 0; i < n; i++) {
+            uint8_t *px = &bm.rgba[i * 4];
+            px[0] = (uint8_t)((px[0] * r + 127u) / 255u);
+            px[1] = (uint8_t)((px[1] * g + 127u) / 255u);
+            px[2] = (uint8_t)((px[2] * b + 127u) / 255u);
+        }
+    }
     uint32_t slot = mesh->texture_count++;
     mesh->textures[slot].tag_id = tag_id;
     mesh->textures[slot].index  = index;
+    mesh->textures[slot].tint   = tint;
     mesh->textures[slot].width  = bm.width;
     mesh->textures[slot].height = bm.height;
     mesh->textures[slot].rgba   = bm.rgba;
     bm.rgba = NULL;
     return slot;
+}
+
+uint32_t hta_mesh_intern_bitmap(hta_bsp_mesh *mesh, const hta_cache *c,
+                                const hta_resource_map *bitmaps,
+                                uint32_t tag_id, uint32_t index)
+{
+    return hta_mesh_intern_bitmap_tinted(mesh, c, bitmaps, tag_id, index,
+                                         0xFFFFFFu);
 }
 
 bool hta_bsp_load_textures(const hta_cache *c, const hta_resource_map *bitmaps,

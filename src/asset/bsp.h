@@ -132,6 +132,14 @@ void hta_submesh_init(hta_submesh *sm);
 typedef struct {
     uint32_t tag_id;
     uint32_t index;
+    /* Halo tints a particle's sprite rather than shipping one bitmap per
+     * colour: the needler's shards and its impact are the same white art
+     * multiplied by magenta. We bake that into the decoded pixels, so the
+     * tint is part of the cache key -- 0xFFFFFF is untinted. Doing it here
+     * rather than in the shader costs one extra copy of a small sprite
+     * sheet and keeps the push constants (already full at 128 bytes) and
+     * the vertex format alone. */
+    uint32_t tint;            /* 0xRRGGBB */
     uint32_t width, height;
     uint8_t *rgba;            /* malloc'd RGBA8 */
 } hta_bsp_texture;

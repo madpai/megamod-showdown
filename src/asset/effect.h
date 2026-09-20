@@ -55,6 +55,13 @@ typedef struct {
     float    drag;                      /* air friction */
     float    elasticity;                /* bounce, 0 = sticks */
     bool     collides;                  /* "collides with structures" */
+    /* What Halo multiplies the sprite by. The needler's shards are magenta
+     * (0.98, 0.18, 1.00) and its `part` bitmap is white: draw it untinted
+     * and you get a white needle. EffectParticle carries a lower and an
+     * upper bound and picks between them per particle; we take the midpoint,
+     * which is one colour for a burst that is meant to look like one thing.
+     * 1,1,1 where the tag asks for nothing. */
+    float    tint[3];
 } hta_effect_particle;
 
 /* Walk every particle an effect spawns, in order. `index` runs 0 .. the
