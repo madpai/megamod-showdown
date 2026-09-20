@@ -363,3 +363,167 @@ void hta_particles_update(hta_particles *p, const hta_collision *col,
         }
     }
 }
+
+/* ParticleSystem: particle types at +92, each 128 bytes. Within a type the
+ * states are at +104 (192 bytes each) and the particle states at +116 (376).
+ * These were found by probing rather than by walking the definition, which
+ * drifts by a couple of bytes in this family. */
+#define PCTL_TYPES             92u
+#define PCTL_TYPE_SIZE        128u
+#define PCTL_TYPE_RADIUS       44u
+#define PCTL_TYPE_STATES      104u
+#define PCTL_STATE_SIZE       192u
+#define PCTL_STATE_DURATION    32u   /* float bounds */
+#define PCTL_STATE_RATE        88u   /* particles a second */
+#define PCTL_TYPE_PSTATES     116u
+#define PCTL_PSTATE_SIZE      376u
+#define PCTL_PSTATE_BITMAP     48u   /* TagDependency */
+#define PCTL_PSTATE_RADIUS    128u   /* radius multiplier */
+#define PCTL_PSTATE_BLEND     226u
+
+uint32_t hta_particles_add_system(hta_particles *p, const hta_cache *c,
+                                  const hta_resource_map *bitmaps,
+                                  uint32_t pctl_tag_id, float speed)
+{
+    if (!p || !c || !pctl_tag_id) return HTA_PART_NO_RECIPE;
+    if (p->recipe_count >= HTA_PART_RECIPES) return HTA_PART_NO_RECIPE;
+    if (!p->mesh.textures) {
+        p->mesh.textures = (hta_bsp_texture *)calloc(HTA_PART_TYPES,
+                                                     sizeof(hta_bsp_texture));
+        if (!p->mesh.textures) return HTA_PART_NO_RECIPE;
+    }
+    for (uint32_t r = 0; r < p->recipe_count; r++)
+        if (p->recipe[r].effect_id == pctl_tag_id) return r;
+
+    int32_t ti = hta_cache_find_tag_by_id(c, pctl_tag_id);
+    if (ti < 0) return HTA_PART_NO_RECIPE;
+    hta_tag_entry t;
+    uint32_t base;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t) || t.indexed) return HTA_PART_NO_RECIPE;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return HTA_PART_NO_RECIPE;
+
+    uint32_t tc = 0, tp = 0, to = 0;
+    if (!hta_read_reflexive(c, base + PCTL_TYPES, &tc, &tp) || !tc)
+        return HTA_PART_NO_RECIPE;
+    if (!hta_cache_ptr_to_offset(c, tp, &to)) return HTA_PART_NO_RECIPE;
+
+    /* The first type is the one attached to the marker; the Trial's flame
+     * systems have exactly one, called "flames". */
+    uint32_t tb = to;
+    float type_radius = 0.0f;
+    hta_rd_f32(c, tb + PCTL_TYPE_RADIUS, &type_radius);
+    if (!(type_radius > 0.0f)) type_radius = 0.3f;
+
+    float rate = 0.0f, life = 1.0f;
+    uint32_t sc = 0, sp = 0, so = 0;
+    if (hta_read_reflexive(c, tb + PCTL_TYPE_STATES, &sc, &sp) && sc &&
+        hta_cache_ptr_to_offset(c, sp, &so)) {
+        hta_rd_f32(c, so + PCTL_STATE_RATE, &rate);
+        float d0 = 0.0f, d1 = 0.0f;
+        hta_rd_f32(c, so + PCTL_STATE_DURATION, &d0);
+        hta_rd_f32(c, so + PCTL_STATE_DURATION + 4u, &d1);
+        if (d1 > 0.0f) life = d1;
+        else if (d0 > 0.0f) life = d0;
+    }
+    if (!(rate > 0.0f)) return HTA_PART_NO_RECIPE;
+
+    /* A particle walks through its states as it ages: the flame starts
+     * invisible at a tenth of the type's radius and swells to four tenths
+     * before it dies. Taking the smallest and largest gives the same growth
+     * the existing radius ramp already does. */
+    uint32_t pc = 0, pp = 0, po = 0;
+    if (!hta_read_reflexive(c, tb + PCTL_TYPE_PSTATES, &pc, &pp) || !pc)
+        return HTA_PART_NO_RECIPE;
+    if (!hta_cache_ptr_to_offset(c, pp, &po)) return HTA_PART_NO_RECIPE;
+
+    uint32_t bitmap = 0;
+    uint16_t blend = HTA_FX_BLEND_ADD;
+    float rmin = 1e9f, rmax = 0.0f;
+    for (uint32_t k = 0; k < pc; k++) {
+        uint32_t pb = po + k * PCTL_PSTATE_SIZE;
+        float rm = 0.0f;
+        hta_rd_f32(c, pb + PCTL_PSTATE_RADIUS, &rm);
+        if (rm > 0.0f) {
+            if (rm < rmin) rmin = rm;
+            if (rm > rmax) rmax = rm;
+        }
+        if (!bitmap) {
+            uint32_t bm = 0;
+            hta_rd_u32(c, pb + PCTL_PSTATE_BITMAP + 12u, &bm);
+            if (bm && bm != 0xFFFFFFFFu) {
+                bitmap = bm;
+                hta_rd_u16(c, pb + PCTL_PSTATE_BLEND, &blend);
+            }
+        }
+    }
+    if (!bitmap) return HTA_PART_NO_RECIPE;
+    if (rmin > rmax) { rmin = 0.1f; rmax = 0.4f; }
+
+    /* Share a type with anything already using this bitmap. */
+    uint32_t ty = ~0u;
+    for (uint32_t k = 0; k < p->type_count; k++)
+        if (p->type[k].bitmap_id == bitmap) { ty = k; break; }
+    if (ty == ~0u) {
+        if (p->type_count >= HTA_PART_TYPES) return HTA_PART_NO_RECIPE;
+        uint32_t tex = hta_mesh_intern_bitmap(&p->mesh, c, bitmaps, bitmap, 0);
+        if (tex == ~0u) return HTA_PART_NO_RECIPE;
+        ty = p->type_count;
+        p->type[ty].bitmap_id = bitmap;
+        p->type[ty].tex = tex;
+        p->type[ty].blend = (uint8_t)blend;
+        uint32_t seqs = hta_bitmap_sequence_count(c, bitmap);
+        for (uint32_t s2 = 0; s2 < seqs && p->type[ty].sprite_count < 8; s2++) {
+            hta_bitmap_sprite spr;
+            if (!hta_bitmap_sprite_at(c, bitmap, s2, &spr)) continue;
+            if (spr.bitmap_index != 0) continue;
+            if (spr.u1 <= spr.u0 || spr.v1 <= spr.v0) continue;
+            p->type[ty].sprite[p->type[ty].sprite_count++] = spr;
+        }
+        if (!p->type[ty].sprite_count) {
+            p->type[ty].sprite[0].bitmap_index = 0;
+            p->type[ty].sprite[0].u0 = 0.0f; p->type[ty].sprite[0].u1 = 1.0f;
+            p->type[ty].sprite[0].v0 = 0.0f; p->type[ty].sprite[0].v1 = 1.0f;
+            p->type[ty].sprite_count = 1;
+        }
+        p->type_count++;
+    }
+
+    hta_particle_recipe rec;
+    memset(&rec, 0, sizeof(rec));
+    rec.effect_id = pctl_tag_id;
+    rec.rate = rate;
+    rec.emit_count = 1;
+    hta_particle_emit *em = &rec.emit[0];
+    em->type = (uint8_t)ty;
+    em->count_min = 1; em->count_max = 1;
+    em->speed_min = speed * 0.7f;
+    em->speed_max = speed;
+    em->spread = 0.18f;                 /* a jet, not a cloud */
+    em->radius_min = type_radius * rmin;
+    em->radius_max = type_radius * rmax;
+    em->life = life;
+    em->fade_in = life * 0.15f;
+    em->fade_out = life * 0.45f;
+    em->gravity = 0.05f;                /* flame rises, like its own smoke */
+    em->drag = 1.2f;
+    em->collides = false;
+
+    p->recipe[p->recipe_count] = rec;
+    return p->recipe_count++;
+}
+
+void hta_particles_emit(hta_particles *p, uint32_t recipe,
+                        const float origin[3], const float dir[3], float dt)
+{
+    if (!p || !p->loaded || recipe >= p->recipe_count) return;
+    hta_particle_recipe *rec = &p->recipe[recipe];
+    if (!(rec->rate > 0.0f) || dt <= 0.0f) return;
+
+    rec->accum += rec->rate * dt;
+    /* Never let a hitch dump a whole second of flame at once. */
+    if (rec->accum > (float)HTA_PART_PER_TYPE) rec->accum = (float)HTA_PART_PER_TYPE;
+    while (rec->accum >= 1.0f) {
+        rec->accum -= 1.0f;
+        hta_particles_burst(p, recipe, origin, dir);
+    }
+}

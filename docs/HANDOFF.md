@@ -1,6 +1,6 @@
 # Session handoff — Halo Trial Android
 
-**Date:** 2026-09-19
+**Date:** 2026-09-20
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Map data (not in git):** `/home/commander/halo-trial-data/extract/maps/` (`bloodgulch.map`, `bitmaps.map`; `sounds.map` is there too, still unused)
 **Device:** Galaxy S24+, Tailscale node `100.68.201.52` (`node`)
@@ -82,6 +82,101 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 `HTA_MAP=... scripts/verify.sh` is **31/31**. `test_player` 53 checks, `test_biped` 27,
 `test_anim` 46.
+
+---
+
+## The flamethrower sprays a particle system (2026-09-20)
+
+The flamethrower had a flame that was one muzzle-flash quad and a handful of
+projectiles. The real jet is a **`pctl` (particle_system)** hung off the
+weapon object's `spawn fire` marker -- the same attachment list that already
+gave us its looping roar, which is on `primary trigger`.
+
+### Reading a `pctl`
+
+The definition walk drifts a couple of bytes in this family, so these were
+found by probing the Trial's own tags and confirming the strings land where
+they should:
+
+| what | offset | stride |
+| --- | --- | --- |
+| ParticleSystem particle types | +92 | 128 |
+| type radius | type+44 | |
+| type states | type+104 | 192 |
+| state duration (float bounds) | state+32 | |
+| state **particles a second** | state+88 | |
+| type particle states | type+116 | 376 |
+| pstate bitmap | pstate+48 | |
+| pstate radius multiplier | pstate+128 | |
+| pstate blend | pstate+226 | |
+
+`weapons\flamethrower\effects\fp_defoliant3` reads as:
+
+```
+type 'flames'  radius 0.300
+  state 'life'  60.0/s  duration 1.00..1.00
+  particle states:
+    invisible      radmul 0.100  add
+    initial flame  radmul 0.100  add   r1.00 g0.75 b0.39
+    roaring fire   radmul 0.400  add   r1.00 g0.84 b0.62
+    smoke death    radmul 0.400  alpha a0.00
+  bitmap weapons\flamethrower\bitmaps\cloud fire
+```
+
+The particle states are a life *curve* -- an ember that starts small and
+bright, swells, then dies to smoke. We do not run the curve; we take the
+range it spans (radius 0.030..0.120 here, from 0.300 x 0.100..0.400) and the
+first bitmap and blend, which is one additive sprite growing over a second.
+That is what the jet looks like from behind the gun.
+
+### Emitting is rate-based, and that is the point
+
+`hta_particles_emit` accumulates `rate * dt` and spawns whole particles out of
+it. Bursting per shot would have given the jet the flamethrower's 0.1 s round
+interval as a visible stutter -- the weapon fires ten times a second and the
+flame is continuous. The accumulator is clamped to the pool size, so a dropped
+frame cannot dump a second of flame into one frame.
+
+It emits from `vm.flash_pos`, which the viewmodel now stores when it poses the
+muzzle flash. That is not a coincidence or a convenient stand-in: the
+flamethrower's first-person flash **is** on `spawn fire` (33 cm down the
+barrel), because `setup_flash` already falls back to any marker for exactly
+this weapon. Every other weapon's flash is on `primary trigger`; probe with
+the flash-marker dump if that is ever in doubt.
+
+### The pool was too small for anything continuous
+
+`HTA_PART_PER_TYPE` was **16**, sized for a burst: an explosion throws a dozen
+and they are gone inside a second. A jet asking for 60 a second that live a
+second each got a dotted line. It is **64** now -- 768 quads of dynamic
+geometry across every type at once, which is nothing -- and the test asserts
+the count after half a second matches the tag's rate rather than the pool's
+ceiling. That assertion is the one that catches this regressing.
+
+### New
+
+- `hta_object_attachment(c, object, marker, class)` -- generalised out of
+  `hta_object_loop_sound`, which was the same walk with `lsnd` hardcoded.
+- `hta_particles_add_system(p, c, bitmaps, pctl, speed)` and
+  `hta_particles_emit(p, recipe, origin, dir, dt)`; `hta_particle_recipe`
+  gained `rate` and `accum`.
+- `hta_viewmodel.flash_pos` -- where the flash marker sits this frame.
+- `test_particle.c` covers the emitter end to end: it builds, it is additive,
+  it spawns nothing in zero time, it sprays at the tagged rate, it travels
+  down the barrel line, and a 10-second frame cannot flood the pool.
+
+**Remember to `hta_particles_build` before emitting.** Emit and burst both do
+nothing without geometry, which cost a confusing "0 alive" while the same
+code in a probe worked.
+
+### Still not done
+
+**The motion tracker.** The art and the behaviour are both readable -- `unhi`
+motion sensor background at **620**, foreground at **724** (found
+empirically), and `hud_globals` gives range, velocity sensitivity and scale --
+but the single `unhi` anchor is 1 (top right) with 0,0 offsets, so where it
+goes is not in the tag, and there is nothing in the world to track yet.
+Deferred on purpose, twice now.
 
 ---
 

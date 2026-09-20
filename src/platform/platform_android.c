@@ -131,6 +131,10 @@ typedef struct {
     uint32_t fire_loop_snd;
     float    fire_loop_gain;
     bool     fire_loop_on;
+    /* And the same weapon sprays rather than shoots: the flamethrower's jet
+     * is a `pctl` particle system attached to its `spawn fire` marker,
+     * emitted for as long as the trigger is held rather than burst. */
+    uint32_t jet_recipe;
     uint32_t empty_snd;      /* the click when the magazine is out */
     uint32_t foot_snd[33];   /* per MaterialType, resolved on first use */
     uint8_t  foot_known[33];
@@ -634,6 +638,25 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
             s->casing_recipe = hta_particles_add_marker(&s->parts, &s->cache, pbm,
                                                         s->weap.firing_fx_id,
                                                         "primary ejection");
+        /* A continuous weapon sprays a particle SYSTEM rather than firing
+         * a burst: the flamethrower's jet is a `pctl` on its `spawn fire`
+         * marker, at the speed of the flame projectile it also launches. */
+        s->jet_recipe = HTA_PART_NO_RECIPE;
+        {
+            uint32_t pctl = hta_object_attachment(&s->cache, weap_tag_id,
+                                                  "spawn fire",
+                                                  HTA_FOURCC('p','c','t','l'));
+            if (pctl) {
+                float jet = s->proj.speed_initial > 0.0f ? s->proj.speed_initial
+                                                         : 3.0f;
+                s->jet_recipe = hta_particles_add_system(&s->parts, &s->cache,
+                                                         pbm, pctl, jet);
+                if (s->jet_recipe != HTA_PART_NO_RECIPE)
+                    hta_log("[weapon] continuous jet 0x%08X at %.1f wu/s",
+                            pctl, (double)jet);
+            }
+        }
+
         /* The grenade blast, which is the same whatever you are holding. */
         s->nade_recipe = HTA_PART_NO_RECIPE;
         if (s->nades.det_effect)
@@ -1572,9 +1595,28 @@ void android_main(struct android_app *app)
         /* A continuous weapon sounds while the trigger is actually doing
          * something, and goes quiet the moment it is released, the magazine
          * runs out, or a swing takes the weapon out of the fight. */
-        fire_loop(&state, in.fire && !swinging &&
-                          state.ammo.phase == HTA_AMMO_READY &&
-                          state.ammo.loaded >= state.ammo.per_shot);
+        bool spraying = in.fire && !swinging &&
+                        state.ammo.phase == HTA_AMMO_READY &&
+                        state.ammo.loaded >= state.ammo.per_shot;
+        fire_loop(&state, spraying);
+
+        /* The jet comes out of the marker the muzzle flash hangs off, which
+         * on the flamethrower is `spawn fire` itself, and goes where the
+         * player is looking. Emitting is rate-based, not per-shot: the
+         * flamethrower's 0.1 s between rounds would otherwise give it a
+         * stutter the real weapon does not have. */
+        if (spraying && state.jet_recipe != HTA_PART_NO_RECIPE) {
+            float fwd[3], right[3], up[3];
+            hta_camera_forward(&state.cam, fwd);
+            hta_camera_right(&state.cam, right);
+            hta_camera_up(&state.cam, up);
+            const float *m = state.vm.flash_pos;
+            float at[3];
+            for (int k = 0; k < 3; k++)
+                at[k] = state.cam.pos[k] + fwd[k]*m[0]
+                      - right[k]*m[1] + up[k]*m[2];
+            hta_particles_emit(&state.parts, state.jet_recipe, at, fwd, dt);
+        }
 
         /* The gun carries its own round counter, and the HUD carries the
          * same magazine as a grid of pips. */

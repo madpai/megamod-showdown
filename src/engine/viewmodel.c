@@ -495,6 +495,7 @@ static void pose_flash(hta_viewmodel *vm, const hta_transform *world)
     const hta_transform *m = &world[vm->flash_node];
     float centre[3];
     hta_xf_point(centre, m, vm->flash_offset);
+    for (int k = 0; k < 3; k++) vm->flash_pos[k] = centre[k];
 
     if (vm->flash_timer <= 0.0f) {
         for (int i = 0; i < 4; i++) {

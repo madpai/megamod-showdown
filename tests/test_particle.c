@@ -284,6 +284,81 @@ int main(int argc, char **argv)
         CHECK(none >= 3, "and the covenant ones do not");
     }
 
+
+    printf("\n[the flamethrower's jet]\n");
+    {
+        /* A continuous weapon does not fire a burst: the flamethrower's
+         * flame is a `pctl` particle system attached to its `spawn fire`
+         * marker, emitted at a tagged rate for as long as the trigger is
+         * held. Exactly one weapon in the Trial has one. */
+        int systems = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def w;
+            if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err)))
+                continue;
+            uint32_t pctl = hta_object_attachment(&c, ids[i], "spawn fire",
+                                                  HTA_FOURCC('p','c','t','l'));
+            if (!pctl) continue;
+            systems++;
+
+            hta_particles p;
+            hta_particles_init(&p);
+            uint32_t jet = hta_particles_add_system(&p, &c, &bm, pctl, 3.0f);
+            CHECK(jet != HTA_PART_NO_RECIPE, "the system builds an emitter");
+            if (jet == HTA_PART_NO_RECIPE) { hta_particles_free(&p); continue; }
+            CHECK(hta_particles_build(&p, err, sizeof(err)),
+                  "  and geometry to draw it with");
+
+            const hta_particle_emit *e = &p.recipe[jet].emit[0];
+            printf("  %s: %.0f/s, radius %.3f..%.3f, %.2f s alive\n",
+                   strrchr(w.path, '\\') + 1, (double)p.recipe[jet].rate,
+                   (double)e->radius_min, (double)e->radius_max,
+                   (double)e->life);
+            CHECK(p.recipe[jet].rate > 1.0f, "  at a rate worth emitting");
+            CHECK(e->life > 0.0f, "  with a lifespan");
+            CHECK(e->radius_max >= e->radius_min, "  and a sane radius range");
+            CHECK(p.type[e->type].blend == HTA_FX_BLEND_ADD,
+                  "  burning, so additive");
+
+            /* Emitting is rate-based rather than per-shot: the trigger
+             * puts out about `rate` particles a second, and nothing at
+             * all before any time has passed. */
+            float o[3] = {0,0,0}, dir[3] = {1,0,0};
+            CHECK(hta_particles_count(&p) == 0, "  nothing before the trigger");
+            hta_particles_emit(&p, jet, o, dir, 0.0f);
+            CHECK(hta_particles_count(&p) == 0, "  and nothing in no time at all");
+
+            for (int k = 0; k < 30; k++) {
+                hta_particles_emit(&p, jet, o, dir, 1.0f / 60.0f);
+                hta_particles_update(&p, NULL, NULL, 1.0f / 60.0f);
+            }
+            uint32_t half = hta_particles_count(&p);
+            float expect = p.recipe[jet].rate * 0.5f;
+            printf("  half a second of trigger: %u alive (the tag says ~%.0f)\n",
+                   half, (double)expect);
+            CHECK(half > 0, "  the trigger sprays");
+            CHECK((float)half <= expect + 2.0f, "  at the rate the tag asks for");
+
+            /* And it goes where it is pointed, rather than where gravity
+             * would take it. */
+            float reach = 0.0f;
+            for (uint32_t k = 0; k < HTA_PART_MAX; k++)
+                if (p.live[k].alive && p.live[k].pos[0] > reach)
+                    reach = p.live[k].pos[0];
+            printf("  the jet reaches %.2f wu\n", (double)reach);
+            CHECK(reach > 0.3f, "  the flame travels down the barrel line");
+
+            /* A dropped frame must not dump a second of flame at once. */
+            hta_particles_emit(&p, jet, o, dir, 10.0f);
+            CHECK(hta_particles_count(&p) <= HTA_PART_PER_TYPE,
+                  "  a long frame cannot flood the pool");
+
+            hta_particles_free(&p);
+        }
+        printf("  %d weapon(s) spray a particle system\n", systems);
+        CHECK(systems == 1, "exactly one of them: the flamethrower");
+    }
+
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

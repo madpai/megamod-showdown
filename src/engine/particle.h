@@ -25,7 +25,12 @@
 #include "player.h"
 
 #define HTA_PART_TYPES    12u
-#define HTA_PART_PER_TYPE 16u
+/* Sixteen was enough for a burst -- an explosion throws a dozen and they are
+ * gone in a second. A continuous weapon is not a burst: the flamethrower
+ * asks for 60 a second that live a second each, so a pool of 16 gave it a
+ * dotted line instead of a jet. Sixty-four covers it with room to spare,
+ * and costs 768 quads of dynamic geometry across every type at once. */
+#define HTA_PART_PER_TYPE 64u
 #define HTA_PART_MAX      (HTA_PART_TYPES * HTA_PART_PER_TYPE)
 #define HTA_PART_RECIPES   8u   /* a detonation plus one per map material */
 #define HTA_PART_EMITS     8u   /* particle entries in one effect */
@@ -71,6 +76,11 @@ typedef struct {
     uint32_t          effect_id;
     hta_particle_emit emit[HTA_PART_EMITS];
     uint32_t          emit_count;
+    /* A `pctl` particle SYSTEM emits continuously rather than in a burst:
+     * the flamethrower's jet is 60 a second for as long as you hold the
+     * trigger. Zero for an ordinary effect. */
+    float             rate;
+    float             accum;
 } hta_particle_recipe;
 
 typedef struct {
@@ -113,6 +123,21 @@ bool hta_particles_build(hta_particles *p, char *err, size_t errlen);
  * (a surface normal for an impact). Ignored for an unknown recipe. */
 void hta_particles_burst(hta_particles *p, uint32_t recipe,
                          const float origin[3], const float dir[3]);
+
+/* A `pctl` particle system: a stream rather than a burst. Halo attaches
+ * these to an object's marker and runs them while a trigger function is
+ * on -- the flamethrower's jet is two of them on `spawn fire`.
+ *
+ * Returns a recipe whose `rate` is set, to be driven with
+ * hta_particles_emit rather than burst. */
+uint32_t hta_particles_add_system(hta_particles *p, const hta_cache *c,
+                                  const hta_resource_map *bitmaps,
+                                  uint32_t pctl_tag_id, float speed);
+
+/* Run an emitting recipe for `dt`, spawning whatever that adds up to.
+ * Call it every frame the emitter is on and not at all when it is off. */
+void hta_particles_emit(hta_particles *p, uint32_t recipe,
+                        const float origin[3], const float dir[3], float dt);
 
 /* Fly, bounce, age out, and re-face the camera. `col` may be NULL; only
  * particles whose physics tag says "collides with structures" use it, which

@@ -69,6 +69,10 @@ typedef struct {
     uint32_t          flash_sprite_count;
     uint32_t          flash_pick;
     uint32_t          flash_rng;
+    /* Where the flash marker sits this frame, in the viewmodel's own
+     * space. The flamethrower's jet comes out of the same marker its
+     * flash hangs off (`spawn fire`), so the caller can emit from it. */
+    float             flash_pos[3];
 
     /* The readout on the gun itself. Halo's assault rifle carries its own
      * round counter: two quads on `frame display`, each a

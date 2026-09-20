@@ -81,6 +81,41 @@ static bool first_track(const hta_cache *c, uint32_t lsnd_id, hta_loop_sound *ou
     return out->loop != 0u || out->start != 0u;
 }
 
+uint32_t hta_object_attachment(const hta_cache *c, uint32_t object_tag_id,
+                               const char *marker, uint32_t want_class)
+{
+    if (!c || !object_tag_id) return 0;
+    int32_t ti = hta_cache_find_tag_by_id(c, object_tag_id);
+    if (ti < 0) return 0;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t)) return 0;
+    uint32_t base;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return 0;
+
+    uint32_t count = 0, ptr = 0, off = 0;
+    if (!hta_read_reflexive(c, base + OBJ_ATTACHMENTS, &count, &ptr)) return 0;
+    if (!count || !hta_cache_ptr_to_offset(c, ptr, &off)) return 0;
+
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t e = off + i * ATTACH_SIZE;
+        if (marker && *marker) {
+            char name[32];
+            if (!hta_rd_bytes(c, e + ATTACH_MARKER, name, 31)) continue;
+            name[31] = '\0';
+            if (strcmp(name, marker) != 0) continue;
+        }
+        uint32_t id = 0;
+        if (!hta_rd_u32(c, e + ATTACH_TYPE + 12u, &id) || !id) continue;
+        int32_t ai = hta_cache_find_tag_by_id(c, id);
+        if (ai < 0) continue;
+        hta_tag_entry at;
+        if (!hta_cache_tag(c, (uint32_t)ai, &at)) continue;
+        if (at.primary_class != want_class) continue;
+        return id;
+    }
+    return 0;
+}
+
 bool hta_object_loop_sound(const hta_cache *c, uint32_t object_tag_id,
                            const char *marker, hta_loop_sound *out)
 {

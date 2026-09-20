@@ -87,6 +87,12 @@ typedef struct {
 bool hta_object_loop_sound(const hta_cache *c, uint32_t object_tag_id,
                            const char *marker, hta_loop_sound *out);
 
+/* Any attachment of a given class on a marker. The flamethrower's jet is
+ * two `pctl` particle systems on `spawn fire`, attached the same way its
+ * roar is an `lsnd` on `primary trigger`. Returns 0 when there is none. */
+uint32_t hta_object_attachment(const hta_cache *c, uint32_t object_tag_id,
+                               const char *marker, uint32_t want_class);
+
 /* The first `snd!` this effect plays, or 0. */
 uint32_t hta_effect_first_sound(const hta_cache *c, uint32_t effect_tag_id);
 
