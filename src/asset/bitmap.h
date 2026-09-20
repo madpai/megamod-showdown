@@ -44,6 +44,8 @@
  * multipurpose map gates it -- is not read yet. */
 #define HTA_SOSO_DETAIL_SCALE 216u
 #define HTA_SOSO_DETAIL       220u
+#define HTA_SOSO_MULTIPURPOSE 188u
+#define HTA_SOSO_DETAIL_MASK  214u
 
 #define HTA_SGLA_BACKGROUND_TINT 100u
 #define HTA_SGLA_DIFFUSE         344u
@@ -99,6 +101,13 @@ uint32_t hta_shader_detail_bitmap(const hta_cache *c, uint32_t shader_tag_id,
  * 60x in others out of one shader. 0 when there is no second one. */
 uint32_t hta_shader_detail2_bitmap(const hta_cache *c, uint32_t shader_tag_id,
                                    float *out_scale);
+
+/* A model shader's multipurpose map and which of its channels gates the
+ * detail map (`ShaderModelDetailMask`: 0 none, then pairs of
+ * inverse/straight for reflection, self-illumination, change colour and
+ * auxiliary). 0 when the shader is not a model or has no mask. */
+uint32_t hta_shader_multipurpose(const hta_cache *c, uint32_t shader_tag_id,
+                                 uint8_t *out_mask);
 
 /* Decode every unique albedo + lightmap referenced by the mesh. Fills
  * mesh->textures and per-submesh albedo_tex/lightmap_tex. Missing resource

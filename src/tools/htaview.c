@@ -185,7 +185,11 @@ int main(int argc, char **argv)
         printf("textures       %u unique decoded, %u..%u px, %.1f MiB RGBA\n",
                mesh.texture_count, mesh.texture_count ? small : 0, big,
                texbytes / (1024.0 * 1024.0));
-        printf("detail maps    %u of %u submeshes\n", detailed, mesh.submesh_count);
+        uint32_t masked = 0;
+        for (uint32_t i = 0; i < mesh.submesh_count; i++)
+            if (mesh.submeshes[i].detail_mask) masked++;
+        printf("detail maps    %u of %u submeshes, %u masked\n",
+               detailed, mesh.submesh_count, masked);
     }
     if (hta_scenario_add_objects(&mesh, &c, rm.data ? &rm : NULL, err, sizeof(err)))
         printf("objects        %s  (%u verts, %u submeshes)\n", err, mesh.vertex_count, mesh.submesh_count);

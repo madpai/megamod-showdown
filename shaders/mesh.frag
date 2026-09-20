@@ -5,7 +5,8 @@ layout(push_constant) uniform Push {
     vec4  light_color;
     vec4  ambient;
     /* x, y: how many times each detail map repeats across the base map.
-       0 means this surface has none. */
+       z: ShaderModelDetailMask -- which multipurpose channel gates the
+       detail, 0 for none. */
     vec4  detail;
 } push;
 
@@ -13,6 +14,7 @@ layout(set = 0, binding = 0) uniform sampler2D u_base;
 layout(set = 0, binding = 1) uniform sampler2D u_light;
 layout(set = 0, binding = 2) uniform sampler2D u_detail;
 layout(set = 0, binding = 3) uniform sampler2D u_detail2;
+layout(set = 0, binding = 4) uniform sampler2D u_multi;
 
 layout(location = 0) in vec3 v_normal;
 layout(location = 1) in vec2 v_uv;
@@ -45,6 +47,20 @@ void main() {
     vec3 d1 = texture(u_detail,  uv1).rgb;
     vec3 d2 = texture(u_detail2, uv2).rgb;
     vec3 det = (push.detail.y > 0.0) ? mix(d2, d1, base.a) : d1;
+
+    /* A model shader can gate its detail by one channel of the
+     * multipurpose map: R auxiliary, G self-illumination, B change colour,
+     * A reflection, each available straight or inverted. Blood Gulch only
+     * uses the reflection pair -- vehicles keep their detail off the shiny
+     * panels. Masked out means neutral grey, which the double-biased
+     * multiply below turns into "leave the base alone". */
+    int dm = int(push.detail.z + 0.5);
+    if (dm > 0) {
+        vec4 mp = texture(u_multi, v_uv);
+        float m = (dm <= 2) ? mp.a : (dm <= 4) ? mp.g : (dm <= 6) ? mp.b : mp.r;
+        if ((dm & 1) == 1) m = 1.0 - m;        /* the odd codes are inverses */
+        det = mix(vec3(0.5), det, m);
+    }
 
     albedo *= det * 2.0;
 

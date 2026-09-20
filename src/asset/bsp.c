@@ -112,6 +112,7 @@ void hta_submesh_init(hta_submesh *sm)
     sm->lightmap_tex  = ~0u;
     sm->detail_tex    = ~0u;
     sm->detail2_tex   = ~0u;
+    sm->multi_tex     = ~0u;
     sm->lightmap_index = 0xFFFFu;
     sm->meter = -1.0f;
 }

@@ -10,6 +10,7 @@
 #include "engine/ammo.h"
 #include "asset/effect.h"
 #include "asset/model.h"
+#include "asset/bsp.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -218,6 +219,41 @@ int main(int argc, char **argv)
         printf("  %d submesh(es) across %d weapons carry a detail map\n",
                with_detail, weapons_seen);
         CHECK(!bad, "no submesh claims a detail map it does not have");
+
+        /* And the mask that gates it. Nothing a player HOLDS uses one --
+         * the cyborg's hands say "none" -- so this is checked on the
+         * scenery and vehicles, where Blood Gulch uses the reflection
+         * channel to keep detail off shiny panels. */
+        {
+            hta_bsp_mesh world;
+            memset(&world, 0, sizeof(world));
+            if (hta_bsp_load_first(&c, &world, err, sizeof(err))) {
+                hta_bsp_load_textures(&c, have_bitmaps ? &bm : NULL, &world,
+                                      err, sizeof(err));
+                uint32_t bsp_only = world.submesh_count;
+                hta_scenario_add_objects(&world, &c, have_bitmaps ? &bm : NULL,
+                                         err, sizeof(err));
+                uint32_t masked = 0, broken = 0;
+                for (uint32_t k = 0; k < world.submesh_count; k++) {
+                    const hta_submesh *sm = &world.submeshes[k];
+                    if (!sm->detail_mask) continue;
+                    masked++;
+                    if (sm->multi_tex == ~0u ||
+                        sm->multi_tex >= world.texture_count) broken++;
+                    if (sm->detail_tex == ~0u) broken++;
+                    if (sm->detail_mask > 8u) broken++;
+                }
+                printf("  %u masked submesh(es) among the placed objects\n", masked);
+                CHECK(masked > 0, "the map's objects use detail masks");
+                CHECK(!broken, "and every mask has a multipurpose map to read");
+                /* The BSP's own surfaces are `senv` and mask differently. */
+                uint32_t bsp_masked = 0;
+                for (uint32_t k = 0; k < bsp_only; k++)
+                    if (world.submeshes[k].detail_mask) bsp_masked++;
+                CHECK(bsp_masked == 0, "and the BSP's own shaders use none");
+                hta_bsp_free(&world);
+            }
+        }
         /* The cyborg's first-person hands have one, so every weapon does. */
         CHECK(with_detail >= weapons_seen,
               "the hands' detail map reaches every weapon");

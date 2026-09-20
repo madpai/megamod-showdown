@@ -364,6 +364,36 @@ frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
 Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
 need weapon state we do not track yet.
 
+## The detail mask (2026-09-20)
+
+`ShaderModelDetailMask` at ShaderModel+214 gates a model's detail map by
+one channel of its **multipurpose map** (+188). Nine values: `none`, then
+inverse/straight pairs for reflection, self-illumination, change colour and
+auxiliary. Blood Gulch uses only the reflection pair -- 6 straight, 5
+inverse, 23 `none` -- which is vehicles keeping detail off their shiny
+panels.
+
+**Which channel is which** was settled from the data rather than from
+memory. The cyborg's multipurpose map has R 0, G 1, B 43 with 32% of the
+blue in mid-tones and almost none of the green: blue carries the
+change-colour structure and green is empty. That matches Halo's documented
+layout, so:
+
+```
+R auxiliary   G self-illumination   B change colour   A reflection
+```
+
+Masked out means **neutral grey**, which the double-biased multiply turns
+into "leave the base alone" -- not black, and not "skip the detail sample".
+
+Reaches 32 of the 315 submeshes Blood Gulch's placed objects contribute.
+Nothing a player HOLDS uses one: the cyborg's first-person hands say
+`none`, so this changed nothing on the weapon in your hands, exactly as
+predicted when it was deferred.
+
+Descriptor bindings are now five: base, lightmap, detail, detail2,
+multipurpose.
+
 ## Model detail maps, and a zeroed index that halved everything (2026-09-20)
 
 ### `hta_submesh_init`, and why memset is not enough
@@ -1504,6 +1534,7 @@ after building, wherever real tag physics are available.
 | Glass shaders (`sgla`) | `src/asset/bitmap.c` draw mode + diffuse map |
 | Viewmodel lighting | `shaders/mesh.frag` lit path, `gfx_vulkan.c` viewmodel push |
 | Submesh defaults | `src/asset/bsp.c` `hta_submesh_init` |
+| Detail mask | `src/asset/bitmap.c` `hta_shader_multipurpose`, `shaders/mesh.frag` |
 | Rounds counter | `src/engine/hud.c` `load_numbers` |
 | Object attachments / looping sounds | `src/asset/effect.c` `hta_object_loop_sound` |
 | Continuous voices | `src/engine/audio.c` `hta_audio_loop` |

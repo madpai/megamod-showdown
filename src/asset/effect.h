@@ -42,7 +42,21 @@ typedef struct {
     float    fade_in, fade_out;
     uint8_t  blend;          /* HTA_FX_BLEND_* */
     uint8_t  orientation;    /* 0 screen facing, 1 parallel to direction */
+    /* How many Halo spawns and how fast it throws them. A muzzle flash is
+     * one sprite sitting still; an explosion is a dozen thrown outwards. */
+    int16_t  count_min, count_max;
+    float    speed_min, speed_max;      /* world units a second */
+    float    spread;                    /* velocity cone half-angle, radians */
+    uint16_t create_in, create;         /* HTA_FX_IN_* / HTA_FX_CAM_* */
 } hta_effect_particle;
+
+/* Walk every particle an effect spawns, in order. `index` runs 0 .. the
+ * return of hta_effect_particle_count. Unlike hta_effect_fp_flash this
+ * filters nothing: a caller that is spawning the whole burst wants the
+ * smoke and the sparks as well as the flash. */
+uint32_t hta_effect_particle_count(const hta_cache *c, uint32_t effect_tag_id);
+bool hta_effect_particle_at(const hta_cache *c, uint32_t effect_tag_id,
+                            uint32_t index, hta_effect_particle *out);
 
 /* One track of a looping sound (`lsnd`). */
 typedef struct {

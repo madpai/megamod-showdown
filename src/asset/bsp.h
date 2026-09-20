@@ -90,6 +90,12 @@ typedef struct {
      * where it is low, out of a single shader. */
     uint32_t detail2_tex;
     float    detail2_scale;
+    /* A model shader can GATE its detail map by one channel of the
+     * multipurpose map: `ShaderModelDetailMask` at +214 names which, and
+     * whether to invert it. Channels are R auxiliary, G self-illumination,
+     * B change colour, A reflection. 0 means no mask. */
+    uint32_t multi_tex;
+    uint8_t  detail_mask;
     uint8_t  draw_mode;       /* HTA_DRAW_* */
     /* HUD overlays only: the tag's own colour for this element. Halo's HUD
      * art is white with an alpha mask, so the colour lives here rather than

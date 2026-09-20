@@ -27,6 +27,7 @@
 #define EFFP_VELOCITY      132u   /* float bounds, world units per second */
 #define EFFP_TYPE           84u   /* TagDependency; tag id at +12 */
 #define EFFP_RADIUS        160u   /* float bounds */
+#define EFFP_VELOCITY_CONE 140u   /* Angle, radians */
 /* Particle (356) */
 #define PART_BITMAP          4u   /* TagDependency; tag id at +12 */
 #define PART_LIFESPAN       56u   /* float bounds */
@@ -219,6 +220,104 @@ static bool location_marker(const hta_cache *c, uint32_t effect_base,
     if (!hta_rd_bytes(c, off + index * EFFLOC_SIZE, out, 31)) return false;
     out[31] = '\0';
     return true;
+}
+
+/* Fill `out` from one EffectParticle entry and the `part` tag it names.
+ * False when the entry has no usable particle tag or bitmap. */
+static bool read_particle(const hta_cache *c, uint32_t base, uint32_t qk,
+                          hta_effect_particle *out)
+{
+    memset(out, 0, sizeof(*out));
+    uint16_t loc = 0;
+    uint32_t part_id = 0;
+    hta_rd_u16(c, qk + EFFP_CREATE_IN, &out->create_in);
+    hta_rd_u16(c, qk + EFFP_CREATE, &out->create);
+    hta_rd_u16(c, qk + EFFP_LOCATION, &loc);
+    if (!hta_rd_u32(c, qk + EFFP_TYPE + 12u, &part_id)) return false;
+    if (!part_id || part_id == 0xFFFFFFFFu) return false;
+
+    int32_t pti = hta_cache_find_tag_by_id(c, part_id);
+    if (pti < 0) return false;
+    hta_tag_entry pt;
+    if (!hta_cache_tag(c, (uint32_t)pti, &pt) || pt.indexed) return false;
+    uint32_t pb;
+    if (!hta_cache_ptr_to_offset(c, pt.tag_data_ptr, &pb)) return false;
+
+    uint16_t blend = 0, orient = 0;
+    uint32_t bitmap = 0;
+    hta_rd_u16(c, pb + PART_BLEND, &blend);
+    hta_rd_u16(c, pb + PART_ORIENTATION, &orient);
+    if (!hta_rd_u32(c, pb + PART_BITMAP + 12u, &bitmap)) return false;
+    if (!bitmap || bitmap == 0xFFFFFFFFu) return false;
+
+    float ls0 = 0.0f, ls1 = 0.0f, r0 = 0.0f, r1 = 0.0f, v0 = 0.0f, v1 = 0.0f;
+    hta_rd_f32(c, pb + PART_LIFESPAN, &ls0);
+    hta_rd_f32(c, pb + PART_LIFESPAN + 4u, &ls1);
+    hta_rd_f32(c, pb + PART_FADE_IN, &out->fade_in);
+    hta_rd_f32(c, pb + PART_FADE_OUT, &out->fade_out);
+    hta_rd_f32(c, qk + EFFP_RADIUS, &r0);
+    hta_rd_f32(c, qk + EFFP_RADIUS + 4u, &r1);
+    hta_rd_f32(c, qk + EFFP_VELOCITY, &v0);
+    hta_rd_f32(c, qk + EFFP_VELOCITY + 4u, &v1);
+    hta_rd_f32(c, qk + EFFP_VELOCITY_CONE, &out->spread);
+    hta_rd_u16(c, qk + EFFP_COUNT, (uint16_t *)&out->count_min);
+    hta_rd_u16(c, qk + EFFP_COUNT + 2u, (uint16_t *)&out->count_max);
+
+    char marker[32];
+    if (!location_marker(c, base, loc, marker)) marker[0] = '\0';
+    snprintf(out->marker, sizeof(out->marker), "%s", marker);
+
+    out->part_id = part_id;
+    out->bitmap_id = bitmap;
+    out->blend = (uint8_t)blend;
+    out->orientation = (uint8_t)orient;
+    out->lifespan = ls1 > ls0 ? ls1 : ls0;
+    out->radius_min = r0;
+    out->radius_max = r1 > r0 ? r1 : r0;
+    out->speed_min = v0 < v1 ? v0 : v1;
+    out->speed_max = v1 > v0 ? v1 : v0;
+    return true;
+}
+
+/* Every particle of every event, flattened. */
+static bool walk_particles(const hta_cache *c, uint32_t effect_tag_id,
+                           uint32_t want, hta_effect_particle *out,
+                           uint32_t *total)
+{
+    if (total) *total = 0;
+    uint32_t ev_off = 0, ev_count = 0, base = 0;
+    if (!events_of(c, effect_tag_id, &ev_off, &ev_count, &base)) return false;
+
+    uint32_t seen = 0;
+    for (uint32_t e = 0; e < ev_count; e++) {
+        uint32_t qc = 0, qp = 0, qo = 0;
+        if (!hta_read_reflexive(c, ev_off + e * EFFEVENT_SIZE + EFFEVENT_PARTICLES,
+                                &qc, &qp))
+            continue;
+        if (!qc || !hta_cache_ptr_to_offset(c, qp, &qo)) continue;
+        for (uint32_t k = 0; k < qc; k++) {
+            hta_effect_particle p;
+            if (!read_particle(c, base, qo + k * EFFPARTICLE_SIZE, &p)) continue;
+            if (out && seen == want) { *out = p; if (total) *total = seen + 1; return true; }
+            seen++;
+        }
+    }
+    if (total) *total = seen;
+    return out ? false : true;
+}
+
+uint32_t hta_effect_particle_count(const hta_cache *c, uint32_t effect_tag_id)
+{
+    uint32_t n = 0;
+    walk_particles(c, effect_tag_id, 0xFFFFFFFFu, NULL, &n);
+    return n;
+}
+
+bool hta_effect_particle_at(const hta_cache *c, uint32_t effect_tag_id,
+                            uint32_t index, hta_effect_particle *out)
+{
+    if (!c || !out) return false;
+    return walk_particles(c, effect_tag_id, index, out, NULL);
 }
 
 static bool pick_particle(const hta_cache *c, uint32_t effect_tag_id,

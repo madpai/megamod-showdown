@@ -53,6 +53,7 @@ typedef struct {
     uint8_t  draw_mode;
     float    detail_scale;   /* 0 = this surface has no detail map */
     float    detail2_scale;
+    float    detail_mask;    /* ShaderModelDetailMask; 0 = no mask */
 } hta_vk_submesh;
 
 struct hta_gfx_mesh {
@@ -484,7 +485,7 @@ static bool create_targets(hta_gfx *g, uint32_t w, uint32_t h, char *err, size_t
 
 static bool create_pass_pipeline(hta_gfx *g, char *err, size_t errlen)
 {
-    VkDescriptorSetLayoutBinding b[4];
+    VkDescriptorSetLayoutBinding b[5];
     memset(b, 0, sizeof(b));
     b[0].binding = 0; b[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     b[0].descriptorCount = 1; b[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -494,8 +495,10 @@ static bool create_pass_pipeline(hta_gfx *g, char *err, size_t errlen)
     b[2].descriptorCount = 1; b[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     b[3].binding = 3; b[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     b[3].descriptorCount = 1; b[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    b[4].binding = 4; b[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    b[4].descriptorCount = 1; b[4].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutCreateInfo sl = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    sl.bindingCount = 4; sl.pBindings = b;
+    sl.bindingCount = 5; sl.pBindings = b;
     VKREQ(vkCreateDescriptorSetLayout(g->device, &sl, NULL, &g->set_layout),
           "vkCreateDescriptorSetLayout");
 
@@ -1043,9 +1046,10 @@ static bool upload_rgba_mips(hta_gfx *g, const uint8_t *rgba, uint32_t w, uint32
 
 static bool write_set(hta_gfx *g, VkDescriptorSet set,
                       VkImageView albedo, VkImageView light,
-                      VkImageView detail, VkImageView detail2)
+                      VkImageView detail, VkImageView detail2,
+                      VkImageView multi)
 {
-    VkDescriptorImageInfo ii[4];
+    VkDescriptorImageInfo ii[5];
     memset(ii, 0, sizeof(ii));
     ii[0].sampler = g->samp_repeat;
     ii[0].imageView = albedo;
@@ -1060,7 +1064,11 @@ static bool write_set(hta_gfx *g, VkDescriptorSet set,
     ii[3].sampler = g->samp_repeat;
     ii[3].imageView = detail2;
     ii[3].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkWriteDescriptorSet w[4];
+    /* The multipurpose map shares the base map's UVs, so it clamps. */
+    ii[4].sampler = g->samp_clamp;
+    ii[4].imageView = multi;
+    ii[4].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet w[5];
     memset(w, 0, sizeof(w));
     w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     w[0].dstSet = set; w[0].dstBinding = 0;
@@ -1070,7 +1078,8 @@ static bool write_set(hta_gfx *g, VkDescriptorSet set,
     w[1] = w[0]; w[1].dstBinding = 1; w[1].pImageInfo = &ii[1];
     w[2] = w[0]; w[2].dstBinding = 2; w[2].pImageInfo = &ii[2];
     w[3] = w[0]; w[3].dstBinding = 3; w[3].pImageInfo = &ii[3];
-    vkUpdateDescriptorSets(g->device, 4, w, 0, NULL);
+    w[4] = w[0]; w[4].dstBinding = 4; w[4].pImageInfo = &ii[4];
+    vkUpdateDescriptorSets(g->device, 5, w, 0, NULL);
     return true;
 }
 
@@ -1149,7 +1158,7 @@ static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
 
     VkDescriptorPoolSize ps;
     ps.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    ps.descriptorCount = nsm * 4;
+    ps.descriptorCount = nsm * 5;
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     pci.maxSets = nsm;
     pci.poolSizeCount = 1;
@@ -1175,8 +1184,9 @@ static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
 
     for (uint32_t i = 0; i < nsm; i++) {
         uint32_t first = 0, count = mesh->index_count, ai = ~0u, li = ~0u;
-        uint32_t di = ~0u, d2i = ~0u;
+        uint32_t di = ~0u, d2i = ~0u, mi = ~0u;
         float dscale = 0.0f, d2scale = 0.0f;
+        uint8_t dmask = 0;
         if (mesh->submesh_count) {
             first = mesh->submeshes[i].first_index;
             count = mesh->submeshes[i].index_count;
@@ -1186,6 +1196,8 @@ static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
             dscale = mesh->submeshes[i].detail_scale;
             d2i = mesh->submeshes[i].detail2_tex;
             d2scale = mesh->submeshes[i].detail2_scale;
+            mi = mesh->submeshes[i].multi_tex;
+            dmask = mesh->submeshes[i].detail_mask;
         }
         m->submeshes[i].first_index = first;
         m->submeshes[i].index_count = count;
@@ -1200,7 +1212,9 @@ static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
         VkImageView d2v = (d2i != ~0u && d2i < m->tex_count) ? m->tex[d2i].view : g->tex_light.view;
         m->submeshes[i].detail_scale = (di != ~0u && di < m->tex_count) ? dscale : 0.0f;
         m->submeshes[i].detail2_scale = (d2i != ~0u && d2i < m->tex_count) ? d2scale : 0.0f;
-        write_set(g, sets[i], av, lv, dv, d2v);
+        VkImageView mv = (mi != ~0u && mi < m->tex_count) ? m->tex[mi].view : g->tex_light.view;
+        m->submeshes[i].detail_mask = (mi != ~0u && mi < m->tex_count) ? (float)dmask : 0.0f;
+        write_set(g, sets[i], av, lv, dv, d2v, mv);
     }
     return m;
 }
@@ -1377,7 +1391,7 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                          * per-submesh, so it rides the push constants. */
                         float det[4] = { mesh->submeshes[i].detail_scale,
                                          mesh->submeshes[i].detail2_scale,
-                                         0.0f, 0.0f };
+                                         mesh->submeshes[i].detail_mask, 0.0f };
                         memcpy(push + 112, det, sizeof(det));
                         vkCmdPushConstants(cb, g->layout,
                                            VK_SHADER_STAGE_VERTEX_BIT |

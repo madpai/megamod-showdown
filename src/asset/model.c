@@ -343,6 +343,15 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
             uint32_t dt = hta_mesh_intern_bitmap(dst, c, bitmaps, det_bm, 0);
             if (dt != ~0u) { sm->detail_tex = dt; sm->detail_scale = dscale; }
         }
+        /* And the channel that gates it, if the shader asks for one. */
+        if (sm->detail_tex != ~0u) {
+            uint8_t mask = 0;
+            uint32_t mp = hta_shader_multipurpose(c, shader_id, &mask);
+            if (mp && mask) {
+                uint32_t mt = hta_mesh_intern_bitmap(dst, c, bitmaps, mp, 0);
+                if (mt != ~0u) { sm->multi_tex = mt; sm->detail_mask = mask; }
+            }
+        }
 
         dst->vertex_count += vcount;
         dst->index_count += emitted;
