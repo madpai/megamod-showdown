@@ -124,6 +124,16 @@ bool hta_effect_detonation(const hta_cache *c, uint32_t effect_tag_id,
 /* The bitmap a `deca` draws with (decal+216). */
 uint32_t hta_decal_bitmap(const hta_cache *c, uint32_t decal_tag_id);
 
+/* The area damage a detonation does: how far it reaches, the core inside
+ * which it does full damage, and how much that is. From the first `jpt!`
+ * among the effect's parts -- a rocket's explosion carries two, the blast
+ * and the shock wave, and the blast comes first.
+ *
+ * DamageEffect reconciles at 672: radius bounds at +0, area-of-effect core
+ * radius at +460, damage bounds at +464. */
+bool hta_effect_damage(const hta_cache *c, uint32_t effect_tag_id,
+                       float *out_radius, float *out_core, float *out_damage);
+
 /* `foot` (material_effects): the sound this biped makes stepping on that
  * MaterialType. Group 0 is the walk set. Returns 0 when the material has no
  * sound of its own -- plenty do not, and silence is the right answer. */

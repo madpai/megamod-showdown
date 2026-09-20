@@ -571,6 +571,7 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
     p->radius = p->phys.radius;
 
     bool  was_air_this_update = false;
+    float fall_speed_in = 0.0f;
     float step_start_x = p->pos[0], step_start_y = p->pos[1];
 
     float fwd[3], right[3];
@@ -618,6 +619,9 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
         if (p->velocity[2] < -40.0f) p->velocity[2] = -40.0f;
 
         was_air_this_update = !p->on_ground;
+        /* How fast we are going down BEFORE the ground zeroes it, which is
+         * what a landing has to be judged on. */
+        if (p->velocity[2] < 0.0f) fall_speed_in = -p->velocity[2];
         step_start_x = p->pos[0];
         step_start_y = p->pos[1];
         float oz = p->pos[2];
@@ -703,6 +707,9 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
     if (!p->noclip && p->on_ground) {
         if (was_air_this_update) {
             p->landed = true;
+            /* How hard. The vertical speed is already zeroed by the
+             * landing itself, so this is what it was on the way in. */
+            p->land_speed = fall_speed_in;
             p->footstep = true;
             p->step_distance = 0.0f;
         } else {

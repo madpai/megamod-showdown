@@ -18,6 +18,7 @@
 #include "../engine/gun.h"
 #include "../engine/projectile.h"
 #include "../engine/particle.h"
+#include "../engine/vitals.h"
 #include "../engine/ammo.h"
 #include "../engine/hud.h"
 #include "../engine/viewmodel.h"
@@ -158,6 +159,9 @@ typedef struct {
     uint32_t        impact_recipe[33];
     uint8_t         map_material[33];      /* the ones this map contains */
     uint32_t        map_material_count;
+
+    /* Health and shield, and what takes them away. */
+    hta_vitals vitals;
 
     hta_ammo ammo;
     float    dry_cooldown;   /* stops an empty trigger clicking every frame */
@@ -883,6 +887,12 @@ static bool load_map(hta_android *s)
             hta_player_apply_physics(&s->player, &phys);
             s->cam.fov_y = phys.fov_y;
             s->base_fov = phys.fov_y;
+            if (hta_vitals_load(&s->vitals, &s->cache))
+                hta_log("[player] %.0f health, %.0f shield, back in %.1fs at %.0f%%/s"
+                        "; a fall hurts past %.1f wu/s and kills at %.1f",
+                        s->vitals.max_health, s->vitals.max_shield,
+                        s->vitals.recharge_delay, s->vitals.recharge_rate * 100.0f,
+                        s->vitals.fall_harmful_min, s->vitals.fall_fatal);
             hta_collision_set_slope(&s->col, phys.max_slope);
             hta_log("[player] cyborg_mp run %.2f wu/s jump %.2f cam %.2f r %.2f slope %.0f deg",
                     phys.run_forward, phys.jump_speed, phys.cam_stand, phys.radius,
@@ -1374,6 +1384,21 @@ void android_main(struct android_app *app)
             play_footstep(&state, mat);
         }
         hta_gun_update(&state.gun, dt);
+
+        /* What the fall cost, and the shield growing back afterwards. */
+        if (state.player.landed && state.vitals.loaded) {
+            float cost = hta_vitals_land(&state.vitals, state.player.land_speed);
+            if (cost > 0.0f)
+                hta_log("[player] landed at %.1f wu/s for %.0f damage "
+                        "(%.0f shield, %.0f health left)",
+                        state.player.land_speed, cost,
+                        state.vitals.shield, state.vitals.health);
+        }
+        hta_vitals_update(&state.vitals, dt);
+        if (state.vitals.loaded) {
+            hta_hud_set_shield(&state.hud, hta_vitals_shield_fraction(&state.vitals));
+            hta_hud_set_health(&state.hud, hta_vitals_health_fraction(&state.vitals));
+        }
         /* Ammo gates the shot: hta_gun_fire spends the cooldown whether or
          * not the magazine could pay, so ask before pulling. */
         hta_ammo_update(&state.ammo, dt);
@@ -1522,6 +1547,30 @@ void android_main(struct android_app *app)
                 /* Thrown out along the surface it hit. */
                 hta_particles_burst(&state.parts, state.det_recipe,
                                     state.proj.hit, state.proj.hit_normal);
+
+                /* And it can catch you. A rocket is 80 at the centre,
+                 * full inside 0.6 world units and gone by 2.0 -- which is
+                 * why firing one at your own feet is a bad idea in Halo
+                 * and now here too. */
+                if (state.vitals.loaded && state.proj.blast_damage > 0.0f) {
+                    float dx = state.cam.pos[0] - state.proj.hit[0];
+                    float dy = state.cam.pos[1] - state.proj.hit[1];
+                    float dz = state.cam.pos[2] - state.proj.hit[2];
+                    float dist = sqrtf(dx*dx + dy*dy + dz*dz);
+                    float r = state.proj.blast_damage_radius;
+                    if (dist < r) {
+                        float core = state.proj.blast_core;
+                        float f = 1.0f;
+                        if (dist > core && r > core)
+                            f = 1.0f - (dist - core) / (r - core);
+                        if (f > 0.0f) {
+                            hta_vitals_damage(&state.vitals,
+                                              state.proj.blast_damage * f);
+                            hta_log("[player] caught the blast at %.1f wu for %.0f",
+                                    dist, state.proj.blast_damage * f);
+                        }
+                    }
+                }
             }
         }
 

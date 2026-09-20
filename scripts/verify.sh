@@ -26,6 +26,7 @@ if ./build-host/test_audio  >/dev/null 2>&1; then ok "voice mixer tests"; else b
 if ./build-host/test_ammo   >/dev/null 2>&1; then ok "magazine/reload tests"; else bad "magazine/reload tests"; fi
 if ./build-host/test_projectile >/dev/null 2>&1; then ok "projectile tests"; else bad "projectile tests"; fi
 if ./build-host/test_particle   >/dev/null 2>&1; then ok "particle tests"; else bad "particle tests"; fi
+if ./build-host/test_vitals     >/dev/null 2>&1; then ok "health/shield tests"; else bad "health/shield tests"; fi
 if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_biped "$HTA_MAP" >/dev/null 2>&1; then ok "biped/globals physics from Trial map"; else bad "biped/globals physics from Trial map"; fi
   if ./build-host/test_anim "$HTA_MAP" >/dev/null 2>&1; then ok "FP animation graph + skinned viewmodel"; else bad "FP animation graph + skinned viewmodel"; fi
@@ -35,6 +36,7 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_weapons "$HTA_MAP" >/dev/null 2>&1; then ok "roster animations + zoom from the weapon tags"; else bad "roster animations + zoom from the weapon tags"; fi
   if ./build-host/test_projectile "$HTA_MAP" >/dev/null 2>&1; then ok "projectiles from the projectile tags"; else bad "projectiles from the projectile tags"; fi
   if ./build-host/test_particle "$HTA_MAP" >/dev/null 2>&1; then ok "effect particles from the effect tags"; else bad "effect particles from the effect tags"; fi
+  if ./build-host/test_vitals "$HTA_MAP" >/dev/null 2>&1; then ok "vitality and falling from the Trial tags"; else bad "vitality and falling from the Trial tags"; fi
 fi
 
 # Optional: validate against the user's own Trial data if HTA_MAP points at it.

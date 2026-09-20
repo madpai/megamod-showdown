@@ -133,6 +133,11 @@ static bool events_of(const hta_cache *c, uint32_t effect_tag_id,
 #define DECAL_RADIUS 24u   /* float bounds, world units */
 #define DECAL_MAP   216u   /* TagDependency -> bitm */
 
+/* DamageEffect, 672, reconciles. */
+#define JPT_RADIUS         0u   /* float bounds */
+#define JPT_AOE_CORE     460u
+#define JPT_DAMAGE       464u   /* lower bound, then upper bounds */
+
 uint32_t hta_decal_bitmap(const hta_cache *c, uint32_t decal_tag_id)
 {
     if (!c || !decal_tag_id || decal_tag_id == 0xFFFFFFFFu) return 0;
@@ -194,6 +199,55 @@ bool hta_effect_detonation(const hta_cache *c, uint32_t effect_tag_id,
         }
     }
     return any;
+}
+
+bool hta_effect_damage(const hta_cache *c, uint32_t effect_tag_id,
+                       float *out_radius, float *out_core, float *out_damage)
+{
+    if (out_radius) *out_radius = 0.0f;
+    if (out_core) *out_core = 0.0f;
+    if (out_damage) *out_damage = 0.0f;
+    if (!c || !effect_tag_id) return false;
+
+    uint32_t ev_off = 0, ev_count = 0, base = 0;
+    if (!events_of(c, effect_tag_id, &ev_off, &ev_count, &base)) return false;
+
+    for (uint32_t e = 0; e < ev_count; e++) {
+        uint32_t pc = 0, pp = 0, po = 0;
+        if (!hta_read_reflexive(c, ev_off + e * EFFEVENT_SIZE + EFFEVENT_PARTS,
+                                &pc, &pp))
+            continue;
+        if (!pc || !hta_cache_ptr_to_offset(c, pp, &po)) continue;
+
+        for (uint32_t k = 0; k < pc; k++) {
+            uint32_t pk = po + k * EFFPART_SIZE;
+            uint32_t cls = 0, id = 0;
+            hta_rd_u32(c, pk + EFFPART_TYPE_CLASS, &cls);
+            if (cls != HTA_FOURCC('j','p','t','!')) continue;
+            if (!hta_rd_u32(c, pk + EFFPART_TYPE + 12u, &id)) continue;
+            if (!id || id == 0xFFFFFFFFu) continue;
+
+            int32_t di = hta_cache_find_tag_by_id(c, id);
+            if (di < 0) continue;
+            hta_tag_entry dt;
+            uint32_t db;
+            if (!hta_cache_tag(c, (uint32_t)di, &dt)) continue;
+            if (!hta_cache_ptr_to_offset(c, dt.tag_data_ptr, &db)) continue;
+
+            float r0 = 0.0f, r1 = 0.0f, core = 0.0f, dmg = 0.0f;
+            hta_rd_f32(c, db + JPT_RADIUS, &r0);
+            hta_rd_f32(c, db + JPT_RADIUS + 4u, &r1);
+            hta_rd_f32(c, db + JPT_AOE_CORE, &core);
+            hta_rd_f32(c, db + JPT_DAMAGE, &dmg);
+            float radius = r1 > r0 ? r1 : r0;
+            if (!(radius > 0.0f) || !(dmg > 0.0f)) continue;
+            if (out_radius) *out_radius = radius;
+            if (out_core) *out_core = core;
+            if (out_damage) *out_damage = dmg;
+            return true;
+        }
+    }
+    return false;
 }
 
 uint32_t hta_effect_first_sound(const hta_cache *c, uint32_t effect_tag_id)

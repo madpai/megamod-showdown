@@ -92,6 +92,7 @@ typedef struct {
     float step_distance;
     bool  footstep;
     bool  landed;        /* true for the update a fall ends */
+    float land_speed;    /* how fast you were falling when it did, wu/s */
 } hta_player;
 
 /* Sets the scope magnification. 1.0 (or anything below it) is unzoomed. */

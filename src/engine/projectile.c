@@ -90,6 +90,8 @@ bool hta_projectiles_equip(hta_projectiles *p, const hta_cache *c,
         p->det_effect = det_fx;
         hta_effect_detonation(c, det_fx, &p->detonation_snd, &p->blast_radius,
                               &p->decal_id);
+        hta_effect_damage(c, det_fx, &p->blast_damage_radius, &p->blast_core,
+                          &p->blast_damage);
     }
 
     p->proj_tag_id   = weap->projectile_id;

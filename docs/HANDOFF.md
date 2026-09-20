@@ -364,6 +364,50 @@ frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
 Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
 need weapon state we do not track yet.
 
+## Health, shield and consequences (2026-09-20)
+
+The bars had been sitting full since they were drawn. They move now, and
+every number is the Trial's.
+
+### Where vitality lives
+
+Not on the biped and not on the unit: on the biped's **collision model**.
+`ModelCollisionGeometry` reconciles at 664 and carries
+
+```
+maximum body vitality   +8      maximum shield vitality +204
+recharge time         +272      shield recharge rate    +448
+```
+
+The multiplayer cyborg is **75 body, 75 shield, back after 4 seconds at
+30% a second** -- a little over three seconds to refill, which is Halo's.
+
+Damage spends the shield first and reaches the body only once it is gone.
+The body never heals itself; only the shield comes back.
+
+### Falling
+
+`globals` +392 (GlobalsFallingDamage, 152) gives a harmful velocity range
+and a maximum, **per TICK like everything else in Halo that is a speed**.
+The cyborg starts being hurt at 0.15 (4.4 world units a second) and a fall
+at 0.34 (10.3 wu/s) is simply fatal. Read as per-second those would make
+stepping off a kerb lethal.
+
+At the player's own gravity of 3.4, that is a free drop of about three
+world units and certain death from about fifteen.
+
+`hta_player` reports `land_speed` alongside `landed`, captured BEFORE the
+ground zeroes the vertical velocity -- which it does in three separate
+places, so reading it afterwards always gives zero.
+
+### The blast catches you
+
+A detonation effect carries its area damage as a `jpt!` among its parts.
+`DamageEffect` reconciles at 672: radius bounds at +0, area-of-effect core
+radius at +460, damage at +464. A rocket is **80 at the centre, full inside
+0.6 world units and gone by 2.0**, so firing one at your own feet costs you
+most of a shield.
+
 ## Sound in the world, and spent brass (2026-09-20)
 
 ### Sounds have a place now
@@ -1702,6 +1746,8 @@ after building, wherever real tag physics are available.
 | Particles | `src/engine/particle.c`, `.h`, `tests/test_particle.c` |
 | Walk bob | `src/engine/viewmodel.c` `apply_move` |
 | Positional sound | `platform_android.c` `play_tag_at`, `hta_audio_play_pan` |
+| Health / shield / falling | `src/engine/vitals.c`, `tests/test_vitals.c` |
+| Blast damage | `src/asset/effect.c` `hta_effect_damage` |
 | Casing ejection | `viewmodel.c` `eject_pos`, `hta_particles_add_marker` |
 | Map material scan | `platform_android.c` `map_material[]` |
 | Effect particle walk | `src/asset/effect.c` `hta_effect_particle_at` |
