@@ -1395,6 +1395,16 @@ void android_main(struct android_app *app)
             }
         }
 
+        /* The weapon sways with the walk, from the weapon's own `moving`
+         * overlay, scaled by how fast the player is actually going. */
+        if (state.vm.loaded) {
+            float run = state.player.phys.run_forward > 0.1f
+                      ? state.player.phys.run_forward : 2.25f;
+            float vx = state.player.velocity[0], vy = state.player.velocity[1];
+            float speed = sqrtf(vx * vx + vy * vy);
+            hta_viewmodel_set_move(&state.vm, speed / run);
+        }
+
         hta_particles_update(&state.parts, &state.cam, dt);
 
         if (state.gun.dirty && state.gfx) {

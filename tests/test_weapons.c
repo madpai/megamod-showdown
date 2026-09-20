@@ -187,6 +187,69 @@ int main(int argc, char **argv)
     CHECK(checked == 3, "all three zooming weapons are in the roster");
     CHECK(zoomers == 3, "and nothing else claims to zoom");
 
+    printf("\n[the weapon sways as you walk]\n");
+    {
+        /* Halo carries the walk bob as its own overlay clip, `first-person
+         * moving`, and every Trial weapon has one. Standing still must be
+         * EXACTLY the base pose -- there is no seam when you stop. */
+        int with_move = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def w;
+            if (!hta_weapon_load_id(&c, have_bitmaps ? &bm : NULL, ids[i], &w,
+                                    NULL, err, sizeof(err))) continue;
+            hta_viewmodel vm;
+            if (!hta_viewmodel_load(&vm, &c, have_bitmaps ? &bm : NULL, &w,
+                                    err, sizeof(err))) continue;
+            if (vm.clip_move >= 0) with_move++;
+            if (strstr(w.path, "assault rifle") && vm.clip_move >= 0) {
+                uint32_t nv = vm.hands_verts + vm.gun_verts;
+                float *base = (float *)malloc((size_t)nv * 3 * sizeof(float));
+                hta_viewmodel_play(&vm, HTA_VM_IDLE);
+                hta_viewmodel_set_move(&vm, 0.0f);
+                vm.frame = 0.0f;
+                hta_viewmodel_update(&vm, 0.0f);
+                for (uint32_t v = 0; v < nv; v++)
+                    for (int k = 0; k < 3; k++)
+                        base[v * 3 + k] = vm.posed[v].pos[k];
+
+                /* Running: the gun has to actually move. */
+                hta_viewmodel_set_move(&vm, 1.0f);
+                float worst = 0.0f;
+                for (int s = 0; s < 40; s++) {
+                    vm.frame = 0.0f;          /* hold the idle, isolate the bob */
+                    hta_viewmodel_update(&vm, 1.0f / 30.0f);
+                    for (uint32_t v = vm.hands_verts; v < nv; v++) {
+                        float dd = 0.0f;
+                        for (int k = 0; k < 3; k++) {
+                            float q = vm.posed[v].pos[k] - base[v * 3 + k];
+                            dd += q * q;
+                        }
+                        if (dd > worst) worst = dd;
+                    }
+                }
+                printf("    the gun travels %.1f mm at a run\n", sqrtf(worst) * 1000.0f);
+                CHECK(sqrtf(worst) > 0.001f, "running sways the weapon");
+
+                /* And stopping puts it back exactly. */
+                hta_viewmodel_set_move(&vm, 0.0f);
+                for (int s = 0; s < 40; s++) {
+                    vm.frame = 0.0f;
+                    hta_viewmodel_update(&vm, 1.0f / 30.0f);
+                }
+                vm.frame = 0.0f;
+                hta_viewmodel_update(&vm, 0.0f);
+                float drift = 0.0f;
+                for (uint32_t v = 0; v < nv; v++)
+                    for (int k = 0; k < 3; k++)
+                        drift += fabsf(vm.posed[v].pos[k] - base[v * 3 + k]);
+                CHECK(drift < 1e-4f, "and stopping returns the exact base pose");
+                free(base);
+            }
+            hta_viewmodel_free(&vm);
+        }
+        CHECK(with_move == (int)count, "every weapon has a moving overlay");
+    }
+
     printf("\n[detail maps on models]\n");
     {
         /* A submesh with no detail map must say ~0u, not 0. Zero is a

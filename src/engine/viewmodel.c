@@ -237,6 +237,7 @@ bool hta_viewmodel_load(hta_viewmodel *vm, const hta_cache *c,
     memset(vm, 0, sizeof(*vm));
     for (int i = 0; i < HTA_VM_STATE_COUNT; i++) vm->clip[i] = -1;
     vm->clip_ammo = -1;
+    vm->clip_move = -1;
 
     if (!weap->fp_anim_id || !weap->fp_model_id) {
         if (err) snprintf(err, errlen, "weapon has no first-person model/animations");
@@ -282,6 +283,7 @@ bool hta_viewmodel_load(hta_viewmodel *vm, const hta_cache *c,
     /* Only the needler has one, and it is not one of the states: it is
      * composed on top of them. */
     vm->clip_ammo = hta_anim_find(&vm->graph, "ammunition");
+    vm->clip_move = hta_anim_find(&vm->graph, "moving");
 
     setup_flash(vm, c, bitmaps, weap);
     setup_counter(vm, c, bitmaps, weap);
@@ -354,6 +356,43 @@ void hta_viewmodel_apply_ammo(const hta_viewmodel *vm, hta_transform *local)
         hta_xf_inverse(&inv, &full[i]);
         hta_xf_mul(&delta, &over[i], &inv);
         hta_xf_mul(&posed, &delta, &local[i]);
+        local[i] = posed;
+    }
+}
+
+void hta_viewmodel_set_move(hta_viewmodel *vm, float fraction)
+{
+    if (!vm) return;
+    if (fraction < 0.0f) fraction = 0.0f;
+    if (fraction > 1.0f) fraction = 1.0f;
+    vm->move_weight = fraction;
+}
+
+/* The walk bob, composed onto whatever the weapon is otherwise doing.
+ *
+ * A DELTA from the clip's own first frame, weighted by speed, so standing
+ * still is exactly the base pose and there is no seam when you stop. The
+ * clip loops -- its first and last frames are identical -- so the motion
+ * lives in the middle and reading either end alone shows nothing. */
+static void apply_move(const hta_viewmodel *vm, hta_transform *local)
+{
+    if (vm->clip_move < 0 || vm->move_weight <= 0.001f) return;
+    hta_transform over[HTA_ANIM_MAX_NODES], rest[HTA_ANIM_MAX_NODES];
+    if (!hta_anim_sample(&vm->graph, (uint32_t)vm->clip_move, vm->move_frame, over))
+        return;
+    if (!hta_anim_sample(&vm->graph, (uint32_t)vm->clip_move, 0.0f, rest))
+        return;
+
+    hta_transform ident;
+    hta_xf_identity(&ident);
+    for (uint32_t i = 0; i < vm->graph.node_count; i++) {
+        if (!hta_anim_animates(&vm->graph, (uint32_t)vm->clip_move, i)) continue;
+        hta_transform inv, delta, scaled, posed;
+        hta_xf_inverse(&inv, &rest[i]);
+        hta_xf_mul(&delta, &over[i], &inv);
+        /* Ease the whole sway in with speed rather than switching it on. */
+        hta_xf_lerp(&scaled, &ident, &delta, vm->move_weight);
+        hta_xf_mul(&posed, &scaled, &local[i]);
         local[i] = posed;
     }
 }
@@ -527,6 +566,23 @@ void hta_viewmodel_update(hta_viewmodel *vm, float dt)
     float prev = vm->frame;
     vm->frame += dt * HTA_ANIM_FPS;
 
+    /* The bob cycles faster the faster you go, and only while you are
+     * moving -- a stopped cycle left mid-stride would freeze the weapon
+     * off to one side. */
+    if (vm->clip_move >= 0) {
+        const hta_animation *mv = &vm->graph.anims[vm->clip_move];
+        float span = (float)(mv->frame_count > 1 ? mv->frame_count - 1 : 1);
+        if (vm->move_weight > 0.001f) {
+            vm->move_frame += dt * HTA_ANIM_FPS * vm->move_weight;
+            if (vm->move_frame >= span) vm->move_frame = fmodf(vm->move_frame, span);
+        } else {
+            /* Settle back to the neutral frame rather than stopping dead. */
+            float ease = dt * HTA_ANIM_FPS;
+            if (vm->move_frame > ease) vm->move_frame -= ease;
+            else vm->move_frame = 0.0f;
+        }
+    }
+
     if (a->sound_index >= 0 && (uint32_t)a->sound_index < vm->graph.sound_count) {
         float cue = (float)(a->sound_frame > 0 ? a->sound_frame : 0);
         if (prev <= cue && vm->frame > cue)
@@ -552,6 +608,7 @@ void hta_viewmodel_update(hta_viewmodel *vm, float dt)
     if (!hta_anim_sample(&vm->graph, (uint32_t)ci, vm->frame, local)) return;
 
     hta_viewmodel_apply_ammo(vm, local);
+    apply_move(vm, local);
 
     hta_anim_world(&vm->graph, local, world);
     hta_viewmodel_pose(vm, world);

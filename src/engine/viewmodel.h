@@ -84,6 +84,14 @@ typedef struct {
     int32_t           clip_ammo;      /* -1 when the weapon has no such clip */
     float             ammo_frame;
 
+    /* The walk bob. Halo carries it as its own OVERLAY clip, `first-person
+     * moving`: 25 frames that translate the rig's root and flex the
+     * support arm, looping, and blended in by how fast you are going. Every
+     * weapon in the Trial has one. */
+    int32_t           clip_move;
+    float             move_frame;
+    float             move_weight;    /* 0 standing .. 1 at a full run */
+
     bool              have_counter;
     uint32_t          counter_submesh[2];   /* [0] most significant */
     uint32_t          counter_vertex[2][4];   /* the quad's four corners */
@@ -117,6 +125,10 @@ void hta_viewmodel_flash(hta_viewmodel *vm);
  * by hta_viewmodel_update; exposed so a tool that drives the graph itself
  * previews exactly what the game draws. Harmless without an overlay. */
 void hta_viewmodel_apply_ammo(const hta_viewmodel *vm, hta_transform *local);
+
+/* How fast the player is moving, 0 standing to 1 at a full run. Drives
+ * both how far the weapon sways and how quickly the cycle runs. */
+void hta_viewmodel_set_move(hta_viewmodel *vm, float fraction);
 
 /* How full the magazine is, 0..1, for weapons that show it on the model.
  * Harmless on a weapon without an ammunition overlay. */
