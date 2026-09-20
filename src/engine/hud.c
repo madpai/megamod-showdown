@@ -50,6 +50,7 @@
 #define WMETER_COLOR_MIN    88u
 #define WMETER_COLOR_MAX    92u
 #define WMETER_SEQUENCE    106u
+#define WMETER_COLOR_EMPTY 100u
 
 /* UnitHUDInterface (1388). Every panel shares a shape, so these are the
  * starts; the field offsets inside a panel are below. All five struct sizes
@@ -598,6 +599,17 @@ static void load_weapon_hud(hta_hud *h, const hta_cache *c,
             h->ammo_meter = ei;
             memcpy(h->ammo_min, cmin, 3 * sizeof(float));
             memcpy(h->ammo_max, cmax, 3 * sizeof(float));
+            /* The unfired pips. Halo draws them rather than dropping them,
+             * and the assault rifle's minimum and maximum colours are the
+             * SAME blue -- so without this a full magazine and an empty one
+             * look identical apart from which pips vanish. */
+            uint8_t eraw[4];
+            hta_rd_bytes(c, off + k * WMETER_SIZE + WMETER_COLOR_EMPTY, eraw, 4);
+            float ecol[4];
+            unpack_color(eraw, ecol);
+            hta_submesh *esm = &h->mesh.submeshes[h->elem[ei].submesh];
+            esm->empty[0] = ecol[0]; esm->empty[1] = ecol[1];
+            esm->empty[2] = ecol[2]; esm->empty[3] = 1.0f;
             h->have_ammo = true;
         }
     }

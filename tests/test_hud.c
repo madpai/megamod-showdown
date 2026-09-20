@@ -299,6 +299,55 @@ int main(int argc, char **argv)
                with_cross, with_ammo);
     }
 
+    printf("\n[the ammo pips deplete]\n");
+    {
+        /* Halo does not DROP the part of a meter the fill has not reached:
+         * it paints it in the element's empty colour. The assault rifle
+         * needs that, because its meter minimum and maximum colours are the
+         * same blue -- the only thing telling a live pip from a spent one is
+         * that empty colour. */
+        uint32_t ids[32];
+        uint32_t n = hta_weapon_list_playable(&c, ids, 32);
+        int checked = 0;
+        for (uint32_t i = 0; i < n; i++) {
+            hta_weapon_def wd;
+            if (!hta_weapon_load_id(&c, &bm, ids[i], &wd, NULL, err, sizeof(err)))
+                continue;
+            if (!strstr(wd.path, "assault rifle")) continue;
+            hta_hud wh;
+            memset(&wh, 0, sizeof(wh));
+            if (!hta_hud_load(&wh, &c, &bm, &wd, err, sizeof(err))) continue;
+            CHECK(wh.ammo_meter >= 0, "the rifle has an ammo meter");
+            if (wh.ammo_meter >= 0) {
+                const hta_submesh *sm =
+                    &wh.mesh.submeshes[wh.elem[wh.ammo_meter].submesh];
+                printf("  empty colour %.2f %.2f %.2f (a %.2f)\n",
+                       sm->empty[0], sm->empty[1], sm->empty[2], sm->empty[3]);
+                CHECK(sm->empty[3] > 0.0f, "and an empty colour to draw spent pips in");
+
+                /* The full and empty colours must actually differ, or the
+                 * grid cannot show anything. */
+                float d = 0.0f;
+                for (int k = 0; k < 3; k++) {
+                    float q = sm->empty[k] - wh.ammo_max[k];
+                    d += q * q;
+                }
+                CHECK(d > 0.01f, "which is a different colour from a live pip");
+
+                hta_hud_set_ammo(&wh, 1.0f);
+                CHECK(sm->meter > 0.99f, "a full magazine fills the meter");
+                hta_hud_set_ammo(&wh, 0.0f);
+                CHECK(sm->meter < 0.01f, "and an empty one empties it");
+                hta_hud_set_ammo(&wh, 0.5f);
+                CHECK(sm->meter > 0.49f && sm->meter < 0.51f, "half is half");
+                checked = 1;
+            }
+            hta_hud_free(&wh);
+            break;
+        }
+        CHECK(checked, "the rifle is in the roster");
+    }
+
     printf("\n[the rounds counter]\n");
     {
         /* Halo draws HUD numbers with the hud_globals FONT -- there is no

@@ -364,6 +364,61 @@ frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
 Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
 need weapon state we do not track yet.
 
+## Meters draw their empty half, and mipmaps (2026-09-20)
+
+### The pip grid was not depleting at all
+
+Owner: "a few bullets left in the magazine but it looks like a lot of
+bullets in the top left". Three wrong ideas before the right one, so here
+is the record.
+
+**A Halo meter does not discard the part the fill has not reached -- it
+paints it in the element's EMPTY colour** (`WeaponHUDInterfaceMeter` +100).
+That is the whole mechanism, and the assault rifle proves it: its
+`color at meter minimum` and `color at meter maximum` are the SAME blue
+(BGRA 255,150,40,0). Lerping between them does nothing. The only thing
+distinguishing a live pip from a spent one is that empty colour, a dark
+navy.
+
+Alpha is WHERE a pixel sits along the meter -- the rifle's three pip rows
+carry rising alpha because that is their firing order -- so:
+
+```
+filled = t.a <= fill
+colour = filled ? tint : empty
+opacity = art brightness        (NOT the alpha)
+```
+
+Opacity must not come from alpha either: alpha is already the ordering
+channel, so using it made early pips faint and late ones bright, which is
+what made an almost-empty magazine look fuller than a full one. This art is
+white-on-black and antialiases its shapes in RGB, so brightness is the
+right channel -- and that is also what keeps the health bar's dim left cap
+from rendering as a black blob.
+
+`hta_submesh.empty` carries it; the HUD pushes it in the fourth push-constant
+vec4, the same slot `mesh.frag` uses for detail scales.
+
+### Mipmaps, and a trap worth 4 seconds
+
+Textures now upload a full mip chain, generated with a box filter, and the
+samplers are trilinear with anisotropy where the device has it (capped at
+8x). That is what fixes "the textures look grainy at distances": a detail
+map tiling a hundred times across a hillside samples one texel in a few
+hundred without one.
+
+The hand-rolled sub-pixel fade in `mesh.frag` is gone -- mipmapping does
+that job properly.
+
+**Never read back from a mapped staging allocation.** Filtering each level
+straight into the staging buffer means every level reads the previous one
+out of write-combined memory: Blood Gulch's texture upload went from 59 ms
+to **4189 ms**. Build the chain in ordinary malloc'd memory and `memcpy` it
+across once -- 108 ms, and the mips cost about 50 ms of that.
+
+Device memory for Blood Gulch: 29.7 MiB -> 38.4 MiB, which is the expected
+4/3.
+
 ## Detail maps, HUD numbers, and the needler a third time (2026-09-20)
 
 ### The world was flat because detail maps were never read
@@ -1279,6 +1334,8 @@ after building, wherever real tag physics are available.
 | Impact-mark art | `src/engine/gun.c` `hta_gun_set_decal` |
 | Detail maps | `src/asset/bitmap.c` `hta_shader_detail_bitmap`, `shaders/mesh.frag` |
 | HUD font digits | `src/asset/font.c` |
+| Meter empty colour | `shaders/hud.frag`, `hta_submesh.empty` |
+| Mipmap generation | `src/gfx/gfx_vulkan.c` `downsample` / `upload_rgba` |
 | Rounds counter | `src/engine/hud.c` `load_numbers` |
 | Object attachments / looping sounds | `src/asset/effect.c` `hta_object_loop_sound` |
 | Continuous voices | `src/engine/audio.c` `hta_audio_loop` |

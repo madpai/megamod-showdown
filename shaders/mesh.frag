@@ -36,20 +36,15 @@ void main() {
      * mid-grey, so a surface with no detail map passes through untouched
      * and needs no branch.
      *
-     * The fade: these tile up to a hundred times across one surface and we
-     * upload no mipmaps, so at a distance the detail aliases into static.
-     * Measuring how fast the detail UV moves per pixel and easing back to
-     * neutral grey when it goes sub-pixel is what a mip chain would do. */
+     * These tile up to a hundred times across one surface, so they live or
+     * die on mipmapping: the textures carry a full chain and the sampler is
+     * trilinear plus anisotropic. Before that they aliased into static and
+     * needed a hand-rolled sub-pixel fade here, which is gone. */
     vec2 uv1 = v_uv * max(push.detail.x, 1.0);
     vec2 uv2 = v_uv * max(push.detail.y, 1.0);
     vec3 d1 = texture(u_detail,  uv1).rgb;
     vec3 d2 = texture(u_detail2, uv2).rgb;
     vec3 det = (push.detail.y > 0.0) ? mix(d2, d1, base.a) : d1;
-
-    float px = max(max(length(dFdx(uv1)), length(dFdy(uv1))),
-                   max(length(dFdx(uv2)), length(dFdy(uv2))));
-    float sharp = clamp(1.0 - px * 1.5, 0.0, 1.0);
-    det = mix(vec3(0.5), det, sharp);
 
     albedo *= det * 2.0;
 

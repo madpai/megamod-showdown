@@ -117,6 +117,7 @@ struct hta_gfx {
     VkPipeline            pipeline_sky;
     VkPipeline            pipeline_hud;
     VkDescriptorSetLayout set_layout;
+    float                 aniso_max;   /* 1.0 when unsupported */
     VkSampler             samp_repeat;
     VkSampler             samp_clamp;
     hta_vk_tex            tex_clay;
@@ -183,18 +184,20 @@ static bool make_buffer(hta_gfx *g, VkDeviceSize size, VkBufferUsageFlags usage,
     return true;
 }
 
-static bool make_image(hta_gfx *g, uint32_t w, uint32_t h, VkFormat fmt,
-                       VkImageUsageFlags usage, VkImageAspectFlags aspect,
-                       VkImage *img, VkDeviceMemory *mem, VkImageView *view,
-                       char *err, size_t errlen)
+static bool make_image_mips(hta_gfx *g, uint32_t w, uint32_t h, VkFormat fmt,
+                            VkImageUsageFlags usage, VkImageAspectFlags aspect,
+                            uint32_t mips,
+                            VkImage *img, VkDeviceMemory *mem, VkImageView *view,
+                            char *err, size_t errlen)
 {
+    if (!mips) mips = 1;
     VkImageCreateInfo ii = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
     ii.imageType     = VK_IMAGE_TYPE_2D;
     ii.format        = fmt;
     ii.extent.width  = w;
     ii.extent.height = h;
     ii.extent.depth  = 1;
-    ii.mipLevels     = 1;
+    ii.mipLevels     = mips;
     ii.arrayLayers   = 1;
     ii.samples       = VK_SAMPLE_COUNT_1_BIT;
     ii.tiling        = VK_IMAGE_TILING_OPTIMAL;
@@ -221,10 +224,49 @@ static bool make_image(hta_gfx *g, uint32_t w, uint32_t h, VkFormat fmt,
     vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
     vi.format   = fmt;
     vi.subresourceRange.aspectMask = aspect;
-    vi.subresourceRange.levelCount = 1;
+    vi.subresourceRange.levelCount = mips;
     vi.subresourceRange.layerCount = 1;
     VKREQ(vkCreateImageView(g->device, &vi, NULL, view), "vkCreateImageView");
     return true;
+}
+
+static bool make_image(hta_gfx *g, uint32_t w, uint32_t h, VkFormat fmt,
+                       VkImageUsageFlags usage, VkImageAspectFlags aspect,
+                       VkImage *img, VkDeviceMemory *mem, VkImageView *view,
+                       char *err, size_t errlen)
+{
+    return make_image_mips(g, w, h, fmt, usage, aspect, 1,
+                           img, mem, view, err, errlen);
+}
+
+/* How many levels a w x h texture gets, down to 1x1. */
+static uint32_t mip_levels(uint32_t w, uint32_t h)
+{
+    uint32_t m = (w > h) ? w : h, n = 1;
+    while (m > 1u) { m >>= 1; n++; }
+    return n;
+}
+
+/* One box-filtered step down. Halo's own bitmaps carry mipmaps, but the
+ * HUD atlases and the font digits we build ourselves do not, so generating
+ * them here covers everything with one path. */
+static void downsample(const uint8_t *src, uint32_t sw, uint32_t sh,
+                       uint8_t *dst, uint32_t dw, uint32_t dh)
+{
+    for (uint32_t y = 0; y < dh; y++) {
+        for (uint32_t x = 0; x < dw; x++) {
+            uint32_t x0 = x * 2u, y0 = y * 2u;
+            uint32_t x1 = (x0 + 1u < sw) ? x0 + 1u : x0;
+            uint32_t y1 = (y0 + 1u < sh) ? y0 + 1u : y0;
+            for (int ch = 0; ch < 4; ch++) {
+                uint32_t a = src[(y0 * sw + x0) * 4u + ch];
+                uint32_t b = src[(y0 * sw + x1) * 4u + ch];
+                uint32_t c = src[(y1 * sw + x0) * 4u + ch];
+                uint32_t d = src[(y1 * sw + x1) * 4u + ch];
+                dst[(y * dw + x) * 4u + ch] = (uint8_t)((a + b + c + d + 2u) / 4u);
+            }
+        }
+    }
 }
 
 /* ------------------------------ setup ------------------------------ */
@@ -298,11 +340,28 @@ static bool create_device(hta_gfx *g, char *err, size_t errlen)
     uint32_t dn = 0;
     if (!g->offscreen) dexts[dn++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
 
+    /* Anisotropic filtering, if the device offers it. Everything else here
+     * is core 1.0, so this is the only feature to ask for. */
+    VkPhysicalDeviceFeatures have;
+    memset(&have, 0, sizeof(have));
+    vkGetPhysicalDeviceFeatures(g->phys, &have);
+    VkPhysicalDeviceFeatures want;
+    memset(&want, 0, sizeof(want));
+    g->aniso_max = 1.0f;
+    if (have.samplerAnisotropy) {
+        VkPhysicalDeviceProperties pr;
+        vkGetPhysicalDeviceProperties(g->phys, &pr);
+        want.samplerAnisotropy = VK_TRUE;
+        g->aniso_max = pr.limits.maxSamplerAnisotropy;
+        if (g->aniso_max > 8.0f) g->aniso_max = 8.0f;   /* plenty, and cheap */
+    }
+
     VkDeviceCreateInfo ci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
     ci.queueCreateInfoCount    = 1;
     ci.pQueueCreateInfos       = &qci;
     ci.enabledExtensionCount   = dn;
     ci.ppEnabledExtensionNames = dn ? dexts : NULL;
+    ci.pEnabledFeatures        = &want;
     VKREQ(vkCreateDevice(g->phys, &ci, NULL, &g->device), "vkCreateDevice");
     vkGetDeviceQueue(g->device, g->qfamily, 0, &g->queue);
     return true;
@@ -439,9 +498,18 @@ static bool create_pass_pipeline(hta_gfx *g, char *err, size_t errlen)
 
     VkSamplerCreateInfo sci = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
     sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
-    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    /* Trilinear across the whole chain. Without mip levels a detail map
+     * tiling a hundred times across a hillside samples one texel out of
+     * every few hundred and comes out as static. */
+    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sci.maxLod = 0.0f;
+    sci.maxLod = VK_LOD_CLAMP_NONE;
+    /* And anisotropy where the device has it: ground seen at a glancing
+     * angle is exactly the case trilinear alone blurs too far. */
+    if (g->aniso_max > 1.0f) {
+        sci.anisotropyEnable = VK_TRUE;
+        sci.maxAnisotropy = g->aniso_max;
+    }
     VKREQ(vkCreateSampler(g->device, &sci, NULL, &g->samp_repeat), "vkCreateSampler(repeat)");
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     VKREQ(vkCreateSampler(g->device, &sci, NULL, &g->samp_clamp), "vkCreateSampler(clamp)");
@@ -830,13 +898,22 @@ static bool upload_rgba(hta_gfx *g, const uint8_t *rgba, uint32_t w, uint32_t h,
 {
     memset(out, 0, sizeof(*out));
     if (!rgba || w == 0 || h == 0) { gfail(err, errlen, "empty texture"); return false; }
-    if (!make_image(g, w, h, VK_FORMAT_R8G8B8A8_UNORM,
-                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                    VK_IMAGE_ASPECT_COLOR_BIT,
-                    &out->image, &out->mem, &out->view, err, errlen))
+    uint32_t levels = mip_levels(w, h);
+    if (!make_image_mips(g, w, h, VK_FORMAT_R8G8B8A8_UNORM,
+                         VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         VK_IMAGE_ASPECT_COLOR_BIT, levels,
+                         &out->image, &out->mem, &out->view, err, errlen))
         return false;
 
-    VkDeviceSize size = (VkDeviceSize)w * h * 4u;
+    /* The whole chain goes into one staging buffer, level 0 first. A full
+     * chain is 4/3 of the base, so this costs a third more upload and
+     * saves the far field from aliasing into noise. */
+    VkDeviceSize size = 0;
+    for (uint32_t l = 0, lw = w, lh = h; l < levels; l++) {
+        size += (VkDeviceSize)lw * lh * 4u;
+        lw = lw > 1u ? lw >> 1 : 1u;
+        lh = lh > 1u ? lh >> 1 : 1u;
+    }
     VkBuffer sb = VK_NULL_HANDLE;
     VkDeviceMemory sm = VK_NULL_HANDLE;
     uint64_t before = g->mem_used;
@@ -853,7 +930,35 @@ static bool upload_rgba(hta_gfx *g, const uint8_t *rgba, uint32_t w, uint32_t h,
         destroy_tex(g, out);
         return false;
     }
-    memcpy(mapped, rgba, (size_t)size);
+    {
+        /* Build the chain in ordinary memory and copy it across ONCE.
+         * Filtering straight into the mapped staging buffer means each
+         * level READS the previous one back out of write-combined memory,
+         * which took texture upload for Blood Gulch from 59 ms to 4.2
+         * seconds. Never read from a mapped staging allocation. */
+        uint8_t *chain = (uint8_t *)malloc((size_t)size);
+        if (!chain) {
+            vkUnmapMemory(g->device, sm);
+            gfail(err, errlen, "out of memory building mipmaps");
+            vkDestroyBuffer(g->device, sb, NULL); vkFreeMemory(g->device, sm, NULL);
+            destroy_tex(g, out);
+            return false;
+        }
+        memcpy(chain, rgba, (size_t)w * h * 4u);
+        const uint8_t *prev = chain;
+        uint8_t *dst = chain + (size_t)w * h * 4u;
+        uint32_t pw = w, ph = h;
+        for (uint32_t l = 1; l < levels; l++) {
+            uint32_t lw = pw > 1u ? pw >> 1 : 1u;
+            uint32_t lh = ph > 1u ? ph >> 1 : 1u;
+            downsample(prev, pw, ph, dst, lw, lh);
+            prev = dst;
+            dst += (size_t)lw * lh * 4u;
+            pw = lw; ph = lh;
+        }
+        memcpy(mapped, chain, (size_t)size);
+        free(chain);
+    }
     vkUnmapMemory(g->device, sm);
 
     VkCommandBufferAllocateInfo ai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
@@ -874,19 +979,29 @@ static bool upload_rgba(hta_gfx *g, const uint8_t *rgba, uint32_t w, uint32_t h,
         bar.srcQueueFamilyIndex = bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         bar.image = out->image;
         bar.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        bar.subresourceRange.levelCount = 1;
+        bar.subresourceRange.levelCount = levels;
         bar.subresourceRange.layerCount = 1;
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &bar);
 
-        VkBufferImageCopy copy;
-        memset(&copy, 0, sizeof(copy));
-        copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        copy.imageSubresource.layerCount = 1;
-        copy.imageExtent.width = w;
-        copy.imageExtent.height = h;
-        copy.imageExtent.depth = 1;
-        vkCmdCopyBufferToImage(cb, sb, out->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        VkDeviceSize offset = 0;
+        uint32_t lw = w, lh = h;
+        for (uint32_t l = 0; l < levels; l++) {
+            VkBufferImageCopy copy;
+            memset(&copy, 0, sizeof(copy));
+            copy.bufferOffset = offset;
+            copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            copy.imageSubresource.mipLevel = l;
+            copy.imageSubresource.layerCount = 1;
+            copy.imageExtent.width = lw;
+            copy.imageExtent.height = lh;
+            copy.imageExtent.depth = 1;
+            vkCmdCopyBufferToImage(cb, sb, out->image,
+                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+            offset += (VkDeviceSize)lw * lh * 4u;
+            lw = lw > 1u ? lw >> 1 : 1u;
+            lh = lh > 1u ? lh >> 1 : 1u;
+        }
 
         bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
@@ -1394,6 +1509,12 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                     meter[2] = hud->submeshes[i].mask;
                 }
                 memcpy(push + 64 + 32, meter, sizeof(meter));  /* the ambient slot */
+                /* The colour of the part of a meter the fill has not
+                 * reached; w == 0 means the element has none. */
+                float empty[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+                if (hud->submeshes && i < hud->submesh_count)
+                    memcpy(empty, hud->submeshes[i].empty, sizeof(empty));
+                memcpy(push + 112, empty, sizeof(empty));
                 vkCmdPushConstants(cb, g->layout,
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                    0, PUSH_SIZE, push);

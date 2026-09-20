@@ -103,6 +103,11 @@ typedef struct {
      * art whose shape is the empty pip grid -- and drawing its colour paints
      * a black grid over the corner. */
     float    mask;
+    /* HUD meters only: the colour Halo paints the part of the bar the fill
+     * has NOT reached. It does not discard that part -- the assault rifle's
+     * unfired pips are drawn in a dark navy, which is what makes a full
+     * magazine read as full. w > 0 means this element has one. */
+    float    empty[4];
 } hta_submesh;
 
 #define HTA_DRAW_OPAQUE 0u
