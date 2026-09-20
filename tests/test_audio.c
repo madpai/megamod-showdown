@@ -207,6 +207,62 @@ int main(void)
         CHECK(hta_audio_active_voices(&a) == 0, "and it still stops on demand");
     }
 
+    printf("\n[placing a sound in the stereo field]\n");
+    {
+        /* A world sound is panned toward where it actually is. The curve is
+         * constant power, so a shot sweeping past does not dip as it
+         * crosses the middle. */
+        hta_audio a;
+        hta_audio_init(&a, 22050, 2);
+        int16_t tone[16];
+        for (int i = 0; i < 16; i++) tone[i] = 12000;
+        uint32_t clip = hta_audio_add_clip(&a, tone, 16, 22050, 1);
+        int16_t out[32];
+
+        double energy[3];
+        const float pans[3] = { -1.0f, 0.0f, 1.0f };
+        for (int p = 0; p < 3; p++) {
+            for (uint32_t v = 0; v < HTA_AUDIO_MAX_VOICES; v++)
+                a.voices[v].active = false;
+            hta_audio_play_pan(&a, clip, 1.0f, pans[p]);
+            memset(out, 0, sizeof(out));
+            hta_audio_mix(&a, out, 8);
+            double l = 0, r = 0;
+            for (int i = 0; i < 8; i++) {
+                l += (double)out[i * 2] * out[i * 2];
+                r += (double)out[i * 2 + 1] * out[i * 2 + 1];
+            }
+            energy[p] = l + r;
+            if (p == 0) {
+                CHECK(l > r * 4.0, "hard left is mostly in the left channel");
+                CHECK(r < l, "  and quieter on the right");
+            } else if (p == 1) {
+                double d = l > r ? l - r : r - l;
+                CHECK(d < (l + r) * 0.05, "centre is even across both");
+            } else {
+                CHECK(r > l * 4.0, "hard right is mostly in the right channel");
+            }
+        }
+        /* Constant power: the total must not sag in the middle. */
+        double lo = energy[0] < energy[2] ? energy[0] : energy[2];
+        printf("  energy: left %.0f centre %.0f right %.0f\n",
+               energy[0], energy[1], energy[2]);
+        CHECK(energy[1] > lo * 0.8 && energy[1] < lo * 1.25,
+              "and a centred sound is as loud as one hard over");
+
+        /* Panning must not disturb the plain play path. */
+        for (uint32_t v = 0; v < HTA_AUDIO_MAX_VOICES; v++)
+            a.voices[v].active = false;
+        hta_audio_play(&a, clip, 1.0f);
+        memset(out, 0, sizeof(out));
+        hta_audio_mix(&a, out, 8);
+        double l2 = 0, r2 = 0;
+        for (int i = 0; i < 8; i++) { l2 += abs(out[i*2]); r2 += abs(out[i*2+1]); }
+        CHECK(l2 > 0 && r2 > 0, "an unplaced sound still reaches both ears");
+        double d2 = l2 > r2 ? l2 - r2 : r2 - l2;
+        CHECK(d2 < (l2 + r2) * 0.05, "evenly");
+    }
+
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

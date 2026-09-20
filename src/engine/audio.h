@@ -30,6 +30,7 @@ typedef struct {
 typedef struct {
     uint32_t clip;
     float    gain;
+    float    pan;        /* -1 hard left .. 0 centre .. +1 hard right */
     /* 0 for a one-shot. Non-zero names a continuous sound the caller owns;
      * a request whose clip is HTA_AUDIO_NO_CLIP stops that one. */
     uint32_t loop;
@@ -40,6 +41,7 @@ typedef struct {
     uint64_t phase;     /* 32.32 fixed point, in source frames */
     uint64_t step;
     float    gain;
+    float    gain_l, gain_r;   /* the pan, resolved once when the voice starts */
     uint32_t loop;      /* 0 for a one-shot voice */
     bool     active;
 } hta_audio_voice;
@@ -69,6 +71,11 @@ uint32_t hta_audio_add_clip(hta_audio *a, const int16_t *samples, uint32_t frame
 
 /* Game thread. Never blocks; drops the request if the ring is full. */
 void hta_audio_play(hta_audio *a, uint32_t clip, float gain);
+
+/* The same, placed in the stereo field. `pan` runs -1 hard left to +1 hard
+ * right and is resolved with a constant-power curve, so a sound sweeping
+ * past keeps its loudness. */
+void hta_audio_play_pan(hta_audio *a, uint32_t clip, float gain, float pan);
 
 /* Starts a continuous sound, or leaves it running if `id` already sounds --
  * calling this every frame while a trigger is held is the intended use. The

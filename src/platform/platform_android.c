@@ -363,6 +363,57 @@ static void play_tag(hta_android *s, uint32_t tag_id, float gain)
     hta_audio_play(&s->audio, s->bank[b].clip[pick], gain);
 }
 
+/* How far a world sound carries.
+ *
+ * INVENTED, and the third number in this project that is. Halo keeps a
+ * minimum and maximum distance on every `snd!` (at +8 and +12) -- and in
+ * the Trial every single one of them reads 0.0 .. 0.0, because the real
+ * values live in per-CLASS defaults inside the engine rather than in the
+ * data. The tag's `sound class` field is set (weapon fire 4, projectile
+ * impact 0, object impacts 13) but the ranges those map to are not
+ * shippable data we have.
+ *
+ * So: full volume within three world units, inverse falloff after that,
+ * silent at sixty -- which is about the length of Blood Gulch. If the
+ * class ranges ever turn up, these two lines are what to replace. */
+#define HTA_SOUND_NEAR  3.0f
+#define HTA_SOUND_FAR  60.0f
+
+/* A sound that happens somewhere in the world rather than in your hands:
+ * quieter with distance, and placed left or right of where you are
+ * looking. */
+static void play_tag_at(hta_android *s, uint32_t tag_id, const float at[3],
+                        float gain)
+{
+    if (!tag_id || !at) return;
+    float d[3] = { at[0] - s->cam.pos[0],
+                   at[1] - s->cam.pos[1],
+                   at[2] - s->cam.pos[2] };
+    float dist = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+    if (dist >= HTA_SOUND_FAR) return;               /* too far to hear */
+
+    float g = gain;
+    if (dist > HTA_SOUND_NEAR) {
+        g *= (HTA_SOUND_NEAR / dist);                /* inverse falloff */
+        g *= (1.0f - dist / HTA_SOUND_FAR);          /* and reach zero cleanly */
+    }
+    if (g <= 0.001f) return;
+
+    float pan = 0.0f;
+    if (dist > 0.01f) {
+        float right[3];
+        hta_camera_right(&s->cam, right);
+        pan = (d[0]*right[0] + d[1]*right[1] + d[2]*right[2]) / dist;
+    }
+
+    int b = bank_get(s, tag_id);
+    if (b < 0) return;
+    uint32_t n = s->bank[b].count;
+    s->rng = s->rng * 1664525u + 1013904223u;
+    uint32_t pick = n > 1 ? (s->rng >> 16) % n : 0u;
+    hta_audio_play_pan(&s->audio, s->bank[b].clip[pick], g, pan);
+}
+
 /* The one continuous voice we keep; any non-zero id would do. */
 #define HTA_LOOP_FIRE 1u
 
@@ -597,17 +648,17 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
  * projectile itself, each naming the effect -- so a bullet into sand and a
  * bullet into a base wall are the weapon's own two sounds, not one of
  * ours. */
-static void play_impact(hta_android *s, uint8_t material)
+static void play_impact_at(hta_android *s, uint8_t material, const float at[3])
 {
-    if (material >= 33u || !s->weap.projectile_id) return;
+    if (material >= 33u) return;
     if (!s->impact_known[material]) {
-        s->impact_known[material] = 1;
         s->impact_snd[material] =
             hta_projectile_impact_sound(&s->cache, s->weap.projectile_id, material);
-        if (s->impact_snd[material]) bank_get(s, s->impact_snd[material]);
+        s->impact_known[material] = 1;
     }
-    if (s->impact_snd[material]) play_tag(s, s->impact_snd[material], 0.8f);
+    if (s->impact_snd[material]) play_tag_at(s, s->impact_snd[material], at, 0.8f);
 }
+
 
 /* The footstep for what you are standing on. Halo keeps these in the
  * biped's own `foot` tag, one sound per material, and plenty of materials
@@ -1369,7 +1420,8 @@ void android_main(struct android_app *app)
                 } else {
                     hta_gun_fire(&state.gun, state.col.built ? &state.col : NULL,
                                  &state.cam);
-                    play_impact(&state, state.gun.hit_material);
+                    play_impact_at(&state, state.gun.hit_material,
+                                   state.gun.last_hit);
                     /* And the dust the round kicks off that surface. */
                     if (state.gun.hit_material < 33u &&
                         state.impact_recipe[state.gun.hit_material]
@@ -1432,9 +1484,11 @@ void android_main(struct android_app *app)
                 /* An explosion has a bang of its own; a round that does not
                  * falls back to what the surface it hit sounds like. */
                 if (state.proj.detonation_snd)
-                    play_tag(&state, state.proj.detonation_snd, 1.0f);
+                    play_tag_at(&state, state.proj.detonation_snd,
+                                state.proj.hit, 1.0f);
                 else
-                    play_impact(&state, state.proj.hit_material);
+                    play_impact_at(&state, state.proj.hit_material,
+                                   state.proj.hit);
                 /* Thrown out along the surface it hit. */
                 hta_particles_burst(&state.parts, state.det_recipe,
                                     state.proj.hit, state.proj.hit_normal);

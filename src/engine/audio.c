@@ -1,6 +1,7 @@
 #include "audio.h"
 
 #include <string.h>
+#include <math.h>
 
 void hta_audio_init(hta_audio *a, uint32_t out_rate, uint8_t out_channels)
 {
@@ -28,7 +29,7 @@ uint32_t hta_audio_add_clip(hta_audio *a, const int16_t *samples, uint32_t frame
     return i;
 }
 
-static void push(hta_audio *a, uint32_t clip, float gain, uint32_t loop)
+static void push(hta_audio *a, uint32_t clip, float gain, float pan, uint32_t loop)
 {
     uint32_t w = atomic_load_explicit(&a->wr, memory_order_relaxed);
     uint32_t r = atomic_load_explicit(&a->rd, memory_order_acquire);
@@ -40,6 +41,7 @@ static void push(hta_audio *a, uint32_t clip, float gain, uint32_t loop)
     }
     a->ring[w & (HTA_AUDIO_REQ_RING - 1u)].clip = clip;
     a->ring[w & (HTA_AUDIO_REQ_RING - 1u)].gain = gain;
+    a->ring[w & (HTA_AUDIO_REQ_RING - 1u)].pan = pan;
     a->ring[w & (HTA_AUDIO_REQ_RING - 1u)].loop = loop;
     atomic_store_explicit(&a->wr, w + 1u, memory_order_release);
 }
@@ -47,19 +49,27 @@ static void push(hta_audio *a, uint32_t clip, float gain, uint32_t loop)
 void hta_audio_play(hta_audio *a, uint32_t clip, float gain)
 {
     if (!a || clip >= a->clip_count) return;
-    push(a, clip, gain, 0u);
+    push(a, clip, gain, 0.0f, 0u);
+}
+
+void hta_audio_play_pan(hta_audio *a, uint32_t clip, float gain, float pan)
+{
+    if (!a || clip >= a->clip_count) return;
+    if (pan < -1.0f) pan = -1.0f;
+    if (pan > 1.0f) pan = 1.0f;
+    push(a, clip, gain, pan, 0u);
 }
 
 void hta_audio_loop(hta_audio *a, uint32_t id, uint32_t clip, float gain)
 {
     if (!a || !id || clip >= a->clip_count) return;
-    push(a, clip, gain, id);
+    push(a, clip, gain, 0.0f, id);
 }
 
 void hta_audio_loop_stop(hta_audio *a, uint32_t id)
 {
     if (!a || !id) return;
-    push(a, HTA_AUDIO_NO_CLIP, 0.0f, id);
+    push(a, HTA_AUDIO_NO_CLIP, 0.0f, 0.0f, id);
 }
 
 /* A free voice, or else the one with the least left to play -- stealing the
@@ -115,6 +125,14 @@ static void drain_requests(hta_audio *a)
         v->phase = 0;
         v->step = ((uint64_t)c->rate << 32) / (uint64_t)a->out_rate;
         v->gain = req.gain;
+        /* Constant power: a sound panned hard to one side is as loud as one
+         * in the middle, which is what keeps a shot sweeping past from
+         * dipping in the centre. */
+        {
+            float t = (req.pan + 1.0f) * 0.25f * 3.14159265f;   /* 0 .. pi/2 */
+            v->gain_l = cosf(t);
+            v->gain_r = sinf(t);
+        }
         v->loop = req.loop;
         v->active = true;
         a->started++;
@@ -155,7 +173,9 @@ void hta_audio_mix(hta_audio *a, int16_t *out, uint32_t frames)
                 uint8_t sc = (c->channels == 2 && ch < 2) ? ch : 0;
                 float s0 = c->samples[(size_t)i0 * c->channels + sc];
                 float s1 = c->samples[(size_t)i1 * c->channels + sc];
-                float s = (s0 + (s1 - s0) * t) * g;
+                float pan = (oc == 2) ? (ch == 0 ? v->gain_l : v->gain_r)
+                                      : 0.70710678f;
+                float s = (s0 + (s1 - s0) * t) * g * pan * 1.4142136f;
 
                 int32_t acc = out[(size_t)f * oc + ch] + (int32_t)s;
                 if (acc > 32767) acc = 32767;
