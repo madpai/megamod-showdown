@@ -92,6 +92,15 @@ typedef struct {
     float             move_frame;
     float             move_weight;    /* 0 standing .. 1 at a full run */
 
+    /* Where a spent casing leaves the gun. Halo hangs it off a marker
+     * called `primary ejection`, the same way the flash hangs off `primary
+     * trigger`. Posed every frame, in the viewmodel's own space -- the
+     * caller turns it into a world position. */
+    bool              have_eject;
+    int32_t           eject_node;
+    float             eject_offset[3];
+    float             eject_pos[3];
+
     bool              have_counter;
     uint32_t          counter_submesh[2];   /* [0] most significant */
     uint32_t          counter_vertex[2][4];   /* the quad's four corners */

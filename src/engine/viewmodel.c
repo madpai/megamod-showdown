@@ -285,6 +285,21 @@ bool hta_viewmodel_load(hta_viewmodel *vm, const hta_cache *c,
     vm->clip_ammo = hta_anim_find(&vm->graph, "ammunition");
     vm->clip_move = hta_anim_find(&vm->graph, "moving");
 
+    /* Where the brass comes out, if this weapon throws any. */
+    {
+        char node_name[32];
+        float off[3];
+        if (hta_model_marker(c, weap->fp_model_id, "primary ejection",
+                             node_name, off)) {
+            int32_t node = hta_anim_node_index(&vm->graph, node_name);
+            if (node >= 0) {
+                vm->have_eject = true;
+                vm->eject_node = node;
+                for (int k = 0; k < 3; k++) vm->eject_offset[k] = off[k];
+            }
+        }
+    }
+
     setup_flash(vm, c, bitmaps, weap);
     setup_counter(vm, c, bitmaps, weap);
 
@@ -611,5 +626,7 @@ void hta_viewmodel_update(hta_viewmodel *vm, float dt)
     apply_move(vm, local);
 
     hta_anim_world(&vm->graph, local, world);
+    if (vm->have_eject)
+        hta_xf_point(vm->eject_pos, &world[vm->eject_node], vm->eject_offset);
     hta_viewmodel_pose(vm, world);
 }

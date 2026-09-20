@@ -194,6 +194,38 @@ int main(int argc, char **argv)
         break;
     }
 
+    printf("\n[spent brass]\n");
+    {
+        /* A weapon's firing effect carries its muzzle flashes AND its
+         * ejected casing. The flash is the viewmodel's job, so only the
+         * particles on `primary ejection` are wanted -- otherwise every
+         * shot would spray a second set of flashes into the world. */
+        int brass = 0, none = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def w;
+            if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err)))
+                continue;
+            hta_particles p;
+            hta_particles_init(&p);
+            uint32_t all = hta_particles_add(&p, &c, &bm, w.firing_fx_id);
+            uint32_t ej = hta_particles_add_marker(&p, &c, &bm, w.firing_fx_id,
+                                                   "primary ejection");
+            if (ej != HTA_PART_NO_RECIPE) {
+                brass++;
+                CHECK(ej != all, "the ejection set is its own recipe");
+                CHECK(p.recipe[ej].emit_count <= p.recipe[all].emit_count,
+                      "  and a subset of the whole effect");
+            } else {
+                none++;
+            }
+            hta_particles_free(&p);
+        }
+        printf("  %d weapon(s) eject brass, %d do not\n", brass, none);
+        /* The human weapons do; the covenant ones have no brass to throw. */
+        CHECK(brass >= 4, "the human weapons eject");
+        CHECK(none >= 3, "and the covenant ones do not");
+    }
+
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

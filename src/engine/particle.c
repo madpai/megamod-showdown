@@ -51,6 +51,13 @@ uint32_t hta_particles_add(hta_particles *p, const hta_cache *c,
                            const hta_resource_map *bitmaps,
                            uint32_t effect_tag_id)
 {
+    return hta_particles_add_marker(p, c, bitmaps, effect_tag_id, NULL);
+}
+
+uint32_t hta_particles_add_marker(hta_particles *p, const hta_cache *c,
+                                  const hta_resource_map *bitmaps,
+                                  uint32_t effect_tag_id, const char *marker)
+{
     if (!p || !c || !effect_tag_id) return HTA_PART_NO_RECIPE;
     if (p->recipe_count >= HTA_PART_RECIPES) return HTA_PART_NO_RECIPE;
     if (!p->mesh.textures) {
@@ -59,16 +66,19 @@ uint32_t hta_particles_add(hta_particles *p, const hta_cache *c,
         if (!p->mesh.textures) return HTA_PART_NO_RECIPE;
     }
 
-    /* An effect already added is the same recipe; impacts share heavily. */
+    /* An effect already added is the same recipe; impacts share heavily.
+     * A marker-filtered add is a different recipe from the whole effect,
+     * so it is keyed apart. */
+    uint32_t key = effect_tag_id ^ (marker ? 0x5BF03635u : 0u);
     for (uint32_t r = 0; r < p->recipe_count; r++)
-        if (p->recipe[r].effect_id == effect_tag_id) return r;
+        if (p->recipe[r].effect_id == key) return r;
 
     uint32_t n = hta_effect_particle_count(c, effect_tag_id);
     if (!n) return HTA_PART_NO_RECIPE;
 
     hta_particle_recipe rec;
     memset(&rec, 0, sizeof(rec));
-    rec.effect_id = effect_tag_id;
+    rec.effect_id = key;
 
     for (uint32_t i = 0; i < n && rec.emit_count < HTA_PART_EMITS; i++) {
         hta_effect_particle ep;
@@ -78,6 +88,7 @@ uint32_t hta_particles_add(hta_particles *p, const hta_cache *c,
         if (ep.create_in != HTA_FX_IN_ANY && ep.create_in != HTA_FX_IN_AIR) continue;
         if (ep.create == HTA_FX_CAM_FIRST) continue;
         if (ep.count_max <= 0) continue;        /* never spawns */
+        if (marker && strcmp(ep.marker, marker) != 0) continue;
 
         /* Share a type with anything already using this bitmap. */
         uint32_t t = ~0u;

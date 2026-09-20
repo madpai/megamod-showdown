@@ -154,6 +154,7 @@ typedef struct {
      * impact effects cover every surface a round can land on. */
     hta_particles   parts;
     uint32_t        det_recipe;
+    uint32_t        casing_recipe;
     uint32_t        impact_recipe[33];
     uint8_t         map_material[33];      /* the ones this map contains */
     uint32_t        map_material_count;
@@ -587,6 +588,7 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
         hta_particles_free(&s->parts);
         hta_particles_init(&s->parts);
         s->det_recipe = HTA_PART_NO_RECIPE;
+        s->casing_recipe = HTA_PART_NO_RECIPE;
         for (uint32_t m = 0; m < 33u; m++) s->impact_recipe[m] = HTA_PART_NO_RECIPE;
 
         const hta_resource_map *pbm = s->bitmaps_ok ? &s->bitmaps_rm : NULL;
@@ -600,6 +602,14 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
             if (fx) s->impact_recipe[m] = hta_particles_add(&s->parts, &s->cache,
                                                             pbm, fx);
         }
+        /* The brass. A weapon's firing effect carries its muzzle flashes
+         * AND its ejected casing; the flash is already drawn by the
+         * viewmodel, so only the particles on `primary ejection` are
+         * taken. The covenant weapons have none, which is correct. */
+        if (s->weap.firing_fx_id)
+            s->casing_recipe = hta_particles_add_marker(&s->parts, &s->cache, pbm,
+                                                        s->weap.firing_fx_id,
+                                                        "primary ejection");
         if (hta_particles_build(&s->parts, perr, sizeof(perr))) {
             hta_log("[weapon] particles: %u type(s), %u recipe(s)",
                     s->parts.type_count, s->parts.recipe_count);
@@ -1432,6 +1442,26 @@ void android_main(struct android_app *app)
                 }
                 hta_viewmodel_play(&state.vm, HTA_VM_FIRE);
                 hta_viewmodel_flash(&state.vm);
+                /* Eject the spent casing from the gun's own marker. The
+                 * viewmodel poses it in its own space, so it takes the
+                 * same basis the renderer builds the weapon with. */
+                if (state.casing_recipe != HTA_PART_NO_RECIPE &&
+                    state.vm.have_eject) {
+                    float fwd[3], right[3], up[3];
+                    hta_camera_forward(&state.cam, fwd);
+                    hta_camera_right(&state.cam, right);
+                    hta_camera_up(&state.cam, up);
+                    const float *e = state.vm.eject_pos;
+                    float at[3], dir[3];
+                    for (int k = 0; k < 3; k++) {
+                        at[k] = state.cam.pos[k] + fwd[k]*e[0]
+                              - right[k]*e[1] + up[k]*e[2];
+                        /* Out to the right and a little up, which is where
+                         * every one of these guns throws it. */
+                        dir[k] = right[k] + up[k] * 0.35f;
+                    }
+                    hta_particles_burst(&state.parts, state.casing_recipe, at, dir);
+                }
                 play_tag(&state, state.fire_snd, 1.0f);
             } else if (state.ammo.dry && state.dry_cooldown <= 0.0f) {
                 /* Click, then reload by itself, the way Halo does. */

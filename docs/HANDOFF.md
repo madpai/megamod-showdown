@@ -364,6 +364,50 @@ frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
 Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
 need weapon state we do not track yet.
 
+## Sound in the world, and spent brass (2026-09-20)
+
+### Sounds have a place now
+
+Impacts and detonations are things that happen somewhere, not in your
+hands, and they had all been playing at full volume dead centre. They
+attenuate with distance and pan toward where they are, on a
+constant-power curve so a shot sweeping past does not dip as it crosses
+the middle. `hta_audio_play_pan`.
+
+**The range is INVENTED -- the third number in this project that is.**
+Halo keeps a minimum and maximum distance on every `snd!` (at +8 and +12,
+the struct reconciles at 164) and **in the Trial every single one reads
+0.0 .. 0.0**. The real values live in per-CLASS defaults inside the engine:
+the tag's `sound class` field IS set (weapon fire 4, projectile impact 0,
+object impacts 13, particle impacts 14) but what those map to is not
+shippable data we have. `HTA_SOUND_NEAR` 3 and `HTA_SOUND_FAR` 60 are the
+two lines to replace if the class ranges ever turn up.
+
+### Spent brass
+
+A weapon's firing effect carries its muzzle flashes AND its ejected
+casing, on a marker called `primary ejection` -- the same way the flash
+hangs off `primary trigger`. `hta_particles_add_marker` takes the
+particles on one marker alone, because the flash is already the
+viewmodel's job and spawning the whole effect would spray a second set of
+flashes into the world.
+
+The viewmodel poses the ejection marker every frame in its own space
+(`vm->eject_pos`), and the platform turns that into a world point with the
+same basis the renderer builds the weapon with: `cam + fwd*x - right*y +
+up*z`.
+
+Five weapons eject and four do not, which is exactly the human/covenant
+split -- the plasma rifle, plasma pistol, needler and flamethrower have no
+brass and no ejection marker.
+
+### Known rough edge
+
+Particles all share one gravity, tuned for smoke (a quarter of the
+player's). A casing therefore falls more slowly than it should. Halo hangs
+a `pphy` physics tag off each `part`; reading it would give every particle
+its own gravity and drag.
+
 ## Impact particles, and the walk bob (2026-09-20)
 
 ### Bullets kick up dust now
@@ -1639,6 +1683,8 @@ after building, wherever real tag physics are available.
 | Detail mask | `src/asset/bitmap.c` `hta_shader_multipurpose`, `shaders/mesh.frag` |
 | Particles | `src/engine/particle.c`, `.h`, `tests/test_particle.c` |
 | Walk bob | `src/engine/viewmodel.c` `apply_move` |
+| Positional sound | `platform_android.c` `play_tag_at`, `hta_audio_play_pan` |
+| Casing ejection | `viewmodel.c` `eject_pos`, `hta_particles_add_marker` |
 | Map material scan | `platform_android.c` `map_material[]` |
 | Effect particle walk | `src/asset/effect.c` `hta_effect_particle_at` |
 | Rounds counter | `src/engine/hud.c` `load_numbers` |

@@ -91,6 +91,14 @@ void hta_particles_free(hta_particles *p);
 uint32_t hta_particles_add(hta_particles *p, const hta_cache *c,
                            const hta_resource_map *bitmaps,
                            uint32_t effect_tag_id);
+
+/* The same, but only the particles attached to one marker. A weapon's
+ * firing effect carries its muzzle flashes AND its ejected casing; the
+ * flash is already drawn by the viewmodel, so the casing is taken alone by
+ * asking for `primary ejection`. */
+uint32_t hta_particles_add_marker(hta_particles *p, const hta_cache *c,
+                                  const hta_resource_map *bitmaps,
+                                  uint32_t effect_tag_id, const char *marker);
 bool hta_particles_build(hta_particles *p, char *err, size_t errlen);
 
 /* Throw one recipe's worth of particles from a point, biased along `dir`
