@@ -671,6 +671,48 @@ int main(void)
     CHECK(col.tri_index == NULL, "collision free clears state");
     hta_bsp_free(&mesh);
 
+    printf("\n[scope]\n");
+    {
+        /* hta_player_update writes the camera's field of view every frame
+         * from the biped tag. A zoom poked straight into the camera lasted
+         * exactly one frame -- on device that read as a stutter and then
+         * nothing. The magnification has to live on the player. */
+        hta_player p;
+        hta_player_init(&p);
+        hta_camera cam;
+        hta_camera_init(&cam);
+        hta_player_input in;
+        memset(&in, 0, sizeof(in));
+
+        hta_player_update(&p, &cam, NULL, &in, 1.0f / 60.0f);
+        float unzoomed = cam.fov_y;
+        CHECK(unzoomed > 0.1f, "the camera takes the biped's field of view");
+
+        hta_player_set_zoom(&p, 2.0f);
+        hta_player_update(&p, &cam, NULL, &in, 1.0f / 60.0f);
+        CHECK(fabsf(cam.fov_y - unzoomed * 0.5f) < 1e-4f, "2x halves it");
+
+        /* The regression itself: it must still be halved many frames later. */
+        for (int i = 0; i < 120; i++)
+            hta_player_update(&p, &cam, NULL, &in, 1.0f / 60.0f);
+        CHECK(fabsf(cam.fov_y - unzoomed * 0.5f) < 1e-4f,
+              "and stays zoomed across later updates");
+
+        hta_player_set_zoom(&p, 8.0f);
+        hta_player_update(&p, &cam, NULL, &in, 1.0f / 60.0f);
+        CHECK(fabsf(cam.fov_y - unzoomed / 8.0f) < 1e-4f, "8x is the sniper's second level");
+
+        hta_player_set_zoom(&p, 1.0f);
+        hta_player_update(&p, &cam, NULL, &in, 1.0f / 60.0f);
+        CHECK(fabsf(cam.fov_y - unzoomed) < 1e-4f, "and unzooming restores it exactly");
+
+        /* A weapon that does not zoom reports 0 magnification; that must not
+         * divide the field of view by zero. */
+        hta_player_set_zoom(&p, 0.0f);
+        hta_player_update(&p, &cam, NULL, &in, 1.0f / 60.0f);
+        CHECK(fabsf(cam.fov_y - unzoomed) < 1e-4f, "a zero magnification is unzoomed");
+    }
+
     printf("\n%s — %d checks, %d failure(s)\n", failures ? "FAILED" : "PASSED", checks, failures);
     return failures ? 1 : 0;
 }

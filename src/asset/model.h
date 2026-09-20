@@ -78,6 +78,15 @@ bool hta_model_append_skinned(hta_bsp_mesh *dst, hta_skin_vertex **skin,
                               hta_transform *rest_inv, uint8_t *have_rest,
                               char *err, size_t errlen);
 
+/* Does this model define a node by that name?
+ *
+ * Which tells us whether a weapon's first-person model carries its own arms:
+ * almost every Trial weapon's fp model is the gun alone, 3 to 7 nodes, and
+ * the arms come from the globals hands model. The fuel rod gun's is a
+ * complete first-person model, 41 nodes, arms included. */
+bool hta_model_has_node(const hta_cache *c, uint32_t model_tag_id,
+                        const char *node_name);
+
 /* A named marker on a mod2: which node it hangs from and where.
  *
  * The node comes back as a NAME, not an index, because a model's node list is

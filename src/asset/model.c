@@ -356,6 +356,30 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
 #define HTA_MARKER_INST_TRANS       4u
 #define HTA_MODEL_NODE_SIZE       156u
 
+bool hta_model_has_node(const hta_cache *c, uint32_t model_tag_id,
+                        const char *node_name)
+{
+    if (!c || !model_tag_id || !node_name) return false;
+    int32_t ti = hta_cache_find_tag_by_id(c, model_tag_id);
+    if (ti < 0) return false;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t)) return false;
+    uint32_t base;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return false;
+
+    uint32_t count = 0, ptr = 0, off = 0;
+    if (!hta_read_reflexive(c, base + HTA_MOD2_NODES, &count, &ptr)) return false;
+    if (!count || !hta_cache_ptr_to_offset(c, ptr, &off)) return false;
+
+    for (uint32_t i = 0; i < count; i++) {
+        char name[32];
+        if (!hta_rd_bytes(c, off + i * HTA_NODE_SIZE, name, 31)) break;
+        name[31] = '\0';
+        if (!strcmp(name, node_name)) return true;
+    }
+    return false;
+}
+
 bool hta_model_marker(const hta_cache *c, uint32_t model_tag_id,
                       const char *marker_name,
                       char out_node_name[32], float out_translation[3])

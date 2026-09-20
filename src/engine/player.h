@@ -81,6 +81,11 @@ typedef struct {
     bool  noclip;
     hta_player_physics phys;
 
+    /* Zoom magnification, 1.0 unzoomed. The player owns the field of view
+     * -- hta_player_update writes it every frame -- so a scope has to go
+     * through here or it is clobbered on the next update. */
+    float zoom;
+
     /* Footsteps are paced by distance, not by a timer, so they slow down
      * when you do and stop when you stop. `footstep` is true for the one
      * update in which a foot lands. */
@@ -88,6 +93,9 @@ typedef struct {
     bool  footstep;
     bool  landed;        /* true for the update a fall ends */
 } hta_player;
+
+/* Sets the scope magnification. 1.0 (or anything below it) is unzoomed. */
+void hta_player_set_zoom(hta_player *p, float magnification);
 
 /* World units between footfalls. The Trial's cyborg runs at 2.25 wu/s, so
  * this is a little under three steps a second at a full run. */

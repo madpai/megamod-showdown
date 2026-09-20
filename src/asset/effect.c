@@ -23,6 +23,8 @@
 #define EFFP_CREATE_IN       0u
 #define EFFP_CREATE          4u
 #define EFFP_LOCATION        8u
+#define EFFP_COUNT         108u   /* int16 bounds */
+#define EFFP_VELOCITY      132u   /* float bounds, world units per second */
 #define EFFP_TYPE           84u   /* TagDependency; tag id at +12 */
 #define EFFP_RADIUS        160u   /* float bounds */
 /* Particle (356) */
@@ -162,6 +164,10 @@ bool hta_effect_fp_flash(const hta_cache *c, uint32_t effect_tag_id,
     uint32_t ev_off = 0, ev_count = 0, base = 0;
     if (!events_of(c, effect_tag_id, &ev_off, &ev_count, &base)) return false;
 
+    /* Best candidate so far: tier 0 sits on the muzzle, tier 1 is thrown. */
+    int  best_tier = 2;
+    float best_size = -1.0f;
+    bool found = false;
     for (uint32_t e = 0; e < ev_count; e++) {
         uint32_t qc = 0, qp = 0, qo = 0;
         if (!hta_read_reflexive(c, ev_off + e * EFFEVENT_SIZE + EFFEVENT_PARTICLES,
@@ -183,6 +189,14 @@ bool hta_effect_fp_flash(const hta_cache *c, uint32_t effect_tag_id,
             if (create_in != HTA_FX_IN_ANY && create_in != HTA_FX_IN_AIR) continue;
             /* What the other player sees is not what we see. */
             if (create == HTA_FX_CAM_THIRD) continue;
+
+            /* A count of 0 never spawns. The tags carry several
+             * switched-off size variants that way, and they are usually
+             * the biggest ones -- taking them would be picking a flash
+             * Halo never draws. */
+            int16_t cmax = 0;
+            hta_rd_u16(c, qk + EFFP_COUNT + 2u, (uint16_t *)&cmax);
+            if (cmax <= 0) continue;
 
             char marker[32];
             if (!location_marker(c, base, loc, marker)) continue;
@@ -215,18 +229,46 @@ bool hta_effect_fp_flash(const hta_cache *c, uint32_t effect_tag_id,
             hta_rd_f32(c, qk + EFFP_RADIUS, &r0);
             hta_rd_f32(c, qk + EFFP_RADIUS + 4u, &r1);
 
+            /* We draw ONE quad where Halo spawns a burst, so pick the
+             * best stand-in rather than the first match.
+             *
+             * A muzzle flash SITS on the muzzle; sparks, tracers and the
+             * smoke plume are thrown out of it at 8 to 20 world units a
+             * second. The shotgun lists its sparks (1.6 cm, thrown at 15)
+             * before its actual 12.5 cm flash, and taking the first gave a
+             * flash too small to see, which is what "no muzzle flash"
+             * looked like on device.
+             *
+             * The sniper is the exception: its muzzle brake sprays 15 to
+             * 20 sprites and it has no stationary flash at all, so a
+             * thrown one is the honest stand-in there. Hence tiers rather
+             * than a hard rejection. Within a tier the widest wins. */
+            float vlo = 0.0f, vhi = 0.0f;
+            hta_rd_f32(c, qk + EFFP_VELOCITY, &vlo);
+            hta_rd_f32(c, qk + EFFP_VELOCITY + 4u, &vhi);
+            float speed = vhi > vlo ? vhi : vlo;
+            if (speed < 0.0f) speed = -speed;
+            int tier = speed <= 1.0f ? 0 : 1;
+
+            float rmax = r1 > r0 ? r1 : r0;
+            float size = (r0 + rmax) * 0.5f;
+            if (tier > best_tier) continue;
+            if (tier == best_tier && size <= best_size) continue;
+            best_tier = tier;
+            best_size = size;
+
             out->part_id = part_id;
             out->bitmap_id = bitmap;
             out->blend = (uint8_t)blend;
             out->orientation = (uint8_t)orient;
             out->lifespan = ls1 > ls0 ? ls1 : ls0;
             out->radius_min = r0;
-            out->radius_max = r1 > r0 ? r1 : r0;
+            out->radius_max = rmax;
             snprintf(out->marker, sizeof(out->marker), "%s", marker);
-            return true;
+            found = true;
         }
     }
-    return false;
+    return found;
 }
 
 /* MaterialEffects (140): effects@0.

@@ -165,6 +165,11 @@ uint32_t hta_weapon_list_playable(const hta_cache *c, uint32_t *out, uint32_t ma
 {
     if (!c || !out || !max) return 0;
     uint32_t n = 0;
+    /* The first-person model and animations of everything kept so far, so a
+     * weapon that looks and handles exactly like one already in the list is
+     * not offered twice. */
+    uint32_t seen_model[64], seen_anim[64];
+    uint32_t seen = 0;
     for (uint32_t i = 0; i < c->tag_count && n < max; i++) {
         hta_tag_entry t;
         if (!hta_cache_tag(c, i, &t) || t.indexed) continue;
@@ -179,6 +184,30 @@ uint32_t hta_weapon_list_playable(const hta_cache *c, uint32_t *out, uint32_t ma
          * projectile, no HUD interface, no crosshair. */
         uint32_t hud = rddep(c, off + HTA_WEAP_HUD_INTERFACE);
         if (!hud) continue;
+
+        /* `needler` and `mp_needler` are separate tags with the same
+         * first-person model, animation graph, HUD, magazine and rate of
+         * fire -- the multiplayer variant differs only in numbers the
+         * player never sees. Offering both just gives you the same gun
+         * twice in the swap order. */
+        bool dup = false;
+        for (uint32_t k = 0; k < seen; k++)
+            if (seen_model[k] == fpm && seen_anim[k] == fpa) { dup = true; break; }
+        if (dup) continue;
+
+        /* And it must have been built on the standard first-person rig.
+         *
+         * Every carried Trial weapon's fp model is the GUN alone -- 3 to 7
+         * nodes -- and wears the globals hands. `weapons\plasma_cannon` (the
+         * fuel rod gun) instead ships a self-contained 41-node model with
+         * its own arms, and its idle holds the gun against the camera. It
+         * is an unfinished asset: Halo never gives it to the player, and in
+         * the hands it fills half the screen. Nothing in the weapon flags
+         * marks it, but the shape of its model does. */
+        if (hta_model_has_node(c, fpm, "frame l wriste")) continue;
+
+        if (seen < 64) { seen_model[seen] = fpm; seen_anim[seen] = fpa; seen++; }
+
         out[n++] = t.tag_id;
     }
     return n;

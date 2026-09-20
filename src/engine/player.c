@@ -506,6 +506,7 @@ bool hta_collision_ray(const hta_collision *c,
 void hta_player_init(hta_player *p)
 {
     memset(p, 0, sizeof(*p));
+    p->zoom = 1.0f;
     hta_player_physics_defaults(&p->phys);
     hta_player_apply_physics(p, &p->phys);
 }
@@ -541,6 +542,12 @@ void hta_player_spawn(hta_player *p, const hta_spawn_point *sp)
     p->on_ground = false;
 }
 
+void hta_player_set_zoom(hta_player *p, float magnification)
+{
+    if (!p) return;
+    p->zoom = magnification > 1.0f ? magnification : 1.0f;
+}
+
 void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
                        const hta_player_input *in, float dt)
 {
@@ -549,7 +556,7 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
     if (dt > 0.1f) dt = 0.1f;    /* never let a hitch teleport the player */
 
     hta_camera_look(cam, in->look_yaw, in->look_pitch);
-    cam->fov_y = p->phys.fov_y;
+    cam->fov_y = p->phys.fov_y / (p->zoom > 1.0f ? p->zoom : 1.0f);
 
     float target_crouch = in->crouch ? 1.0f : 0.0f;
     float crate = (p->phys.crouch_time > 1e-3f) ? (dt / p->phys.crouch_time) : 1.0f;

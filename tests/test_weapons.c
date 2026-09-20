@@ -8,6 +8,7 @@
 #include "engine/viewmodel.h"
 #include "engine/ammo.h"
 #include "asset/effect.h"
+#include "asset/model.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,7 +69,44 @@ int main(int argc, char **argv)
     uint32_t count = hta_weapon_list_playable(&c, ids, 32);
     printf("\n[roster]\n");
     printf("  %u playable weapon(s)\n", count);
-    CHECK(count >= 8, "the roster has at least the eight the map places");
+    CHECK(count == 9, "nine weapons a player can actually carry");
+    {
+        /* `needler` and `mp_needler` are distinct tags that share a
+         * first-person model, animation graph, HUD and magazine -- the same
+         * gun twice in the swap order. */
+        int clash = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def a;
+            if (!hta_weapon_load_id(&c, NULL, ids[i], &a, NULL, err, sizeof(err))) continue;
+            for (uint32_t j = i + 1; j < count; j++) {
+                hta_weapon_def b;
+                if (!hta_weapon_load_id(&c, NULL, ids[j], &b, NULL, err, sizeof(err))) continue;
+                if (a.fp_model_id == b.fp_model_id && a.fp_anim_id == b.fp_anim_id) {
+                    printf("  FAIL: %s and %s are the same gun\n",
+                           leaf(a.path), leaf(b.path));
+                    clash++;
+                }
+            }
+        }
+        CHECK(!clash, "no weapon appears twice under two names");
+    }
+    {
+        /* The fuel rod gun (`plasma_cannon`) is the one weapon whose
+         * first-person model carries its own arms instead of wearing the
+         * globals hands. Loading both drew two sets of arms AND let the
+         * gun model overwrite the hands' bind pose, so it is kept out of
+         * the roster entirely -- Halo never hands it to the player. */
+        int self_contained = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def w;
+            if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err))) continue;
+            if (hta_model_has_node(&c, w.fp_model_id, "frame l wriste")) {
+                printf("  FAIL: %s brings its own arms\n", leaf(w.path));
+                self_contained++;
+            }
+        }
+        CHECK(!self_contained, "every weapon in the roster wears the globals hands");
+    }
 
     printf("\n[every weapon animates]\n");
     /* The flamethrower's antr genuinely has no fire clip -- it is the one
@@ -146,6 +184,37 @@ int main(int argc, char **argv)
     }
     CHECK(checked == 3, "all three zooming weapons are in the roster");
     CHECK(zoomers == 3, "and nothing else claims to zoom");
+
+    printf("\n[every weapon flashes]\n");
+    /* The shotgun shipped with no visible muzzle flash. Its firing effect
+     * lists `sparks trail` -- six to nine sprites 1.6 cm across, thrown at
+     * 15 world units a second -- BEFORE its actual 12.5 cm flash, and we
+     * took the first match. A flash sits on the muzzle; sparks are thrown. */
+    int flashes = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        hta_weapon_def w;
+        if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err))) continue;
+        hta_effect_particle f;
+        if (!hta_effect_fp_flash(&c, w.firing_fx_id, "primary trigger", &f)) {
+            /* The flamethrower's is a three-to-five particle jet, not a
+             * flash, and one quad would misrepresent it. */
+            CHECK(strstr(w.path, "flamethrower") != NULL,
+                  "only the flamethrower has no single-quad flash");
+            continue;
+        }
+        float radius = (f.radius_min + f.radius_max) * 0.5f;
+        printf("  %-16s %.3f m radius, %.3f s\n", leaf(w.path), radius, f.lifespan);
+        CHECK(radius > 0.02f, "the flash is big enough to see");
+        CHECK(radius < 0.60f, "and not big enough to fill the screen");
+        CHECK(f.lifespan > 0.0f, "and lasts a measurable time");
+        CHECK(f.blend == HTA_FX_BLEND_ADD, "and adds light rather than blending");
+        if (!strcmp(leaf(w.path), "shotgun")) {
+            /* The exact regression: the spark cloud is 0.0159 at the top. */
+            CHECK(f.radius_max > 0.1f, "the shotgun gets its flash, not its sparks");
+        }
+        flashes++;
+    }
+    CHECK(flashes + 1 == (int)count, "every weapon but the flamethrower flashes");
 
     printf("\n[every weapon makes a noise]\n");
     /* Almost every weapon's gunshot hangs off its trigger's firing effect.

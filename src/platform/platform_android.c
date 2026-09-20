@@ -381,11 +381,12 @@ static float zoom_magnification(const hta_weapon_def *w, int level)
     return m > 1.0f ? m : 1.0f;
 }
 
+/* The player writes the camera's field of view every update, so the zoom has
+ * to live there rather than being poked into the camera -- doing that gave
+ * exactly one zoomed frame before the next update put it back. */
 static void apply_zoom(hta_android *s)
 {
-    float base = s->base_fov > 0.1f ? s->base_fov : s->player.phys.fov_y;
-    float mag = zoom_magnification(&s->weap, s->zoom_level);
-    s->cam.fov_y = base / mag;
+    hta_player_set_zoom(&s->player, zoom_magnification(&s->weap, s->zoom_level));
 }
 
 /* Step to the next zoom level, wrapping back to none. Weapons the tag gives
@@ -396,10 +397,9 @@ static void cycle_zoom(hta_android *s)
     int was = s->zoom_level;
     s->zoom_level = (s->zoom_level + 1) % (s->weap.zoom_levels + 1);
     apply_zoom(s);
-    uint32_t snd = (s->zoom_level > was || (was && !s->zoom_level))
-                 ? (s->zoom_level ? s->weap.zoom_in_snd_id : s->weap.zoom_out_snd_id)
-                 : s->weap.zoom_in_snd_id;
-    if (snd) { bank_get(s, snd); play_tag(s, snd, 1.0f); }
+    uint32_t snd = s->zoom_level ? s->weap.zoom_in_snd_id : s->weap.zoom_out_snd_id;
+    (void)was;
+    play_tag(s, snd, 1.0f);
     hta_log("[weapon] zoom %dx", (int)zoom_magnification(&s->weap, s->zoom_level));
 }
 
@@ -456,6 +456,10 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
     }
     s->empty_snd = hta_effect_first_sound(&s->cache, s->weap.empty_fx_id);
     if (s->empty_snd) bank_get(s, s->empty_snd);
+    /* Decoding a sound takes long enough to be a visible hitch, so the zoom
+     * sounds are decoded on equip rather than on the first press. */
+    if (s->weap.zoom_in_snd_id)  bank_get(s, s->weap.zoom_in_snd_id);
+    if (s->weap.zoom_out_snd_id) bank_get(s, s->weap.zoom_out_snd_id);
     /* Impacts are this projectile's, so forget the last weapon's. */
     memset(s->impact_known, 0, sizeof(s->impact_known));
 

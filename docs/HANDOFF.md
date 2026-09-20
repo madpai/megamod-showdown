@@ -364,6 +364,92 @@ frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
 Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
 need weapon state we do not track yet.
 
+## Zoom, the shotgun's flash, and the gun with two sets of arms (2026-09-19)
+
+Owner's second pass on the roster. Four of the six were real bugs.
+
+### Zoom did nothing, and stuttered doing it
+
+`hta_player_update` writes `cam->fov_y` from the biped tag **every frame**.
+Poking the zoom into the camera therefore lasted exactly one frame, which on
+device read as "the screen stutters for a moment then nothing happens". The
+magnification now lives on the player (`hta_player_set_zoom`), and the player
+divides its own tagged field of view by it. Anything else that wants to own
+the field of view has to go through there too.
+
+The stutter itself was the zoom sound being decoded on the game thread at
+first press; the zoom in/out sounds are decoded on equip now.
+`tests/test_player.c` `[scope]` pins the regression: zoomed, then still
+zoomed 120 updates later.
+
+### The shotgun's muzzle flash was its sparks
+
+Every candidate in the shotgun's firing effect is additive and first-person,
+and we took the first one. That is `effects\particles\flash\sparks trail`:
+six to nine sprites **1.6 cm** across thrown at 15 world units a second. The
+actual flash, `flash h generic`, is 12.5 cm and sits two entries later. A
+1.6 cm flash is invisible, hence "no muzzle flash".
+
+`hta_effect_fp_flash` now scores candidates instead of taking the first:
+
+- a particle whose **count** tops out at 0 never spawns -- the tags carry
+  switched-off size variants that way, and they are usually the biggest;
+- **tier 0 sits on the muzzle** (speed <= 1 wu/s), tier 1 is thrown;
+- within a tier, the widest wins.
+
+Tiers rather than a hard rejection because the **sniper** has no stationary
+flash at all -- its muzzle brake sprays 15 to 20 sprites at 8 to 12 wu/s, so
+a thrown one is the honest stand-in there. The quad's size is now the
+MIDDLE of the tagged radius range, not the top: Halo randomises each sprite
+inside that range, and taking the top put a 50 cm flare on the fuel rod gun.
+
+### Two needlers
+
+`needler` and `mp_needler` are separate tags sharing a first-person model,
+animation graph, HUD interface, magazine and rate of fire -- the same gun
+twice in the swap order. `hta_weapon_list_playable` now skips a weapon whose
+(fp model, fp anim) pair it has already listed.
+
+### "The weird gun": two sets of arms, and a corrupted bind pose
+
+Worth reading before touching `hta_viewmodel_load`.
+
+Almost every Trial weapon's first-person model is the **gun alone**, 3 to 7
+nodes, and the arms come from the globals hands model. `plasma_cannon` --
+the fuel rod gun -- ships a **self-contained 41-node model with its own
+arms**, 37 nodes shared with the hands.
+
+`hta_model_append_skinned` writes `rest_inv[node]` for every node the model
+defines, and the gun is appended second. So the fuel rod gun's model
+silently overwrote the hands' bind pose for all 37 shared nodes, `frame
+bone24` (the ROOT) among them, which differs by 7.8 cm in z. Result: the
+globals hands were lifted to eye level and drawn as a detached arm beside
+the gun. The viewmodel now skips the globals hands when the weapon's own
+model has `frame l wriste`.
+
+**An earlier note in this file was wrong** and is corrected here: the fuel
+rod gun is NOT posed 50 cm below the eye. That figure came from the bind
+pose. Posed at its idle it sits where the others do. What made it look
+wrong was the doubled arms above, plus its idle holding the gun against the
+camera.
+
+It is kept out of the roster anyway, on the same signal: Halo never gives it
+to a player, its first-person animations were never finished, and in the
+hands it fills half the screen. One line in `hta_weapon_list_playable`.
+
+Nine carriable weapons remain. Note that Blood Gulch's netgame equipment
+DOES list the fuel rod gun -- placement is not evidence a weapon was
+finished for first person.
+
+### Where the wrist-height idea went
+
+Measuring how high the idle poses the wrists looked like the principled
+filter and is **not**: every weapon including the fuel rod gun rests them 2
+to 9 cm below the eye (it is at -0.061, between the flamethrower's -0.057
+and the rocket launcher's -0.063). The hands *mesh* was displaced, not the
+wrist node, because the displacement came from the bind pose. Do not
+re-derive it.
+
 ## The whole roster: firing clips, shotgun shells, zoom, the flamethrower (2026-09-19)
 
 Owner's list: *"all of the weapons need firing animations. Also the shotgun when
@@ -897,7 +983,9 @@ after building, wherever real tag physics are available.
 | Map / bitmap picker | `android/.../SetupActivity.java` |
 | Android glue | `src/platform/platform_android.c` |
 | Animation + skinning tests | `tests/test_anim.c` (needs `HTA_MAP`) |
-| Roster: clips, zoom, firing sounds | `tests/test_weapons.c` (needs `HTA_MAP`) |
+| Roster: clips, zoom, flashes, sounds | `tests/test_weapons.c` (needs `HTA_MAP`) |
+| Model node lookup | `src/asset/model.c` `hta_model_has_node` |
+| Scope magnification | `src/engine/player.c` `hta_player_set_zoom` |
 | Object attachments / looping sounds | `src/asset/effect.c` `hta_object_loop_sound` |
 | Continuous voices | `src/engine/audio.c` `hta_audio_loop` |
 | Tag physics tests | `tests/test_biped.c` (needs `HTA_MAP`) |

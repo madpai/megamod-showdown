@@ -213,7 +213,11 @@ static void setup_flash(hta_viewmodel *vm, const hta_cache *c,
     vm->flash_offset[0] = offset[0];
     vm->flash_offset[1] = offset[1];
     vm->flash_offset[2] = offset[2];
-    vm->flash_radius = flash.radius_max > 0.0f ? flash.radius_max : 0.1f;
+    /* Halo picks each sprite's radius somewhere in the tagged range, so the
+     * middle of it is the representative size for our single quad. Taking
+     * the top put a 50 cm flare on the plasma cannon. */
+    float radius = (flash.radius_min + flash.radius_max) * 0.5f;
+    vm->flash_radius = radius > 0.0f ? radius : 0.1f;
     vm->flash_life = flash.lifespan > 0.0f ? flash.lifespan : 0.08f;
     vm->flash_first_vertex = base_v;
 }
@@ -235,8 +239,21 @@ bool hta_viewmodel_load(hta_viewmodel *vm, const hta_cache *c,
     vm->mesh.textures = (hta_bsp_texture *)calloc(256, sizeof(hta_bsp_texture));
     if (!vm->mesh.textures) { free_partial(vm); if (err) snprintf(err, errlen, "oom"); return false; }
 
-    /* Hands first so the gun draws over them where they overlap. */
+    /* Hands first so the gun draws over them where they overlap.
+     *
+     * Unless the weapon's own first-person model already has arms. Almost
+     * every Trial weapon's fp model is the gun alone -- 3 to 7 nodes -- and
+     * the arms come from the globals hands model. The fuel rod gun (tagged
+     * `plasma_cannon`) ships a complete first-person model instead: 41
+     * nodes, 37 of them shared with the hands.
+     *
+     * Appending both drew two sets of arms, and worse, the second append
+     * overwrote the FIRST's bind pose for every shared node -- including the
+     * root, which differs by 7.8 cm -- so the globals hands came out lifted
+     * to eye level beside a gun held at the wrong angle. That is what "the
+     * weird gun" was. A model that has its own wrists does not want ours. */
     uint32_t hands = hta_globals_fp_hands(c);
+    if (hta_model_has_node(c, weap->fp_model_id, "frame l wriste")) hands = 0;
     if (hands && !hta_model_append_skinned(&vm->mesh, &vm->skin, c, bitmaps, hands,
                                            &vm->graph, vm->rest_inv, vm->have_rest,
                                            err, errlen)) {

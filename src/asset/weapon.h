@@ -115,7 +115,12 @@ bool hta_weapon_load_id(const hta_cache *c, const hta_resource_map *bitmaps,
 /* Tag ids of every weapon a player could FIGHT with: one with a
  * first-person model, first-person animations and a HUD interface. The
  * last of those is what rules out the ball and the flag, which are held in
- * first person but carried rather than fired. Returns how many were
+ * first person but carried rather than fired.
+ *
+ * Also skipped: weapons whose first-person model carries its own arms
+ * rather than wearing the globals hands (the unfinished fuel rod gun), and
+ * a weapon that shares a first-person model and animation graph with one
+ * already listed (`mp_needler` behind `needler`). Returns how many were
  * written. */
 uint32_t hta_weapon_list_playable(const hta_cache *c, uint32_t *out, uint32_t max);
 
