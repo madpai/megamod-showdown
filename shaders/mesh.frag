@@ -92,5 +92,11 @@ void main() {
     } else {
         col = albedo * lm * 2.0;
     }
-    out_color = vec4(col, 1.0);
+    /* The alpha pipeline blends with SRC_ALPHA, so the texture's own alpha
+     * has to reach it. Hardcoding 1.0 here meant every alpha-blended
+     * surface drew opaque -- a rocket's smoke came out as black squares,
+     * because a smoke sprite is a soft shape in the alpha channel over a
+     * black background. The additive pipeline blends ONE/ONE and does not
+     * care either way. */
+    out_color = vec4(col, base.a);
 }

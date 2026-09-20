@@ -364,6 +364,66 @@ frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
 Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
 need weapon state we do not track yet.
 
+## Particles (2026-09-20)
+
+The thing the flamethrower and the rocket explosion had been waiting on.
+`src/engine/particle.c`.
+
+An `effe` event carries a list of particles beside its parts: each names a
+`part` tag, how many to spawn (`count` bounds at EffectParticle+108), how
+fast to throw them (`velocity` at +132) and inside what cone (`velocity cone
+angle` at +140). `hta_effect_particle_count` / `_at` walk them all;
+`hta_effect_fp_flash` still picks just one for the muzzle flash.
+
+A rocket's detonation is a lens flare plus **40 to 60** smoke puffs at
+0.85 to 1.75 world units, living four seconds. The needler's is spike
+debris, a flash, a flare and smoke -- four types.
+
+Geometry follows the projectiles: ONE mesh built when the effect loads,
+holding a fixed slot per particle, re-posed on the CPU each frame, a dead
+slot collapsed to a point. Slots are **partitioned by type** rather than
+pooled, so each type's quads are contiguous and share one submesh -- one
+draw call per type instead of one per particle. `HTA_PART_PER_TYPE` is 24,
+so the rocket's 40-60 smoke puffs are capped at 24.
+
+Everything is built on equip, never mid-game: interning a texture would
+move the mesh under the buffer the GPU is reading.
+
+### Two renderer bugs it exposed
+
+**`mesh.frag` hardcoded its output alpha to 1.0.** The alpha pipeline
+blends with SRC_ALPHA, so every alpha-blended surface in the world had been
+drawing fully opaque -- a rocket's smoke came out as solid black squares,
+because a smoke sprite is a soft shape in the alpha channel over a black
+background. It outputs the base map's alpha now. The additive pipeline
+blends ONE/ONE and never cared.
+
+**Art with no alpha channel cannot be alpha-blended.** The rocket's lens
+flare, `flares_generic`, is a format that carries none, so every texel
+decodes to alpha 255 and it drew as a square of its own black background.
+A particle whose decoded texture has no alpha is switched to ADDITIVE,
+where black contributes nothing -- which is how a flare reads anyway. This
+is measured from the decoded texels, not assumed from the format number.
+
+### `dyn` is an array now
+
+`hta_gfx_draw` takes `const hta_gfx_dynamic *dyn, uint32_t dyn_count`
+(max 4). Projectiles and their particles are separate meshes with separate
+textures, both rewritten every frame. The three passes run across ALL the
+dynamic meshes in order -- opaque, then alpha, then additive -- so a
+rocket's smoke never sorts in front of the rocket.
+
+### What this does not do yet
+
+- **Bullet impacts.** Every projectile carries 33 material responses, each
+  an effect with its own sparks and smoke. Loading one per material would
+  be 33 particle systems; loading on demand would move the mesh mid-frame.
+  Hitscan impacts are still just a decal and a sound.
+- **The flamethrower's jet.** Its detonation effect has no drawable
+  particles, and the jet itself is a `pctl` particle SYSTEM -- a different
+  tag class with emitters and curves, not an effect's particle list.
+- No collision: particles pass through walls.
+
 ## The detail mask (2026-09-20)
 
 `ShaderModelDetailMask` at ShaderModel+214 gates a model's detail map by
@@ -1535,6 +1595,8 @@ after building, wherever real tag physics are available.
 | Viewmodel lighting | `shaders/mesh.frag` lit path, `gfx_vulkan.c` viewmodel push |
 | Submesh defaults | `src/asset/bsp.c` `hta_submesh_init` |
 | Detail mask | `src/asset/bitmap.c` `hta_shader_multipurpose`, `shaders/mesh.frag` |
+| Particles | `src/engine/particle.c`, `.h`, `tests/test_particle.c` |
+| Effect particle walk | `src/asset/effect.c` `hta_effect_particle_at` |
 | Rounds counter | `src/engine/hud.c` `load_numbers` |
 | Object attachments / looping sounds | `src/asset/effect.c` `hta_object_loop_sound` |
 | Continuous voices | `src/engine/audio.c` `hta_audio_loop` |

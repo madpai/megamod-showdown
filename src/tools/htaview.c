@@ -24,6 +24,7 @@
 #include "engine/camera.h"
 #include "engine/viewmodel.h"
 #include "engine/projectile.h"
+#include "engine/particle.h"
 #include "engine/hud.h"
 #include "asset/biped.h"
 #include "gfx/gfx.h"
@@ -223,9 +224,12 @@ int main(int argc, char **argv)
 
     hta_viewmodel vm;
     hta_projectiles proj;
-    hta_gfx_dynamic gproj;
+    hta_gfx_dynamic gproj, gpart;
+    hta_particles parts;
     memset(&proj, 0, sizeof(proj));
     memset(&gproj, 0, sizeof(gproj));
+    memset(&gpart, 0, sizeof(gpart));
+    hta_particles_init(&parts);
     hta_weapon_def wdef;
     hta_gfx_mesh *gvm = NULL;
     int32_t fp_anim = -1;
@@ -272,6 +276,15 @@ int main(int argc, char **argv)
                 gproj.vertices = proj.mesh.vertices;
                 gproj.vertex_count = proj.mesh.vertex_count;
                 if (!gproj.mesh) printf("projectile     upload failed: %s\n", err);
+                /* And whatever its detonation throws out. */
+                if (proj.det_effect &&
+                    hta_particles_load(&parts, &c, rm.data ? &rm : NULL,
+                                       proj.det_effect, err, sizeof(err))) {
+                    printf("particles      %u type(s), %u slots\n",
+                           parts.type_count, parts.mesh.vertex_count / 4u);
+                    gpart.mesh = hta_gfx_mesh_upload_dynamic(g, &parts.mesh,
+                                                             err, sizeof(err));
+                }
             } else {
                 printf("projectile     none to draw for this weapon\n");
             }
@@ -399,6 +412,23 @@ int main(int argc, char **argv)
                 int mag = wdef.rounds_loaded_max > 0 ? wdef.rounds_loaded_max : 60;
                 hta_viewmodel_set_ammo(&vm, (float)ammo / (float)mag);
             }
+            if (fly >= 0.0f && parts.loaded) {
+                /* --fly also detonates: burst the particles where the
+                 * projectile would have gone off, then age them by the
+                 * same amount, so one shot shows the explosion. */
+                float fwd2[3];
+                hta_camera_forward(&cam, fwd2);
+                float at[3];
+                for (int k = 0; k < 3; k++)
+                    at[k] = cam.pos[k] + fwd2[k] * 3.0f;
+                float up2[3] = { 0.0f, 0.0f, 1.0f };
+                hta_particles_burst(&parts, at, up2);
+                for (float el = 0.0f; el < fly; el += 1.0f / 60.0f)
+                    hta_particles_update(&parts, &cam, 1.0f / 60.0f);
+                hta_particles_update(&parts, &cam, 0.0f);
+                printf("particles      %u alive after %.2f s\n",
+                       hta_particles_count(&parts), fly);
+            }
             if (fly >= 0.0f && proj.loaded) {
                 float fwd[3];
                 hta_camera_forward(&cam, fwd);
@@ -452,8 +482,19 @@ int main(int argc, char **argv)
             for (int k = 0; k < 3; k++) vmdraw.offset[k] = wdef.fp_offset[k];
         }
 
+        /* Projectiles and their particles are separate dynamic meshes. */
+        hta_gfx_dynamic dynlist[2];
+        uint32_t dyncount = 0;
+        if (gproj.mesh) dynlist[dyncount++] = gproj;
+        if (gpart.mesh) {
+            gpart.vertices = parts.mesh.vertices;
+            gpart.vertex_count = parts.mesh.vertex_count;
+            dynlist[dyncount++] = gpart;
+        }
+
         double r0 = hta_time_seconds();
-        bool ok = hta_gfx_draw(g, &cam, &scene, gm, gs, NULL, gproj.mesh ? &gproj : NULL,
+        bool ok = hta_gfx_draw(g, &cam, &scene, gm, gs, NULL,
+                               dynlist, dyncount,
                                gvm ? &vmdraw : NULL,
                                ghud ? &huddraw : NULL);
         double r1 = hta_time_seconds();
@@ -478,6 +519,8 @@ int main(int argc, char **argv)
     }
 
     free(pixels);
+    if (gpart.mesh) hta_gfx_mesh_free(g, gpart.mesh);
+    hta_particles_free(&parts);
     if (gproj.mesh) hta_gfx_mesh_free(g, gproj.mesh);
     hta_projectiles_free(&proj);
     if (gvm) hta_gfx_mesh_free(g, gvm);

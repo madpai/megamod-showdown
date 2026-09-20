@@ -76,9 +76,13 @@ typedef struct {
     uint32_t          vertex_count;
 } hta_gfx_dynamic;
 
+/* `dyn` is an array: projectiles in flight and the particles they throw
+ * are separate meshes with separate textures, and both change every frame. */
+#define HTA_GFX_MAX_DYNAMIC 4u
+
 bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                   hta_gfx_mesh *mesh, hta_gfx_mesh *sky, hta_gfx_mesh *fx,
-                  const hta_gfx_dynamic *dyn,
+                  const hta_gfx_dynamic *dyn, uint32_t dyn_count,
                   const hta_gfx_viewmodel *vm, const hta_gfx_overlay *hud);
 
 /* Offscreen only: copies the last rendered frame out as tightly packed RGBA8.

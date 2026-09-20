@@ -1269,7 +1269,7 @@ static void fill_push(uint8_t *p, const hta_camera *cam, const hta_scene *s)
 
 bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                   hta_gfx_mesh *mesh, hta_gfx_mesh *sky, hta_gfx_mesh *fx,
-                  const hta_gfx_dynamic *dyn,
+                  const hta_gfx_dynamic *dyn, uint32_t dyn_count,
                   const hta_gfx_viewmodel *vm, const hta_gfx_overlay *hud)
 {
     if (!g || !g->ready || !cam || !scene) return false;
@@ -1290,15 +1290,19 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
         }
     }
 
-    hta_gfx_mesh *dynmesh = dyn ? dyn->mesh : NULL;
-    VkDeviceSize dyn_voffset = 0;
-    if (dynmesh && dynmesh->vslots) {
-        uint32_t dslot = slot % dynmesh->vslots;
-        dyn_voffset = dynmesh->vslot_bytes * dslot;
-        if (dyn->vertices && dyn->vertex_count) {
-            VkDeviceSize n = (VkDeviceSize)dyn->vertex_count * sizeof(hta_vertex);
-            if (n > dynmesh->vslot_bytes) n = dynmesh->vslot_bytes;
-            memcpy((uint8_t *)dynmesh->vmapped + dyn_voffset, dyn->vertices, (size_t)n);
+    if (dyn_count > HTA_GFX_MAX_DYNAMIC) dyn_count = HTA_GFX_MAX_DYNAMIC;
+    VkDeviceSize dyn_voffset[HTA_GFX_MAX_DYNAMIC];
+    memset(dyn_voffset, 0, sizeof(dyn_voffset));
+    for (uint32_t dq = 0; dyn && dq < dyn_count; dq++) {
+        hta_gfx_mesh *dm = dyn[dq].mesh;
+        if (!dm || !dm->vslots) continue;
+        uint32_t dslot = slot % dm->vslots;
+        dyn_voffset[dq] = dm->vslot_bytes * dslot;
+        if (dyn[dq].vertices && dyn[dq].vertex_count) {
+            VkDeviceSize n = (VkDeviceSize)dyn[dq].vertex_count * sizeof(hta_vertex);
+            if (n > dm->vslot_bytes) n = dm->vslot_bytes;
+            memcpy((uint8_t *)dm->vmapped + dyn_voffset[dq],
+                   dyn[dq].vertices, (size_t)n);
         }
     }
 
@@ -1491,7 +1495,10 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
         /* Back to the world camera. The viewmodel pass above pushes a
          * VIEW-space matrix, and everything after it that lives in the world
          * has to put the world one back or it rides the camera. */
-        if ((fx && fx->index_count) || (dynmesh && dynmesh->index_count)) {
+        bool any_dyn = false;
+        for (uint32_t dq = 0; dyn && dq < dyn_count; dq++)
+            if (dyn[dq].mesh && dyn[dq].mesh->index_count) any_dyn = true;
+        if ((fx && fx->index_count) || any_dyn) {
             memset(push, 0, sizeof(push));
             fill_push(push, cam, scene);
             vkCmdPushConstants(cb, g->layout,
@@ -1525,25 +1532,38 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                 }
             }
         }
-        /* Projectiles in flight: world space, vertices rewritten this frame. */
-        if (dynmesh && dynmesh->index_count) {
+        /* World-space geometry rewritten this frame: projectiles in flight
+         * and the particles they throw. Opaque first across all of them,
+         * then alpha, then additive, so a rocket's smoke never sorts in
+         * front of the rocket. */
+        {
             const uint8_t dyn_passes[3] = { HTA_DRAW_OPAQUE, HTA_DRAW_ALPHA, HTA_DRAW_ADD };
             VkPipeline dyn_pipes[3] = { g->pipeline, g->pipeline_alpha, g->pipeline_add };
-            vkCmdBindVertexBuffers(cb, 0, 1, &dynmesh->vbuf, &dyn_voffset);
-            vkCmdBindIndexBuffer(cb, dynmesh->ibuf, 0, VK_INDEX_TYPE_UINT32);
             for (int pz = 0; pz < 3; pz++) {
                 int bound = 0;
-                for (uint32_t i = 0; i < dynmesh->submesh_count; i++) {
-                    if (!dynmesh->submeshes[i].index_count) continue;
-                    if (dynmesh->submeshes[i].draw_mode != dyn_passes[pz]) continue;
-                    if (!bound) {
-                        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, dyn_pipes[pz]);
-                        bound = 1;
+                for (uint32_t dq = 0; dyn && dq < dyn_count; dq++) {
+                    hta_gfx_mesh *dm = dyn[dq].mesh;
+                    if (!dm || !dm->index_count) continue;
+                    int vb_bound = 0;
+                    for (uint32_t i = 0; i < dm->submesh_count; i++) {
+                        if (!dm->submeshes[i].index_count) continue;
+                        if (dm->submeshes[i].draw_mode != dyn_passes[pz]) continue;
+                        if (!bound) {
+                            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                              dyn_pipes[pz]);
+                            bound = 1;
+                        }
+                        if (!vb_bound) {
+                            vkCmdBindVertexBuffers(cb, 0, 1, &dm->vbuf, &dyn_voffset[dq]);
+                            vkCmdBindIndexBuffer(cb, dm->ibuf, 0, VK_INDEX_TYPE_UINT32);
+                            vb_bound = 1;
+                        }
+                        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                                g->layout, 0, 1,
+                                                &dm->submeshes[i].set, 0, NULL);
+                        vkCmdDrawIndexed(cb, dm->submeshes[i].index_count, 1,
+                                         dm->submeshes[i].first_index, 0, 0);
                     }
-                    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
-                                            0, 1, &dynmesh->submeshes[i].set, 0, NULL);
-                    vkCmdDrawIndexed(cb, dynmesh->submeshes[i].index_count, 1,
-                                     dynmesh->submeshes[i].first_index, 0, 0);
                 }
             }
         }

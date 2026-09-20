@@ -86,9 +86,11 @@ bool hta_projectiles_equip(hta_projectiles *p, const hta_cache *c,
      * read as explosions. */
     uint32_t det_fx = 0;
     hta_rd_u32(c, base + PROJ_EFFECT + 12u, &det_fx);
-    if (det_fx && det_fx != 0xFFFFFFFFu)
+    if (det_fx && det_fx != 0xFFFFFFFFu) {
+        p->det_effect = det_fx;
         hta_effect_detonation(c, det_fx, &p->detonation_snd, &p->blast_radius,
                               &p->decal_id);
+    }
 
     p->proj_tag_id   = weap->projectile_id;
     p->speed_initial = v0 * HTA_TICKS_PER_SECOND;

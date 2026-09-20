@@ -17,6 +17,7 @@
 #include "../engine/player.h"
 #include "../engine/gun.h"
 #include "../engine/projectile.h"
+#include "../engine/particle.h"
 #include "../engine/ammo.h"
 #include "../engine/hud.h"
 #include "../engine/viewmodel.h"
@@ -148,6 +149,8 @@ typedef struct {
 
     /* Rounds you can watch fly: the rocket and the needle. */
     hta_projectiles proj;
+    /* And the smoke and fire their detonation throws out. */
+    hta_particles   parts;
 
     hta_ammo ammo;
     float    dry_cooldown;   /* stops an empty trigger clicking every frame */
@@ -165,6 +168,7 @@ typedef struct {
     hta_gfx_mesh *gpu_sky;
     hta_gfx_mesh *gpu_fx;
     hta_gfx_mesh *gpu_proj;
+    hta_gfx_mesh *gpu_parts;
     hta_gfx_mesh *gpu_fp;
     hta_hud       hud;
     hta_gfx_mesh *gpu_hud;
@@ -500,6 +504,7 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
 
     /* The weapon's own round, if it is an object rather than a particle.
      * Most of the roster has nothing to draw, which is not a failure. */
+    if (s->gpu_parts) { hta_gfx_mesh_free(s->gfx, s->gpu_parts); s->gpu_parts = NULL; }
     if (s->gpu_proj) { hta_gfx_mesh_free(s->gfx, s->gpu_proj); s->gpu_proj = NULL; }
     {
         char perr[HTA_ERRLEN];
@@ -513,6 +518,22 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
             if (s->gfx)
                 s->gpu_proj = hta_gfx_mesh_upload_dynamic(s->gfx, &s->proj.mesh,
                                                           perr, sizeof(perr));
+        }
+        /* What its detonation throws out. Built once here, because
+         * interning a texture mid-game would move the mesh under the
+         * buffer the GPU is reading. */
+        if (s->gpu_parts) {
+            hta_gfx_mesh_free(s->gfx, s->gpu_parts);
+            s->gpu_parts = NULL;
+        }
+        if (s->proj.det_effect &&
+            hta_particles_load(&s->parts, &s->cache,
+                               s->bitmaps_ok ? &s->bitmaps_rm : NULL,
+                               s->proj.det_effect, perr, sizeof(perr))) {
+            hta_log("[weapon] detonation particles: %u type(s)", s->parts.type_count);
+            if (s->gfx)
+                s->gpu_parts = hta_gfx_mesh_upload_dynamic(s->gfx, &s->parts.mesh,
+                                                           perr, sizeof(perr));
         }
     }
 
@@ -994,6 +1015,9 @@ static void start_gfx(hta_android *s)
         if (s->proj.loaded && s->proj.mesh.index_count)
             s->gpu_proj = hta_gfx_mesh_upload_dynamic(s->gfx, &s->proj.mesh,
                                                       err, sizeof(err));
+        if (s->parts.loaded && s->parts.mesh.index_count)
+            s->gpu_parts = hta_gfx_mesh_upload_dynamic(s->gfx, &s->parts.mesh,
+                                                       err, sizeof(err));
         }
         if (s->have_fp) {
             s->gpu_fp = hta_gfx_mesh_upload_dynamic(s->gfx, &s->vm.mesh, err, sizeof(err));
@@ -1014,6 +1038,7 @@ static void stop_gfx(hta_android *s)
 {
     if (s->gpu_hud) { hta_gfx_mesh_free(s->gfx, s->gpu_hud); s->gpu_hud = NULL; }
     if (s->gpu_fp) { hta_gfx_mesh_free(s->gfx, s->gpu_fp); s->gpu_fp = NULL; }
+    if (s->gpu_parts) { hta_gfx_mesh_free(s->gfx, s->gpu_parts); s->gpu_parts = NULL; }
     if (s->gpu_proj) { hta_gfx_mesh_free(s->gfx, s->gpu_proj); s->gpu_proj = NULL; }
     if (s->gpu_fx) { hta_gfx_mesh_free(s->gfx, s->gpu_fx); s->gpu_fx = NULL; }
     if (s->gpu_sky) { hta_gfx_mesh_free(s->gfx, s->gpu_sky); s->gpu_sky = NULL; }
@@ -1364,8 +1389,13 @@ void android_main(struct android_app *app)
                     play_tag(&state, state.proj.detonation_snd, 1.0f);
                 else
                     play_impact(&state, state.proj.hit_material);
+                /* Thrown out along the surface it hit. */
+                hta_particles_burst(&state.parts, state.proj.hit,
+                                    state.proj.hit_normal);
             }
         }
+
+        hta_particles_update(&state.parts, &state.cam, dt);
 
         if (state.gun.dirty && state.gfx) {
             char err[HTA_ERRLEN];
@@ -1401,16 +1431,23 @@ void android_main(struct android_app *app)
                 vmdraw.vertex_count = state.vm.mesh.vertex_count;
                 for (int k = 0; k < 3; k++) vmdraw.offset[k] = state.weap.fp_offset[k];
             }
-            hta_gfx_dynamic projdraw;
-            memset(&projdraw, 0, sizeof(projdraw));
+            hta_gfx_dynamic dynlist[2];
+            uint32_t dyncount = 0;
             if (state.gpu_proj) {
-                projdraw.mesh = state.gpu_proj;
-                projdraw.vertices = state.proj.mesh.vertices;
-                projdraw.vertex_count = state.proj.mesh.vertex_count;
+                dynlist[dyncount].mesh = state.gpu_proj;
+                dynlist[dyncount].vertices = state.proj.mesh.vertices;
+                dynlist[dyncount].vertex_count = state.proj.mesh.vertex_count;
+                dyncount++;
+            }
+            if (state.gpu_parts) {
+                dynlist[dyncount].mesh = state.gpu_parts;
+                dynlist[dyncount].vertices = state.parts.mesh.vertices;
+                dynlist[dyncount].vertex_count = state.parts.mesh.vertex_count;
+                dyncount++;
             }
             if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh,
                               state.gpu_sky, state.gpu_fx,
-                              state.gpu_proj ? &projdraw : NULL,
+                              dynlist, dyncount,
                               vmdraw.mesh ? &vmdraw : NULL,
                               state.gpu_hud ? &huddraw : NULL)) {
                 hta_log("[app] surface lost; rebuilding renderer");
@@ -1464,6 +1501,7 @@ done:
     hta_collision_free(&state.col);
     hta_gun_free(&state.gun);
     hta_projectiles_free(&state.proj);
+    hta_particles_free(&state.parts);
     hta_bsp_free(&state.mesh);
     hta_bsp_free(&state.sky);
     hta_bsp_free(&state.coll_mesh);

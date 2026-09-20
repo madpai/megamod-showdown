@@ -61,6 +61,7 @@ typedef struct {
     uint32_t detonation_snd;
     float    blast_radius;
     uint32_t decal_id;       /* `deca` the blast leaves, 0 if none */
+    uint32_t det_effect;     /* the `effe` itself, for its particles */
 
     /* Where the last projectile went off, for the caller's impact sound and
      * scorch. Valid for the update that set `detonated`. */
