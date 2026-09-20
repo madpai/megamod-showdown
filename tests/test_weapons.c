@@ -6,6 +6,7 @@
 #include "asset/cache.h"
 #include "asset/weapon.h"
 #include "engine/viewmodel.h"
+#include "asset/anim.h"
 #include "engine/ammo.h"
 #include "asset/effect.h"
 #include "asset/model.h"
@@ -184,6 +185,95 @@ int main(int argc, char **argv)
     }
     CHECK(checked == 3, "all three zooming weapons are in the roster");
     CHECK(zoomers == 3, "and nothing else claims to zoom");
+
+    printf("\n[the needler wears its magazine]\n");
+    {
+        /* Halo poses the needler's sixteen needle bones with an OVERLAY
+         * clip, `first-person ammunition`: 21 frames for a 20-round
+         * magazine, frame 0 full and frame 20 empty. It is the only Trial
+         * weapon with one. */
+        int found = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def w;
+            if (!hta_weapon_load_id(&c, have_bitmaps ? &bm : NULL, ids[i], &w,
+                                    NULL, err, sizeof(err))) continue;
+            hta_viewmodel vm;
+            if (!hta_viewmodel_load(&vm, &c, have_bitmaps ? &bm : NULL, &w,
+                                    err, sizeof(err))) continue;
+            if (strstr(w.path, "needler")) {
+                found = 1;
+                CHECK(vm.clip_ammo >= 0, "the needler has an ammunition overlay");
+                if (vm.clip_ammo >= 0) {
+                    const hta_animation *a = &vm.graph.anims[vm.clip_ammo];
+                    printf("    %u frames for a %d-round magazine\n",
+                           a->frame_count, w.rounds_loaded_max);
+                    CHECK(a->frame_count == 21, "21 frames");
+
+                    hta_viewmodel_set_ammo(&vm, 1.0f);
+                    CHECK(vm.ammo_frame == 0.0f, "a full magazine is frame 0");
+                    hta_viewmodel_set_ammo(&vm, 0.0f);
+                    CHECK(vm.ammo_frame == 20.0f, "an empty one is the last frame");
+                    hta_viewmodel_set_ammo(&vm, 0.5f);
+                    CHECK(vm.ammo_frame == 10.0f, "and half is halfway");
+                    /* Out of range must not walk off the clip. */
+                    hta_viewmodel_set_ammo(&vm, 2.0f);
+                    CHECK(vm.ammo_frame == 0.0f, "over-full clamps");
+                    hta_viewmodel_set_ammo(&vm, -1.0f);
+                    CHECK(vm.ammo_frame == 20.0f, "and negative clamps");
+
+                    /* The needles must actually move, and the arms must not:
+                     * an overlay's unkeyframed nodes hold its own default
+                     * pose, so composing all of them would flatten them. */
+                    int needles = 0, arms = 0;
+                    for (uint32_t k = 0; k < vm.graph.node_count; k++) {
+                        if (!hta_anim_animates(&vm.graph, (uint32_t)vm.clip_ammo, k))
+                            continue;
+                        if (strstr(vm.graph.nodes[k].name, "needle")) needles++;
+                        else if (strstr(vm.graph.nodes[k].name, "upperarm") ||
+                                 strstr(vm.graph.nodes[k].name, "forearm") ||
+                                 strstr(vm.graph.nodes[k].name, "wriste")) arms++;
+                    }
+                    printf("    overlay keyframes %d needle bones, %d arm bones\n",
+                           needles, arms);
+                    CHECK(needles == 16, "sixteen needles");
+                    CHECK(arms == 0, "and no arm bones, which it must not move");
+
+                    /* And the pose really differs between full and empty. */
+                    uint32_t nv = vm.hands_verts + vm.gun_verts;
+                    float *full = (float *)malloc((size_t)nv * 3 * sizeof(float));
+                    hta_viewmodel_set_ammo(&vm, 1.0f);
+                    hta_viewmodel_update(&vm, 0.0f);
+                    for (uint32_t v = 0; v < nv; v++)
+                        for (int k = 0; k < 3; k++)
+                            full[v * 3 + k] = vm.posed[v].pos[k];
+
+                    hta_viewmodel_set_ammo(&vm, 0.0f);
+                    hta_viewmodel_update(&vm, 0.0f);
+                    float worst = 0.0f;
+                    uint32_t moved = 0;
+                    for (uint32_t v = 0; v < nv; v++) {
+                        float dd = 0.0f;
+                        for (int k = 0; k < 3; k++) {
+                            float dv = vm.posed[v].pos[k] - full[v * 3 + k];
+                            dd += dv * dv;
+                        }
+                        if (dd > 1e-8f) moved++;
+                        if (dd > worst) worst = dd;
+                    }
+                    free(full);
+                    printf("    %u of %u vertices move, worst %.3f m\n",
+                           moved, nv, sqrtf(worst));
+                    CHECK(moved > 0, "the needles move between full and empty");
+                    CHECK(moved < nv / 2, "and the rest of the gun does not");
+                    CHECK(sqrtf(worst) > 0.005f, "by enough to see");
+                }
+            } else {
+                CHECK(vm.clip_ammo < 0, "no other weapon has one");
+            }
+            hta_viewmodel_free(&vm);
+        }
+        CHECK(found, "the needler is in the roster");
+    }
 
     printf("\n[every weapon flashes]\n");
     /* The shotgun shipped with no visible muzzle flash. Its firing effect

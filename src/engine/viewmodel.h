@@ -76,6 +76,14 @@ typedef struct {
      * weapon's magazine size, textured from a TEN-FRAME bitmap -- one image
      * per digit, not a sprite sheet. The ten frames are decoded into a
      * single wide atlas so a digit is chosen by shifting U. */
+    /* The needler wears its magazine: sixteen needle bones that fold away as
+     * it empties. Halo drives them with an OVERLAY clip, `first-person
+     * ammunition`, 21 frames for a 20-round magazine -- frame 0 full, frame
+     * 20 empty -- composed on top of whatever the weapon is doing. It is the
+     * only Trial weapon with one. */
+    int32_t           clip_ammo;      /* -1 when the weapon has no such clip */
+    float             ammo_frame;
+
     bool              have_counter;
     uint32_t          counter_submesh[2];   /* [0] most significant */
     uint32_t          counter_vertex[2][4];   /* the quad's four corners */
@@ -104,6 +112,10 @@ void hta_viewmodel_play(hta_viewmodel *vm, hta_vm_state s);
 /* Lights the muzzle flash for its tagged lifespan. Harmless if the weapon
  * has no first-person flash particle. */
 void hta_viewmodel_flash(hta_viewmodel *vm);
+
+/* How full the magazine is, 0..1, for weapons that show it on the model.
+ * Harmless on a weapon without an ammunition overlay. */
+void hta_viewmodel_set_ammo(hta_viewmodel *vm, float fraction);
 
 /* What the gun's own readout shows. Harmless if it has no readout. */
 void hta_viewmodel_set_counter(hta_viewmodel *vm, uint32_t value);

@@ -66,8 +66,19 @@ typedef struct {
 
 /* Renders one frame. In swapchain mode this also presents. Returns false if the
  * surface needs rebuilding (caller should recreate). */
+/* World-space geometry whose vertices change every frame: projectiles in
+ * flight. Same arrangement as hta_gfx_viewmodel -- a mesh from
+ * hta_gfx_mesh_upload_dynamic plus this frame's vertices -- but drawn with
+ * the world camera rather than in view space. */
+typedef struct {
+    hta_gfx_mesh     *mesh;
+    const hta_vertex *vertices;
+    uint32_t          vertex_count;
+} hta_gfx_dynamic;
+
 bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                   hta_gfx_mesh *mesh, hta_gfx_mesh *sky, hta_gfx_mesh *fx,
+                  const hta_gfx_dynamic *dyn,
                   const hta_gfx_viewmodel *vm, const hta_gfx_overlay *hud);
 
 /* Offscreen only: copies the last rendered frame out as tightly packed RGBA8.

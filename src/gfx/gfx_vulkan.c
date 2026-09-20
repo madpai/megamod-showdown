@@ -1093,6 +1093,7 @@ static void fill_push(uint8_t *p, const hta_camera *cam, const hta_scene *s)
 
 bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                   hta_gfx_mesh *mesh, hta_gfx_mesh *sky, hta_gfx_mesh *fx,
+                  const hta_gfx_dynamic *dyn,
                   const hta_gfx_viewmodel *vm, const hta_gfx_overlay *hud)
 {
     if (!g || !g->ready || !cam || !scene) return false;
@@ -1110,6 +1111,18 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
             VkDeviceSize n = (VkDeviceSize)vm->vertex_count * sizeof(hta_vertex);
             if (n > viewmodel->vslot_bytes) n = viewmodel->vslot_bytes;
             memcpy((uint8_t *)viewmodel->vmapped + vm_voffset, vm->vertices, (size_t)n);
+        }
+    }
+
+    hta_gfx_mesh *dynmesh = dyn ? dyn->mesh : NULL;
+    VkDeviceSize dyn_voffset = 0;
+    if (dynmesh && dynmesh->vslots) {
+        uint32_t dslot = slot % dynmesh->vslots;
+        dyn_voffset = dynmesh->vslot_bytes * dslot;
+        if (dyn->vertices && dyn->vertex_count) {
+            VkDeviceSize n = (VkDeviceSize)dyn->vertex_count * sizeof(hta_vertex);
+            if (n > dynmesh->vslot_bytes) n = dynmesh->vslot_bytes;
+            memcpy((uint8_t *)dynmesh->vmapped + dyn_voffset, dyn->vertices, (size_t)n);
         }
     }
 
@@ -1258,6 +1271,17 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
             }
         }
 
+        /* Back to the world camera. The viewmodel pass above pushes a
+         * VIEW-space matrix, and everything after it that lives in the world
+         * has to put the world one back or it rides the camera. */
+        if ((fx && fx->index_count) || (dynmesh && dynmesh->index_count)) {
+            memset(push, 0, sizeof(push));
+            fill_push(push, cam, scene);
+            vkCmdPushConstants(cb, g->layout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, PUSH_SIZE, push);
+        }
+
         if (fx && fx->index_count) {
             vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline);
             vkCmdBindVertexBuffers(cb, 0, 1, &fx->vbuf, &zero);
@@ -1270,6 +1294,29 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                                  fx->submeshes[i].first_index, 0, 0);
             }
         }
+        /* Projectiles in flight: world space, vertices rewritten this frame. */
+        if (dynmesh && dynmesh->index_count) {
+            const uint8_t dyn_passes[3] = { HTA_DRAW_OPAQUE, HTA_DRAW_ALPHA, HTA_DRAW_ADD };
+            VkPipeline dyn_pipes[3] = { g->pipeline, g->pipeline_alpha, g->pipeline_add };
+            vkCmdBindVertexBuffers(cb, 0, 1, &dynmesh->vbuf, &dyn_voffset);
+            vkCmdBindIndexBuffer(cb, dynmesh->ibuf, 0, VK_INDEX_TYPE_UINT32);
+            for (int pz = 0; pz < 3; pz++) {
+                int bound = 0;
+                for (uint32_t i = 0; i < dynmesh->submesh_count; i++) {
+                    if (!dynmesh->submeshes[i].index_count) continue;
+                    if (dynmesh->submeshes[i].draw_mode != dyn_passes[pz]) continue;
+                    if (!bound) {
+                        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, dyn_pipes[pz]);
+                        bound = 1;
+                    }
+                    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
+                                            0, 1, &dynmesh->submeshes[i].set, 0, NULL);
+                    vkCmdDrawIndexed(cb, dynmesh->submeshes[i].index_count, 1,
+                                     dynmesh->submeshes[i].first_index, 0, 0);
+                }
+            }
+        }
+
         /* The HUD goes on last: no depth, its own tint per element. */
         if (hudmesh && hudmesh->index_count && g->pipeline_hud) {
             vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline_hud);

@@ -117,6 +117,13 @@ int hta_gun_fire(hta_gun *g, const hta_collision *col, const hta_camera *cam)
     if (!hta_collision_ray_material(col, cam->pos, dir, HTA_GUN_RANGE, &t, hit, nrm,
                                     &g->hit_material))
         return 1; /* shot fired, missed */
+    hta_gun_add_mark(g, hit, nrm);
+    return 1;
+}
+
+void hta_gun_add_mark(hta_gun *g, const float hit[3], const float nrm[3])
+{
+    if (!g || !hit || !nrm) return;
     uint32_t i = g->next % HTA_GUN_MAX_HITS;
     g->hits[i].pos[0] = hit[0] + nrm[0] * 0.02f;
     g->hits[i].pos[1] = hit[1] + nrm[1] * 0.02f;
@@ -127,6 +134,18 @@ int hta_gun_fire(hta_gun *g, const hta_collision *col, const hta_camera *cam)
     g->next++;
     if (g->n < HTA_GUN_MAX_HITS) g->n++;
     g->dirty = 1;
+}
+
+int hta_gun_launch(hta_gun *g, const hta_camera *cam, float out_dir[3])
+{
+    if (!g || !cam || !out_dir) return 0;
+    if (!hta_gun_ready(g)) return 0;
+    g->cooldown = (g->fire_interval > 0.02f) ? g->fire_interval : HTA_GUN_COOLDOWN;
+    float aim[3];
+    hta_camera_forward(cam, aim);
+    hta_gun_shot_dir(g, aim, out_dir);
+    g->since_shot = 0.0f;
+    g->hit_material = HTA_MATERIAL_NONE;
     return 1;
 }
 

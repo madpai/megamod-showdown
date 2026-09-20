@@ -114,6 +114,16 @@ int32_t hta_anim_find(const hta_anim_graph *g, const char *needle);
 /* Exact node-name match; -1 if absent. */
 int32_t hta_anim_node_index(const hta_anim_graph *g, const char *name);
 
+/* Does this animation keyframe that node?
+ *
+ * Halo stores one bit per node per channel, and an OVERLAY animation only
+ * writes the handful of nodes it moves -- the needler's `first-person
+ * ammunition` keyframes its sixteen needle bones and nothing else. Every
+ * other node in a sampled overlay carries the animation's own default, not
+ * the pose you want to keep, so a caller composing an overlay onto a base
+ * clip must take only the nodes this returns true for. */
+bool hta_anim_animates(const hta_anim_graph *g, uint32_t anim, uint32_t node);
+
 /* Parent-relative pose of every node at `frame` (fractional frames are
  * interpolated). `out` needs g->node_count entries. Refuses compressed
  * animations -- the Trial's FP graphs have none. */

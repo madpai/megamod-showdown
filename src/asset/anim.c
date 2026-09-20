@@ -323,6 +323,17 @@ static bool sample_frame(const hta_anim_graph *g, const hta_animation *a,
     return true;
 }
 
+bool hta_anim_animates(const hta_anim_graph *g, uint32_t anim, uint32_t node)
+{
+    if (!g || anim >= g->anim_count || node >= g->node_count) return false;
+    const hta_animation *a = &g->anims[anim];
+    if (node >= a->node_count) return false;
+    uint32_t w = node / 32u, b = node % 32u;
+    return ((a->rot_flags[w] >> b) & 1u) ||
+           ((a->trans_flags[w] >> b) & 1u) ||
+           ((a->scale_flags[w] >> b) & 1u);
+}
+
 bool hta_anim_sample(const hta_anim_graph *g, uint32_t anim, float frame,
                      hta_transform *out)
 {

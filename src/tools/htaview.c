@@ -6,7 +6,7 @@
  *
  *   htaview <cache.map> [--out prefix] [--width N] [--height N] [--shots N]
  *                       [--fp [clip]] [--eye X Y Z] [--yaw DEG] [--pitch DEG]
- *                       [--flash] [--ammo N]
+ *                       [--flash] [--ammo N] [--fly SECONDS]
  *
  * --fp stands at a player spawn with the animated first-person viewmodel up,
  * stepping one animation frame per shot. That is the visual check for the
@@ -23,6 +23,7 @@
 #include "asset/weapon.h"
 #include "engine/camera.h"
 #include "engine/viewmodel.h"
+#include "engine/projectile.h"
 #include "engine/hud.h"
 #include "asset/biped.h"
 #include "gfx/gfx.h"
@@ -86,6 +87,7 @@ int main(int argc, char **argv)
     const char *fp_clip = "idle";
     int fp_mode = 0;
     int have_eye = 0, want_flash = 0, ammo = -1;
+    float fly = -1.0f;
     const char *want_weapon = NULL;
     int zoom_level = 0;
     float shield = 1.0f, health = 1.0f;
@@ -111,6 +113,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--weapon") && i + 1 < argc) want_weapon = argv[++i];
         else if (!strcmp(argv[i], "--zoom") && i + 1 < argc) zoom_level = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--ammo") && i + 1 < argc) ammo = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--fly") && i + 1 < argc) fly = strtof(argv[++i], NULL);
         else if (!strcmp(argv[i], "--shield") && i + 1 < argc) shield = strtof(argv[++i], NULL);
         else if (!strcmp(argv[i], "--health") && i + 1 < argc) health = strtof(argv[++i], NULL);
         else if (!strcmp(argv[i], "--fp")) {
@@ -198,6 +201,10 @@ int main(int argc, char **argv)
            t_upload * 1000.0, hta_gfx_device_memory_used(g) / (1024.0*1024.0));
 
     hta_viewmodel vm;
+    hta_projectiles proj;
+    hta_gfx_dynamic gproj;
+    memset(&proj, 0, sizeof(proj));
+    memset(&gproj, 0, sizeof(gproj));
     hta_weapon_def wdef;
     hta_gfx_mesh *gvm = NULL;
     int32_t fp_anim = -1;
@@ -231,6 +238,22 @@ int main(int argc, char **argv)
                    fp_clip, fp_anim >= 0 ? vm.graph.anims[fp_anim].name : "NOT FOUND");
             gvm = hta_gfx_mesh_upload_dynamic(g, &vm.mesh, err, sizeof(err));
             if (!gvm) printf("viewmodel      upload failed: %s\n", err);
+
+            /* --fly launches one of the weapon's projectiles straight ahead
+             * and advances it that many seconds before the shot, so a rocket
+             * in flight can be looked at without a device. */
+            if (hta_projectiles_equip(&proj, &c, rm.data ? &rm : NULL, &wdef,
+                                      err, sizeof(err))) {
+                printf("projectile     %u verts each, %.1f -> %.1f wu/s, range %.0f\n",
+                       proj.verts_each, proj.speed_initial, proj.speed_final,
+                       proj.range);
+                gproj.mesh = hta_gfx_mesh_upload_dynamic(g, &proj.mesh, err, sizeof(err));
+                gproj.vertices = proj.mesh.vertices;
+                gproj.vertex_count = proj.mesh.vertex_count;
+                if (!gproj.mesh) printf("projectile     upload failed: %s\n", err);
+            } else {
+                printf("projectile     none to draw for this weapon\n");
+            }
         }
     }
 
@@ -339,7 +362,25 @@ int main(int argc, char **argv)
             cam.pitch = have_eye ? eye_pitch : 0.0f;
             /* --flash lights the muzzle flash for the shot, so it can be
              * looked at without a device. */
-            if (ammo >= 0 && vm.loaded) hta_viewmodel_set_counter(&vm, (uint32_t)ammo);
+            if (ammo >= 0 && vm.loaded) {
+                hta_viewmodel_set_counter(&vm, (uint32_t)ammo);
+                /* And the needler's needles, which fold away as it empties. */
+                int mag = wdef.rounds_loaded_max > 0 ? wdef.rounds_loaded_max : 60;
+                hta_viewmodel_set_ammo(&vm, (float)ammo / (float)mag);
+            }
+            if (fly >= 0.0f && proj.loaded) {
+                float fwd[3];
+                hta_camera_forward(&cam, fwd);
+                float muzzle[3];
+                for (int k = 0; k < 3; k++) muzzle[k] = cam.pos[k] + fwd[k] * 0.3f;
+                hta_projectiles_fire(&proj, muzzle, fwd);
+                /* Step it at 60 Hz so the collision sees every metre. */
+                for (float el = 0.0f; el < fly; el += 1.0f / 60.0f)
+                    hta_projectiles_update(&proj, NULL, 1.0f / 60.0f);
+                printf("projectile     %u in flight after %.2f s at %.1f %.1f %.1f\n",
+                       hta_projectiles_count(&proj), fly,
+                       proj.live[0].pos[0], proj.live[0].pos[1], proj.live[0].pos[2]);
+            }
             if (want_flash && vm.loaded) {
                 hta_viewmodel_flash(&vm);
                 vm.flash_timer = vm.flash_life;
@@ -378,7 +419,8 @@ int main(int argc, char **argv)
         }
 
         double r0 = hta_time_seconds();
-        bool ok = hta_gfx_draw(g, &cam, &scene, gm, gs, NULL, gvm ? &vmdraw : NULL,
+        bool ok = hta_gfx_draw(g, &cam, &scene, gm, gs, NULL, gproj.mesh ? &gproj : NULL,
+                               gvm ? &vmdraw : NULL,
                                ghud ? &huddraw : NULL);
         double r1 = hta_time_seconds();
         if (!ok) { fprintf(stderr, "draw failed on shot %u\n", s); break; }
@@ -402,6 +444,8 @@ int main(int argc, char **argv)
     }
 
     free(pixels);
+    if (gproj.mesh) hta_gfx_mesh_free(g, gproj.mesh);
+    hta_projectiles_free(&proj);
     if (gvm) hta_gfx_mesh_free(g, gvm);
     hta_viewmodel_free(&vm);
     if (gs) hta_gfx_mesh_free(g, gs);

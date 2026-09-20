@@ -364,6 +364,72 @@ frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
 Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
 need weapon state we do not track yet.
 
+## Needles that deplete, and rockets you can watch fly (2026-09-20)
+
+The last two of the owner's six.
+
+### The needler wears its magazine
+
+Its first-person model has `frame needle01`..`needle16`, and the weapon's
+animation graph has a clip nothing was playing: **`first-person
+ammunition`**, 21 frames for a 20-round magazine, type 1 (OVERLAY). Frame 0
+is full, frame 20 empty. It is the only Trial weapon with one -- every other
+weapon has `first-person overlays` and nothing else.
+
+Overlays compose, they do not replace. A sampled animation fills EVERY node,
+using the animation's own defaults for the ones it does not keyframe, so
+taking all of them would flatten the arms. `hta_anim_animates(g, anim,
+node)` reads Halo's per-node keyframe bitmask, and the viewmodel takes only
+those: sixteen needle bones, and `frame r pinky tip`, which is flagged but
+never moves. 745 of the needler's 3861 vertices move between full and empty,
+by up to 17.7 cm.
+
+The overlay is composed in `hta_viewmodel_update` after the base clip, so
+the needles stay retracted through firing, reloading and the melee swing.
+
+### Projectiles
+
+`hta_projectiles` in `src/engine/projectile.c`. Halo fires everything as a
+projectile, bullets included, but only two carried weapons give theirs a
+MODEL: the rocket launcher (117 verts) and the needler (10). The rest are
+particles and stay hitscan -- a bullet at 324 wu/s crosses Blood Gulch in
+under a third of a second.
+
+**The units are per TICK.** `initial velocity` (proj+484) and `final
+velocity` (+488) are world units per tick at 30 ticks a second; `maximum
+range` (+456) is world units and `timer` (+444) is seconds. So the rocket's
+0.4 is **12 wu/s** (about 36 m/s, which is why you can dodge one) and the
+sniper's 33.3 is 1000 wu/s. Reading them as per-second gives a rocket you
+can walk past, and is the mistake to avoid. Projectile reconciles at 588.
+
+Geometry: ONE mesh holding `HTA_PROJ_MAX` copies of the model, built on
+equip and re-posed on the CPU each frame -- the muzzle flash's trick. An
+idle copy is collapsed to a point rather than removed, so the index buffer
+never changes. **The mesh's `textures` table must be allocated before
+anything is appended into it**, or every submesh comes out with
+`albedo_tex == ~0u` and the renderer silently draws nothing. That cost an
+hour; `hta_viewmodel_load` does the same `calloc(256, ...)` for the same
+reason.
+
+A weapon with a drawable round no longer hitscans: `hta_gun_launch` spends
+the cooldown and hands back the shot direction, the projectile does its own
+collision on the way, and its detonation calls `hta_gun_add_mark` and plays
+the material's impact -- the same scorch and the same sound a bullet leaves.
+
+### A renderer slot, and a push-constant bug it uncovered
+
+`hta_gfx_draw` gained `const hta_gfx_dynamic *dyn`: world-space geometry
+whose vertices change every frame, the same arrangement as
+`hta_gfx_viewmodel` but drawn with the world camera.
+
+Adding it exposed an existing bug. The draw order is world, viewmodel, fx,
+HUD -- and the **viewmodel pass pushes a VIEW-space matrix while the fx pass
+never pushed anything of its own**. Scorch marks were therefore drawn with
+the viewmodel's matrices whenever a viewmodel was present, which is to say
+always on device. The world constants are pushed back before both fx and the
+dynamic pass now. Anything added after the viewmodel that lives in the world
+must do the same.
+
 ## Zoom, the shotgun's flash, and the gun with two sets of arms (2026-09-19)
 
 Owner's second pass on the roster. Four of the six were real bugs.
@@ -984,6 +1050,10 @@ after building, wherever real tag physics are available.
 | Android glue | `src/platform/platform_android.c` |
 | Animation + skinning tests | `tests/test_anim.c` (needs `HTA_MAP`) |
 | Roster: clips, zoom, flashes, sounds | `tests/test_weapons.c` (needs `HTA_MAP`) |
+| Projectiles in flight | `src/engine/projectile.c`, `.h` |
+| Projectile tests | `tests/test_projectile.c` |
+| Overlay clips / keyframe mask | `src/asset/anim.c` `hta_anim_animates` |
+| Rocket preview | `htaview --weapon "rocket launcher" --fly 0.05` |
 | Model node lookup | `src/asset/model.c` `hta_model_has_node` |
 | Scope magnification | `src/engine/player.c` `hta_player_set_zoom` |
 | Object attachments / looping sounds | `src/asset/effect.c` `hta_object_loop_sound` |

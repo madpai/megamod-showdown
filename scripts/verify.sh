@@ -24,6 +24,7 @@ if ./build-host/test_bitmap >/dev/null 2>&1; then ok "bitmap decode tests"; else
 if ./build-host/test_sound  >/dev/null 2>&1; then ok "Xbox ADPCM decoder tests"; else bad "Xbox ADPCM decoder tests"; fi
 if ./build-host/test_audio  >/dev/null 2>&1; then ok "voice mixer tests"; else bad "voice mixer tests"; fi
 if ./build-host/test_ammo   >/dev/null 2>&1; then ok "magazine/reload tests"; else bad "magazine/reload tests"; fi
+if ./build-host/test_projectile >/dev/null 2>&1; then ok "projectile tests"; else bad "projectile tests"; fi
 if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_biped "$HTA_MAP" >/dev/null 2>&1; then ok "biped/globals physics from Trial map"; else bad "biped/globals physics from Trial map"; fi
   if ./build-host/test_anim "$HTA_MAP" >/dev/null 2>&1; then ok "FP animation graph + skinned viewmodel"; else bad "FP animation graph + skinned viewmodel"; fi
@@ -31,6 +32,7 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_ammo "$HTA_MAP" >/dev/null 2>&1; then ok "magazine values from the Trial weapon tag"; else bad "magazine values from the Trial weapon tag"; fi
   if ./build-host/test_hud "$HTA_MAP" >/dev/null 2>&1; then ok "crosshair from the weapon HUD tag"; else bad "crosshair from the weapon HUD tag"; fi
   if ./build-host/test_weapons "$HTA_MAP" >/dev/null 2>&1; then ok "roster animations + zoom from the weapon tags"; else bad "roster animations + zoom from the weapon tags"; fi
+  if ./build-host/test_projectile "$HTA_MAP" >/dev/null 2>&1; then ok "projectiles from the projectile tags"; else bad "projectiles from the projectile tags"; fi
 fi
 
 # Optional: validate against the user's own Trial data if HTA_MAP points at it.

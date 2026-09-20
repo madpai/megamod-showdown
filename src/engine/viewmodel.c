@@ -229,6 +229,7 @@ bool hta_viewmodel_load(hta_viewmodel *vm, const hta_cache *c,
     if (!vm || !c || !weap) return false;
     memset(vm, 0, sizeof(*vm));
     for (int i = 0; i < HTA_VM_STATE_COUNT; i++) vm->clip[i] = -1;
+    vm->clip_ammo = -1;
 
     if (!weap->fp_anim_id || !weap->fp_model_id) {
         if (err) snprintf(err, errlen, "weapon has no first-person model/animations");
@@ -271,6 +272,10 @@ bool hta_viewmodel_load(hta_viewmodel *vm, const hta_cache *c,
 
     /* The muzzle flash: four more vertices and one more submesh on the same
      * mesh. Everything about it comes from the weapon's own firing effect. */
+    /* Only the needler has one, and it is not one of the states: it is
+     * composed on top of them. */
+    vm->clip_ammo = hta_anim_find(&vm->graph, "ammunition");
+
     setup_flash(vm, c, bitmaps, weap);
     setup_counter(vm, c, bitmaps, weap);
 
@@ -304,6 +309,17 @@ void hta_viewmodel_free(hta_viewmodel *vm)
 {
     if (!vm) return;
     free_partial(vm);
+}
+
+void hta_viewmodel_set_ammo(hta_viewmodel *vm, float fraction)
+{
+    if (!vm || vm->clip_ammo < 0) return;
+    if (fraction < 0.0f) fraction = 0.0f;
+    if (fraction > 1.0f) fraction = 1.0f;
+    const hta_animation *a = &vm->graph.anims[vm->clip_ammo];
+    float last = (float)(a->frame_count > 0 ? a->frame_count - 1 : 0);
+    /* Frame 0 is a full magazine, the last frame an empty one. */
+    vm->ammo_frame = (1.0f - fraction) * last;
 }
 
 void hta_viewmodel_set_counter(hta_viewmodel *vm, uint32_t value)
@@ -478,6 +494,22 @@ void hta_viewmodel_update(hta_viewmodel *vm, float dt)
 
     hta_transform local[HTA_ANIM_MAX_NODES], world[HTA_ANIM_MAX_NODES];
     if (!hta_anim_sample(&vm->graph, (uint32_t)ci, vm->frame, local)) return;
+
+    /* The needler's needles are posed by an overlay clip rather than by
+     * whatever the gun is doing, so they stay retracted through firing,
+     * reloading and the melee swing. Only the nodes the overlay actually
+     * keyframes are taken -- the rest of a sampled overlay is its own
+     * default pose, which would flatten the arms. */
+    if (vm->clip_ammo >= 0) {
+        hta_transform over[HTA_ANIM_MAX_NODES];
+        if (hta_anim_sample(&vm->graph, (uint32_t)vm->clip_ammo,
+                            vm->ammo_frame, over)) {
+            for (uint32_t i = 0; i < vm->graph.node_count; i++)
+                if (hta_anim_animates(&vm->graph, (uint32_t)vm->clip_ammo, i))
+                    local[i] = over[i];
+        }
+    }
+
     hta_anim_world(&vm->graph, local, world);
     hta_viewmodel_pose(vm, world);
 }

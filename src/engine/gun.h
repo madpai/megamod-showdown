@@ -59,6 +59,16 @@ void hta_gun_free(hta_gun *g);
 int  hta_gun_ready(const hta_gun *g);
 /* Returns 1 if a shot fired (and possibly hit). */
 int  hta_gun_fire(hta_gun *g, const hta_collision *col, const hta_camera *cam);
+/* Spend the cooldown and hand back the direction this round would take,
+ * WITHOUT tracing it. For a weapon whose round is an object you can watch
+ * fly: the projectile does its own collision, and reports back through
+ * hta_gun_add_mark when it goes off. Returns 0 if the gun was not ready. */
+int  hta_gun_launch(hta_gun *g, const hta_camera *cam, float out_dir[3]);
+
+/* Record an impact mark anywhere. hta_gun_fire does this for a hitscan
+ * round; a projectile's detonation goes through here. */
+void hta_gun_add_mark(hta_gun *g, const float hit[3], const float nrm[3]);
+
 void hta_gun_update(hta_gun *g, float dt);
 /* Rebuilds g->mesh from impact marks. Call when dirty before GPU upload. */
 void hta_gun_build_mesh(hta_gun *g);
