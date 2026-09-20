@@ -1252,6 +1252,11 @@ void android_main(struct android_app *app)
         /* Ammo gates the shot: hta_gun_fire spends the cooldown whether or
          * not the magazine could pay, so ask before pulling. */
         hta_ammo_update(&state.ammo, dt);
+        /* A shell-at-a-time reload chains on its own, and every shell after
+         * the first was being loaded silently with no animation -- which is
+         * most of a shotgun reload from empty. Each one replays the clip. */
+        if (state.ammo.reload_began && state.vm.loaded)
+            hta_viewmodel_play(&state.vm, HTA_VM_RELOAD);
         if (state.dry_cooldown > 0.0f) state.dry_cooldown -= dt;
 
         /* Swapping rebuilds the viewmodel and the HUD, so do it before
@@ -1326,6 +1331,10 @@ void android_main(struct android_app *app)
         if (state.ammo.mag_max > 0) {
             float full = (float)state.ammo.loaded / (float)state.ammo.mag_max;
             hta_hud_set_ammo(&state.hud, full);
+            /* Halo's HUD counter is the TOTAL carried: the magazine plus
+             * the reserve. The pips are the magazine, the gun's own readout
+             * is the magazine. */
+            hta_hud_set_number(&state.hud, state.ammo.loaded + state.ammo.reserve);
             /* And the needler wears its magazine: its needles fold away as
              * it empties and spring back on the reload. */
             hta_viewmodel_set_ammo(&state.vm, full);

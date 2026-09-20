@@ -210,16 +210,16 @@ int main(int argc, char **argv)
                     CHECK(a->frame_count == 21, "21 frames");
 
                     hta_viewmodel_set_ammo(&vm, 1.0f);
-                    CHECK(vm.ammo_frame == 0.0f, "a full magazine is frame 0");
+                    CHECK(vm.ammo_frame == 20.0f, "a full magazine is the LAST frame");
                     hta_viewmodel_set_ammo(&vm, 0.0f);
-                    CHECK(vm.ammo_frame == 20.0f, "an empty one is the last frame");
+                    CHECK(vm.ammo_frame == 0.0f, "an empty one is frame 0");
                     hta_viewmodel_set_ammo(&vm, 0.5f);
                     CHECK(vm.ammo_frame == 10.0f, "and half is halfway");
                     /* Out of range must not walk off the clip. */
                     hta_viewmodel_set_ammo(&vm, 2.0f);
-                    CHECK(vm.ammo_frame == 0.0f, "over-full clamps");
+                    CHECK(vm.ammo_frame == 20.0f, "over-full clamps");
                     hta_viewmodel_set_ammo(&vm, -1.0f);
-                    CHECK(vm.ammo_frame == 20.0f, "and negative clamps");
+                    CHECK(vm.ammo_frame == 0.0f, "and negative clamps");
 
                     /* The needles must actually move, and the arms must not:
                      * an overlay's unkeyframed nodes hold its own default
@@ -238,36 +238,40 @@ int main(int argc, char **argv)
                     CHECK(needles == 16, "sixteen needles");
                     CHECK(arms == 0, "and no arm bones, which it must not move");
 
-                    /* THE invariant. An overlay is a delta from its own
-                     * first frame, so at a full magazine it must change
-                     * nothing at all. Substituting the overlay's absolute
-                     * values instead made the needles vanish when full and
-                     * reappear as a clump as the gun emptied. */
+                    /* The clip POSES the needle bones; it does not offset
+                     * them, and the FULL end is its last frame, not its
+                     * first. Both are easy to get backwards -- at the full
+                     * end every needle bone shares one transform, which
+                     * reads as "collapsed" until you remember each needle
+                     * is skinned against its own bind pose.
+                     *
+                     * So the check is on the posed geometry, and it is
+                     * monotonic: needles leave the rack as it empties. */
                     {
-                        hta_transform a[HTA_ANIM_MAX_NODES], b[HTA_ANIM_MAX_NODES];
-                        int32_t idle = vm.clip[HTA_VM_IDLE];
-                        CHECK(idle >= 0, "the needler has an idle to overlay onto");
-                        hta_anim_sample(&vm.graph, (uint32_t)idle, 0.0f, a);
-                        memcpy(b, a, sizeof(hta_transform) * vm.graph.node_count);
-                        hta_viewmodel_set_ammo(&vm, 1.0f);
-                        hta_viewmodel_apply_ammo(&vm, b);
-                        float drift = 0.0f;
-                        for (uint32_t k = 0; k < vm.graph.node_count; k++)
-                            for (int q = 0; q < 3; q++)
-                                drift += fabsf(a[k].t[q] - b[k].t[q]);
-                        printf("    full-magazine overlay drift %.6f\n", drift);
-                        CHECK(drift < 1e-4f,
-                              "a full magazine leaves the base pose untouched");
-
-                        /* And an empty one must not. */
-                        memcpy(b, a, sizeof(hta_transform) * vm.graph.node_count);
-                        hta_viewmodel_set_ammo(&vm, 0.0f);
-                        hta_viewmodel_apply_ammo(&vm, b);
-                        drift = 0.0f;
-                        for (uint32_t k = 0; k < vm.graph.node_count; k++)
-                            for (int q = 0; q < 3; q++)
-                                drift += fabsf(a[k].t[q] - b[k].t[q]);
-                        CHECK(drift > 1e-3f, "and an empty one moves the needles");
+                        /* Measured on the idle, which is how it is held. */
+                        hta_viewmodel_play(&vm, HTA_VM_IDLE);
+                        uint32_t nv = vm.hands_verts + vm.gun_verts;
+                        int prev = -1, falls = 0, steps = 0;
+                        int at_full = 0, at_empty = 0;
+                        for (int r = 20; r >= 0; r -= 2) {
+                            hta_viewmodel_set_ammo(&vm, (float)r / 20.0f);
+                            hta_viewmodel_update(&vm, 0.0f);
+                            int up = 0;
+                            for (uint32_t v = vm.hands_verts; v < nv; v++)
+                                if (vm.posed[v].pos[2] > -0.02f) up++;
+                            if (r == 20) at_full = up;
+                            if (r == 0)  at_empty = up;
+                            if (prev >= 0) { steps++; if (up <= prev) falls++; }
+                            prev = up;
+                        }
+                        printf("    needles showing: %d full -> %d empty\n",
+                               at_full, at_empty);
+                        CHECK(at_full > at_empty,
+                              "a full magazine shows more needles than an empty one");
+                        CHECK(at_full - at_empty > 100,
+                              "and by enough to see");
+                        CHECK(falls == steps,
+                              "and they only ever leave, never come back");
                     }
 
                     /* And the pose really differs between full and empty. */

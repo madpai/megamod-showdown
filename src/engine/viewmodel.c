@@ -326,28 +326,24 @@ void hta_viewmodel_free(hta_viewmodel *vm)
 void hta_viewmodel_apply_ammo(const hta_viewmodel *vm, hta_transform *local)
 {
     if (!vm || !local || vm->clip_ammo < 0) return;
-    hta_transform over[HTA_ANIM_MAX_NODES], rest[HTA_ANIM_MAX_NODES];
+    hta_transform over[HTA_ANIM_MAX_NODES];
     if (!hta_anim_sample(&vm->graph, (uint32_t)vm->clip_ammo, vm->ammo_frame, over))
         return;
-    if (!hta_anim_sample(&vm->graph, (uint32_t)vm->clip_ammo, 0.0f, rest))
-        return;
 
-    /* An overlay is a DELTA, not a pose. Substituting its absolute values
-     * throws the base clip away: the needler's needles vanished at a full
-     * magazine and reappeared as a single clump as it emptied, because the
-     * overlay's own frame 0 is nowhere near where the idle holds them.
+    /* The clip POSES the needle bones outright; it does not offset them.
      *
-     * The delta is what the clip has moved since its own first frame, so at
-     * frame 0 this is exactly the identity and the base pose survives
-     * untouched. That is the property to check if this ever looks wrong. */
-    for (uint32_t i = 0; i < vm->graph.node_count; i++) {
-        if (!hta_anim_animates(&vm->graph, (uint32_t)vm->clip_ammo, i)) continue;
-        hta_transform inv, delta, posed;
-        hta_xf_inverse(&inv, &rest[i]);
-        hta_xf_mul(&delta, &over[i], &inv);
-        hta_xf_mul(&posed, &delta, &local[i]);
-        local[i] = posed;
-    }
+     * Reading it as an additive delta looks principled and is wrong: it
+     * throws the needles out into a splayed mess at an empty magazine,
+     * because the ammunition clip and the idle hold those bones in quite
+     * different places. Compare the posed bounding box, not the node
+     * translations, if this is ever in doubt.
+     *
+     * Only the nodes the clip actually keyframes are taken. The rest of a
+     * sampled overlay is its own default pose, which would flatten the
+     * arms. */
+    for (uint32_t i = 0; i < vm->graph.node_count; i++)
+        if (hta_anim_animates(&vm->graph, (uint32_t)vm->clip_ammo, i))
+            local[i] = over[i];
 }
 
 void hta_viewmodel_set_ammo(hta_viewmodel *vm, float fraction)
@@ -357,8 +353,17 @@ void hta_viewmodel_set_ammo(hta_viewmodel *vm, float fraction)
     if (fraction > 1.0f) fraction = 1.0f;
     const hta_animation *a = &vm->graph.anims[vm->clip_ammo];
     float last = (float)(a->frame_count > 0 ? a->frame_count - 1 : 0);
-    /* Frame 0 is a full magazine, the last frame an empty one. */
-    vm->ammo_frame = (1.0f - fraction) * last;
+    /* The LAST frame is a full magazine and frame 0 an empty one -- the
+     * opposite of the obvious reading, and the reason the needles ran
+     * backwards at first.
+     *
+     * What misleads: at the full end all sixteen needle bones share one
+     * transform, which looks like "collapsed to a point" until you
+     * remember each needle is skinned against its OWN bind pose. Identical
+     * node transforms therefore mean every needle sits at rest, i.e. the
+     * complete rack. It is the spent end that gives them separate,
+     * displaced transforms. */
+    vm->ammo_frame = fraction * last;
 }
 
 void hta_viewmodel_set_counter(hta_viewmodel *vm, uint32_t value)

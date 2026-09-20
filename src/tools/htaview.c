@@ -179,9 +179,13 @@ int main(int argc, char **argv)
             texbytes += (uint64_t)mesh.textures[i].width *
                         mesh.textures[i].height * 4u;
         }
+        uint32_t detailed = 0;
+        for (uint32_t i = 0; i < mesh.submesh_count; i++)
+            if (mesh.submeshes[i].detail_tex != ~0u) detailed++;
         printf("textures       %u unique decoded, %u..%u px, %.1f MiB RGBA\n",
                mesh.texture_count, mesh.texture_count ? small : 0, big,
                texbytes / (1024.0 * 1024.0));
+        printf("detail maps    %u of %u submeshes\n", detailed, mesh.submesh_count);
     }
     if (hta_scenario_add_objects(&mesh, &c, rm.data ? &rm : NULL, err, sizeof(err)))
         printf("objects        %s  (%u verts, %u submeshes)\n", err, mesh.vertex_count, mesh.submesh_count);
@@ -296,7 +300,13 @@ int main(int argc, char **argv)
         if (hud.elem_count) {
             hta_hud_set_shield(&hud, shield);
             hta_hud_set_health(&hud, health);
-            hta_hud_set_ammo(&hud, ammo >= 0 ? (float)ammo / 60.0f : 1.0f);
+            {
+                int mag = wdef.rounds_loaded_max > 0 ? wdef.rounds_loaded_max : 60;
+                hta_hud_set_ammo(&hud, ammo >= 0 ? (float)ammo / (float)mag : 1.0f);
+                /* Halo's HUD number is the TOTAL: what is loaded plus what
+                 * is in reserve. */
+                hta_hud_set_number(&hud, ammo >= 0 ? ammo : wdef.rounds_initial);
+            }
             hta_hud_set_zoom(&hud, zoom_level);
             hta_hud_layout(&hud, W, H);
             ghud = hta_gfx_mesh_upload_dynamic(g, &hud.mesh, herr, sizeof(herr));
@@ -306,6 +316,9 @@ int main(int argc, char **argv)
                 huddraw.vertex_count = hud.mesh.vertex_count;
                 huddraw.submeshes = hud.mesh.submeshes;
                 huddraw.submesh_count = hud.mesh.submesh_count;
+                printf("hud            %u number digit(s), font %s; ammo meter %d\n",
+                       hud.number_count, hud.digits.loaded ? "loaded" : "MISSING",
+                       hud.ammo_meter);
                 printf("hud            %u element(s); crosshair %s (%.0f px), unit hud %s\n",
                        hud.elem_count, hud.have_cross ? "yes" : "no",
                        hud.cross_px, hud.have_unit ? "yes" : "no");

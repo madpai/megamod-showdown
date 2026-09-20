@@ -18,6 +18,7 @@
 #include "../asset/bsp.h"
 #include "../asset/bitmap.h"
 #include "../asset/weapon.h"
+#include "../asset/font.h"
 
 #define HTA_HUD_CANVAS_W 640.0f
 #define HTA_HUD_CANVAS_H 480.0f
@@ -93,6 +94,17 @@ typedef struct {
     bool     have_ammo;
     int32_t  ammo_meter;                     /* element index, -1 if absent */
     float    ammo_min[3], ammo_max[3];
+
+    /* The rounds counter. Halo draws HUD numbers with the `hud_globals`
+     * fullscreen font, one glyph a digit -- there is no digit bitmap in
+     * the weapon's own tag, only where to put the number and how many
+     * digits it gets. */
+    hta_font_digits digits;
+    int32_t  number_elem[8];     /* most significant first */
+    uint32_t number_count;
+    float    number_cell;        /* canvas px per digit */
+    float    number_base[2];     /* the tag's anchor offset */
+    bool     number_leading_zeros;
 } hta_hud;
 
 /* Reads the weapon's `wphi`, decodes its reticle, and reserves geometry.
@@ -112,6 +124,10 @@ void hta_hud_set_shield(hta_hud *h, float fraction);
 void hta_hud_set_health(hta_hud *h, float fraction);
 /* Rounds in the magazine over its capacity. */
 void hta_hud_set_ammo(hta_hud *h, float fraction);
+
+/* The rounds the counter shows. Harmless on a weapon with no number
+ * element, and on a HUD whose font would not load. */
+void hta_hud_set_number(hta_hud *h, int value);
 
 /* Which zoom level the weapon is at, 0 for unzoomed. Shows that level's
  * scope furniture and hides every other level's. */

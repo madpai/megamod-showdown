@@ -80,6 +80,16 @@ typedef struct {
     uint32_t lightmap_index;  /* 0xFFFF = none */
     uint32_t albedo_tex;      /* index into hta_bsp_mesh.textures, ~0u = none */
     uint32_t lightmap_tex;
+    /* Halo layers a high-frequency detail map over the base map; it is what
+     * keeps ground from being one flat repeat of a low-resolution texture.
+     * ~0u and 0.0 mean the surface has none. */
+    uint32_t detail_tex;
+    float    detail_scale;    /* repeats across the base map's span */
+    /* Halo blends two detail maps by the base map's ALPHA: Blood Gulch's
+     * ground is sand at 100x where the alpha is high and grass at 60x
+     * where it is low, out of a single shader. */
+    uint32_t detail2_tex;
+    float    detail2_scale;
     uint8_t  draw_mode;       /* HTA_DRAW_* */
     /* HUD overlays only: the tag's own colour for this element. Halo's HUD
      * art is white with an alpha mask, so the colour lives here rather than

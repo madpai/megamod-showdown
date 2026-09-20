@@ -364,6 +364,113 @@ frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
 Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
 need weapon state we do not track yet.
 
+## Detail maps, HUD numbers, and the needler a third time (2026-09-20)
+
+### The world was flat because detail maps were never read
+
+The single biggest visual gap. `shader_environment` layers TWO detail maps
+over the base at high frequency, and we only ever sampled the base:
+
+```
+levels\test\bloodgulch\shaders\blood ground
+   primary detail    levels\b30\bitmaps\detail sand   scale 100
+   secondary detail  levels\a30\bitmaps\detail grass  scale  60
+```
+
+`ShaderEnvironment` reconciles at 836: primary scale 180, primary 184,
+secondary scale 200, secondary 204. 20 of Blood Gulch's 79 submeshes have
+them.
+
+Halo combines them as a **double-biased multiply** -- `base * detail * 2`,
+so mid-grey is a no-op -- and blends the two by the **base map's own
+alpha**. That is how one shader is sand in places and grass in others.
+
+Two things worth keeping:
+
+- The fallback texture for a surface with no detail map is the existing
+  mid-grey `tex_light`, which doubles to exactly 1.0. No branch, no second
+  pipeline.
+- **We upload no mipmaps.** A map tiling 100 times across a hillside
+  aliases into static at any distance. `mesh.frag` measures how fast the
+  detail UV moves per pixel (`dFdx`/`dFdy`) and eases back to neutral grey
+  as it goes sub-pixel. That is what a mip chain would do, and without it
+  the ground looks like television snow.
+
+This took the descriptor layout from 2 bindings to 4 and `PUSH_SIZE` from
+112 to 128 (the guaranteed Vulkan minimum), with the two detail scales
+pushed per submesh.
+
+### HUD numbers come from a FONT
+
+There is no digit bitmap anywhere in a weapon's HUD tag. `WeaponHUDInterfaceNumber`
+(160 bytes) says only where the number goes, how many digits it gets and
+what colour it is; the glyphs come from `hud_globals`' **fullscreen font**,
+which on the Trial is `ui\large_ui`.
+
+A `font` (156) is a character table (`FontCharacter` 20) plus one flat blob
+of 8-bit coverage. Each character carries its own size, origin and an offset
+into that blob -- no sheet, no packing. `src/asset/font.c` builds the ten
+digits into one small RGBA atlas, white with the coverage as alpha, which
+the HUD tints like any other element.
+
+Two traps, both cost time:
+
+- The blob is addressed by the **pointer at TagDataOffset+12**, not the
+  file offset at +8.
+- The number elements are on the weapon HUD's **child** (`ui\hud\master
+  rounds`), not on the weapon's own tag, and `hta_hud_load` has to load the
+  font BEFORE walking the weapon HUD or they are silently skipped.
+
+The counter shows the TOTAL carried -- magazine plus reserve -- which is
+what Halo's 240 and 036 are. The pips are the magazine and the gun's own
+readout is the magazine.
+
+### The needler, a third time: it POSES, and the full end is the LAST frame
+
+Two wrong readings in a row, so this is the record.
+
+The ammunition clip **replaces** the needle bones; it is not an additive
+delta. Composing a delta throws them into a splayed mess at an empty
+magazine. And **frame 0 is EMPTY, the last frame is FULL** -- the opposite
+of the obvious reading.
+
+What misleads is that at the full end all sixteen needle bones share ONE
+transform, which reads as "collapsed to a point" until you remember each
+needle is skinned against its own bind pose. Identical node transforms
+therefore mean every needle sits at rest, i.e. the complete rack; it is the
+SPENT end that gives them separate, displaced transforms.
+
+**Do not reason about this from node translations.** Measure the posed
+bounding box, or count vertices above the gun. The test sweeps the magazine
+and requires the count to fall monotonically.
+
+### Impact marks were drawn opaque
+
+A decal is a hole in a sheet of alpha. The fx pass bound the opaque pipeline
+unconditionally, so every bullet hole painted its transparent border onto
+the wall as a square. The pass honours each submesh's draw mode now, and
+the marks are `HTA_DRAW_ALPHA`.
+
+### The shotgun's reload had one animation for twelve shells
+
+`hta_ammo` chains the shells by itself, but only the first press replayed
+the clip -- every shell after it loaded silently. The platform replays on
+`reload_began`, which the chain sets per shell. The shotgun's
+`reload-empty` is 12 frames = 0.40 s, exactly its tagged per-shell time.
+
+(Its `enter` / `exit-full` / `exit-empty` clips are the rest of the
+choreography and are still unused.)
+
+### Still open
+
+- **The ammo pip grid tracks backwards**: more pips light as the magazine
+  empties. The meter reaches the element (`ammo_meter` is set and the art
+  responds), so it is the fill sense or the layer the meter is on, not the
+  plumbing.
+- **The flamethrower is one quad, not a jet**, and the rocket's explosion
+  has no particles or light. Both need a particle system.
+- No mipmaps anywhere; the detail fade is standing in for one.
+
 ## The scope, the needles again, explosions and real decals (2026-09-20)
 
 ### Overlays are DELTAS, and the needler proved it
@@ -1170,6 +1277,9 @@ after building, wherever real tag physics are available.
 | Sprite within a sequence | `src/asset/bitmap.c` `hta_bitmap_sprite_in` |
 | Detonation sound / decal | `src/asset/effect.c` `hta_effect_detonation` |
 | Impact-mark art | `src/engine/gun.c` `hta_gun_set_decal` |
+| Detail maps | `src/asset/bitmap.c` `hta_shader_detail_bitmap`, `shaders/mesh.frag` |
+| HUD font digits | `src/asset/font.c` |
+| Rounds counter | `src/engine/hud.c` `load_numbers` |
 | Object attachments / looping sounds | `src/asset/effect.c` `hta_object_loop_sound` |
 | Continuous voices | `src/engine/audio.c` `hta_audio_loop` |
 | Tag physics tests | `tests/test_biped.c` (needs `HTA_MAP`) |

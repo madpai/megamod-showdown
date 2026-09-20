@@ -1,6 +1,7 @@
 /* The screen HUD built from Halo's own weapon HUD interface tag.
  * Needs a real cache: pass bloodgulch.map; bitmaps.map is read beside it. */
 #include "engine/hud.h"
+#include "asset/font.h"
 #include "asset/cache.h"
 #include "asset/weapon.h"
 #include <stdio.h>
@@ -296,6 +297,81 @@ int main(int argc, char **argv)
         CHECK(varied, "different weapons get different reticles");
         printf("    %u with a crosshair, %u with an ammo display\n",
                with_cross, with_ammo);
+    }
+
+    printf("\n[the rounds counter]\n");
+    {
+        /* Halo draws HUD numbers with the hud_globals FONT -- there is no
+         * digit bitmap anywhere in the weapon's tag. And the number
+         * elements are on the weapon HUD's CHILD, not on the weapon's own
+         * tag, which is why they have to be looked for down the chain. */
+        uint32_t font = hta_hud_font(&c);
+        CHECK(font != 0, "hud_globals names a fullscreen font");
+        hta_font_digits dg;
+        memset(&dg, 0, sizeof(dg));
+        CHECK(hta_font_digits_load(&c, font, &dg, err, sizeof(err)),
+              "and its ten digits load");
+        if (dg.loaded) {
+            printf("  digit atlas %ux%u, ascent %d\n",
+                   dg.atlas_w, dg.atlas_h, dg.ascent);
+            int sane = 1;
+            for (int d = 0; d < 10; d++)
+                if (!dg.digit[d].w || !dg.digit[d].h ||
+                    dg.digit[d].u1 <= dg.digit[d].u0) sane = 0;
+            CHECK(sane, "every digit has pixels and a place in the atlas");
+            /* An all-zero alpha atlas would render nothing at all. */
+            uint32_t lit = 0;
+            for (size_t i = 3; i < (size_t)dg.atlas_w * dg.atlas_h * 4u; i += 4)
+                if (dg.rgba[i] > 128) lit++;
+            printf("  %u lit texels of %u\n", lit,
+                   (unsigned)(dg.atlas_w * dg.atlas_h));
+            CHECK(lit > 100, "and the glyphs actually have ink in them");
+        }
+        hta_font_digits_free(&dg);
+
+        uint32_t ids[32];
+        uint32_t n = hta_weapon_list_playable(&c, ids, 32);
+        int with_numbers = 0;
+        for (uint32_t i = 0; i < n; i++) {
+            hta_weapon_def wd;
+            if (!hta_weapon_load_id(&c, &bm, ids[i], &wd, NULL, err, sizeof(err)))
+                continue;
+            hta_hud wh;
+            memset(&wh, 0, sizeof(wh));
+            if (!hta_hud_load(&wh, &c, &bm, &wd, err, sizeof(err))) continue;
+            if (wh.number_count) {
+                with_numbers++;
+                if (!strstr(wd.path, "assault rifle")) { hta_hud_free(&wh); continue; }
+                CHECK(wh.number_count == 3, "the rifle's counter has three digits");
+
+                /* 240 and 036: the tag asks for leading zeros, which is how
+                 * the real HUD shows them. */
+                hta_hud_set_number(&wh, 240);
+                hta_hud_layout(&wh, 1920, 1080);
+                int shown = 0;
+                for (uint32_t k = 0; k < wh.number_count; k++)
+                    if (wh.elem[wh.number_elem[k]].w_px > 0.0f) shown++;
+                CHECK(shown == 3, "240 draws three digits");
+                hta_hud_set_number(&wh, 36);
+                shown = 0;
+                for (uint32_t k = 0; k < wh.number_count; k++)
+                    if (wh.elem[wh.number_elem[k]].w_px > 0.0f) shown++;
+                CHECK(shown == 3, "and 36 still draws three, zero-padded");
+
+                /* Digits must not overlap or drift apart. */
+                hta_hud_set_number(&wh, 888);
+                float x0 = wh.elem[wh.number_elem[0]].offset[0];
+                float x1 = wh.elem[wh.number_elem[1]].offset[0];
+                float x2 = wh.elem[wh.number_elem[2]].offset[0];
+                printf("  888 sits at x %.1f %.1f %.1f\n", x0, x1, x2);
+                CHECK(x1 > x0 && x2 > x1, "digits run left to right");
+                CHECK((x2 - x1) - (x1 - x0) < 0.01f &&
+                      (x1 - x0) - (x2 - x1) < 0.01f,
+                      "and evenly, for one repeated digit");
+            }
+            hta_hud_free(&wh);
+        }
+        CHECK(with_numbers > 0, "the roster has counters");
     }
 
     printf("\n[the sniper's scope]\n");

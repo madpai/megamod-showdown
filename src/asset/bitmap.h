@@ -35,6 +35,13 @@
 
 /* ShaderEnvironment.base_map TagDependency, after the 40-byte Shader header. */
 #define HTA_SENV_BASE_MAP  0x88u
+/* ShaderEnvironment reconciles at 836. The detail maps are what give Halo's
+ * ground its texture up close -- without them a grass shader is one flat
+ * repeat of a low-resolution base map. */
+#define HTA_SENV_PRIMARY_DETAIL_SCALE   180u
+#define HTA_SENV_PRIMARY_DETAIL         184u
+#define HTA_SENV_SECONDARY_DETAIL_SCALE 200u
+#define HTA_SENV_SECONDARY_DETAIL       204u
 
 typedef struct {
     const uint8_t *data;
@@ -68,6 +75,18 @@ bool hta_bitmap_decode(const hta_cache *c, const hta_resource_map *bitmaps,
 /* First bitmap tag referenced by a shader (senv base map, else first 'bitm'
  * TagDependency). Returns 0 if none. */
 uint32_t hta_shader_base_bitmap(const hta_cache *c, uint32_t shader_tag_id);
+
+/* An environment shader's primary detail map and how many times it repeats
+ * across the base map's span. 0 when the shader has none (or is not an
+ * `senv`), which is the case for every object shader. */
+uint32_t hta_shader_detail_bitmap(const hta_cache *c, uint32_t shader_tag_id,
+                                  float *out_scale);
+
+/* The second detail map. Halo blends the two by the BASE map's alpha, which
+ * is how Blood Gulch's ground is sand at 100x in some places and grass at
+ * 60x in others out of one shader. 0 when there is no second one. */
+uint32_t hta_shader_detail2_bitmap(const hta_cache *c, uint32_t shader_tag_id,
+                                   float *out_scale);
 
 /* Decode every unique albedo + lightmap referenced by the mesh. Fills
  * mesh->textures and per-submesh albedo_tex/lightmap_tex. Missing resource

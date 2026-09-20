@@ -309,6 +309,55 @@ bool hta_bitmap_decode(const hta_cache *c, const hta_resource_map *bitmaps,
     return hta_bitmap_decode_pixels(fmt, w, h, src, src_len, out, err, errlen);
 }
 
+uint32_t hta_shader_detail_bitmap(const hta_cache *c, uint32_t shader_tag_id,
+                                  float *out_scale)
+{
+    if (out_scale) *out_scale = 0.0f;
+    if (!c || !shader_tag_id || shader_tag_id == 0xFFFFFFFFu) return 0;
+    int32_t ti = hta_cache_find_tag_by_id(c, shader_tag_id);
+    if (ti < 0) return 0;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t)) return 0;
+    /* Only the environment shader; the object shaders layer differently. */
+    if (t.primary_class != HTA_TAG_SENV) return 0;
+    uint32_t off;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &off)) return 0;
+
+    uint32_t id = 0;
+    float scale = 0.0f;
+    if (!hta_rd_u32(c, off + HTA_SENV_PRIMARY_DETAIL + 0x0C, &id)) return 0;
+    if (!id || id == 0xFFFFFFFFu) return 0;
+    hta_rd_f32(c, off + HTA_SENV_PRIMARY_DETAIL_SCALE, &scale);
+    /* A zero scale means "once across the surface", which for a detail map
+     * is never what is wanted; Halo's own default is 1. */
+    if (!(scale > 0.0f)) scale = 1.0f;
+    if (out_scale) *out_scale = scale;
+    return id;
+}
+
+uint32_t hta_shader_detail2_bitmap(const hta_cache *c, uint32_t shader_tag_id,
+                                   float *out_scale)
+{
+    if (out_scale) *out_scale = 0.0f;
+    if (!c || !shader_tag_id || shader_tag_id == 0xFFFFFFFFu) return 0;
+    int32_t ti = hta_cache_find_tag_by_id(c, shader_tag_id);
+    if (ti < 0) return 0;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t)) return 0;
+    if (t.primary_class != HTA_TAG_SENV) return 0;
+    uint32_t off;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &off)) return 0;
+
+    uint32_t id = 0;
+    float scale = 0.0f;
+    if (!hta_rd_u32(c, off + HTA_SENV_SECONDARY_DETAIL + 0x0C, &id)) return 0;
+    if (!id || id == 0xFFFFFFFFu) return 0;
+    hta_rd_f32(c, off + HTA_SENV_SECONDARY_DETAIL_SCALE, &scale);
+    if (!(scale > 0.0f)) scale = 1.0f;
+    if (out_scale) *out_scale = scale;
+    return id;
+}
+
 uint32_t hta_shader_base_bitmap(const hta_cache *c, uint32_t shader_tag_id)
 {
     if (!c || !shader_tag_id || shader_tag_id == 0xFFFFFFFFu) return 0;
@@ -406,9 +455,25 @@ bool hta_bsp_load_textures(const hta_cache *c, const hta_resource_map *bitmaps,
         hta_submesh *sm = &mesh->submeshes[i];
         sm->albedo_tex = ~0u;
         sm->lightmap_tex = ~0u;
+        sm->detail_tex = ~0u;
+        sm->detail_scale = 0.0f;
+        sm->detail2_tex = ~0u;
+        sm->detail2_scale = 0.0f;
         sm->draw_mode = hta_shader_draw_mode(c, sm->shader_tag_id);
         uint32_t base = hta_shader_base_bitmap(c, sm->shader_tag_id);
         if (base) sm->albedo_tex = hta_mesh_intern_bitmap(mesh, c, bitmaps, base, 0);
+        float dscale = 0.0f;
+        uint32_t detail = hta_shader_detail_bitmap(c, sm->shader_tag_id, &dscale);
+        if (detail) {
+            uint32_t dt = hta_mesh_intern_bitmap(mesh, c, bitmaps, detail, 0);
+            if (dt != ~0u) { sm->detail_tex = dt; sm->detail_scale = dscale; }
+        }
+        float d2scale = 0.0f;
+        uint32_t detail2 = hta_shader_detail2_bitmap(c, sm->shader_tag_id, &d2scale);
+        if (detail2) {
+            uint32_t dt = hta_mesh_intern_bitmap(mesh, c, bitmaps, detail2, 0);
+            if (dt != ~0u) { sm->detail2_tex = dt; sm->detail2_scale = d2scale; }
+        }
         if (mesh->lightmaps_bitmap_id && sm->lightmap_index != 0xFFFFu)
             sm->lightmap_tex = hta_mesh_intern_bitmap(mesh, c, bitmaps,
                                           mesh->lightmaps_bitmap_id,

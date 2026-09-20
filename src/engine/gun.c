@@ -248,7 +248,10 @@ void hta_gun_build_mesh(hta_gun *g)
     g->mesh.submeshes[0].index_count = n * 6;
     g->mesh.submeshes[0].albedo_tex = 0;
     g->mesh.submeshes[0].lightmap_tex = ~0u;
-    g->mesh.submeshes[0].draw_mode = HTA_DRAW_OPAQUE;
+    /* A decal is a hole in a sheet of alpha, not a square of paint. Drawn
+     * opaque, the transparent part of the bitmap came out as a solid patch
+     * on the wall -- which is what "the bullet holes look strange" was. */
+    g->mesh.submeshes[0].draw_mode = HTA_DRAW_ALPHA;
     g->dirty = 0;
 }
 

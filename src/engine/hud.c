@@ -12,6 +12,13 @@
 #define XHAIR_BITMAP        36u   /* TagDependency; tag id at +12 */
 #define XHAIR_OVERLAYS      52u
 /* WeaponHUDInterfaceCrosshairOverlay (108) */
+#define WPHI_NUMBERS       120u   /* TagReflexive of WeaponHUDInterfaceNumber */
+#define WNUM_SIZE          160u
+#define WNUM_OFFSET         36u   /* Point2DInt */
+#define WNUM_COLOR          72u   /* ColorARGBInt */
+#define WNUM_MAX_DIGITS    104u   /* int8 */
+#define WNUM_FLAGS         105u   /* bit 0: show leading zeros */
+
 #define XOVER_SIZE         108u   /* WeaponHUDInterfaceCrosshairOverlay */
 #define XOVER_OFFSET         0u   /* Point2DInt: two int16 */
 #define XOVER_COLOR         36u   /* ColorARGBInt: blue, green, red, alpha */
@@ -66,6 +73,7 @@
 
 void hta_hud_free(hta_hud *h)
 {
+    if (h) hta_font_digits_free(&h->digits);
     if (!h) return;
     hta_bsp_free(&h->mesh);
     memset(h, 0, sizeof(*h));
@@ -80,6 +88,25 @@ static void unpack_color(const uint8_t c[4], float out[4])
     out[1] = (float)c[1] / 255.0f;
     out[2] = (float)c[0] / 255.0f;
     out[3] = c[3] ? (float)c[3] / 255.0f : 1.0f;
+}
+
+/* Interns a block of RGBA that did not come from a bitmap tag: the digit
+ * atlas is built from a font, which has no `bitm` of its own. */
+static uint32_t intern_rgba(hta_hud *h, const uint8_t *rgba,
+                            uint32_t w, uint32_t hgt)
+{
+    if (!h->mesh.textures || !rgba || !w || !hgt) return ~0u;
+    if (h->mesh.texture_count >= HTA_HUD_MAX_ELEMENTS) return ~0u;
+    size_t bytes = (size_t)w * hgt * 4u;
+    uint8_t *copy = (uint8_t *)malloc(bytes);
+    if (!copy) return ~0u;
+    memcpy(copy, rgba, bytes);
+    uint32_t i = h->mesh.texture_count++;
+    h->mesh.textures[i].rgba = copy;
+    h->mesh.textures[i].width = w;
+    h->mesh.textures[i].height = hgt;
+    h->mesh.textures[i].tag_id = 0xF0000000u + i;   /* never a real tag id */
+    return i;
 }
 
 /* Appends one quad. Returns its element index, or -1. */
@@ -408,6 +435,62 @@ static void load_scope(hta_hud *h, const hta_cache *c,
     }
 }
 
+/* The rounds counter. The weapon's tag says where it goes and how many
+ * digits it gets; the glyphs come from the HUD font. */
+static void load_numbers(hta_hud *h, const hta_cache *c, uint32_t base,
+                         uint8_t anchor)
+{
+    if (h->number_count) return;              /* the first block wins */
+    uint32_t n = 0, p = 0, off = 0;
+    if (!hta_read_reflexive(c, base + WPHI_NUMBERS, &n, &p) || !n) return;
+    if (!hta_cache_ptr_to_offset(c, p, &off)) return;
+    if (!h->digits.loaded) return;
+
+    uint32_t tex = intern_rgba(h, h->digits.rgba,
+                               h->digits.atlas_w, h->digits.atlas_h);
+    if (tex == ~0u) return;
+
+    int16_t ax = 0, ay = 0;
+    uint8_t col[4] = {255, 255, 255, 0};
+    int8_t  maxd = 0;
+    uint8_t flags = 0;
+    hta_rd_u16(c, off + WNUM_OFFSET + 0u, (uint16_t *)&ax);
+    hta_rd_u16(c, off + WNUM_OFFSET + 2u, (uint16_t *)&ay);
+    hta_rd_bytes(c, off + WNUM_COLOR, col, 4);
+    hta_rd_u8(c, off + WNUM_MAX_DIGITS, (uint8_t *)&maxd);
+    hta_rd_u8(c, off + WNUM_FLAGS, &flags);
+    if (maxd <= 0) maxd = 3;
+    if (maxd > 8) maxd = 8;
+
+    float tint[4];
+    unpack_color(col, tint);
+
+    /* One cell per digit, as wide as the widest glyph, so the number does
+     * not shuffle sideways as it counts down. */
+    float cell = 0.0f;
+    for (int d = 0; d < 10; d++)
+        if ((float)h->digits.digit[d].advance > cell)
+            cell = (float)h->digits.digit[d].advance;
+    h->number_cell = cell;
+    h->number_base[0] = (float)ax;
+    h->number_base[1] = (float)ay;
+    h->number_leading_zeros = (flags & 1u) != 0;
+
+    for (int i = 0; i < maxd; i++) {
+        hta_bitmap_sprite sp;
+        sp.bitmap_index = 0;
+        sp.u0 = h->digits.digit[0].u0; sp.u1 = h->digits.digit[0].u1;
+        sp.v0 = h->digits.digit[0].v0; sp.v1 = h->digits.digit[0].v1;
+        int ei = add_elem(h, tex, &sp,
+                          (float)h->digits.atlas_w, (float)h->digits.atlas_h,
+                          (int16_t)(ax + i * (int)cell), ay,
+                          anchor, tint, -1.0f);
+        if (ei < 0) break;
+        h->elem[ei].extra_scale = HTA_HUD_WEAPON_SCALE;
+        h->number_elem[h->number_count++] = ei;
+    }
+}
+
 static void load_unit(hta_hud *h, const hta_cache *c,
                       const hta_resource_map *bitmaps)
 {
@@ -496,6 +579,8 @@ static void load_weapon_hud(hta_hud *h, const hta_cache *c,
         }
     }
 
+    load_numbers(h, c, base, anchor);
+
     if (hta_read_reflexive(c, base + WPHI_METERS, &n, &p) && n &&
         hta_cache_ptr_to_offset(c, p, &off)) {
         for (uint32_t k = 0; k < n; k++) {
@@ -540,9 +625,18 @@ bool hta_hud_load(hta_hud *h, const hta_cache *c, const hta_resource_map *bitmap
         return false;
     }
 
-    load_unit(h, c, bitmaps);
+    /* The HUD font first: the rounds counter is built while walking the
+     * weapon HUD, and the number elements live on its CHILD hud, not on
+     * the weapon's own tag. A cache with no hud_globals gets no numbers. */
+    {
+        char ferr[HTA_ERRLEN];
+        uint32_t font = hta_hud_font(c);
+        if (font) hta_font_digits_load(c, font, &h->digits, ferr, sizeof(ferr));
+    }
 
+    load_unit(h, c, bitmaps);
     load_weapon_hud(h, c, bitmaps, weap->hud_interface_id, 0);
+
     load_crosshair(h, c, bitmaps, weap);
     load_scope(h, c, bitmaps, weap);
 
@@ -601,6 +695,38 @@ static void anchor_origin(uint8_t anchor, float w, float h,
     case HTA_HUD_ANCHOR_BOTTOM_LEFT:  *ox = 0;      *oy = h;      *gx =  1; *gy = -1; break;
     case HTA_HUD_ANCHOR_BOTTOM_RIGHT: *ox = w;      *oy = h;      *gx = -1; *gy = -1; break;
     default:                          *ox = w*0.5f; *oy = h*0.5f; *gx =  0; *gy =  0; break;
+    }
+}
+
+void hta_hud_set_number(hta_hud *h, int value)
+{
+    if (!h || !h->number_count || !h->digits.loaded) return;
+    if (value < 0) value = 0;
+
+    uint32_t n = h->number_count;
+    float pen = h->number_base[0];
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t place = n - 1u - i;          /* rightmost digit is place 0 */
+        int div = 1;
+        for (uint32_t k = 0; k < place; k++) div *= 10;
+        int d = (value / div) % 10;
+
+        /* Blank the leading zeros unless the tag asks for them. */
+        bool blank = !h->number_leading_zeros && place > 0 && value < div;
+        hta_hud_elem *e = &h->elem[h->number_elem[i]];
+        const hta_glyph *gl = &h->digits.digit[d];
+        e->uv[0] = gl->u0; e->uv[1] = gl->v0;
+        e->uv[2] = gl->u1; e->uv[3] = gl->v1;
+        e->w_px = blank ? 0.0f : (float)gl->w;
+        e->h_px = blank ? 0.0f : (float)gl->h;
+        /* Proportional, like the font: the pen advances by the glyph the
+         * font says, not by a fixed cell. Leading zeros are shown on every
+         * Trial weapon, so the number does not shuffle as it counts. */
+        e->offset[0] = pen;
+        e->offset[1] = h->number_base[1];
+        /* The glyph is drawn at the weapon block's scale, so the pen has
+         * to advance at that scale too or the digits sit apart. */
+        pen += blank ? 0.0f : (float)gl->advance * HTA_HUD_WEAPON_SCALE;
     }
 }
 

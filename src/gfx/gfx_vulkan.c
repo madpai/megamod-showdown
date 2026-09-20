@@ -39,7 +39,7 @@ _Static_assert(sizeof(kHudVert) > 256, "hud vertex SPIR-V looks truncated");
 _Static_assert(sizeof(kHudFrag) > 256, "hud fragment SPIR-V looks truncated");
 
 #define MAX_IMAGES 8
-#define PUSH_SIZE  112u   /* mat4(64) + 3 * vec4(48) */
+#define PUSH_SIZE  128u   /* mat4(64) + 4 * vec4(64); 128 is the guaranteed minimum */
 
 typedef struct {
     VkImage        image;
@@ -51,6 +51,8 @@ typedef struct {
     uint32_t first_index, index_count;
     VkDescriptorSet set;
     uint8_t  draw_mode;
+    float    detail_scale;   /* 0 = this surface has no detail map */
+    float    detail2_scale;
 } hta_vk_submesh;
 
 struct hta_gfx_mesh {
@@ -420,14 +422,18 @@ static bool create_targets(hta_gfx *g, uint32_t w, uint32_t h, char *err, size_t
 
 static bool create_pass_pipeline(hta_gfx *g, char *err, size_t errlen)
 {
-    VkDescriptorSetLayoutBinding b[2];
+    VkDescriptorSetLayoutBinding b[4];
     memset(b, 0, sizeof(b));
     b[0].binding = 0; b[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     b[0].descriptorCount = 1; b[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     b[1].binding = 1; b[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     b[1].descriptorCount = 1; b[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    b[2].binding = 2; b[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    b[2].descriptorCount = 1; b[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    b[3].binding = 3; b[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    b[3].descriptorCount = 1; b[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutCreateInfo sl = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    sl.bindingCount = 2; sl.pBindings = b;
+    sl.bindingCount = 4; sl.pBindings = b;
     VKREQ(vkCreateDescriptorSetLayout(g->device, &sl, NULL, &g->set_layout),
           "vkCreateDescriptorSetLayout");
 
@@ -911,9 +917,10 @@ static bool upload_rgba(hta_gfx *g, const uint8_t *rgba, uint32_t w, uint32_t h,
 }
 
 static bool write_set(hta_gfx *g, VkDescriptorSet set,
-                      VkImageView albedo, VkImageView light)
+                      VkImageView albedo, VkImageView light,
+                      VkImageView detail, VkImageView detail2)
 {
-    VkDescriptorImageInfo ii[2];
+    VkDescriptorImageInfo ii[4];
     memset(ii, 0, sizeof(ii));
     ii[0].sampler = g->samp_repeat;
     ii[0].imageView = albedo;
@@ -921,7 +928,14 @@ static bool write_set(hta_gfx *g, VkDescriptorSet set,
     ii[1].sampler = g->samp_clamp;
     ii[1].imageView = light;
     ii[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkWriteDescriptorSet w[2];
+    /* A detail map tiles many times over one surface, so it repeats. */
+    ii[2].sampler = g->samp_repeat;
+    ii[2].imageView = detail;
+    ii[2].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    ii[3].sampler = g->samp_repeat;
+    ii[3].imageView = detail2;
+    ii[3].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet w[4];
     memset(w, 0, sizeof(w));
     w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     w[0].dstSet = set; w[0].dstBinding = 0;
@@ -929,7 +943,9 @@ static bool write_set(hta_gfx *g, VkDescriptorSet set,
     w[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     w[0].pImageInfo = &ii[0];
     w[1] = w[0]; w[1].dstBinding = 1; w[1].pImageInfo = &ii[1];
-    vkUpdateDescriptorSets(g->device, 2, w, 0, NULL);
+    w[2] = w[0]; w[2].dstBinding = 2; w[2].pImageInfo = &ii[2];
+    w[3] = w[0]; w[3].dstBinding = 3; w[3].pImageInfo = &ii[3];
+    vkUpdateDescriptorSets(g->device, 4, w, 0, NULL);
     return true;
 }
 
@@ -999,7 +1015,7 @@ static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
 
     VkDescriptorPoolSize ps;
     ps.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    ps.descriptorCount = nsm * 2;
+    ps.descriptorCount = nsm * 4;
     VkDescriptorPoolCreateInfo pci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     pci.maxSets = nsm;
     pci.poolSizeCount = 1;
@@ -1025,11 +1041,17 @@ static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
 
     for (uint32_t i = 0; i < nsm; i++) {
         uint32_t first = 0, count = mesh->index_count, ai = ~0u, li = ~0u;
+        uint32_t di = ~0u, d2i = ~0u;
+        float dscale = 0.0f, d2scale = 0.0f;
         if (mesh->submesh_count) {
             first = mesh->submeshes[i].first_index;
             count = mesh->submeshes[i].index_count;
             ai = mesh->submeshes[i].albedo_tex;
             li = mesh->submeshes[i].lightmap_tex;
+            di = mesh->submeshes[i].detail_tex;
+            dscale = mesh->submeshes[i].detail_scale;
+            d2i = mesh->submeshes[i].detail2_tex;
+            d2scale = mesh->submeshes[i].detail2_scale;
         }
         m->submeshes[i].first_index = first;
         m->submeshes[i].index_count = count;
@@ -1038,7 +1060,13 @@ static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
                                                         : HTA_DRAW_OPAQUE;
         VkImageView av = (ai != ~0u && ai < m->tex_count) ? m->tex[ai].view : g->tex_clay.view;
         VkImageView lv = (li != ~0u && li < m->tex_count) ? m->tex[li].view : g->tex_light.view;
-        write_set(g, sets[i], av, lv);
+        /* The mid-grey fallback doubles to exactly 1.0, so a surface with no
+         * detail map comes out of the shader untouched. */
+        VkImageView dv = (di != ~0u && di < m->tex_count) ? m->tex[di].view : g->tex_light.view;
+        VkImageView d2v = (d2i != ~0u && d2i < m->tex_count) ? m->tex[d2i].view : g->tex_light.view;
+        m->submeshes[i].detail_scale = (di != ~0u && di < m->tex_count) ? dscale : 0.0f;
+        m->submeshes[i].detail2_scale = (d2i != ~0u && d2i < m->tex_count) ? d2scale : 0.0f;
+        write_set(g, sets[i], av, lv, dv, d2v);
     }
     return m;
 }
@@ -1211,6 +1239,16 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                     for (uint32_t i = 0; i < mesh->submesh_count; i++) {
                         if (!mesh->submeshes[i].index_count) continue;
                         if (mesh->submeshes[i].draw_mode != passes[p]) continue;
+                        /* How often this surface's detail map repeats is
+                         * per-submesh, so it rides the push constants. */
+                        float det[4] = { mesh->submeshes[i].detail_scale,
+                                         mesh->submeshes[i].detail2_scale,
+                                         0.0f, 0.0f };
+                        memcpy(push + 112, det, sizeof(det));
+                        vkCmdPushConstants(cb, g->layout,
+                                           VK_SHADER_STAGE_VERTEX_BIT |
+                                           VK_SHADER_STAGE_FRAGMENT_BIT,
+                                           0, PUSH_SIZE, push);
                         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
                                                 0, 1, &mesh->submeshes[i].set, 0, NULL);
                         vkCmdDrawIndexed(cb, mesh->submeshes[i].index_count, 1,
@@ -1283,15 +1321,29 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
         }
 
         if (fx && fx->index_count) {
-            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline);
+            /* Impact marks honour their own draw mode: a decal is alpha,
+             * and drawing it opaque paints its transparent border onto the
+             * wall as a square. */
+            const uint8_t fx_passes[3] = { HTA_DRAW_OPAQUE, HTA_DRAW_ALPHA, HTA_DRAW_ADD };
+            VkPipeline fx_pipes[3] = { g->pipeline, g->pipeline_alpha, g->pipeline_add };
             vkCmdBindVertexBuffers(cb, 0, 1, &fx->vbuf, &zero);
             vkCmdBindIndexBuffer(cb, fx->ibuf, 0, VK_INDEX_TYPE_UINT32);
-            for (uint32_t i = 0; i < fx->submesh_count; i++) {
-                if (!fx->submeshes[i].index_count) continue;
-                vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
-                                        0, 1, &fx->submeshes[i].set, 0, NULL);
-                vkCmdDrawIndexed(cb, fx->submeshes[i].index_count, 1,
-                                 fx->submeshes[i].first_index, 0, 0);
+            for (int fp = 0; fp < 3; fp++) {
+                int bound = 0;
+                for (uint32_t i = 0; i < fx->submesh_count; i++) {
+                    if (!fx->submeshes[i].index_count) continue;
+                    if (fx->submeshes[i].draw_mode != fx_passes[fp]) continue;
+                    if (!bound) {
+                        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                          fx_pipes[fp]);
+                        bound = 1;
+                    }
+                    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                            g->layout, 0, 1,
+                                            &fx->submeshes[i].set, 0, NULL);
+                    vkCmdDrawIndexed(cb, fx->submeshes[i].index_count, 1,
+                                     fx->submeshes[i].first_index, 0, 0);
+                }
             }
         }
         /* Projectiles in flight: world space, vertices rewritten this frame. */
