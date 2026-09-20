@@ -364,6 +364,65 @@ frame centre, square, at the height-scaled size. `test_hud` is 25 checks.
 Only the `aim` crosshair is drawn. The rest (zoom overlays, low-ammo flashes)
 need weapon state we do not track yet.
 
+## The first-person weapon was never lit (2026-09-20)
+
+Owner: "the rifle screen is supposed to be much brighter... I think the
+weapons are a bit dark in general. Maybe we are missing something?" Yes,
+and it was a whole term of the lighting equation.
+
+`mesh.frag` declared `light_dir`, `light_color` and `ambient` and **used
+none of them**. The world does not need them -- it carries a lightmap per
+surface -- but the viewmodel has no lightmap, so it fell through to the
+mid-grey fallback and rendered at RAW ALBEDO with no lighting at all.
+
+The Trial's gun textures are dark: the assault rifle's body averages
+**58/255**, its display panels 13 to 24. Unlit that is nearly black, while
+the real game shows a lit mid-grey rifle. So:
+
+```
+ndl = dot(N, -L) * 0.5 + 0.5          // WRAPPED, not clamped
+col = albedo * (ambient + light * ndl) * 2.0
+```
+
+Three things worth keeping:
+
+- **Wrapped, not clamped.** A hard `max(dot,0)` splits the weapon into a
+  blown highlight and a black underside. Halo's gun is evenly lit with soft
+  modelling; wrapping keeps everything above the ambient floor.
+- **The x2** is the same half-bright convention the lightmaps use, and is
+  what brings a 58/255 texture up to the mid-grey of the reference.
+- **The light arrives already rotated into viewmodel space.** `mesh.vert`
+  passes normals through untransformed, so the viewmodel's are in its own
+  frame (+X forward, +Y left, +Z up); the CPU rotates the scene light into
+  that frame rather than the shader guessing.
+
+`light_color.w` selects the path, and the **ADD pass is pushed with w = 0**:
+the round counter's digits, the icons and the muzzle flash are emissive.
+Lighting them would be wrong twice -- they glow by themselves, and a
+billboard's normal need not face the sun.
+
+### What the rifle's counter is NOT
+
+Chased and ruled out, so nobody repeats it:
+
+- Its digits are a `schi` with `framebuffer blend = add` and **one map whose
+  colour function is "current"** -- no multiplier anywhere. We draw exactly
+  what the tag asks for.
+- The digit art is not dim: it peaks at **213/255**. It is the gun body
+  around it that is dark.
+- `shader_model` has a **multipurpose map** whose green channel is
+  self-illumination, and the rifle's first-person one decodes to all zeros
+  across R, G, B and A. That is not a decode failure -- it is format 14 like
+  the base map beside it, which decodes fine. The assault rifle genuinely
+  has no self-illumination, no specular and no change colour in first
+  person.
+
+What was left is exposure, and the lit viewmodel is what fixes it.
+
+`shader_model` detail maps (scale at 216, map at 220) are still unread. The
+rifle declares a detail scale of 8.0 with no map, so it would gain nothing;
+other models may.
+
 ## The needler was invisible, not broken (2026-09-20)
 
 ### `sgla` was never handled, so the needles were dark
@@ -1399,6 +1458,7 @@ after building, wherever real tag physics are available.
 | Meter empty colour | `shaders/hud.frag`, `hta_submesh.empty` |
 | Mipmap generation | `src/gfx/gfx_vulkan.c` `downsample` / `upload_rgba_mips` |
 | Glass shaders (`sgla`) | `src/asset/bitmap.c` draw mode + diffuse map |
+| Viewmodel lighting | `shaders/mesh.frag` lit path, `gfx_vulkan.c` viewmodel push |
 | Rounds counter | `src/engine/hud.c` `load_numbers` |
 | Object attachments / looping sounds | `src/asset/effect.c` `hta_object_loop_sound` |
 | Continuous voices | `src/engine/audio.c` `hta_audio_loop` |

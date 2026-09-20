@@ -48,7 +48,33 @@ void main() {
 
     albedo *= det * 2.0;
 
-    /* Halo lightmaps are stored at half-bright and multiplied by 2 at display. */
-    vec3 col = albedo * lm * 2.0;
+    /* Halo lightmaps are stored at half-bright and multiplied by 2 at
+     * display. The world carries one per surface.
+     *
+     * The first-person weapon does NOT: it has no lightmap, so it was
+     * drawn at raw albedo with no lighting of any kind. The Trial's gun
+     * textures are dark -- the assault rifle's body averages 58/255 -- so
+     * unlit it came out nearly black, while the real game shows a lit
+     * mid-grey rifle. Light it from the scene instead, on the same
+     * half-bright convention the lightmaps use, so a weapon sits at the
+     * same exposure as the ground it is standing on.
+     *
+     * light_color.w marks that path; the light direction arrives already
+     * rotated into the viewmodel's own space, because its normals are
+     * never transformed out of it. */
+    vec3 col;
+    if (push.light_color.w > 0.5) {
+        /* WRAPPED, not clamped. A hard N.L splits the weapon into a blown
+         * highlight and a black underside, which is not how Halo's gun
+         * reads: it is evenly lit with soft modelling. Wrapping keeps the
+         * whole model above the ambient floor and only varies the amount.
+         * The x2 is the same half-bright convention the lightmaps use, and
+         * is what brings a 58/255 gun texture up to the mid-grey the real
+         * game shows. */
+        float ndl = dot(normalize(v_normal), -push.light_dir.xyz) * 0.5 + 0.5;
+        col = albedo * (push.ambient.rgb + push.light_color.rgb * ndl) * 2.0;
+    } else {
+        col = albedo * lm * 2.0;
+    }
     out_color = vec4(col, 1.0);
 }

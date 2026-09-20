@@ -1415,6 +1415,27 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
             hta_mat4 vp = hta_camera_view_proj(cam);
             hta_mat4 mvp = hta_mat4_mul(&vp, &model);
             memcpy(push, mvp.m, 64);
+
+            /* The viewmodel has no lightmap, so it takes the scene's light
+             * directly. Its normals are never transformed out of its own
+             * space (+X forward, +Y left, +Z up), so the light direction is
+             * rotated INTO that space here rather than in the shader. */
+            {
+                const float *L = scene->light_dir;
+                float ld[4] = {
+                    L[0]*fwd[0]   + L[1]*fwd[1]   + L[2]*fwd[2],
+                    -(L[0]*right[0] + L[1]*right[1] + L[2]*right[2]),
+                    L[0]*up[0]    + L[1]*up[1]    + L[2]*up[2],
+                    0.0f
+                };
+                float lc[4] = { scene->light_color[0], scene->light_color[1],
+                                scene->light_color[2], 1.0f };  /* w: lit path */
+                float am[4] = { scene->ambient[0], scene->ambient[1],
+                                scene->ambient[2], 0.0f };
+                memcpy(push + 64, ld, 16);
+                memcpy(push + 80, lc, 16);
+                memcpy(push + 96, am, 16);
+            }
             vkCmdPushConstants(cb, g->layout,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                0, PUSH_SIZE, push);
@@ -1428,6 +1449,16 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
             VkPipeline vm_pipes[3] = { g->pipeline, g->pipeline_alpha, g->pipeline_add };
             for (int p = 0; p < 3; p++) {
                 int bound = 0;
+                /* The additive pass is emissive -- the round counter's
+                 * digits, the icons, the muzzle flash. Lighting those would
+                 * be wrong twice over: they glow by themselves, and a
+                 * quad's normal need not face the sun. */
+                float lw = (vm_passes[p] == HTA_DRAW_ADD) ? 0.0f : 1.0f;
+                memcpy(push + 80 + 12, &lw, sizeof(lw));
+                vkCmdPushConstants(cb, g->layout,
+                                   VK_SHADER_STAGE_VERTEX_BIT |
+                                   VK_SHADER_STAGE_FRAGMENT_BIT,
+                                   0, PUSH_SIZE, push);
                 for (uint32_t i = 0; i < viewmodel->submesh_count; i++) {
                     if (!viewmodel->submeshes[i].index_count) continue;
                     if (viewmodel->submeshes[i].draw_mode != vm_passes[p]) continue;
