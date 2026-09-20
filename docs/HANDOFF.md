@@ -85,6 +85,95 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## 18 fps, and brass that hung in the air (2026-09-20)
+
+The owner reported lag and "bullet casings fall in slow motion and are kind
+of weird". Both were real, and the frame rate was **entirely** particles:
+standing still with nothing going off the phone reads **120 fps**, and firing
+at a wall a few metres away took it to **18**.
+
+### Brass floated because drag was read wrong
+
+`air friction` is a FORCE. What slows a particle is force over **mass**, and
+the casing's `stones` physics reads friction 900 against a mass of 284672 --
+**0.003 a second**, which is free fall, which is what brass does. Reading the
+friction alone and dividing it by an invented constant of 125 gave it 7.2 a
+second: a terminal velocity of about 1.6 wu/s, and casings that drifted
+across the view like ash.
+
+Mass is at **pphy+4**. It is `cache_only` -- derived from `density` by the tag
+compiler -- and it is sitting in the cache already. Smoke comes out at 1.5/s
+this way, which is almost exactly the 1.6 the 125 divisor had been hand-tuned
+to produce for smoke *alone*; the constant was right for one case and wrong
+for the other, which is what a missing divisor by mass looks like.
+
+A casing now falls 1.5 wu in 0.92 s against a free-fall 0.94.
+
+### Every particle was drawn at twice its tagged size
+
+Halo's `radius` is the sprite's **size**, and the quad spanned `-radius` to
+`+radius`. That is double the width and **four times the fill**. The spent
+brass settles it four ways over -- these are the tagged radii at the two
+possible conventions against the real round:
+
+| casing | tag | as half-extent | as size | real |
+| --- | --- | --- | --- | --- |
+| pistol | 0.010 wu | 6.1 cm | **3.0 cm** | 9 mm, 2.5 cm |
+| assault rifle | 0.015 | 9.1 | **4.6** | 7.62x51, 5.1 cm |
+| shotgun | 0.023 | 14.0 | **7.0** | 12-gauge, 7.0 cm |
+| sniper | 0.037 | 22.6 | **11.3** | .50 BMG, 13 cm |
+
+Corners are `+/-0.5` now, not `+/-1`.
+
+### The pool is budgeted by AREA, and I had made it worse
+
+`HTA_PART_PER_TYPE` had gone 16 -> 64 for the flamethrower's jet in the build
+before this one. That quadrupled what every *other* effect could keep alive,
+and the plasma rifle's impact is **57 quads of additive blending per hit** at
+up to 10 hits a second. 768 live quads, each twice the size it should be, is
+the 18 fps.
+
+Count was never the thing that hurt. **Fill** was. Brass is 4 cm and free at
+any depth; a rocket's smoke puff is metres across. So each type now declares
+what the tags ask of it -- `count_max * lifespan / HTA_PART_RECUR`, or
+`rate * lifespan` for an emitter -- and slots are spent **cheapest first**
+until the live quads add up to `HTA_PART_AREA` (12) square world units.
+Cheapest-first matters: scaling everyone by one factor charged the
+flamethrower's 6 cm jet particles for the explosion cloud sharing its load.
+
+`type[t].first_slot` / `type[t].slots` is where a type's particles live.
+**There is no uniform stride any more** -- `HTA_PART_PER_TYPE` is only a
+ceiling, and slot arithmetic that assumes otherwise is a bug.
+
+Where it lands on the real map: 2.7 to 11.7 sq wu per weapon, except the
+rocket launcher at 36 -- its fireball alone is 12 sq wu a quad, so that one
+is the floor rather than a choice. **`HTA_PART_AREA` is the knob** if the
+phone still struggles.
+
+Two traps hit while writing this:
+
+- The floor can overspend the budget, so `left` goes negative; casting that
+  to unsigned handed the rocket launcher 446 slots instead of 24.
+- A type whose single quad is over a quarter of the budget gets a floor of
+  **one**, not two.
+
+### A full pool has to recycle
+
+Spent brass lives **thirty seconds**. A pool that refuses to spawn when it is
+full would eject a few shells and then go quiet for half a minute. A burst now
+takes the oldest slot when there is no free one -- it drops what was about to
+expire anyway, and the gun keeps ejecting.
+
+### New tests
+
+- brass is barely slowed by air and lands in about free-fall time
+- a quad is no wider than its tagged radius, printed in cm beside the round
+- the pool stays inside the geometry ceiling and the area budget (or is
+  floored trying, which only the rocket is)
+- a full pool keeps throwing
+
+---
+
 ## Every particle was white (2026-09-20)
 
 The needler threw white sparks. So did the plasma pistol, and so did the

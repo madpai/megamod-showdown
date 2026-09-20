@@ -98,7 +98,7 @@ int main(int argc, char **argv)
         CHECK(p.type_count >= 2, "a flare and a smoke plume at least");
         CHECK(p.recipe_count == 1, "one recipe for one effect");
         CHECK(p.mesh.submesh_count == p.type_count, "one submesh per type");
-        CHECK(p.mesh.vertex_count == p.type_count * p.per_type * 4u,
+        CHECK(p.mesh.vertex_count == p.slot_count * 4u,
               "and a fixed slot per particle");
 
         /* Art with no alpha channel cannot be alpha-blended: it would draw
@@ -120,7 +120,7 @@ int main(int argc, char **argv)
         uint32_t alive = hta_particles_count(&p);
         printf("    burst -> %u alive\n", alive);
         CHECK(alive > 0, "a burst throws particles");
-        CHECK(alive <= p.type_count * p.per_type, "and never past its slots");
+        CHECK(alive <= p.slot_count, "and never past its slots");
 
         /* They must move, and they must all die. */
         hta_particles_update(&p, NULL, NULL, 1.0f / 60.0f);
@@ -142,7 +142,7 @@ int main(int argc, char **argv)
 
         /* Bursting far more than there is room for must not overflow. */
         for (int k = 0; k < 40; k++) hta_particles_burst(&p, det, o, up);
-        CHECK(hta_particles_count(&p) <= p.type_count * p.per_type,
+        CHECK(hta_particles_count(&p) <= p.slot_count,
               "repeated bursts stay inside the slots");
 
         hta_particles_free(&p);
@@ -246,7 +246,7 @@ int main(int argc, char **argv)
             float end_z = start_z;
             for (uint32_t k = 0; k < HTA_PART_MAX; k++)
                 if (p.live[k].alive) { end_z = p.live[k].pos[2]; break; }
-            printf("  a casing falls %.3f m in half a second\n", start_z - end_z);
+            printf("  a casing falls %.3f wu in half a second\n", start_z - end_z);
             CHECK(start_z - end_z > 0.05f, "brass actually falls");
             hta_particles_free(&p);
             break;
@@ -351,7 +351,7 @@ int main(int argc, char **argv)
 
             /* A dropped frame must not dump a second of flame at once. */
             hta_particles_emit(&p, jet, o, dir, 10.0f);
-            CHECK(hta_particles_count(&p) <= p.per_type,
+            CHECK(hta_particles_count(&p) <= p.type[p.recipe[jet].emit[0].type].slots,
                   "  a long frame cannot flood the pool");
 
             hta_particles_free(&p);
@@ -445,6 +445,172 @@ int main(int argc, char **argv)
         CHECK(hta_tint_pack(wht) == 0xFFFFFFu, "white packs to white");
         float over[3] = { 2.0f, -1.0f, 0.0f };
         CHECK(hta_tint_pack(over) == 0xFF0000u, "out-of-range clamps");
+    }
+
+
+    printf("\n[brass falls, it does not float]\n");
+    {
+        /* `air friction` is a FORCE. What slows a particle is force over
+         * mass, and the casing's physics has friction 900 against a mass of
+         * 284672 -- 0.003 a second, which is free fall. Reading the
+         * friction alone and dividing it by a constant gave it 7.2 a
+         * second, a terminal velocity of about 1.6 wu/s, and brass that
+         * hung in the air in front of the player. */
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def w;
+            if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err)))
+                continue;
+            hta_particles p;
+            hta_particles_init(&p);
+            uint32_t ej = hta_particles_add_marker(&p, &c, &bm, w.firing_fx_id,
+                                                   "primary ejection");
+            if (ej == HTA_PART_NO_RECIPE || !hta_particles_build(&p, err, sizeof(err))) {
+                hta_particles_free(&p);
+                continue;
+            }
+            const hta_particle_emit *em = &p.recipe[ej].emit[0];
+            if (!(em->gravity < -0.5f)) { hta_particles_free(&p); continue; }
+
+            float o[3] = { 0.0f, 0.0f, 1.5f }, dir[3] = { 1.0f, 0.0f, 0.0f };
+            hta_particles_burst(&p, ej, o, dir);
+            float t = 0.0f;
+            for (int k = 0; k < 600; k++) {
+                hta_particles_update(&p, NULL, NULL, 1.0f / 60.0f);
+                t += 1.0f / 60.0f;
+                float low = 1e9f;
+                int any = 0;
+                for (uint32_t q = 0; q < HTA_PART_MAX; q++)
+                    if (p.live[q].alive) {
+                        if (p.live[q].pos[2] < low) low = p.live[q].pos[2];
+                        any = 1;
+                    }
+                if (!any || low <= 0.0f) break;
+            }
+            /* Free fall over 1.5 wu at Halo's 3.4 wu/s^2 is 0.94 s. */
+            printf("  %-16s drag %.4f/s, falls 1.5 wu in %.2f s\n",
+                   strrchr(w.path, '\\') + 1, (double)em->drag, (double)t);
+            CHECK(em->drag < 0.05f, "  a casing is barely slowed by air");
+            CHECK(t < 1.15f, "  and reaches the ground in about free-fall time");
+            hta_particles_free(&p);
+        }
+    }
+
+    printf("\n[a particle is its tagged size, not twice it]\n");
+    {
+        /* Halo's `radius` is the sprite's SIZE. Spanning the quad -r..+r
+         * drew everything at double width, which is four times the fill --
+         * most of why a plasma impact took the phone to 18 fps. The spent
+         * brass settles it: at this scale the shotgun's shell is 7.0 cm
+         * against a real 12-gauge's 7.0, and the sniper's is 11.3 against
+         * a .50 BMG's 13. */
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def w;
+            if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err)))
+                continue;
+            hta_particles p;
+            hta_particles_init(&p);
+            uint32_t ej = hta_particles_add_marker(&p, &c, &bm, w.firing_fx_id,
+                                                   "primary ejection");
+            if (ej == HTA_PART_NO_RECIPE || !hta_particles_build(&p, err, sizeof(err))) {
+                hta_particles_free(&p);
+                continue;
+            }
+            float o[3] = { 0.0f, 0.0f, 0.0f }, dir[3] = { 0.0f, 0.0f, 1.0f };
+            hta_particles_burst(&p, ej, o, dir);
+            hta_particles_update(&p, NULL, NULL, 1.0f / 600.0f);
+
+            uint32_t t = p.recipe[ej].emit[0].type;
+            uint32_t slot = p.type[t].first_slot;
+            const hta_vertex *v = &p.mesh.vertices[slot * 4u];
+            float wide = 0.0f;
+            for (int a = 0; a < 3; a++) {
+                float d0 = v[1].pos[a] - v[0].pos[a];
+                wide += d0 * d0;
+            }
+            wide = sqrtf(wide);
+            float tagged = p.recipe[ej].emit[0].radius_min;
+            printf("  %-16s tag %.3f wu -> quad %.3f wu (%.1f cm)\n",
+                   strrchr(w.path, '\\') + 1, (double)tagged, (double)wide,
+                   (double)(wide * 304.8f));
+            CHECK(wide <= tagged * 1.05f, "  the quad is no wider than the tag");
+            hta_particles_free(&p);
+        }
+    }
+
+    printf("\n[the pool is budgeted by area, and recycles]\n");
+    {
+        /* What costs a phone is not how MANY particles are alive, it is how
+         * many square units of blending they cover. Brass is 4 cm and free
+         * at any depth; a rocket's smoke puff is metres across. */
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def w;
+            if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err)))
+                continue;
+            hta_particles p;
+            hta_particles_init(&p);
+            int any = 0;
+            for (uint8_t m = 0; m < 20u; m++) {
+                uint32_t fx = hta_projectile_response_effect(&c, w.projectile_id, m);
+                if (fx && hta_particles_add(&p, &c, &bm, fx) != HTA_PART_NO_RECIPE)
+                    any = 1;
+            }
+            if (!any || !hta_particles_build(&p, err, sizeof(err))) {
+                hta_particles_free(&p);
+                continue;
+            }
+            float area = 0.0f;
+            uint32_t floored = 0;
+            for (uint32_t t = 0; t < p.type_count; t++) {
+                area += (float)p.type[t].slots * p.type[t].quad_area;
+                if (p.type[t].slots <= HTA_PART_PER_TYPE_MIN) floored++;
+            }
+            printf("  %-16s %2u types, %3u slots, %6.2f sq wu\n",
+                   strrchr(w.path, '\\') + 1, p.type_count, p.slot_count, (double)area);
+            CHECK(p.slot_count <= HTA_PART_MAX, "  inside the geometry ceiling");
+            /* A type is never cut below the floor, so a load made entirely
+             * of very large sprites can exceed the budget -- that is the
+             * rocket's fireball, and one of it IS the effect happening. */
+            CHECK(area <= HTA_PART_AREA * 1.05f || floored > 0,
+                  "  inside the area budget, or floored trying");
+            hta_particles_free(&p);
+        }
+    }
+
+    printf("\n[a full pool keeps throwing]\n");
+    {
+        /* Spent brass lives thirty seconds. A pool that refuses when it is
+         * full would eject a few shells and then go quiet for half a
+         * minute; taking the oldest slot keeps the rifle throwing. */
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def w;
+            if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err)))
+                continue;
+            hta_particles p;
+            hta_particles_init(&p);
+            uint32_t ej = hta_particles_add_marker(&p, &c, &bm, w.firing_fx_id,
+                                                   "primary ejection");
+            if (ej == HTA_PART_NO_RECIPE || !hta_particles_build(&p, err, sizeof(err))) {
+                hta_particles_free(&p);
+                continue;
+            }
+            if (!(p.recipe[ej].emit[0].life > 5.0f)) { hta_particles_free(&p); continue; }
+
+            float o[3] = { 0.0f, 0.0f, 2.0f }, dir[3] = { 1.0f, 0.0f, 0.0f };
+            uint32_t t = p.recipe[ej].emit[0].type;
+            /* Fill it, then keep firing well past the pool's depth. */
+            for (uint32_t k = 0; k < p.type[t].slots * 3u; k++) {
+                hta_particles_burst(&p, ej, o, dir);
+                hta_particles_update(&p, NULL, NULL, 1.0f / 15.0f);
+            }
+            uint32_t fresh = 0;
+            for (uint32_t sl = 0; sl < p.type[t].slots; sl++)
+                if (p.live[p.type[t].first_slot + sl].alive &&
+                    p.live[p.type[t].first_slot + sl].age < 1.0f) fresh++;
+            printf("  %-16s %u of %u shells are recent\n",
+                   strrchr(w.path, '\\') + 1, fresh, p.type[t].slots);
+            CHECK(fresh > 0, "  the gun is still ejecting");
+            hta_particles_free(&p);
+        }
     }
 
     printf("\n%d checks, %d failures\n", checks, failures);

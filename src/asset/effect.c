@@ -36,10 +36,14 @@
 
 /* PointPhysics, 64, reconciles. */
 #define PPHY_FLAGS           0u
+/* Derived by the tag compiler from `density` and sitting right there in the
+ * cache. It is what turns `air friction` into a deceleration. */
+#define PPHY_MASS            4u
 #define PPHY_FLAG_COLLIDES   0x2u   /* collides with structures */
 #define PPHY_FLAG_NO_GRAVITY 0x20u
 #define PPHY_AIR_GRAVITY    12u
 #define PPHY_AIR_FRICTION   36u
+#define PPHY_DENSITY        28u
 #define PPHY_ELASTICITY     48u
 #define PART_LIFESPAN       56u   /* float bounds */
 #define PART_FADE_IN        64u
@@ -390,8 +394,21 @@ static bool read_particle(const hta_cache *c, uint32_t base, uint32_t qk,
             uint32_t flags = 0;
             hta_rd_u32(c, phb + PPHY_FLAGS, &flags);
             hta_rd_f32(c, phb + PPHY_AIR_GRAVITY, &out->gravity);
-            hta_rd_f32(c, phb + PPHY_AIR_FRICTION, &out->drag);
             hta_rd_f32(c, phb + PPHY_ELASTICITY, &out->elasticity);
+            /* Drag is a FORCE; what slows the particle is force over mass.
+             * Reading `air friction` on its own and dividing it by a
+             * constant made spent brass float: the casing's `stones`
+             * physics has friction 900, which looks enormous beside
+             * smoke's 200 until you notice its mass is 284672 against
+             * smoke's 136. Per unit mass the casing gets 0.003 a second --
+             * free fall, which is what brass does -- and smoke gets 1.5,
+             * which is the drift the old constant had been hand-tuned to
+             * reproduce for smoke alone. Mass is derived from `density` by
+             * the tag compiler and is in the cache already. */
+            float friction = 0.0f, mass = 0.0f;
+            hta_rd_f32(c, phb + PPHY_AIR_FRICTION, &friction);
+            hta_rd_f32(c, phb + PPHY_MASS, &mass);
+            out->drag = (mass > 1e-4f) ? friction / mass : 0.0f;
             if (flags & PPHY_FLAG_NO_GRAVITY) out->gravity = 0.0f;
             out->collides = (flags & PPHY_FLAG_COLLIDES) != 0;
         }

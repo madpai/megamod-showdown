@@ -24,23 +24,36 @@
 #include "camera.h"
 #include "player.h"
 
-/* The pool is a fixed 768 quads DIVIDED among the types, not a fixed depth
- * per type multiplied by them.
+/* Slots are budgeted BY AREA, and each type gets its own share.
  *
- * Those two were the same thing while every recipe was a burst. They stopped
- * being the same thing twice over in one session: tinting split each colour
- * of the same sheet into its own type (the rocket launcher went from 8 types
- * to 17, and 12 was the whole budget), and the flamethrower's continuous jet
- * wants 60 particles of ONE type alive at once where a burst wanted a dozen.
- * Dividing instead gives the flamethrower's two types 64 slots each and the
- * rocket launcher's seventeen 45 each, out of the same geometry.
+ * A flat depth per type is wrong in both directions, which took two goes to
+ * learn. A burst wants a dozen slots and a continuous jet wants sixty, so a
+ * flat 16 gave the flamethrower a dotted line -- and raising it to 64 for
+ * everyone let the plasma rifle keep 768 additive quads alive, each about a
+ * metre and a half across, which took the phone to 18 fps. Count was never
+ * the thing that hurt: FILL was. Brass is 4 cm and free at any depth; a
+ * plasma splash is 1.5 m and costs a hundred times as much per quad.
  *
- * HTA_PART_PER_TYPE is the ceiling; hta_particles.per_type is what a given
- * load actually got, and is what the slot arithmetic uses. */
+ * So each type declares what it wants from the tags -- `count_max` times a
+ * few overlapping bursts, or `rate * lifespan` for an emitter -- and the
+ * wants are scaled down together until the live quads add up to no more
+ * than HTA_PART_AREA world units squared. One plasma impact is 9.7 of
+ * those, so the budget is a little over one impact's worth of blending on
+ * screen at a time, which is about what the real game shows.
+ *
+ * type[t].first_slot / type[t].slots is where a type's particles live.
+ * Nothing may assume a uniform stride. */
 #define HTA_PART_TYPES    24u
-#define HTA_PART_MAX     768u
+#define HTA_PART_MAX     768u   /* geometry ceiling, rarely reached */
 #define HTA_PART_PER_TYPE 64u   /* the deepest any one type can be */
-#define HTA_PART_PER_TYPE_MIN 8u
+#define HTA_PART_PER_TYPE_MIN 2u
+#define HTA_PART_AREA     12.0f /* sq world units of live quad, all types */
+/* How often an effect can be assumed to recur, in seconds. A type's demand
+ * is `count_max * lifespan / this`: a spent casing lives 30 seconds and
+ * wants a lot of slots, a plasma flash lives 0.43 and wants one burst's
+ * worth. Four times a second is about as fast as anything in the Trial
+ * throws the same effect twice. */
+#define HTA_PART_RECUR  0.25f
 #define HTA_PART_RECIPES  16u   /* a detonation, the jet, one per material */
 #define HTA_PART_EMITS     8u   /* particle entries in one effect */
 
@@ -70,6 +83,13 @@ typedef struct {
      * particle, which is why no two puffs of smoke look alike. */
     hta_bitmap_sprite sprite[8];
     uint32_t sprite_count;
+
+    /* Filled as recipes are added, spent by hta_particles_build. `want` is
+     * what the tags ask for, `quad_area` is what one of them costs to
+     * blend, and `slots`/`first_slot` are what it actually got. */
+    uint32_t want;
+    float    quad_area;       /* (2 * radius_max)^2, world units squared */
+    uint32_t first_slot, slots;
 } hta_particle_type;
 
 /* One particle entry of an effect: which type to throw, how many, how fast.
@@ -98,9 +118,7 @@ typedef struct {
 } hta_particle_recipe;
 
 typedef struct {
-    /* Slots a type got, fixed by hta_particles_build. Type t owns
-     * live[t * per_type .. (t+1) * per_type). */
-    uint32_t            per_type;
+    uint32_t            slot_count;   /* slots handed out across all types */
     hta_particle        live[HTA_PART_MAX];
     hta_particle_type   type[HTA_PART_TYPES];
     uint32_t            type_count;

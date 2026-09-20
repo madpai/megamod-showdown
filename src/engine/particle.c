@@ -8,12 +8,6 @@
 /* Halo's own, and what the player and the projectiles fall at. */
 #define PART_GRAVITY 3.4f
 
-/* Halo's `air friction` is 200 for muzzle smoke and 900 for a spent
- * casing. Those are not units of ours, so they are divided into a
- * per-second damping. The divisor is chosen so smoke keeps the 1.6/s that
- * looked right before any of this was read from tags -- it preserves what
- * was already verified and scales everything else against it. */
-#define PART_DRAG_SCALE 125.0f
 
 void hta_particles_init(hta_particles *p)
 {
@@ -56,6 +50,34 @@ uint32_t hta_particles_add(hta_particles *p, const hta_cache *c,
                            uint32_t effect_tag_id)
 {
     return hta_particles_add_marker(p, c, bitmaps, effect_tag_id, NULL);
+}
+
+/* How many of one particle are alive at once if the effect keeps happening:
+ * everything thrown within one lifespan. A casing lives 30 seconds and a
+ * plasma flash 0.43, which is the whole difference between brass that
+ * litters the floor and a flash that must not pile up. */
+static uint32_t demand_for(int16_t count_max, float life)
+{
+    uint32_t n = count_max > 0 ? (uint32_t)count_max : 1u;
+    float recur = life / HTA_PART_RECUR;
+    if (recur < 1.0f) recur = 1.0f;
+    float want = (float)n * recur;
+    if (want > (float)HTA_PART_PER_TYPE) want = (float)HTA_PART_PER_TYPE;
+    return (uint32_t)(want + 0.5f);
+}
+
+/* What a type is going to be asked for, and what one of its quads costs to
+ * blend. Called once per emit entry as recipes are added; spent in
+ * hta_particles_build, which is the only place that knows the whole load. */
+static void note_demand(hta_particles *p, uint32_t t, uint32_t want,
+                        float radius_max)
+{
+    if (t >= HTA_PART_TYPES) return;
+    if (want < 1u) want = 1u;
+    if (want > HTA_PART_PER_TYPE) want = HTA_PART_PER_TYPE;
+    if (want > p->type[t].want) p->type[t].want = want;
+    float area = radius_max * radius_max;
+    if (area > p->type[t].quad_area) p->type[t].quad_area = area;
 }
 
 uint32_t hta_particles_add_marker(hta_particles *p, const hta_cache *c,
@@ -161,9 +183,10 @@ uint32_t hta_particles_add_marker(hta_particles *p, const hta_cache *c,
         em->fade_in   = ep.fade_in;
         em->fade_out  = ep.fade_out;
         em->gravity    = ep.gravity;
-        em->drag       = ep.drag / PART_DRAG_SCALE;
+        em->drag       = ep.drag;
         em->elasticity = ep.elasticity;
         em->collides   = ep.collides;
+        note_demand(p, t, demand_for(em->count_max, em->life), em->radius_max);
     }
     if (!rec.emit_count) return HTA_PART_NO_RECIPE;
 
@@ -175,14 +198,73 @@ bool hta_particles_build(hta_particles *p, char *err, size_t errlen)
 {
     if (!p || !p->type_count) return false;
 
-    /* One slot per particle, grouped by type so a type is one submesh.
-     * The fixed pool is shared out here: a load with two types gets deep
-     * pools, a load with seventeen gets shallow ones, and the geometry is
-     * the same either way. */
-    p->per_type = HTA_PART_MAX / p->type_count;
-    if (p->per_type > HTA_PART_PER_TYPE) p->per_type = HTA_PART_PER_TYPE;
-    if (p->per_type < HTA_PART_PER_TYPE_MIN) p->per_type = HTA_PART_PER_TYPE_MIN;
-    uint32_t slots = p->type_count * p->per_type;
+    /* Hand out slots by AREA, not evenly.
+     *
+     * Every type says what the tags ask of it and what one of its quads
+     * costs to blend. If the whole wish list fits under the budget, every
+     * type gets what it asked for -- brass is 4 cm across and a hundred of
+     * it costs nothing. If it does not, every type is scaled back by the
+     * same factor, so the cut falls hardest on whatever is asking for the
+     * most square metres of additive blending. That is the plasma rifle,
+     * which is exactly the one that needed cutting. */
+    /* Cheapest first. Scaling everyone back by the same factor sounds
+     * fair and is not: it charges the flamethrower's jet, whose quads are
+     * 6 cm of nothing, for the explosion cloud sharing its load. Spending
+     * the budget in order of cost per quad means brass and sparks are
+     * always fully funded and the cut lands on whatever is actually
+     * expensive to blend. */
+    uint8_t order[HTA_PART_TYPES];
+    for (uint32_t t = 0; t < p->type_count; t++) order[t] = (uint8_t)t;
+    for (uint32_t i = 1; i < p->type_count; i++) {
+        uint8_t k = order[i];
+        uint32_t j = i;
+        while (j && p->type[order[j - 1]].quad_area > p->type[k].quad_area) {
+            order[j] = order[j - 1];
+            j--;
+        }
+        order[j] = k;
+    }
+
+    float left = HTA_PART_AREA;
+    uint32_t slots = 0;
+    for (uint32_t i = 0; i < p->type_count; i++) {
+        uint32_t t = order[i];
+        if (!p->type[t].want) p->type[t].want = HTA_PART_PER_TYPE_MIN;
+        uint32_t n = p->type[t].want;
+        float cost = p->type[t].quad_area;
+        if (cost > 1e-6f) {
+            /* The floor below can overspend, so the budget goes negative
+             * and there is nothing left to afford with. Casting that to
+             * unsigned is how the rocket launcher briefly got 446 slots
+             * instead of 24. */
+            uint32_t afford = (left > 0.0f) ? (uint32_t)(left / cost) : 0u;
+            if (n > afford) n = afford;
+        }
+        /* Every type draws at least something: one particle of an
+         * expensive effect is the effect happening, and refusing it
+         * outright would silently delete the rocket's fireball. But the
+         * floor is ONE where a single quad is already a quarter of the
+         * whole budget -- the rocket's fireball is 12 square units on its
+         * own, and two of those is most of a frame's blending. */
+        uint32_t floor_n = (cost > HTA_PART_AREA * 0.25f)
+                         ? 1u : HTA_PART_PER_TYPE_MIN;
+        if (n < floor_n) n = floor_n;
+        if (n > HTA_PART_PER_TYPE) n = HTA_PART_PER_TYPE;
+        if (slots + n > HTA_PART_MAX) n = HTA_PART_MAX - slots;
+        p->type[t].slots = n;
+        left -= (float)n * cost;
+        slots += n;
+    }
+    /* Slot ranges are assigned in type order, not spending order, so a
+     * submesh stays one contiguous run. */
+    slots = 0;
+    for (uint32_t t = 0; t < p->type_count; t++) {
+        p->type[t].first_slot = slots;
+        slots += p->type[t].slots;
+    }
+    p->slot_count = slots;
+    if (!slots) { if (err) snprintf(err, errlen, "no particle slots"); return false; }
+
     p->mesh.vertices = (hta_vertex *)calloc((size_t)slots * 4u, sizeof(hta_vertex));
     p->mesh.indices  = (uint32_t *)calloc((size_t)slots * 6u, sizeof(uint32_t));
     p->mesh.submeshes = (hta_submesh *)calloc(p->type_count, sizeof(hta_submesh));
@@ -198,8 +280,8 @@ bool hta_particles_build(hta_particles *p, char *err, size_t errlen)
     for (uint32_t t = 0; t < p->type_count; t++) {
         hta_submesh *sm = &p->mesh.submeshes[t];
         hta_submesh_init(sm);
-        sm->first_index = t * p->per_type * 6u;
-        sm->index_count = p->per_type * 6u;
+        sm->first_index = p->type[t].first_slot * 6u;
+        sm->index_count = p->type[t].slots * 6u;
         sm->albedo_tex = p->type[t].tex;
         sm->draw_mode = (p->type[t].blend == HTA_FX_BLEND_ADD) ? HTA_DRAW_ADD
                                                                : HTA_DRAW_ALPHA;
@@ -256,13 +338,24 @@ void hta_particles_burst(hta_particles *p, uint32_t recipe,
         int lo = em->count_min > 0 ? em->count_min : 0;
         int hi = em->count_max > lo ? em->count_max : lo;
         int want = lo + (int)(frand(p) * (float)(hi - lo + 1));
-        if (want > (int)p->per_type) want = (int)p->per_type;
+        if (want > (int)p->type[t].slots) want = (int)p->type[t].slots;
 
-        uint32_t base = t * p->per_type;
-        for (int spawned = 0, slot = 0;
-             spawned < want && slot < (int)p->per_type; slot++) {
-            hta_particle *q = &p->live[base + (uint32_t)slot];
-            if (q->alive) continue;            /* a burst never cuts one short */
+        uint32_t base = p->type[t].first_slot;
+        for (int spawned = 0; spawned < want; spawned++) {
+            /* A free slot if there is one, otherwise the OLDEST. A pool
+             * that simply refuses when it is full goes silent: the rifle's
+             * brass lives thirty seconds, so after the first few shells
+             * nothing would ever eject again. Taking the oldest keeps the
+             * effect running and drops what was about to expire anyway. */
+            hta_particle *q = NULL;
+            float worst = -1.0f;
+            for (uint32_t sl = 0; sl < p->type[t].slots; sl++) {
+                hta_particle *cand = &p->live[base + sl];
+                if (!cand->alive) { q = cand; break; }
+                float used = cand->life > 0.0f ? cand->age / cand->life : 1.0f;
+                if (used > worst) { worst = used; q = cand; }
+            }
+            if (!q) break;
             memset(q, 0, sizeof(*q));
             for (int k = 0; k < 3; k++) q->pos[k] = origin[k];
             float v[3];
@@ -279,7 +372,6 @@ void hta_particles_burst(hta_particles *p, uint32_t recipe,
             q->elasticity = em->elasticity;
             q->collides = em->collides;
             q->alive = true;
-            spawned++;
         }
     }
 }
@@ -295,8 +387,8 @@ void hta_particles_update(hta_particles *p, const hta_collision *col,
     if (cam) { hta_camera_right(cam, right); hta_camera_up(cam, up); }
 
     for (uint32_t t = 0; t < p->type_count; t++) {
-        for (uint32_t s = 0; s < p->per_type; s++) {
-            uint32_t slot = t * p->per_type + s;
+        for (uint32_t s = 0; s < p->type[t].slots; s++) {
+            uint32_t slot = p->type[t].first_slot + s;
             hta_particle *q = &p->live[slot];
             if (!q->alive) { hide_slot(p, slot); continue; }
 
@@ -357,7 +449,18 @@ void hta_particles_update(hta_particles *p, const hta_collision *col,
             hta_vertex *v = &p->mesh.vertices[slot * 4u];
             const hta_bitmap_sprite *sp =
                 &p->type[t].sprite[slot % p->type[t].sprite_count];
-            const float corner[4][2] = { {-1,-1}, {1,-1}, {1,1}, {-1,1} };
+            /* HALF, not whole. Halo's `radius` is the sprite's SIZE, and
+             * spanning the quad from -radius to +radius drew every particle
+             * at twice the width the tag asks for -- which is four times
+             * the fill, and is most of why a plasma impact took the phone
+             * to 18 fps. The spent casings settle it four ways: at this
+             * scale the pistol's is 3.0 cm, the rifle's 4.6, the shotgun's
+             * 7.0 and the sniper's 11.3, against real 9 mm, 7.62x51,
+             * 12-gauge and .50 BMG brass of 2.5, 5.1, 7.0 and 13 cm.
+             * Doubled they are all twice the size of the round they came
+             * out of. */
+            const float corner[4][2] = { {-.5f,-.5f}, {.5f,-.5f},
+                                         {.5f,.5f}, {-.5f,.5f} };
             const float uvs[4][2] = { {sp->u0, sp->v1}, {sp->u1, sp->v1},
                                       {sp->u1, sp->v0}, {sp->u0, sp->v0} };
             for (int k = 0; k < 4; k++) {
@@ -548,6 +651,10 @@ uint32_t hta_particles_add_system(hta_particles *p, const hta_cache *c,
     em->gravity = 0.05f;                /* flame rises, like its own smoke */
     em->drag = 1.2f;
     em->collides = false;
+    /* An emitter's demand is its whole stream: everything it throws in one
+     * particle's lifetime is alive at once. */
+    note_demand(p, ty, (uint32_t)(rate * life + 1.0f), em->radius_max);
+
 
     p->recipe[p->recipe_count] = rec;
     return p->recipe_count++;
@@ -562,7 +669,12 @@ void hta_particles_emit(hta_particles *p, uint32_t recipe,
 
     rec->accum += rec->rate * dt;
     /* Never let a hitch dump a whole second of flame at once. */
-    if (rec->accum > (float)p->per_type) rec->accum = (float)p->per_type;
+    {
+        uint32_t t = rec->emit[0].type;
+        float cap = (t < p->type_count) ? (float)p->type[t].slots
+                                        : (float)HTA_PART_PER_TYPE;
+        if (rec->accum > cap) rec->accum = cap;
+    }
     while (rec->accum >= 1.0f) {
         rec->accum -= 1.0f;
         hta_particles_burst(p, recipe, origin, dir);
