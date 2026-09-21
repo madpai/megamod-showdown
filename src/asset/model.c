@@ -513,7 +513,7 @@ static uint32_t palette_model(const hta_cache *c, uint32_t pal_arr, uint32_t pal
 static uint32_t add_palette_objects(hta_bsp_mesh *world, const hta_cache *c,
                                     const hta_resource_map *bitmaps,
                                     uint32_t place_off, uint32_t pal_off,
-                                    uint32_t entry_size)
+                                    uint32_t entry_size, const uint8_t *skip, uint32_t skip_count)
 {
     int32_t si = hta_cache_find_tag_by_class(c, HTA_TAG_SCNR);
     if (si < 0) return 0;
@@ -530,6 +530,7 @@ static uint32_t add_palette_objects(hta_bsp_mesh *world, const hta_cache *c,
     uint32_t added = 0;
     if (n > 512) n = 512;
     for (uint32_t i = 0; i < n; i++) {
+        if (skip && i < skip_count && skip[i]) continue;
         uint32_t e = arr + i * entry_size;
         uint16_t type = 0;
         float pos[3], rot[3];
@@ -547,17 +548,18 @@ static uint32_t add_palette_objects(hta_bsp_mesh *world, const hta_cache *c,
     return added;
 }
 
-bool hta_scenario_add_objects(hta_bsp_mesh *world, const hta_cache *c,
+bool hta_scenario_add_objects_excluding(hta_bsp_mesh *world, const hta_cache *c,
                               const hta_resource_map *bitmaps,
+                              const uint8_t *skip, uint32_t skip_count,
                               char *err, size_t errlen)
 {
     if (!world || !c) { fail(err, errlen, "bad arguments"); return false; }
     uint32_t s = add_palette_objects(world, c, bitmaps,
                                      HTA_SCENARIO_SCENERY_OFF, HTA_SCENARIO_SCENERY_PAL,
-                                     HTA_SCENERY_ENTRY_SIZE);
+                                     HTA_SCENERY_ENTRY_SIZE, NULL, 0);
     uint32_t v = add_palette_objects(world, c, bitmaps,
                                      HTA_SCENARIO_VEHICLES_OFF, HTA_SCENARIO_VEHICLE_PAL,
-                                     HTA_VEHICLE_ENTRY_SIZE);
+                                     HTA_VEHICLE_ENTRY_SIZE, skip, skip_count);
     if (err && errlen)
         snprintf(err, errlen, "scenery+vehicles instanced: %u+%u", s, v);
     return true;
@@ -750,7 +752,7 @@ static uint32_t instance_coll_tag(hta_bsp_mesh *col, const hta_cache *c,
 
 static uint32_t add_palette_collision(hta_bsp_mesh *col, const hta_cache *c,
                                       uint32_t place_off, uint32_t pal_off,
-                                      uint32_t entry_size)
+                                      uint32_t entry_size, const uint8_t *skip, uint32_t skip_count)
 {
     int32_t si = hta_cache_find_tag_by_class(c, HTA_TAG_SCNR);
     if (si < 0) return 0;
@@ -767,6 +769,7 @@ static uint32_t add_palette_collision(hta_bsp_mesh *col, const hta_cache *c,
     uint32_t added = 0;
     if (n > 512) n = 512;
     for (uint32_t i = 0; i < n; i++) {
+        if (skip && i < skip_count && skip[i]) continue;
         uint32_t e = arr + i * entry_size;
         uint16_t type = 0;
         float pos[3], rot[3];
@@ -784,19 +787,64 @@ static uint32_t add_palette_collision(hta_bsp_mesh *col, const hta_cache *c,
     return added;
 }
 
-bool hta_scenario_add_collision(hta_bsp_mesh *col, const hta_cache *c,
+bool hta_scenario_add_collision_excluding(hta_bsp_mesh *col, const hta_cache *c,
+                                const uint8_t *skip, uint32_t skip_count,
                                 char *err, size_t errlen)
 {
     if (!col || !c) { fail(err, errlen, "bad arguments"); return false; }
     uint32_t s = add_palette_collision(col, c,
                                        HTA_SCENARIO_SCENERY_OFF, HTA_SCENARIO_SCENERY_PAL,
-                                       HTA_SCENERY_ENTRY_SIZE);
+                                       HTA_SCENERY_ENTRY_SIZE, NULL, 0);
     uint32_t v = add_palette_collision(col, c,
                                        HTA_SCENARIO_VEHICLES_OFF, HTA_SCENARIO_VEHICLE_PAL,
-                                       HTA_VEHICLE_ENTRY_SIZE);
+                                       HTA_VEHICLE_ENTRY_SIZE, skip, skip_count);
     if (err && errlen)
         snprintf(err, errlen, "scenery+vehicle colliders: %u+%u", s, v);
     return true;
+}
+
+bool hta_scenario_add_objects(hta_bsp_mesh *m, const hta_cache *c,
+                              const hta_resource_map *bm, char *err, size_t n)
+{ return hta_scenario_add_objects_excluding(m, c, bm, NULL, 0, err, n); }
+
+bool hta_scenario_add_collision(hta_bsp_mesh *m, const hta_cache *c, char *err, size_t n)
+{ return hta_scenario_add_collision_excluding(m, c, NULL, 0, err, n); }
+
+bool hta_model_collision_instance(hta_bsp_mesh *m, const hta_cache *c,
+                                  uint32_t object_id)
+{
+    int32_t ti = hta_cache_find_tag_by_id(c, object_id);
+    hta_tag_entry t; uint32_t off, mid = 0, cid = 0;
+    if (ti < 0 || !hta_cache_tag(c, (uint32_t)ti, &t) ||
+        !hta_cache_ptr_to_offset(c, t.tag_data_ptr, &off)) return false;
+    hta_rd_u32(c, off + HTA_OBJECT_MODEL_ID, &mid);
+    hta_rd_u32(c, off + HTA_OBJECT_COLLISION_ID, &cid);
+    float zero[3] = {0};
+    return instance_coll_tag(m, c, cid, mid, zero, zero) > 0;
+}
+
+bool hta_model_marker_position(const hta_cache *c, uint32_t model,
+                                const char *marker, float out[3])
+{
+    char name[32]; float local[3];
+    if (!hta_model_marker(c, model, marker, name, local)) return false;
+    int32_t ti = hta_cache_find_tag_by_id(c, model);
+    hta_tag_entry t; uint32_t off, n, ptr, arr;
+    if (ti < 0 || !hta_cache_tag(c, (uint32_t)ti, &t) ||
+        !hta_cache_ptr_to_offset(c, t.tag_data_ptr, &off) ||
+        !hta_read_reflexive(c, off + HTA_MOD2_NODES, &n, &ptr) ||
+        !hta_cache_ptr_to_offset(c, ptr, &arr)) return false;
+    hta_m4 rest[HTA_MAX_COLL_NODES];
+    uint32_t nr = load_rest_pose(c, model, rest, HTA_MAX_COLL_NODES);
+    for (uint32_t i = 0; i < n && i < nr; i++) {
+        char node[32] = {0}; hta_rd_bytes(c, arr + i*HTA_NODE_SIZE, node, 31);
+        if (strcmp(node, name)) continue;
+        for (int k = 0; k < 3; k++)
+            out[k] = rest[i].m[k]*local[0] + rest[i].m[4+k]*local[1] +
+                     rest[i].m[8+k]*local[2] + rest[i].m[12+k];
+        return true;
+    }
+    return false;
 }
 
 bool hta_sky_load(hta_bsp_mesh *out, const hta_cache *c,

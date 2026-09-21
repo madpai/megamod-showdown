@@ -23,6 +23,8 @@
 #include "../engine/actor.h"
 #include "../engine/pickup.h"
 #include "../engine/bot.h"
+#include "../engine/vehicle.h"
+#include <stdatomic.h>
 #include "../engine/ammo.h"
 #include "../engine/hud.h"
 #include "../engine/viewmodel.h"
@@ -118,6 +120,8 @@ typedef struct {
     hta_bsp_mesh  coll_mesh;
     hta_viewmodel vm;
     hta_collision col;
+    hta_vehicles vehicles;
+    hta_gfx_mesh *gpu_vehicles;
 
     /* Sound. One bank entry per snd! tag actually asked for, decoded once and
      * kept; Halo tags carry several permutations of the same sound and pick
@@ -295,6 +299,7 @@ typedef struct {
 } hta_android;
 
 static hta_android *g_android;
+static _Atomic int g_vehicle_mode; /* 0 walk, 1 nearby driver seat, 2 driving */
 static bool         g_hud_wanted;
 
 /* ---------------------------- asset loading ---------------------------- */
@@ -1065,9 +1070,14 @@ static bool load_map(hta_android *s)
     else
         hta_log("[assets] textures: %u unique (albedos+lightmaps)", s->mesh.texture_count);
 
+    if (hta_vehicles_load(&s->vehicles, &s->cache,
+            s->bitmaps_rm.data ? &s->bitmaps_rm : NULL, err, sizeof(err)))
+        hta_log("[vehicles] %s", err);
+
     if (hta_bsp_load_collision(&s->cache, &s->coll_mesh, err, sizeof(err))) {
         s->have_coll = true;
-        if (hta_scenario_add_collision(&s->coll_mesh, &s->cache, err, sizeof(err)))
+        if (hta_scenario_add_collision_excluding(&s->coll_mesh, &s->cache,
+                s->vehicles.skip, HTA_VEHICLE_PLACEMENTS, err, sizeof(err)))
             hta_log("[assets] %s", err);
         if (!hta_collision_build(&s->col, &s->coll_mesh))
             hta_log("[assets] collision BSP grid failed; %s", err);
@@ -1114,11 +1124,14 @@ static bool load_map(hta_android *s)
         hta_log("[assets] %u material(s) in this map", s->map_material_count);
     }
 
-    if (hta_scenario_add_objects(&s->mesh, &s->cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL, err, sizeof(err)))
+    if (hta_scenario_add_objects_excluding(&s->mesh, &s->cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL,
+            s->vehicles.skip, HTA_VEHICLE_PLACEMENTS, err, sizeof(err)))
         hta_log("[assets] %s  (now %u verts / %u submeshes)", err,
                 s->mesh.vertex_count, s->mesh.submesh_count);
     if (!s->have_coll)
         hta_collision_rebind(&s->col, s->mesh.vertices, s->mesh.indices);
+
+    if (s->vehicles.loaded) s->col.extra = &s->vehicles.collision;
 
     s->bitmaps_ok = (s->bitmaps_rm.data != NULL);
     s->weapon_count = hta_weapon_list_playable(&s->cache, s->weapons,
@@ -1598,6 +1611,12 @@ static void start_gfx(hta_android *s)
             if (!s->gpu_items) hta_log("[gfx] item upload FAILED: %s", err);
             s->items_upload = HTA_ITEMS_UPLOAD_FRAMES;
         }
+        if (s->vehicles.loaded) {
+            s->gpu_vehicles = hta_gfx_mesh_upload_dynamic_world(s->gfx,
+                &s->vehicles.mesh, err, sizeof(err));
+            s->vehicles.upload_frames = HTA_ITEMS_UPLOAD_FRAMES;
+            if (!s->gpu_vehicles) hta_log("[gfx] vehicle upload FAILED: %s", err);
+        }
         if (s->have_fp) {
             s->gpu_fp = hta_gfx_mesh_upload_dynamic(s->gfx, &s->vm.mesh, err, sizeof(err));
             if (!s->gpu_fp) hta_log("[gfx] fp weapon upload FAILED: %s", err);
@@ -1615,6 +1634,7 @@ static void start_gfx(hta_android *s)
 
 static void stop_gfx(hta_android *s)
 {
+    if (s->gpu_vehicles) { hta_gfx_mesh_free(s->gfx, s->gpu_vehicles); s->gpu_vehicles = NULL; }
     if (s->gpu_bot) { hta_gfx_mesh_free(s->gfx, s->gpu_bot); s->gpu_bot = NULL; }
     if (s->gpu_items) { hta_gfx_mesh_free(s->gfx, s->gpu_items); s->gpu_items = NULL; }
     if (s->gpu_corpse) { hta_gfx_mesh_free(s->gfx, s->gpu_corpse); s->gpu_corpse = NULL; }
@@ -1711,6 +1731,13 @@ Java_net_hta_halotrial_GameActivity_nativeDebugText(JNIEnv *env, jclass cls)
 {
     (void)cls;
     return (*env)->NewStringUTF(env, g_debug_text);
+}
+
+JNIEXPORT jint JNICALL
+Java_net_hta_halotrial_GameActivity_nativeVehicleMode(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    return atomic_load(&g_vehicle_mode);
 }
 
 JNIEXPORT jstring JNICALL
@@ -1837,6 +1864,7 @@ void android_main(struct android_app *app)
     } else {
         hta_log("[audio] no output stream; running silent");
     }
+    if (!state.vehicles.loaded) state.vehicles.driver = -1;
     state.last_time = hta_time_seconds();
 
     hta_log("[app] android_main; pointer size %zu bytes", sizeof(void *));
@@ -1864,8 +1892,39 @@ void android_main(struct android_app *app)
          * hta_player_update with a blank input keeps gravity and the ground
          * query -- so dying on a slope still slides you down it. */
         if (state.dead) memset(&in, 0, sizeof(in));
-        hta_player_update(&state.player, &state.cam,
-                          state.col.built ? &state.col : NULL, &in, dt);
+        int32_t near_vehicle = state.dead ? -1 :
+            hta_vehicles_near(&state.vehicles, &state.col, state.player.pos);
+        bool was_driving = state.vehicles.loaded && state.vehicles.driver >= 0;
+        if (!state.dead && state.hud_swap && (was_driving || near_vehicle >= 0)) {
+            state.hud_swap = false;
+            if (was_driving) {
+                if (!hta_vehicles_exit(&state.vehicles, &state.col, &state.player, &state.cam))
+                    hta_log("[vehicles] stop on clear ground before exiting");
+            } else if (hta_vehicles_enter(&state.vehicles, near_vehicle)) {
+                state.zoom_level = 0; apply_zoom(&state);
+                state.hud_fire = false;
+                state.throwing = false;
+                hta_viewmodel_play(&state.vm, HTA_VM_IDLE);
+            }
+        }
+        bool driving = state.vehicles.loaded && state.vehicles.driver >= 0;
+        hta_vehicles_update(&state.vehicles, &state.col,
+            driving && !state.dead ? in.move_forward : 0,
+            driving && !state.dead ? in.move_right : 0,
+            in.jump || state.dead, state.player.gravity, dt);
+        if (driving) {
+            hta_vehicles_camera(&state.vehicles, &state.col, &state.player,
+                &state.cam, in.look_yaw, in.look_pitch);
+            in.fire = false;
+            state.hud_swap = state.hud_zoom = state.hud_melee = false;
+            state.hud_reload = state.hud_grenade = false; state.hud_debug = 0;
+        } else {
+            /* Do not turn the brake button into a jump on the exit frame. */
+            if (was_driving) { memset(&in, 0, sizeof(in)); state.hud_fire = false; }
+            hta_player_update(&state.player, &state.cam,
+                state.col.built ? &state.col : NULL, &in, dt);
+        }
+        atomic_store(&g_vehicle_mode, state.dead ? 0 : driving ? 2 : near_vehicle >= 0 ? 1 : 0);
         if (state.player.footstep && state.col.built) {
             uint8_t mat = hta_collision_ground_material(&state.col,
                                                         state.player.pos[0],
@@ -1917,6 +1976,8 @@ void android_main(struct android_app *app)
         /* Dying, and coming back. */
         if (state.vitals.loaded && state.vitals.died && !state.dead) {
             state.dead = true;
+            state.vehicles.driver = -1;
+            atomic_store(&g_vehicle_mode, 0);
             state.dead_timer = HTA_RESPAWN_DELAY;
             for (int k = 0; k < 3; k++) state.death_pos[k] = state.player.pos[k];
             fire_loop(&state, false);
@@ -2038,8 +2099,8 @@ void android_main(struct android_app *app)
          * and makes you ASK for a weapon, which is the difference between
          * topping up and losing the gun you wanted. SWAP is that ask: on an
          * item it picks it up, and off one it cycles as before. */
-        if (state.items.loaded && !state.dead) {
-            hta_pickups_update(&state.items, dt);
+        if (state.items.loaded) hta_pickups_update(&state.items, dt);
+        if (state.items.loaded && !state.dead && !driving) {
             const float *feet = state.player.pos;
 
             int32_t got = hta_pickups_at(&state.items, feet);
@@ -2113,10 +2174,10 @@ void android_main(struct android_app *app)
                 }
             }
 
-            if (hta_pickups_dirty(&state.items)) {
-                hta_pickups_pose(&state.items);
-                state.items_upload = HTA_ITEMS_UPLOAD_FRAMES;
-            }
+        }
+        if (state.items.loaded && hta_pickups_dirty(&state.items)) {
+            hta_pickups_pose(&state.items);
+            state.items_upload = HTA_ITEMS_UPLOAD_FRAMES;
         }
 
         /* A powerup running out. The overshield BLEEDS down rather than
@@ -2574,7 +2635,7 @@ void android_main(struct android_app *app)
              * off the screen entirely while zoomed. Without this the sniper
              * reads as a magnified view with a rifle in front of it. */
             /* And a corpse is not holding it either. */
-            if (state.gpu_fp && state.zoom_level == 0 && !state.dead) {
+            if (state.gpu_fp && state.zoom_level == 0 && !state.dead && !driving) {
                 vmdraw.mesh = state.gpu_fp;
                 vmdraw.vertices = state.vm.posed;
                 vmdraw.vertex_count = state.vm.mesh.vertex_count;
@@ -2630,6 +2691,13 @@ void android_main(struct android_app *app)
                 dynlist[dyncount].lit = true;
                 dyncount++;
             }
+            if (state.gpu_vehicles && dyncount < HTA_GFX_MAX_DYNAMIC) {
+                dynlist[dyncount].mesh = state.gpu_vehicles;
+                dynlist[dyncount].vertices = state.vehicles.upload_frames ? state.vehicles.mesh.vertices : NULL;
+                dynlist[dyncount].vertex_count = state.vehicles.mesh.vertex_count;
+                if (state.vehicles.upload_frames) state.vehicles.upload_frames--;
+                dyncount++;
+            }
             if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh,
                               state.gpu_sky, state.gpu_fx,
                               dynlist, dyncount,
@@ -2642,7 +2710,10 @@ void android_main(struct android_app *app)
             state.frames++;
             state.fps_accum += dt;
             state.fps_frames++;
-            if (state.ammo.phase == HTA_AMMO_RELOADING)
+            if (driving && state.vehicles.driver >= 0)
+                snprintf(g_ammo_text, sizeof(g_ammo_text), "%.0f km/h",
+                    fabsf(state.vehicles.cars[state.vehicles.driver].speed) * 3.048f * 3.6f);
+            else if (state.ammo.phase == HTA_AMMO_RELOADING)
                 snprintf(g_ammo_text, sizeof(g_ammo_text), "-- / %d", state.ammo.reserve);
             else
                 snprintf(g_ammo_text, sizeof(g_ammo_text), "%d / %d",
@@ -2684,6 +2755,7 @@ done:
     state.bank_count = 0;
     stop_gfx(&state);
     hta_collision_free(&state.col);
+    hta_vehicles_free(&state.vehicles);
     hta_gun_free(&state.gun);
     hta_projectiles_free(&state.proj);
     hta_projectiles_free(&state.nades);

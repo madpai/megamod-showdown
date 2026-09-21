@@ -9,6 +9,93 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## The Warthog drives (2026-09-21)
+
+The first drivable slice: enter the driver's seat, throttle, reverse, steer,
+brake, and get out again. Human jeeps only (`vehicle type == 1`), which in
+`bloodgulch` is 12 Warthog placements. Everything else stays parked scenery.
+
+`Vehicle` reconciles to **1008** bytes on top of `Unit`'s 752, so the driving
+block is a contiguous run of floats at **vehi+760**: maximum forward speed,
+maximum reverse, speed acceleration, speed deceleration, maximum left turn,
+maximum right turn, wheel circumference, turn rate. `vehicle type` is the
+`uint16` at **+756**.
+
+The units needed the sanity check the handoff asks for, because the tag gives
+no hint and two of them disagree:
+
+- **Speed is per tick.** Warthog forward is `0.275` → `0.275 x 30 = 8.25 wu/s`
+  = **90 km/h**, which is a Warthog. Read as per-second it is 3 km/h, which is
+  not. Acceleration is that speed's change per tick, so it scales by 30
+  squared: `0.0028 x 900 = 2.52 wu/s^2`, and the car reaches top speed in
+  3.3 s. A 4-second host drive lands on 8.25 wu/s exactly.
+- **The turn limits are DEGREES, not radians.** `maximum left turn` is
+  `30.0` and `maximum right turn` is `-30.0`. As radians that is 1719 deg of
+  steering lock; as degrees it is a 30 deg lock, which is what a road vehicle
+  has. `turn rate` is `180.0` deg/s, so the wheel reaches full lock in 1/6 s.
+  Note the tag's right limit is *signed*: interpolating toward whichever limit
+  the stick asks for reproduces the sign for free and would honour an
+  asymmetric vehicle.
+- Wheel circumference `1.0 wu` = 3.05 m = a **0.97 m tire**. Correct, and a
+  good check that the run of floats had not drifted.
+
+The chassis is kinematic, not a rigid body: wheels query the ground, the
+highest contact sets the body height, and front/back and left/right contact
+pairs set pitch and roll. Steering is a bicycle model through the wheelbase
+measured from the `phys` tag's own powered mass points. It is stepped at
+120 Hz regardless of frame rate so a slow frame cannot tunnel a jeep through
+a wall.
+
+Moving vehicles had to come out of the world. They were baked into both the
+BSP render mesh and the BSP collision mesh at load, so a driven Warthog would
+have left an invisible parked copy of itself behind, and its body would have
+been a hole in its own collision. `hta_scenario_add_objects` and
+`..._add_collision` grew `_excluding` variants that skip the placement indices
+the vehicle system has claimed; the old names stay as wrappers. The fleet then
+carries its own render mesh (a dynamic world mesh, so it keeps mipmaps,
+detail maps and scene lighting) and its own collision grid.
+
+That second grid needed a way into every existing query. `hta_collision` grew
+an optional borrowed `extra` pointer, and `ground`, `depenetrate`,
+`ray_material` and `ground_material` became thin front-ends that consult the
+static grid and then the moving one, keeping the nearer hit. So bullets,
+grenades, footsteps and the player's own body all see the Warthog where it
+actually is, with no call site changed. The vehicle's own physics deliberately
+walks the *static* grid only (`terrain.extra = NULL`), or every jeep would
+collide with its own hull.
+
+**The trap this leaves behind:** `hta_collision_build` memsets the struct, so
+it clears `extra`. Re-point it after any rebuild of a grid that carries one.
+Commented at the field.
+
+Verified on the real map, not just flat ground. A synthetic-only test passed
+while the spawn-side Warthog crawled at 0.84 wu/s over uneven terrain, because
+ground support was only acquired on a frame the car had already moved; the
+real-map check is what caught it. Driving into the canyon wall at
+`(94.4, -121.0)` wedges and stops — `htaprobe` confirms two genuine
+`WALL: can push` faces there — and reverse frees it immediately at the tag's
+own 3.60 wu/s. There is no wall-sliding: a blocked jeep stops dead rather
+than glancing off.
+
+Cost, measured before anyone optimises it: parked jeeps are **free**
+(0.000 ms — resting cars are skipped and nothing re-poses), and the
+near-a-seat probe is 0.0004 ms. Driving costs **1.39 ms/frame** on the host,
+and essentially all of it is one call: re-posing all 12 jeeps and rebuilding
+the whole 7152-triangle collision grid every frame that anything moves.
+Eleven of those twelve are parked and unchanged. If the phone's fps readout
+drops while driving, that is the thing to fix, and the fix is per-vehicle
+grids rather than one shared rebuild.
+
+Touch controls reuse the existing pad: SWAP becomes DRIVE near a seat and
+EXIT while driving, JUMP becomes BRAKE, and the stick is throttle and steering.
+The ammo readout becomes a km/h speedometer. Exit refuses unless the jeep is
+stopped and on the ground, and it probes four doors for one with ground, head
+clearance and an unobstructed path from the seat.
+
+`test_vehicle` covers entry, braking, reverse, steering, safe exit and the
+real Warthog's own tag values; `htaview --drive N [--steer S] [--car N]`
+drives a jeep headless and renders it from the chase camera.
+
 ## The Warthog sampled the wrong parts of its textures (2026-09-21)
 
 Reported: the Warthog still did not look properly textured. A host render

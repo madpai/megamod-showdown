@@ -17,6 +17,7 @@ cmake -B build-host -S . -G Ninja >/dev/null 2>&1 || true
 if cmake --build build-host >/dev/null 2>&1; then ok "host build"; else bad "host build"; fi
 if ./build-host/test_engine >/dev/null 2>&1; then ok "engine unit tests"; else bad "engine unit tests"; fi
 if ./build-host/test_cache  >/dev/null 2>&1; then ok "cache parser tests";  else bad "cache parser tests"; fi
+if ./build-host/test_vehicle >/dev/null 2>&1; then ok "vehicle driving and collision tests"; else bad "vehicle driving and collision tests"; fi
 if ./build-host/test_model >/dev/null 2>&1; then ok "model UV and lighting tests"; else bad "model UV and lighting tests"; fi
 if ./build-host/test_bsp    >/dev/null 2>&1; then ok "bsp extraction tests"; else bad "bsp extraction tests"; fi
 if ./build-host/test_camera >/dev/null 2>&1; then ok "camera/projection tests"; else bad "camera/projection tests"; fi
@@ -41,6 +42,7 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_projectile "$HTA_MAP" >/dev/null 2>&1; then ok "projectiles from the projectile tags"; else bad "projectiles from the projectile tags"; fi
   if ./build-host/test_particle "$HTA_MAP" >/dev/null 2>&1; then ok "effect particles from the effect tags"; else bad "effect particles from the effect tags"; fi
   if ./build-host/test_vitals "$HTA_MAP" >/dev/null 2>&1; then ok "vitality and falling from the Trial tags"; else bad "vitality and falling from the Trial tags"; fi
+  if ./build-host/test_vehicle "$HTA_MAP" >/dev/null 2>&1; then ok "Trial Warthog entry, driving and exit"; else bad "Trial Warthog entry, driving and exit"; fi
   if ./build-host/test_model "$HTA_MAP" >/dev/null 2>&1; then ok "Warthog textures and lighting"; else bad "Warthog textures and lighting"; fi
   if ./build-host/test_actor  "$HTA_MAP" >/dev/null 2>&1; then ok "the cyborg poses and dies"; else bad "the cyborg poses and dies"; fi
   if ./build-host/test_pickup "$HTA_MAP" >/dev/null 2>&1; then ok "what the map leaves on the ground"; else bad "what the map leaves on the ground"; fi
@@ -86,6 +88,12 @@ if [ -x ./build-host/htaview ]; then
     VM=$(mktemp -d)
     OUT=$(cd "$VM" && "$OLDPWD/build-host/htaview" "$HTA_MAP" --fp idle --out vm --width 320 --height 240 --shots 1 2>&1) || true
     if echo "$OUT" | grep -q "verts.*hands.*gun"; then ok "first-person viewmodel renders"; else bad "first-person viewmodel renders"; fi
+    OUT=$(cd "$VM" && "$OLDPWD/build-host/htaview" "$HTA_MAP" --drive 2 --out drive --width 320 --height 240 --shots 1 2>&1) || true
+    if echo "$OUT" | grep -q "drive .*jeeps" && echo "$OUT" | grep -q "coverage"; then
+      ok "moving Warthog and chase camera render"
+    else
+      bad "moving Warthog and chase camera render"
+    fi
     rm -rf "$VM"
   fi
 else

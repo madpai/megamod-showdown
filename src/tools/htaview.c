@@ -16,6 +16,7 @@
  * reproduce a player's screenshot from the coordinates in their HUD readout:
  * pass their feet Z plus the standing eye height (0.62).
  */
+#include "../engine/vehicle.h"
 #include "asset/cache.h"
 #include "asset/bsp.h"
 #include "asset/bitmap.h"
@@ -95,6 +96,8 @@ int main(int argc, char **argv)
     int zoom_level = 0;
     float shield = 1.0f, health = 1.0f;
     float eye[3] = {0.0f, 0.0f, 0.0f}, eye_yaw = 0.0f, eye_pitch = 0.0f;
+    float drive = -1.0f, drive_steer = 0.0f;
+    uint32_t drive_car = 1;
     uint32_t W = 1280, H = 720, shots = 4;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--out")    && i + 1 < argc) prefix = argv[++i];
@@ -112,6 +115,9 @@ int main(int argc, char **argv)
             eye_yaw = strtof(argv[++i], NULL) * 0.01745329f;
         else if (!strcmp(argv[i], "--pitch") && i + 1 < argc)
             eye_pitch = strtof(argv[++i], NULL) * 0.01745329f;
+        else if (!strcmp(argv[i], "--drive") && i + 1 < argc) drive = strtof(argv[++i], NULL);
+        else if (!strcmp(argv[i], "--steer") && i + 1 < argc) drive_steer = strtof(argv[++i], NULL);
+        else if (!strcmp(argv[i], "--car") && i + 1 < argc) drive_car = (uint32_t)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--flash")) want_flash = 1;
         else if (!strcmp(argv[i], "--weapon") && i + 1 < argc) want_weapon = argv[++i];
         else if (!strcmp(argv[i], "--zoom") && i + 1 < argc) zoom_level = atoi(argv[++i]);
@@ -128,6 +134,7 @@ int main(int argc, char **argv)
     }
     if (W == 0 || H == 0 || W > 8192 || H > 8192) { fprintf(stderr, "bad size\n"); return 2; }
     if (shots > 64) shots = 64;
+    if (!isfinite(drive) || drive > 30 || !isfinite(drive_steer)) return 2;
 
     size_t size = 0;
     uint8_t *data = slurp(argv[1], &size);
@@ -195,7 +202,30 @@ int main(int argc, char **argv)
         printf("detail maps    %u of %u submeshes, %u masked\n",
                detailed, mesh.submesh_count, masked);
     }
-    if (hta_scenario_add_objects(&mesh, &c, rm.data ? &rm : NULL, err, sizeof(err)))
+    hta_vehicles vehicles = {0}; vehicles.driver = -1;
+    hta_bsp_mesh road = {0}; hta_collision road_col = {0};
+    hta_player driver; hta_player_init(&driver);
+    if (drive >= 0) {
+        if (!hta_vehicles_load(&vehicles, &c, rm.data ? &rm : NULL, err, sizeof(err)) ||
+            drive_car >= vehicles.count || !hta_bsp_load_collision(&c, &road, err, sizeof(err))) {
+            fprintf(stderr, "drive setup failed: %s\n", err); return 1;
+        }
+        hta_scenario_add_collision_excluding(&road, &c, vehicles.skip, sizeof(vehicles.skip), err, sizeof(err));
+        if (!hta_collision_build(&road_col, &road)) return 1;
+        road_col.extra = &vehicles.collision;
+        for (int tick = 0; tick < 60; tick++)
+            hta_vehicles_update(&vehicles, &road_col, 0, 0, false, driver.gravity, 1.0f/60);
+        hta_vehicles_enter(&vehicles, (int32_t)drive_car);
+        double start = hta_time_seconds();
+        int ticks = (int)ceilf(drive * 60);
+        for (int tick = 0; tick < ticks; tick++)
+            hta_vehicles_update(&vehicles, &road_col, 1, drive_steer, false, driver.gravity, 1.0f/60);
+        printf("drive          %u jeeps, %.2f seconds, %.2f wu/s, %.2f ms/update\n",
+            vehicles.count, drive, vehicles.cars[drive_car].speed,
+            ticks ? (hta_time_seconds()-start)*1000/ticks : 0);
+    }
+    if (hta_scenario_add_objects_excluding(&mesh, &c, rm.data ? &rm : NULL,
+            vehicles.skip, sizeof(vehicles.skip), err, sizeof(err)))
         printf("objects        %s  (%u verts, %u submeshes)\n", err, mesh.vertex_count, mesh.submesh_count);
     hta_bsp_mesh sky;
     memset(&sky, 0, sizeof(sky));
@@ -225,6 +255,9 @@ int main(int argc, char **argv)
     printf("upload         %.1f ms, device memory %.2f MiB\n",
            t_upload * 1000.0, hta_gfx_device_memory_used(g) / (1024.0*1024.0));
 
+    hta_gfx_mesh *gv = vehicles.loaded ?
+        hta_gfx_mesh_upload_dynamic_world(g, &vehicles.mesh, err, sizeof(err)) : NULL;
+    if (vehicles.loaded && !gv) { fprintf(stderr, "vehicle upload: %s\n", err); return 1; }
     hta_viewmodel vm;
     hta_projectiles proj;
     hta_gfx_dynamic gproj, gpart;
@@ -496,6 +529,9 @@ int main(int argc, char **argv)
             cam.pitch = atan2f(dz, sqrtf(dx*dx + dy*dy));
         }
 
+        if (vehicles.driver >= 0)
+            hta_vehicles_camera(&vehicles, &road_col, &driver, &cam, 0, 0);
+
         hta_gfx_viewmodel vmdraw;
         memset(&vmdraw, 0, sizeof(vmdraw));
         if (gvm) {
@@ -506,8 +542,10 @@ int main(int argc, char **argv)
         }
 
         /* Projectiles and their particles are separate dynamic meshes. */
-        hta_gfx_dynamic dynlist[2];
+        hta_gfx_dynamic dynlist[3];
         uint32_t dyncount = 0;
+        if (gv) dynlist[dyncount++] = (hta_gfx_dynamic){
+            .mesh = gv, .vertices = vehicles.mesh.vertices, .vertex_count = vehicles.mesh.vertex_count };
         if (gproj.mesh) dynlist[dyncount++] = gproj;
         if (gpart.mesh) {
             gpart.vertices = parts.mesh.vertices;
@@ -518,7 +556,7 @@ int main(int argc, char **argv)
         double r0 = hta_time_seconds();
         bool ok = hta_gfx_draw(g, &cam, &scene, gm, gs, NULL,
                                dynlist, dyncount,
-                               gvm ? &vmdraw : NULL,
+                               gvm && vehicles.driver < 0 ? &vmdraw : NULL,
                                ghud ? &huddraw : NULL);
         double r1 = hta_time_seconds();
         if (!ok) { fprintf(stderr, "draw failed on shot %u\n", s); break; }
@@ -542,6 +580,8 @@ int main(int argc, char **argv)
     }
 
     free(pixels);
+    if (gv) hta_gfx_mesh_free(g, gv);
+    hta_vehicles_free(&vehicles); hta_collision_free(&road_col); hta_bsp_free(&road);
     if (gpart.mesh) hta_gfx_mesh_free(g, gpart.mesh);
     hta_particles_free(&parts);
     if (gproj.mesh) hta_gfx_mesh_free(g, gproj.mesh);

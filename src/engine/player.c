@@ -180,10 +180,12 @@ static int32_t ground_tri(const hta_collision *c, float x, float y, float z_from
 uint8_t hta_collision_ground_material(const hta_collision *c,
                                       float x, float y, float z_from)
 {
-    if (!c || !c->tri_material) return HTA_MATERIAL_NONE;
-    int32_t t = ground_tri(c, x, y, z_from, NULL);
-    if (t < 0) return HTA_MATERIAL_NONE;
-    return c->tri_material[t];
+    if (!c) return HTA_MATERIAL_NONE;
+    float z = -INFINITY, ez = -INFINITY;
+    int32_t t = ground_tri(c, x, y, z_from, &z);
+    if (c->extra && hta_collision_ground(c->extra, x, y, z_from, &ez) && ez > z)
+        return hta_collision_ground_material(c->extra, x, y, z_from);
+    return t >= 0 && c->tri_material ? c->tri_material[t] : HTA_MATERIAL_NONE;
 }
 
 void hta_collision_rebind_material(hta_collision *c, const uint8_t *tri_material)
@@ -191,7 +193,7 @@ void hta_collision_rebind_material(hta_collision *c, const uint8_t *tri_material
     if (c) c->tri_material = tri_material;
 }
 
-bool hta_collision_ground(const hta_collision *c, float x, float y, float z_from,
+static bool collision_ground_static(const hta_collision *c, float x, float y, float z_from,
                           float *out_z)
 {
     if (!c || !c->built || !out_z) return false;
@@ -310,7 +312,7 @@ static float tri_slab_xy_dist(const float a[3], const float b[3], const float c3
     return best;
 }
 
-void hta_collision_depenetrate(const hta_collision *c,
+static void collision_depenetrate_static(const hta_collision *c,
                                float *x, float *y, float z_feet,
                                float height, float radius)
 {
@@ -480,7 +482,7 @@ static void ray_tri(const hta_collision *c, uint32_t t,
  * A particle's ray is centimetres long and touches one cell. A bullet's
  * crosses the map and touches a diagonal of them, and the walk stops as soon
  * as the nearest hit so far is closer than the next cell can possibly be. */
-bool hta_collision_ray_material(const hta_collision *c,
+static bool collision_ray_static(const hta_collision *c,
                                 const float orig[3], const float dir[3], float max_t,
                                 float *out_t, float hit[3], float nrm[3],
                                 uint8_t *out_material)
@@ -568,6 +570,47 @@ bool hta_collision_ray_material(const hta_collision *c,
     if (out_material && c->tri_material && best_tri >= 0)
         *out_material = c->tri_material[best_tri];
     return true;
+}
+
+bool hta_collision_ground(const hta_collision *c, float x, float y, float from,
+                           float *out)
+{
+    if (!c || !out) return false;
+    float z = -INFINITY, ez = -INFINITY;
+    bool found = collision_ground_static(c, x, y, from, &z);
+    if (c->extra && hta_collision_ground(c->extra, x, y, from, &ez)) {
+        z = found ? fmaxf(z, ez) : ez; found = true;
+    }
+    if (found) *out = z;
+    return found;
+}
+
+void hta_collision_depenetrate(const hta_collision *c, float *x, float *y,
+                                float z, float height, float radius)
+{
+    if (!c) return;
+    collision_depenetrate_static(c, x, y, z, height, radius);
+    if (c->extra) {
+        hta_collision_depenetrate(c->extra, x, y, z, height, radius);
+        collision_depenetrate_static(c, x, y, z, height, radius);
+    }
+}
+
+bool hta_collision_ray_material(const hta_collision *c, const float orig[3],
+    const float dir[3], float max_t, float *out_t, float hit[3], float nrm[3], uint8_t *mat)
+{
+    if (!c) return false;
+    float t = max_t;
+    bool found = collision_ray_static(c, orig, dir, max_t, &t, hit, nrm, mat);
+    float et, eh[3], en[3]; uint8_t em = HTA_MATERIAL_NONE;
+    if (c->extra && hta_collision_ray_material(c->extra, orig, dir, t, &et, eh, en, &em)) {
+        t = et; found = true;
+        if (hit) memcpy(hit, eh, sizeof(eh));
+        if (nrm) memcpy(nrm, en, sizeof(en));
+        if (mat) *mat = em;
+    }
+    if (found && out_t) *out_t = t;
+    return found;
 }
 
 bool hta_collision_ray(const hta_collision *c,

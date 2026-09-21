@@ -9,6 +9,7 @@ if(ANDROID)
         src/engine/engine.c
         src/engine/camera.c
         src/engine/player.c
+        src/engine/vehicle.c
         src/engine/gun.c
         src/engine/projectile.c
         src/engine/particle.c
@@ -48,7 +49,7 @@ if(ANDROID)
     target_link_options(hta_native PRIVATE -u ANativeActivity_onCreate)
 else()
     # Host build: the portable engine only, plus its tests.
-    add_library(hta_engine STATIC src/engine/engine.c src/engine/camera.c src/engine/player.c src/engine/gun.c
+    add_library(hta_engine STATIC src/engine/engine.c src/engine/camera.c src/engine/player.c src/engine/vehicle.c src/engine/gun.c
         src/engine/projectile.c
         src/engine/particle.c
         src/engine/vitals.c
@@ -100,6 +101,10 @@ else()
     target_include_directories(test_bsp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(test_bsp PRIVATE hta_engine m)
     add_test(NAME bsp COMMAND test_bsp)
+
+    add_executable(test_vehicle tests/test_vehicle.c)
+    target_link_libraries(test_vehicle PRIVATE hta_engine m)
+    add_test(NAME vehicle COMMAND test_vehicle)
 
     add_executable(test_model tests/test_model.c)
     target_link_libraries(test_model PRIVATE hta_engine m)

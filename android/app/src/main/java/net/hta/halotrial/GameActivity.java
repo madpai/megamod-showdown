@@ -148,6 +148,7 @@ public class GameActivity extends NativeActivity {
     static native void nativeHudDebug(int action);
     static native String nativeDebugText();
     static native String nativeAmmoText();
+    static native int nativeVehicleMode();
 
     private static final class HudOverlay extends View {
         private final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -412,6 +413,15 @@ public class GameActivity extends NativeActivity {
 
         @Override
         protected void onDraw(Canvas c) {
+            int vehicleMode = GameActivity.nativeVehicleMode();
+            if (vehicleMode != 0) {
+                float savedSize = label.getTextSize();
+                label.setTextSize(Math.min(getWidth(), getHeight()) * 0.026f);
+                c.drawText(vehicleMode == 2
+                        ? "Stick: drive / steer    BRAKE to stop    EXIT when stopped"
+                        : "DRIVE: enter Warthog", getWidth() * 0.5f, getHeight() * 0.18f, label);
+                label.setTextSize(savedSize);
+            }
             c.drawCircle(stickCx, stickCy, stickR, fill);
             c.drawCircle(stickCx, stickCy, stickR, ring);
             c.drawCircle(stickTx, stickTy, stickR * 0.38f, thumb);
@@ -426,7 +436,7 @@ public class GameActivity extends NativeActivity {
 
             c.drawCircle(jumpCx, jumpCy, jumpR, jumpP);
             c.drawCircle(jumpCx, jumpCy, jumpR, ring);
-            c.drawText("JUMP", jumpCx, jumpCy + label.getTextSize() * 0.35f, label);
+            c.drawText(vehicleMode == 2 ? "BRAKE" : "JUMP", jumpCx, jumpCy + label.getTextSize() * 0.35f, label);
 
             c.drawCircle(crouchCx, crouchCy, crouchR, crouchP);
             c.drawCircle(crouchCx, crouchCy, crouchR, ring);
@@ -442,7 +452,8 @@ public class GameActivity extends NativeActivity {
 
             c.drawCircle(swapCx, swapCy, swapR, swapP);
             c.drawCircle(swapCx, swapCy, swapR, ring);
-            c.drawText("SWAP", swapCx, swapCy + label.getTextSize() * 0.35f, label);
+            c.drawText(vehicleMode == 2 ? "EXIT" :
+                    vehicleMode == 1 ? "DRIVE" : "SWAP", swapCx, swapCy + label.getTextSize() * 0.35f, label);
 
             c.drawCircle(zoomCx, zoomCy, zoomR, zoomP);
             c.drawCircle(zoomCx, zoomCy, zoomR, ring);

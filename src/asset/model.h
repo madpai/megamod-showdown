@@ -122,4 +122,14 @@ bool hta_scenario_add_collision(hta_bsp_mesh *col, const hta_cache *c,
 bool hta_sky_load(hta_bsp_mesh *out, const hta_cache *c,
                   const hta_resource_map *bitmaps, char *err, size_t errlen);
 
+/* Skip only the vehicle placement indices owned by a moving vehicle system. */
+bool hta_scenario_add_objects_excluding(hta_bsp_mesh *m, const hta_cache *c,
+    const hta_resource_map *bm, const uint8_t *skip, uint32_t skip_count,
+    char *err, size_t n);
+bool hta_scenario_add_collision_excluding(hta_bsp_mesh *m, const hta_cache *c,
+    const uint8_t *skip, uint32_t skip_count, char *err, size_t n);
+bool hta_model_collision_instance(hta_bsp_mesh *m, const hta_cache *c, uint32_t object_id);
+bool hta_model_marker_position(const hta_cache *c, uint32_t model,
+    const char *marker, float out[3]);
+
 #endif

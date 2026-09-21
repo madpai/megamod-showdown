@@ -40,7 +40,7 @@ cd /home/commander/projects/halo-trial-android
 HTA_MAP=/home/commander/halo-trial-data/extract/maps/bloodgulch.map scripts/verify.sh
 ```
 
-54 checks: host build, every unit test twice (synthetic, then against the real
+57 checks: host build, every unit test twice (synthetic, then against the real
 map), a synthetic-fixture CLI pass, an offscreen render, the APK build, and the
 APK's contents (arm64 only, no bundled audio, right entry points).
 
@@ -97,20 +97,38 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Release: "Warthog texture coordinates and lighting" (2026-09-21).**
+> **Release: "The Warthog drives" (2026-09-21).**
 >
-> 1. Walk around the Warthog. Tire tread, hood/side panels and tail lights
->    should now line up with the geometry instead of sampling unrelated
->    patches of the texture. The body should be lit by the scene.
-> 2. Check other vehicles and trees: the model UV-scale correction applies
->    to every model whose tag uses non-unit scales. Watch for stretched or
->    misplaced textures, and excessively bright placed objects.
-> 3. Check held weapons and their counters, especially the fuel rod gun.
->    Their shared model loader now restores UV scales too.
+> 1. **Get in.** Walk up to a Warthog's driver side. SWAP should read
+>    **DRIVE**; press it. The camera moves to a chase view behind the jeep and
+>    the ammo readout becomes a speedometer in km/h.
+> 2. **Drive.** Left stick is throttle (up) / reverse (down) and steering
+>    (left/right). Dragging the view still looks around independently. Top
+>    speed should be about **90 km/h**, reached in a bit over three seconds.
+>    JUMP now reads **BRAKE**.
+> 3. **Watch the fps readout while moving.** This is the main thing to report.
+>    Driving costs 1.39 ms/frame on the host and parked jeeps cost nothing;
+>    almost all of it is rebuilding the whole fleet's collision grid every
+>    frame. If fps falls off 120 while driving and recovers when you stop,
+>    that is this, and the fix is per-vehicle grids.
+> 4. **Get out.** Stop, then press **EXIT**. It refuses while you are moving
+>    or airborne, and it checks four doors for ground, headroom and a clear
+>    path — if all four are blocked it will refuse and log. Getting out in a
+>    ditch or against a wall is the interesting case.
+> 5. **Hit things.** Drive into the canyon wall: the jeep should stop dead
+>    (there is no wall-sliding yet) and reverse should free it. Shoot a
+>    Warthog, throw a grenade at one, and walk into one — bullets, blasts and
+>    your own body should all meet it where it actually *is*, not where it was
+>    parked. Check no invisible parked jeep is left behind at a spawn point.
+> 6. **Check nothing else moved.** Weapons, HUD, pickups and the body should
+>    be untouched on foot. Note that pickups, the bot and the corpse now take
+>    their tagged detail maps in the dynamic pass like the world does — watch
+>    for anything newly speckled.
 >
-> All 54 verification checks passed; before/after host renders inspected.
-> Phone confirmation pending. Vehicle reflections remain unsupported, and
-> vehicles are still not drivable. Next feature: a small Warthog driving slice.
+> All 57 verification checks passed, including the real Trial Warthog's entry,
+> driving and exit. Phone confirmation pending. Wheels do not spin, there are
+> no passenger or turret seats, the Warthog cannot be damaged or flipped, and
+> only human jeeps are drivable — the Scorpion, Ghost and Banshee stay parked.
 
 ---
 
@@ -156,6 +174,15 @@ uploads retain their existing filtering. Device confirmation pending.
 **A body to shoot at.** Stands in front of the spawn with the player's health,
 shield and collision shape, holds a rifle, flinches, dies, comes back.
 
+**A drivable Warthog.** Human jeeps (`vehi+756 == 1`) come out of the static
+world into their own render mesh and their own collision grid, and the twelve
+Blood Gulch placements are drivable: enter, throttle, reverse, steer, brake,
+exit. Speeds, acceleration, steering lock and turn rate all come from the
+vehicle tag; the wheelbase and mass points come from its `phys` tag. Chase
+camera, DRIVE/EXIT/BRAKE touch labels and a km/h speedometer. The moving hull
+is solid to bullets, grenades, footsteps and the player. Device confirmation
+pending.
+
 **Placed model textures.** Model UV scales are restored from `mod2+48/+52`;
 opaque placed `shader_model` surfaces use scene lighting. This fixes the
 Warthog sampling the wrong texture regions and being drawn unlit. Reflections
@@ -163,8 +190,9 @@ remain a rendering gap; phone confirmation of this fix is pending.
 
 ### Not started
 
-- **Vehicles.** The Warthog is drawn and collidable but not drivable. This is
-  the biggest single piece left and the biggest jump in how the game feels.
+- **Vehicles beyond the driver's seat.** The Warthog now drives (see below).
+  Passengers, the turret, vehicle damage and flipping, and the Scorpion,
+  Ghost and Banshee are all still untouched.
 - **Bots.** The body exists; it needs somewhere to walk, something to walk
   towards, an eye test and a trigger. None of that touches what is there.
 - **Netcode.** Parked deliberately.
@@ -189,6 +217,11 @@ remain a rendering gap; phone confirmation of this fix is pending.
 | Motion tracker | Art and behaviour readable (`unhi` 620/724, `hud_globals` range and scale) but placement is not in the tag, and nothing moves to track. Deferred three times. |
 | No hit sound on the body | `weapons\*\effects\impact cyborg shield` is in the cache and is the right thing to reach for. |
 | The bot's rifle is hardcoded | Should be whatever it is carrying, once it carries anything. |
+| Vehicle wheels do not spin | `wheel_spin` is accumulated from the tag's wheel circumference but nothing consumes it: the jeep is one rigid mesh, so the wheels need their own node transforms in `pose_mesh`. |
+| A blocked jeep stops dead | No wall-sliding. Driving into the canyon wall wedges you; reverse frees it. Glancing blows should deflect, not halt. |
+| Driving re-poses the whole fleet | 1.39 ms/frame on the host, and all of it is one `hta_vehicles_pose` rebuilding all 12 jeeps' shared collision grid. Eleven are parked. Per-vehicle grids is the fix, if the phone says it needs one. |
+| Vehicles take no damage | You cannot destroy or flip a Warthog, and it does not hurt what it hits. |
+| Only 1 dynamic mesh slot left | The vehicle fleet took one; 7 of `HTA_GFX_MAX_DYNAMIC`'s 8 are now in use, and dropped weapons still want one. |
 
 ---
 
@@ -229,7 +262,7 @@ Projectile 588 · Effect 64 · EffectEvent 68 · EffectPart 104 · EffectParticl
 232 · Particle 356 · PointPhysics 64 · ShaderEnvironment 836 · ShaderModel 440
 · ShaderTransparentGlass 480 · ShaderTransparentChicago 108 · Sound 164 ·
 SoundLooping 84 · Font 156 · WeaponHUDInterface 380 · Globals 428 ·
-GBXModel 232 · ModelCollisionGeometry 664 · DamageEffect 672 · Object 380 · Unit 752 ·
+Vehicle 1008 · GBXModel 232 · ModelCollisionGeometry 664 · DamageEffect 672 · Object 380 · Unit 752 ·
 Dialogue 4112 · Scenario 1456 · ScenarioNetgameEquipment 144 · ItemCollection
 92 · ItemCollectionPermutation 84 · ScenarioPlayerStartingProfile 104 ·
 ScenarioStartingEquipment 204 · UnitHUDInterfaceHUDSound 56 · Equipment 944
@@ -250,6 +283,7 @@ ScenarioStartingEquipment 204 · UnitHUDInterfaceHUDSound 56 · Equipment 944
 | Equipment powerup type / grenade type / time / pickup sound | 776 / 778 / 780 / 784 |
 | DamageEffect per-material multipliers | **jpt+512**, one float per MaterialType |
 | Unit `melee damage` | 380 + 268 |
+| Vehicle type / driving floats | **vehi+756** (u16; 1 == human jeep) / **vehi+760**, 8 floats: forward, reverse, accel, decel, left turn, right turn, wheel circumference, turn rate |
 | Object model / animation graph / attachments | +40 / +56 / +320 (72 each) |
 
 **MaterialType 21 is cyborg armour, 22 is cyborg energy shield.** Those two
@@ -289,6 +323,11 @@ the full story.
   That is invisible and fine.
 - **A corpse must stop no bullets**, or a dead body soaks the magazine meant
   for the next one.
+- **`hta_collision_build` memsets the grid**, which clears the optional
+  `extra` link to a moving-object grid. Re-point it after any rebuild, or
+  vehicles silently stop being solid.
+- **Vehicle physics must walk the STATIC grid** (`extra = NULL`). Given the
+  whole world, every jeep collides with its own hull and cannot move.
 - **Dynamic meshes write one vertex slot per in-flight frame.** Uploading a
   change once leaves stale geometry in the other slots. The count belongs to
   the swapchain, so re-upload for several frames.
@@ -321,6 +360,13 @@ wrong, this list is the first place to look — they are all one constant.
 | `HTA_VM_KEY_FRACTION` | 0.35 | when a clip "does its thing" if `key frame` is 0 |
 | `HTA_BOT_RESPAWN` | 5 s | how long a body lies there |
 | `HTA_ITEMS_UPLOAD_FRAMES` | 8 | ≥ any swapchain image count |
+| `HTA_VEHICLE_ENTER_REACH` | 0.9 wu | how close to a driver's seat DRIVE appears |
+| `HTA_VEHICLE_EXIT_SPEED` | 0.5 wu/s | below this a jeep counts as stopped, for entering and exiting |
+| `HTA_VEHICLE_STEP` | 1/120 s | fixed physics substep, so frame rate cannot change handling |
+| `HTA_VEHICLE_CLEARANCE` | 0.04 wu | how far a mass point may be pushed before it counts as blocked |
+| `HTA_VEHICLE_MAX_SLOPE` | 0.75 rad | cap on the pitch/roll the wheels may pose the body to (43°) |
+| `HTA_VEHICLE_CAMERA_BACK` | 2.5 wu | chase camera distance, pulled in by terrain |
+| `HTA_VEHICLE_CAMERA_UP` | 0.7 wu | chase camera height above the hull |
 
 ---
 
@@ -330,6 +376,7 @@ wrong, this list is the first place to look — they are all one constant.
 # look at the first-person view without a device
 ./build-host/htaview $HTA_MAP --fp idle   --shots 2 --out /tmp/fp
 ./build-host/htaview $HTA_MAP --weapon "rocket launcher" --fly 0.05
+./build-host/htaview $HTA_MAP --drive 4 --steer 0.3   # drive a jeep, then render it
 
 # chase a "stuck here" report: the HUD readout gives x y z
 ./build-host/htaprobe $HTA_MAP --at 96.57 -155.72 --z 0.81   # why it pushes
@@ -373,6 +420,7 @@ Put them in the session scratchpad, not the repo. Relink after every rebuild.
 | Biped physics | `src/asset/biped.c` |
 | HUD font digits | `src/asset/font.c` |
 | Player movement, collision grid, **ray query** | `src/engine/player.c` |
+| Drivable vehicles, chassis, chase camera | `src/engine/vehicle.c` |
 | First-person weapon | `src/engine/viewmodel.c` |
 | World-space skinned character | `src/engine/actor.c` |
 | A body that can be shot | `src/engine/bot.c` |

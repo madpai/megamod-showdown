@@ -12,7 +12,7 @@
 #include "../asset/bsp.h"
 #include "../asset/biped.h"
 
-typedef struct {
+typedef struct hta_collision {
     /* uniform grid over XY; each cell lists triangle indices */
     float    min[2], cell;
     uint32_t nx, ny;
@@ -24,6 +24,10 @@ typedef struct {
     uint32_t          tri_count;
     float             walkable_nz; /* cos(max slope); 0.5 ≈ 60° */
     bool built;
+    /* Optional independently rebuilt moving-object grid; borrowed, acyclic.
+     * hta_collision_build memsets this struct, so re-point `extra` AFTER any
+     * rebuild of the grid that carries it, or the link silently vanishes. */
+    const struct hta_collision *extra;
 } hta_collision;
 
 bool hta_collision_build(hta_collision *c, const hta_bsp_mesh *mesh);
