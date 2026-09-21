@@ -28,6 +28,7 @@ if ./build-host/test_projectile >/dev/null 2>&1; then ok "projectile tests"; els
 if ./build-host/test_particle   >/dev/null 2>&1; then ok "particle tests"; else bad "particle tests"; fi
 if ./build-host/test_vitals     >/dev/null 2>&1; then ok "health/shield tests"; else bad "health/shield tests"; fi
 if ./build-host/test_actor      >/dev/null 2>&1; then ok "world-space actor tests"; else bad "world-space actor tests"; fi
+if ./build-host/test_pickup     >/dev/null 2>&1; then ok "pickup tests"; else bad "pickup tests"; fi
 if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_biped "$HTA_MAP" >/dev/null 2>&1; then ok "biped/globals physics from Trial map"; else bad "biped/globals physics from Trial map"; fi
   if ./build-host/test_anim "$HTA_MAP" >/dev/null 2>&1; then ok "FP animation graph + skinned viewmodel"; else bad "FP animation graph + skinned viewmodel"; fi
@@ -39,6 +40,7 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_particle "$HTA_MAP" >/dev/null 2>&1; then ok "effect particles from the effect tags"; else bad "effect particles from the effect tags"; fi
   if ./build-host/test_vitals "$HTA_MAP" >/dev/null 2>&1; then ok "vitality and falling from the Trial tags"; else bad "vitality and falling from the Trial tags"; fi
   if ./build-host/test_actor  "$HTA_MAP" >/dev/null 2>&1; then ok "the cyborg poses and dies"; else bad "the cyborg poses and dies"; fi
+  if ./build-host/test_pickup "$HTA_MAP" >/dev/null 2>&1; then ok "what the map leaves on the ground"; else bad "what the map leaves on the ground"; fi
 fi
 
 # Optional: validate against the user's own Trial data if HTA_MAP points at it.

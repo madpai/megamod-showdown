@@ -21,6 +21,7 @@
 #include "../engine/vitals.h"
 #include "../asset/dialogue.h"
 #include "../engine/actor.h"
+#include "../engine/pickup.h"
 #include "../engine/ammo.h"
 #include "../engine/hud.h"
 #include "../engine/viewmodel.h"
@@ -201,6 +202,22 @@ typedef struct {
     hta_actor     corpse;
     hta_gfx_mesh *gpu_corpse;
     bool          corpse_up;
+
+    /* What the map leaves on the ground. */
+    hta_pickups   items;
+    hta_gfx_mesh *gpu_items;
+    /* Frames left to keep uploading the item geometry. The dynamic path
+     * writes one vertex slot per in-flight frame, so a single change has to
+     * reach every one of them before it can stop -- and how many there are
+     * is the swapchain's image count, which is not ours to know. Eight
+     * covers any of them; the cost of a few extra copies after something is
+     * picked up is nothing beside doing it every frame forever. */
+    int           items_upload;
+#define HTA_ITEMS_UPLOAD_FRAMES 8
+    uint32_t      pickup_snd_health, pickup_snd_shield, pickup_snd_camo;
+    uint32_t      pickup_snd_ammo;
+    float         powerup_timer;
+    hta_item_kind powerup;
 
     hta_ammo ammo;
     float    dry_cooldown;   /* stops an empty trigger clicking every frame */
@@ -579,6 +596,12 @@ static void cycle_zoom(hta_android *s)
  * The GPU meshes are freed and re-uploaded, so this must not run while a
  * frame is in flight -- it is called from the game thread between frames.
  */
+/* Overshield stacks on top of your own, and drains back down over the time
+ * the equipment tag says -- 60 s for the overshield, 45 for camouflage. The
+ * MULTIPLIER is ours: Halo's overshield is famously "three bars", and the
+ * tag says how long it lasts but not how much it gives. */
+#define HTA_OVERSHIELD_MULT 3.0f
+
 /* Halo's multiplayer respawn. The five seconds are the GAMETYPE's, not any
  * tag's -- no gametype ships inside a map -- so this one number is ours. The
  * fade is shaped around it: black by the time the body has settled, black
@@ -1000,6 +1023,19 @@ static bool load_map(hta_android *s)
             hta_log("[assets] collision grid failed to build; player will free-fly");
         else
             hta_log("[assets] collision grid %ux%u cells (render mesh)", s->col.nx, s->col.ny);
+    }
+
+    /* What the map leaves lying about. Every position, facing, respawn time
+     * and weighted choice is the scenario's own. */
+    if (hta_pickups_load(&s->items, &s->cache)) {
+        char ierr[HTA_ERRLEN];
+        if (hta_pickups_build(&s->items, &s->cache,
+                              s->bitmaps_rm.data ? &s->bitmaps_rm : NULL,
+                              ierr, sizeof(ierr)))
+            hta_log("[items] %s", ierr);
+        else
+            hta_log("[items] %u placement(s) but no geometry: %s",
+                    s->items.count, ierr);
     }
 
     /* Which materials this map is actually made of. Blood Gulch is four:
@@ -1426,6 +1462,12 @@ static void start_gfx(hta_android *s)
                                                         err, sizeof(err));
             if (!s->gpu_corpse) hta_log("[gfx] corpse upload FAILED: %s", err);
         }
+        if (s->items.have_mesh && s->items.mesh.index_count) {
+            s->gpu_items = hta_gfx_mesh_upload_dynamic(s->gfx, &s->items.mesh,
+                                                       err, sizeof(err));
+            if (!s->gpu_items) hta_log("[gfx] item upload FAILED: %s", err);
+            s->items_upload = HTA_ITEMS_UPLOAD_FRAMES;
+        }
         if (s->have_fp) {
             s->gpu_fp = hta_gfx_mesh_upload_dynamic(s->gfx, &s->vm.mesh, err, sizeof(err));
             if (!s->gpu_fp) hta_log("[gfx] fp weapon upload FAILED: %s", err);
@@ -1443,6 +1485,7 @@ static void start_gfx(hta_android *s)
 
 static void stop_gfx(hta_android *s)
 {
+    if (s->gpu_items) { hta_gfx_mesh_free(s->gfx, s->gpu_items); s->gpu_items = NULL; }
     if (s->gpu_corpse) { hta_gfx_mesh_free(s->gfx, s->gpu_corpse); s->gpu_corpse = NULL; }
     if (s->gpu_hud) { hta_gfx_mesh_free(s->gfx, s->gpu_hud); s->gpu_hud = NULL; }
     if (s->gpu_fp) { hta_gfx_mesh_free(s->gfx, s->gpu_fp); s->gpu_fp = NULL; }
@@ -1851,6 +1894,107 @@ void android_main(struct android_app *app)
             hta_viewmodel_play(&state.vm, HTA_VM_RELOAD);
         if (state.dry_cooldown > 0.0f) state.dry_cooldown -= dt;
 
+        /* What you are standing on.
+         *
+         * Halo takes grenades, health and powerups as you walk over them
+         * and makes you ASK for a weapon, which is the difference between
+         * topping up and losing the gun you wanted. SWAP is that ask: on an
+         * item it picks it up, and off one it cycles as before. */
+        if (state.items.loaded && !state.dead) {
+            hta_pickups_update(&state.items, dt);
+            const float *feet = state.player.pos;
+
+            int32_t got = hta_pickups_at(&state.items, feet);
+            const hta_item_choice *item = hta_pickups_item(&state.items, got);
+            if (item) {
+                bool taken = false;
+                switch (item->kind) {
+                case HTA_ITEM_GRENADE:
+                    if (state.nade_count < state.nade_max) {
+                        state.nade_count++;
+                        taken = true;
+                    }
+                    break;
+                case HTA_ITEM_HEALTH:
+                    if (state.vitals.loaded &&
+                        state.vitals.health < state.vitals.max_health) {
+                        state.vitals.health = state.vitals.max_health;
+                        taken = true;
+                    }
+                    break;
+                case HTA_ITEM_OVERSHIELD:
+                    if (state.vitals.loaded) {
+                        state.vitals.shield = state.vitals.max_shield *
+                                              HTA_OVERSHIELD_MULT;
+                        state.powerup = HTA_ITEM_OVERSHIELD;
+                        state.powerup_timer = item->powerup_time;
+                        taken = true;
+                    }
+                    break;
+                case HTA_ITEM_CAMOUFLAGE:
+                    state.powerup = HTA_ITEM_CAMOUFLAGE;
+                    state.powerup_timer = item->powerup_time;
+                    taken = true;
+                    break;
+                default:
+                    break;   /* a weapon waits to be asked for */
+                }
+                if (taken) {
+                    play_tag(&state, item->pickup_snd, 1.0f);
+                    hta_log("[items] picked up %s", item->path);
+                    hta_pickups_take(&state.items, got);
+                }
+            }
+
+            /* SWAP on a weapon takes it instead of cycling. */
+            if (state.hud_swap) {
+                int32_t wslot = hta_pickups_at_kind(&state.items, feet,
+                                                    HTA_ITEM_WEAPON);
+                const hta_item_choice *w = hta_pickups_item(&state.items, wslot);
+                if (w && w->tag_id != state.weapons[state.weapon_slot]) {
+                    state.hud_swap = false;
+                    /* It joins the roster in the slot it replaces, so the
+                     * next SWAP cycles from where you are rather than
+                     * jumping back to whatever you started with. */
+                    state.weapons[state.weapon_slot] = w->tag_id;
+                    equip_weapon(&state, w->tag_id);
+                    hta_pickups_take(&state.items, wslot);
+                    play_tag(&state, w->pickup_snd, 1.0f);
+                    hta_log("[items] picked up %s", w->path);
+                }
+            }
+
+            if (hta_pickups_dirty(&state.items)) {
+                hta_pickups_pose(&state.items);
+                state.items_upload = HTA_ITEMS_UPLOAD_FRAMES;
+            }
+        }
+
+        /* A powerup running out. The overshield BLEEDS down rather than
+         * vanishing: in Halo you watch the extra bars drain, and a cliff
+         * edge at sixty seconds would make it impossible to judge. */
+        if (state.powerup_timer > 0.0f) {
+            float was = state.powerup_timer;
+            state.powerup_timer -= dt;
+            if (state.powerup == HTA_ITEM_OVERSHIELD && state.vitals.loaded &&
+                state.vitals.shield > state.vitals.max_shield && was > 0.0f) {
+                float extra = state.vitals.max_shield *
+                              (HTA_OVERSHIELD_MULT - 1.0f);
+                state.vitals.shield -= extra * (dt / was);
+                if (state.vitals.shield < state.vitals.max_shield)
+                    state.vitals.shield = state.vitals.max_shield;
+            }
+            if (state.powerup_timer <= 0.0f) {
+                state.powerup_timer = 0.0f;
+                if (state.powerup == HTA_ITEM_OVERSHIELD &&
+                    state.vitals.loaded &&
+                    state.vitals.shield > state.vitals.max_shield)
+                    state.vitals.shield = state.vitals.max_shield;
+                hta_log("[items] powerup over");
+                state.powerup = HTA_ITEM_NONE;
+            }
+        }
+
         /* None of the buttons do anything to a corpse. They are consumed
          * rather than left pending, or every press made while dead would
          * fire at once on respawn. */
@@ -2158,6 +2302,19 @@ void android_main(struct android_app *app)
                 dynlist[dyncount].mesh = state.gpu_parts;
                 dynlist[dyncount].vertices = state.parts.mesh.vertices;
                 dynlist[dyncount].vertex_count = state.parts.mesh.vertex_count;
+                dyncount++;
+            }
+            if (state.gpu_items && dyncount < HTA_GFX_MAX_DYNAMIC) {
+                dynlist[dyncount].mesh = state.gpu_items;
+                /* NULL skips the copy. The items do not move, so they are
+                 * only written into the vertex slots after something is
+                 * taken or comes back -- 23,000 vertices every frame to
+                 * keep thirty-seven still objects still would be 900 KB a
+                 * frame of nothing. */
+                dynlist[dyncount].vertices =
+                    state.items_upload > 0 ? state.items.posed : NULL;
+                dynlist[dyncount].vertex_count = state.items.mesh.vertex_count;
+                if (state.items_upload > 0) state.items_upload--;
                 dyncount++;
             }
             if (state.corpse_up && state.gpu_corpse &&

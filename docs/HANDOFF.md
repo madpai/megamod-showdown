@@ -85,6 +85,112 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## Pickups (2026-09-21)
+
+Blood Gulch's own item layout, running. Every position, facing, respawn time
+and weighted choice is the scenario's.
+
+### Where it lives
+
+**Not** in the scenery: Halo keeps items in the scenario as **`netgame
+equipment`**, at **+900**, 144 bytes each. `Scenario` reconciles at 1456,
+`ScenarioNetgameEquipment` at 144, `ItemCollection` at 92 and
+`ItemCollectionPermutation` at 84 -- all four, which is why these offsets can
+be trusted without probing.
+
+| | offset |
+| --- | --- |
+| netgame equipment | Scenario +900, stride 144 |
+| spawn time (int16 s, 0 = use the collection's) | +14 |
+| position | +64 |
+| facing | +76 |
+| item collection | +80 (id at +92) |
+| collection permutations | ItemCollection +0, stride 84 |
+| collection default spawn time | +12 |
+| permutation weight / item | +32 / +36 |
+
+Blood Gulch places **37**: 17 weapons, 16 grenades, 2 health packs, the
+overshield and the active camouflage. Respawns run 15 s to 180 s. The
+placement's own time wins over the collection's -- the rocket launcher is
+written 90 s over its collection's 120.
+
+### The equipment says what it is; its PATH lies
+
+`Equipment` sits at **+776** (Object 380 + Item 396), and declares 944 =
+776 + 168:
+
+| | offset |
+| --- | --- |
+| powerup type | 776 |
+| grenade type | 778 |
+| powerup time | 780 |
+| pickup sound | 784 |
+
+Powerup type comes out exactly right -- camouflage 3, overshield 2, health 5,
+grenade 6, and 0 for the ammo powerups the Trial never places -- which is the
+check that 776 is correct.
+
+**Do not classify these by path.** In Bungie's own tags the overshield's
+model is `powerups\active camoflage\active camoflage` and the
+camouflage's is the overshield's: they are swapped. Anything keying off
+names hands out the wrong powerup. (The pickup sounds are not swapped:
+`pickup_dbl_shield` and `pickup_health` are right. An earlier probe said
+otherwise and was wrong -- a static return buffer aliasing between two
+printf arguments.)
+
+Powerup times are the tag's: overshield **60 s**, camouflage **45 s**.
+
+### The runtime
+
+`src/engine/pickup.c`, portable and testable: each placement holds an item
+drawn from its collection's weights, hands it over when you walk onto it,
+counts down, and **draws afresh**. That last part is the pedestal in the
+middle of the map, which is overshield or camouflage fifty-fifty and rolls
+again every time -- measured at 98/102 over 200 respawns.
+
+Halo takes grenades, health and powerups as you **walk over** them and makes
+you **ask** for a weapon; the difference is between topping up and losing the
+gun you wanted. SWAP is the ask: on a weapon it picks it up, off one it
+cycles as before, and the new weapon takes the roster slot it replaces.
+
+### Drawing them without paying for it every frame
+
+23,041 vertices across 37 items. Posing that every frame would be **900 KB of
+upload a frame to keep thirty-seven stationary objects stationary**.
+
+`dyn[].vertices == NULL` skips the copy, so items are only written when
+something is actually taken or comes back. The catch: the dynamic path writes
+**one vertex slot per in-flight frame** and the count is the swapchain's
+image count, which the platform does not know -- so a change is re-uploaded
+for `HTA_ITEMS_UPLOAD_FRAMES` (8) frames, not one. Uploading once would leave
+stale geometry in the other slots, visible as an item flickering back.
+
+`HTA_GFX_MAX_DYNAMIC` went 4 -> 6: projectiles, grenades, particles, the
+corpse and now the items.
+
+### Ours, not the tags'
+
+- `HTA_PICKUP_REACH` 0.5 wu (about 1.5 m) -- no tag carries a pickup radius.
+- `HTA_PICKUP_LIFT` 0.06 wu -- the scenario's z is the ground the item rests
+  on, and drawing exactly on it sinks the model halfway in.
+- `HTA_OVERSHIELD_MULT` 3.0 -- the tag says how long it lasts, not how much
+  it gives. It bleeds down over the powerup time rather than vanishing.
+- `HTA_ITEM_RESPAWN_DEFAULT` 15 s, where neither the placement nor the
+  collection says (the base weapons are written that way).
+
+### Not done
+
+- **Items do not spin.** Halo rotates powerups where they lie. Doing it means
+  either paying the full upload every frame or splitting the powerups into
+  their own dynamic mesh -- the latter is the right answer and is the reason
+  `HTA_GFX_MAX_DYNAMIC` has headroom.
+- **Camouflage does nothing** beyond running its timer. With no other player
+  and no third-person view of yourself, there is nothing for it to hide.
+- Weapons picked up arrive with a full magazine, because `hta_ammo_init` is
+  what equipping runs. A dropped weapon should carry what was left in it.
+
+---
+
 ## The shield has a voice (2026-09-21)
 
 Asked for: "isn't there supposed to be a sound effect when your shield is
