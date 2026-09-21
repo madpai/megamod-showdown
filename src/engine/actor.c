@@ -26,6 +26,7 @@ void hta_actor_free(hta_actor *a)
     free(a->skin);
     memset(a, 0, sizeof(*a));
     a->clip = -1;
+    a->overlay = -1;
 }
 
 bool hta_actor_load(hta_actor *a, const hta_cache *c,
@@ -38,6 +39,7 @@ bool hta_actor_load(hta_actor *a, const hta_cache *c,
     }
     memset(a, 0, sizeof(*a));
     a->clip = -1;
+    a->overlay = -1;
 
     int32_t ti = hta_cache_find_tag_by_id(c, bipd_tag_id);
     if (ti < 0) { if (err) snprintf(err, errlen, "no such biped"); return false; }
@@ -104,6 +106,21 @@ bool hta_actor_play(hta_actor *a, const char *name, bool hold)
     return true;
 }
 
+bool hta_actor_play_overlay(hta_actor *a, const char *name)
+{
+    if (!a || !a->loaded || !name) return false;
+    int32_t ci = hta_anim_find(&a->graph, name);
+    if (ci < 0) return false;
+    a->overlay = ci;
+    a->overlay_frame = 0.0f;
+    return true;
+}
+
+bool hta_actor_overlaying(const hta_actor *a)
+{
+    return a && a->loaded && a->overlay >= 0;
+}
+
 bool hta_actor_play_death(hta_actor *a, uint32_t *rng)
 {
     if (!a || !a->loaded) return false;
@@ -121,7 +138,17 @@ bool hta_actor_play_death(hta_actor *a, uint32_t *rng)
 
 void hta_actor_update(hta_actor *a, float dt)
 {
-    if (!a || !a->loaded || a->clip < 0 || dt <= 0.0f) return;
+    if (!a || !a->loaded || dt <= 0.0f) return;
+
+    /* The overlay runs once and then gets out of the way. */
+    if (a->overlay >= 0) {
+        const hta_animation *ov = &a->graph.anims[a->overlay];
+        float last = (float)(ov->frame_count > 1 ? ov->frame_count - 1 : 0);
+        a->overlay_frame += dt * HTA_ANIM_FPS;
+        if (a->overlay_frame >= last) a->overlay = -1;
+    }
+
+    if (a->clip < 0) return;
     const hta_animation *an = &a->graph.anims[a->clip];
     float last = (float)(an->frame_count > 1 ? an->frame_count - 1 : 0);
 
@@ -150,6 +177,19 @@ void hta_actor_place(hta_actor *a, const float pos[3], float yaw)
                                         a->frame, local)) {
         for (uint32_t i = 0; i < a->graph.node_count; i++)
             hta_xf_identity(&local[i]);
+    }
+
+    /* An overlay contributes ONLY the nodes it keyframes. Every other node
+     * in a sampled overlay carries the animation's own default rather than
+     * the pose underneath, so taking the lot turns the body inside out. */
+    if (a->overlay >= 0) {
+        hta_transform ov[HTA_ANIM_MAX_NODES];
+        if (hta_anim_sample(&a->graph, (uint32_t)a->overlay,
+                            a->overlay_frame, ov)) {
+            for (uint32_t i = 0; i < a->graph.node_count; i++)
+                if (hta_anim_animates(&a->graph, (uint32_t)a->overlay, i))
+                    local[i] = ov[i];
+        }
     }
     hta_anim_world(&a->graph, local, world);
 

@@ -71,7 +71,13 @@ bool hta_bot_arm(hta_bot *b, const hta_cache *c,
 }
 
 /* Halo's flinch: nine frames, three variants so a burst does not look like
- * a metronome. `s-ping` is a SOFT ping -- being hit without going down. */
+ * a metronome. `s-ping` is a SOFT ping -- being hit without going down.
+ *
+ * These are OVERLAY animations (type 1). They keyframe the few nodes that
+ * jerk and leave the rest alone, so they go OVER the idle rather than
+ * replacing it. Played as an ordinary clip the untouched nodes take the
+ * animation's own defaults and the body turns inside out -- which is
+ * exactly what it did. */
 static void flinch(hta_bot *b)
 {
     static const char *const PINGS[3] = {
@@ -80,8 +86,9 @@ static void flinch(hta_bot *b)
     b->rng = b->rng * 1103515245u + 12345u;
     uint32_t start = (b->rng >> 16) % 3u;
     for (uint32_t i = 0; i < 3u; i++) {
-        if (!hta_actor_play(&b->actor, PINGS[(start + i) % 3u], false)) continue;
-        const hta_animation *an = &b->actor.graph.anims[b->actor.clip];
+        if (!hta_actor_play_overlay(&b->actor, PINGS[(start + i) % 3u]))
+            continue;
+        const hta_animation *an = &b->actor.graph.anims[b->actor.overlay];
         b->flinch = (float)an->frame_count / HTA_ANIM_FPS;
         return;
     }
@@ -137,13 +144,10 @@ void hta_bot_update(hta_bot *b, float dt)
         if (b->timer <= 0.0f) hta_bot_spawn(b, b->pos, b->yaw);
     }
 
-    /* A flinch runs its nine frames and hands the body back to its idle. */
+    /* The overlay clears itself; this only tracks whether one is running. */
     if (b->flinch > 0.0f) {
         b->flinch -= dt;
-        if (b->flinch <= 0.0f) {
-            b->flinch = 0.0f;
-            if (b->state == HTA_BOT_ALIVE) stand(b);
-        }
+        if (b->flinch < 0.0f) b->flinch = 0.0f;
     }
 
     hta_actor_update(&b->actor, dt);
@@ -245,6 +249,9 @@ void hta_bot_damage(hta_bot *b, float amount, const float at[3])
 
     b->died = true;
     b->state = HTA_BOT_DYING;
+    /* A flinch must not sit on top of a corpse. */
+    b->actor.overlay = -1;
+    b->flinch = 0.0f;
     if (hta_actor_play_death(&b->actor, &b->rng)) {
         const hta_animation *an = &b->actor.graph.anims[b->actor.clip];
         b->timer = (float)an->frame_count / HTA_ANIM_FPS;

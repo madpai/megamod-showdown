@@ -33,6 +33,16 @@ typedef struct {
     bool     hold_last;            /* stop on the final frame, do not loop */
     bool     finished;             /* it has reached that frame */
 
+    /* An OVERLAY laid on top of the clip above, -1 for none.
+     *
+     * Halo's flinches are overlay animations: they keyframe the handful of
+     * nodes that jerk and nothing else. Played as an ordinary clip the
+     * untouched nodes take the animation's own defaults instead of the pose
+     * you meant to keep, and the body turns inside out -- which is exactly
+     * what "when he's getting hurt he flips upside down" was. */
+    int32_t  overlay;
+    float    overlay_frame;
+
     float    pos[3];
     float    yaw;                  /* radians about +Z */
     uint32_t model_id;             /* the body's own, for finding markers */
@@ -51,6 +61,14 @@ void hta_actor_free(hta_actor *a);
  * stops it on the last frame instead of looping, which is what a death
  * wants. False if the graph has no such clip. */
 bool hta_actor_play(hta_actor *a, const char *name, bool hold);
+
+/* Lay an overlay over whatever is playing. Only the nodes the overlay
+ * actually keyframes are taken, which is what `hta_anim_animates` is for.
+ * It runs once and clears itself. */
+bool hta_actor_play_overlay(hta_actor *a, const char *name);
+
+/* Is one still running? */
+bool hta_actor_overlaying(const hta_actor *a);
 
 /* One of Halo's death animations, chosen at random. The cyborg names them
  * `h-kill ...` for a hard death and `s-kill ...` for a soft one, by the

@@ -252,12 +252,36 @@ int main(int argc, char **argv)
         CHECK(b.flinch == 0.0f, "standing still, not flinching");
 
         hta_bot_damage(&b, 10.0f, NULL);
-        printf("  hit -> '%s' for %.2f s\n",
-               b.actor.graph.anims[b.actor.clip].name, (double)b.flinch);
         CHECK(b.state == HTA_BOT_ALIVE, "it survives a scratch");
         CHECK(b.flinch > 0.0f, "  and reacts");
-        CHECK(strstr(b.actor.graph.anims[b.actor.clip].name, "ping") != NULL,
-              "  with one of Halo's ping clips");
+        CHECK(hta_actor_overlaying(&b.actor), "  with an overlay");
+        printf("  hit -> overlay '%s' for %.2f s, still standing as '%s'\n",
+               b.actor.graph.anims[b.actor.overlay].name, (double)b.flinch,
+               b.actor.graph.anims[b.actor.clip].name);
+        CHECK(strstr(b.actor.graph.anims[b.actor.overlay].name, "ping") != NULL,
+              "  which is one of Halo's ping clips");
+        /* The ping clips are type 1. Played as an ordinary clip the nodes
+         * they do not keyframe take the animation's own defaults and the
+         * body turns inside out -- which is what it did on device. */
+        CHECK(b.actor.graph.anims[b.actor.overlay].type == 1,
+              "  and is an OVERLAY, which is why it must not replace the pose");
+        CHECK(strcmp(b.actor.graph.anims[b.actor.clip].name, idle) == 0,
+              "  the base clip is untouched");
+
+        /* The body must stay the right way up and the right size. Flipping
+         * upside down shows as the feet going above the head. */
+        hta_bot_update(&b, 1.0f / 60.0f);
+        float lo = 1e9f, hi = -1e9f, head = -1e9f, foot = 1e9f;
+        for (uint32_t v = 0; v < b.actor.mesh.vertex_count; v++) {
+            float z = b.actor.posed[v].pos[2];
+            if (z < lo) lo = z;
+            if (z > hi) hi = z;
+        }
+        head = hi; foot = lo;
+        printf("  mid-flinch it spans %.2f wu, feet %.2f head %.2f\n",
+               (double)(hi - lo), (double)foot, (double)head);
+        CHECK(hi - lo > 0.4f && hi - lo < 1.0f, "  still a person-shaped person");
+        CHECK(fabsf(foot - at[2]) < 0.3f, "  still standing on its feet");
 
         /* Three variants, so repeated hits are not identical. */
         int distinct = 0;
@@ -266,7 +290,9 @@ int main(int argc, char **argv)
             b.vitals.health = b.vitals.max_health;
             b.vitals.shield = b.vitals.max_shield;
             hta_bot_damage(&b, 1.0f, NULL);
-            const char *nm = b.actor.graph.anims[b.actor.clip].name;
+            const char *nm = hta_actor_overlaying(&b.actor)
+                           ? b.actor.graph.anims[b.actor.overlay].name
+                           : b.actor.graph.anims[b.actor.clip].name;
             int have = 0;
             for (int q = 0; q < distinct; q++) if (seen[q] == nm) have = 1;
             if (!have && distinct < 4) seen[distinct++] = nm;
@@ -280,10 +306,11 @@ int main(int argc, char **argv)
             hta_bot_update(&b, 1.0f / 60.0f);
             t += 1.0f / 60.0f;
         }
-        printf("  back to '%s' after %.2f s\n",
-               b.actor.graph.anims[b.actor.clip].name, (double)t);
+        printf("  overlay gone after %.2f s, base still '%s'\n",
+               (double)t, b.actor.graph.anims[b.actor.clip].name);
+        CHECK(!hta_actor_overlaying(&b.actor), "  then the overlay clears");
         CHECK(strcmp(b.actor.graph.anims[b.actor.clip].name, idle) == 0,
-              "  then stands up straight again");
+              "  and it is still standing as it was");
         CHECK(t < 1.0f, "  quickly -- it is a flinch, not a stagger");
     }
 

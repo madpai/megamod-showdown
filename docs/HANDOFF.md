@@ -85,6 +85,52 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## The flinch turned him inside out (2026-09-21)
+
+Reported: "when he's getting hurt he flips upside down".
+
+**`s-ping front gut%0/1/2` are `type 1` -- OVERLAY animations.** They
+keyframe the handful of nodes that jerk and leave the rest alone. Played as
+an ordinary clip, every node the overlay does not touch takes *the
+animation's own defaults* rather than the pose underneath, and the body turns
+inside out.
+
+This trap is already written down in `anim.h`, discovered on the needler's
+`first-person ammunition`, and I walked straight into it again. **Check
+`anims[i].type` before playing anything new.** The idle is type 0 and the
+kill clips are type 0; the pings are the only type 1 here.
+
+`hta_actor` gained a second slot: `overlay` / `overlay_frame`, laid over the
+base clip in `hta_actor_place`, taking **only** the nodes
+`hta_anim_animates` reports. It runs once and clears itself, so the idle
+underneath is never disturbed -- the test checks the base clip is untouched
+AND that the body is still person-shaped and standing on its feet
+mid-flinch, because "spans 0.66 wu, feet at the ground" is what upside-down
+would fail.
+
+A death clears any running overlay: a flinch must not sit on top of a corpse.
+
+## On making him more HD
+
+He cannot be. The numbers, for the record:
+
+- **Geometry** is already the best the tag has -- `append_mod2` takes the
+  `super high` LOD first and falls back through high / medium / low.
+- **Texture** is `characters\cyborg\bitmaps\cyborg` at **512x512**, which
+  is the Trial's own art at full resolution. There is nothing larger in the
+  cache to load.
+- The **detail map** is applied: `detail corroded metal light` at 128x128,
+  tiled x10 over the body submesh, gated by the 512x512 multipurpose map.
+
+So what is on screen is everything the Trial ships. Anything sharper means
+new art, which this project does not do.
+
+One thing that WOULD help and is not done: **dynamic meshes get no mipmaps**
+(`vslots == 0` gates the chain), so the body shimmers at distance rather than
+softening. That is a real gap, not a resolution one.
+
+---
+
 ## Why he looked ugly (2026-09-21)
 
 Reported: "he looks ugly which leads me to believe this is how we will all
