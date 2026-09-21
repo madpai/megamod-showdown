@@ -37,9 +37,14 @@ void        hta_gfx_extent(const hta_gfx *g, uint32_t *w, uint32_t *h);
 hta_gfx_mesh *hta_gfx_mesh_upload(hta_gfx *g, const hta_bsp_mesh *mesh,
                                   char *err, size_t errlen);
 /* Same, but the vertex buffer can be rewritten every frame -- for the skinned
- * viewmodel. Topology, submeshes and textures are still uploaded once. */
+ * viewmodel or HUD, with no mipmaps. Topology, submeshes and textures are
+ * still uploaded once. */
 hta_gfx_mesh *hta_gfx_mesh_upload_dynamic(hta_gfx *g, const hta_bsp_mesh *mesh,
                                           char *err, size_t errlen);
+/* Animated world geometry, with the same mipmap chain as static geometry.
+ * Textures are uploaded once, not regenerated when vertices change. */
+hta_gfx_mesh *hta_gfx_mesh_upload_dynamic_world(hta_gfx *g, const hta_bsp_mesh *mesh,
+                                                char *err, size_t errlen);
 void hta_gfx_mesh_free(hta_gfx *g, hta_gfx_mesh *m);
 
 /* The first-person view. `vertices` (optional) replaces the mesh's vertex data

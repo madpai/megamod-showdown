@@ -1084,7 +1084,7 @@ static bool write_set(hta_gfx *g, VkDescriptorSet set,
 }
 
 static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
-                                 uint32_t vslots, char *err, size_t errlen)
+                                 uint32_t vslots, bool want_mips, char *err, size_t errlen)
 {
     if (!g || !g->ready || !mesh || !mesh->vertices || !mesh->indices ||
         !mesh->vertex_count || !mesh->index_count) {
@@ -1133,14 +1133,9 @@ static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
     if (m->tex_count) {
         m->tex = (hta_vk_tex *)calloc(m->tex_count, sizeof(hta_vk_tex));
         if (!m->tex) { hta_gfx_mesh_free(g, m); gfail(err, errlen, "oom"); return NULL; }
-        /* Mipmaps are for surfaces that MINIFY. The world does; the
-         * viewmodel and the HUD never do -- they are drawn at a fixed size
-         * a few centimetres from the eye -- and mipping them only costs
-         * sharpness. The rifle's round counter is the case that showed it:
-         * its digits are small additive quads, a lower level averaged them
-         * with the black around them, and the readout came out dim and
-         * smeared. A dynamic mesh is exactly the set that never minifies. */
-        bool want_mips = (vslots == 0);
+        /* Texture filtering is independent of vertex-buffer updates: animated
+         * world objects minify too. HUD and viewmodel callers opt out so their
+         * small additive digits retain their existing sharpness. */
         for (uint32_t i = 0; i < m->tex_count; i++) {
             const hta_bsp_texture *t = &mesh->textures[i];
             if (!t->rgba || !upload_rgba_mips(g, t->rgba, t->width, t->height,
@@ -1222,7 +1217,7 @@ static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
 hta_gfx_mesh *hta_gfx_mesh_upload(hta_gfx *g, const hta_bsp_mesh *mesh,
                                   char *err, size_t errlen)
 {
-    return upload_mesh(g, mesh, 0, err, errlen);
+    return upload_mesh(g, mesh, 0, true, err, errlen);
 }
 
 hta_gfx_mesh *hta_gfx_mesh_upload_dynamic(hta_gfx *g, const hta_bsp_mesh *mesh,
@@ -1230,7 +1225,15 @@ hta_gfx_mesh *hta_gfx_mesh_upload_dynamic(hta_gfx *g, const hta_bsp_mesh *mesh,
 {
     if (!g || !g->ready) { gfail(err, errlen, "renderer not ready"); return NULL; }
     uint32_t slots = g->image_count ? g->image_count : 1u;
-    return upload_mesh(g, mesh, slots, err, errlen);
+    return upload_mesh(g, mesh, slots, false, err, errlen);
+}
+
+hta_gfx_mesh *hta_gfx_mesh_upload_dynamic_world(hta_gfx *g, const hta_bsp_mesh *mesh,
+                                                char *err, size_t errlen)
+{
+    if (!g || !g->ready) { gfail(err, errlen, "renderer not ready"); return NULL; }
+    uint32_t slots = g->image_count ? g->image_count : 1u;
+    return upload_mesh(g, mesh, slots, true, err, errlen);
 }
 
 void hta_gfx_mesh_free(hta_gfx *g, hta_gfx_mesh *m)

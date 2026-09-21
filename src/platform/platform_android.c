@@ -806,7 +806,7 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
                     s->proj.range, s->proj.blast_radius);
             if (s->proj.detonation_snd) bank_get(s, s->proj.detonation_snd);
             if (s->gfx)
-                s->gpu_proj = hta_gfx_mesh_upload_dynamic(s->gfx, &s->proj.mesh,
+                s->gpu_proj = hta_gfx_mesh_upload_dynamic_world(s->gfx, &s->proj.mesh,
                                                           perr, sizeof(perr));
         }
         /* Everything this weapon will ever throw: its detonation, and one
@@ -1574,26 +1574,26 @@ static void start_gfx(hta_android *s)
          * there being scorch marks -- they were, briefly, which meant
          * rockets and their smoke only appeared once you had shot a wall. */
         if (s->proj.loaded && s->proj.mesh.index_count)
-            s->gpu_proj = hta_gfx_mesh_upload_dynamic(s->gfx, &s->proj.mesh,
+            s->gpu_proj = hta_gfx_mesh_upload_dynamic_world(s->gfx, &s->proj.mesh,
                                                       err, sizeof(err));
         if (s->parts.loaded && s->parts.mesh.index_count)
             s->gpu_parts = hta_gfx_mesh_upload_dynamic(s->gfx, &s->parts.mesh,
                                                        err, sizeof(err));
         if (s->nades.loaded && s->nades.mesh.index_count)
-            s->gpu_nades = hta_gfx_mesh_upload_dynamic(s->gfx, &s->nades.mesh,
+            s->gpu_nades = hta_gfx_mesh_upload_dynamic_world(s->gfx, &s->nades.mesh,
                                                        err, sizeof(err));
         if (s->corpse.loaded && s->corpse.mesh.index_count) {
-            s->gpu_corpse = hta_gfx_mesh_upload_dynamic(s->gfx, &s->corpse.mesh,
+            s->gpu_corpse = hta_gfx_mesh_upload_dynamic_world(s->gfx, &s->corpse.mesh,
                                                         err, sizeof(err));
             if (!s->gpu_corpse) hta_log("[gfx] corpse upload FAILED: %s", err);
         }
         if (s->bot.loaded && s->bot.actor.mesh.index_count) {
-            s->gpu_bot = hta_gfx_mesh_upload_dynamic(s->gfx, &s->bot.actor.mesh,
+            s->gpu_bot = hta_gfx_mesh_upload_dynamic_world(s->gfx, &s->bot.actor.mesh,
                                                      err, sizeof(err));
             if (!s->gpu_bot) hta_log("[gfx] bot upload FAILED: %s", err);
         }
         if (s->items.have_mesh && s->items.mesh.index_count) {
-            s->gpu_items = hta_gfx_mesh_upload_dynamic(s->gfx, &s->items.mesh,
+            s->gpu_items = hta_gfx_mesh_upload_dynamic_world(s->gfx, &s->items.mesh,
                                                        err, sizeof(err));
             if (!s->gpu_items) hta_log("[gfx] item upload FAILED: %s", err);
             s->items_upload = HTA_ITEMS_UPLOAD_FRAMES;

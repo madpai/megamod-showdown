@@ -275,7 +275,7 @@ int main(int argc, char **argv)
                 printf("projectile     %u verts each, %.1f -> %.1f wu/s, range %.0f\n",
                        proj.verts_each, proj.speed_initial, proj.speed_final,
                        proj.range);
-                gproj.mesh = hta_gfx_mesh_upload_dynamic(g, &proj.mesh, err, sizeof(err));
+                gproj.mesh = hta_gfx_mesh_upload_dynamic_world(g, &proj.mesh, err, sizeof(err));
                 gproj.vertices = proj.mesh.vertices;
                 gproj.vertex_count = proj.mesh.vertex_count;
                 if (!gproj.mesh) printf("projectile     upload failed: %s\n", err);

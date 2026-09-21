@@ -9,6 +9,25 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## Mipmaps for moving world objects (2026-09-21)
+
+The upload code equated dynamic vertices with textures that never minify.
+That was originally a workaround for dim, smeared weapon-counter digits,
+but bodies and pickups later inherited it and shimmered at distance.
+
+Texture mipmap policy is now independent of vertex-buffer slots. A dedicated
+`hta_gfx_mesh_upload_dynamic_world` entry point enables the existing mipmap
+chain for bodies, corpses, items, grenades and projectiles, including weapon
+switch uploads. HUD, viewmodel and particles keep their existing path.
+Textures are uploaded once; animating a body does not rebuild its mipmaps.
+A full chain adds about one third to texture texel storage, with no new
+invented gameplay constants.
+
+Validation: `verify.sh` passed all 52 checks, including the Android build.
+A two-frame real-map rocket flight render exercised the new world upload
+path successfully (86.0% and 87.4% coverage). Actual shimmer improvement and
+phone memory/loading impact still need device testing.
+
 ## The flinch turned him inside out (2026-09-21)
 
 Reported: "when he's getting hurt he flips upside down".

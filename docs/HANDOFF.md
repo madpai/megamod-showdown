@@ -97,18 +97,18 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Build `0444970` — "The flinch was an overlay".**
+> **Release: "Mipmaps for moving world objects" (2026-09-21).**
 >
-> 1. Shoot the body standing in front of the spawn. It should **flinch and
->    stay upright** — feet on the ground, right way up. That was the bug.
-> 2. Try each weapon on him via the **DBG** pad (left edge, cycles the whole
->    roster). The damage model is per-material now: the **shotgun** should feel
->    weak against his shield and strong once it is down; the **plasma rifle**
->    the other way round; the **sniper** should be two shots; **melee kills
->    outright**, which is what his tag says.
-> 3. Grenades and rockets should hurt him by blast radius.
+> 1. Back away from the standing body and nearby weapon pickups, then strafe
+>    while watching their surfaces. Fine detail should shimmer less at distance.
+> 2. Shoot the body: its flinch should stay upright, and its corpse should
+>    remain correctly textured. Throw grenades and fire rockets too.
+> 3. Check the assault rifle round counter and HUD digits: they should retain
+>    their previous sharpness. Report blurry digits, missing textures, or a
+>    noticeable frame-rate or loading regression.
 >
-> Known and deliberate: he does not move, aim or shoot. No hit *sound* yet.
+> Host verification passed; the visual improvement still needs device testing.
+> The body remains stationary and has no hit sound.
 
 ---
 
@@ -147,6 +147,10 @@ a spawn point away from where you died.
 weighted choices. Two-weapon carry, the map's own AR+pistol loadout, SWAP to
 switch or to pick up.
 
+**World-object filtering.** Bodies, corpses, pickups, grenades and projectiles
+now upload mipmaps once alongside their textures. HUD, viewmodel and particle
+uploads retain their existing filtering. Device confirmation pending.
+
 **A body to shoot at.** Stands in front of the spawn with the player's health,
 shield and collision shape, holds a rifle, flinches, dies, comes back.
 
@@ -174,7 +178,6 @@ shield and collision shape, holds a rifle, flinches, dies, comes back.
 | Dropped weapons | A weapon you swap off vanishes. Drawing one needs a second dynamic mesh holding each weapon model once. `HTA_GFX_MAX_DYNAMIC` was raised to 8 to leave room — six were already in use. |
 | Items do not rotate | Halo spins powerups. Doing it means paying the full item upload every frame or splitting powerups into their own dynamic mesh. The latter. |
 | Camouflage does nothing | It runs its timer. Nothing to hide from yet. |
-| No mipmaps on dynamic meshes | The chain is gated on `vslots == 0`. Bodies and items shimmer at distance. |
 | Picked-up weapons are full | `hta_ammo_init` runs on equip; a dropped weapon should carry what was left in it. |
 | Motion tracker | Art and behaviour readable (`unhi` 620/724, `hud_globals` range and scale) but placement is not in the tag, and nothing moves to track. Deferred three times. |
 | No hit sound on the body | `weapons\*\effects\impact cyborg shield` is in the cache and is the right thing to reach for. |
