@@ -1,25 +1,30 @@
 # halo-trial-android
 
-Investigating and (if feasible) building a native ARM64 Android multiplayer client
-for the free **Halo: Combat Evolved Trial** — target: **Blood Gulch**.
+A native ARM64 Android engine for the free **Halo: Combat Evolved Trial**,
+playing **Blood Gulch**. C, Vulkan, AAudio, no engine dependencies. It reads
+the player's own copy of the Trial and takes every value it can from the
+original tags.
 
-**Start here: [`docs/ANDROID_PORT_INVESTIGATION.md`](docs/ANDROID_PORT_INVESTIGATION.md)**
+**Working on this? Start here: [`docs/HANDOFF.md`](docs/HANDOFF.md).**
+That file is the whole briefing — the build and test loop, what works, what is
+next, how to read Halo's tags, and the traps that have already cost a session.
 
-## Headline finding
+## Where it got to
 
-No portable Halo engine exists. Every reverse-engineering project found
-(Demon, halo-re/halo and forks) is an **in-process patcher for a 32-bit x86
-executable** — the artifact they produce *is* the original binary. That class
-of project cannot be ported to ARM64 Android.
+Blood Gulch renders with its lightmaps and detail maps. You can run, crouch,
+jump and fall on the Trial's own biped physics; carry two of its eleven
+weapons with their real models, animations, sounds and HUD; throw its
+grenades; pick up what the map actually places, on the map's own respawn
+timers; die and watch your body go down; and shoot a target that bleeds
+shields before health, at the damage the tags say each weapon does.
 
-Native Android is feasible only as a **new engine** consuming user-supplied
-Trial assets. Favourable scope note: the Trial's *only* MP map is Blood Gulch,
-so the stated goal is 100% of the Trial's MP content, not a subset.
+Not yet: vehicles, bots that think, menus, netcode.
 
 ## Legal
 
-- **No Halo assets, executables, or DLLs are ever committed here or bundled in an APK.**
-- The user supplies their own Trial copy; assets are imported on-device at runtime.
+- **No Halo assets, executables, or DLLs are ever committed here or bundled in
+  an APK.** The player supplies their own Trial copy; assets are imported
+  on-device at runtime.
 - This project does **not** use the December 2024 Halo "Digsite" leak material
   that the current upstream Demon depends on.
 - No DRM is involved and none is circumvented.
@@ -29,6 +34,10 @@ so the stated goal is 100% of the Trial's MP content, not a subset.
 
 | Doc | Contents |
 |---|---|
-| [ANDROID_PORT_INVESTIGATION.md](docs/ANDROID_PORT_INVESTIGATION.md) | Full findings, measurements, feasibility, staged plan |
+| [HANDOFF.md](docs/HANDOFF.md) | **Start here.** Current state, the loop, tag discipline, traps, invented constants |
+| [JOURNAL.md](docs/JOURNAL.md) | Every session, newest first. The *why*. Search it by symptom |
 | [BUILD_ENVIRONMENT.md](docs/BUILD_ENVIRONMENT.md) | Exact toolchain versions |
-| [PROGRESS.md](docs/PROGRESS.md) | Milestone checklist + blockers |
+| [BLOOD_GULCH_ASSETS.md](docs/BLOOD_GULCH_ASSETS.md) | What is in the map |
+| [INVADER_ASSET_PIPELINE.md](docs/INVADER_ASSET_PIPELINE.md) | How Invader's tag definitions are used |
+| [ANDROID_PORT_INVESTIGATION.md](docs/ANDROID_PORT_INVESTIGATION.md) | The original feasibility study |
+| [PROGRESS.md](docs/PROGRESS.md) | Early milestone log |
