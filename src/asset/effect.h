@@ -94,6 +94,15 @@ typedef struct {
 bool hta_object_loop_sound(const hta_cache *c, uint32_t object_tag_id,
                            const char *marker, hta_loop_sound *out);
 
+/* An `lsnd`'s first track, read directly rather than through an object.
+ *
+ * The unit HUD's sounds are `lsnd` tags, and nothing downstream can play
+ * one: a mixer clip comes from a `snd!`. This is the step between. Passing a
+ * `snd!` straight through is deliberate -- the caller has a tag id and does
+ * not always know which it is. */
+bool hta_loop_sound_track(const hta_cache *c, uint32_t tag_id,
+                          hta_loop_sound *out);
+
 /* Any attachment of a given class on a marker. The flamethrower's jet is
  * two `pctl` particle systems on `spawn fire`, attached the same way its
  * roar is an `lsnd` on `primary trigger`. Returns 0 when there is none. */

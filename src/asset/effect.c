@@ -122,6 +122,24 @@ uint32_t hta_object_attachment(const hta_cache *c, uint32_t object_tag_id,
     return 0;
 }
 
+bool hta_loop_sound_track(const hta_cache *c, uint32_t tag_id,
+                          hta_loop_sound *out)
+{
+    if (!c || !out || !tag_id || tag_id == 0xFFFFFFFFu) return false;
+    memset(out, 0, sizeof(*out));
+    int32_t ti = hta_cache_find_tag_by_id(c, tag_id);
+    if (ti < 0) return false;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t)) return false;
+    if (t.primary_class == HTA_FOURCC('s','n','d','!')) {
+        /* Already playable. */
+        out->loop = tag_id;
+        out->gain = 1.0f;
+        return true;
+    }
+    return first_track(c, tag_id, out);
+}
+
 bool hta_object_loop_sound(const hta_cache *c, uint32_t object_tag_id,
                            const char *marker, hta_loop_sound *out)
 {

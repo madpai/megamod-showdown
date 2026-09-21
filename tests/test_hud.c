@@ -1,6 +1,8 @@
 /* The screen HUD built from Halo's own weapon HUD interface tag.
  * Needs a real cache: pass bloodgulch.map; bitmaps.map is read beside it. */
 #include "engine/hud.h"
+#include "asset/effect.h"
+#include "asset/sound.h"
 #include "asset/font.h"
 #include "asset/cache.h"
 #include "asset/weapon.h"
@@ -305,6 +307,60 @@ int main(int argc, char **argv)
         }
         hta_hud_set_fade(NULL, 0.5f);
         CHECK(1, "a null hud is not a crash");
+    }
+
+
+    printf("\n[the shield has a voice]\n");
+    {
+        /* Halo hangs these off the `unhi`, not the biped, as a reflexive of
+         * UnitHUDInterfaceHUDSound -- 56 bytes, which is the definition's
+         * own size -- each with a `latched to` bitfield naming the
+         * condition. The reflexive is at +960: a definition walk puts it at
+         * 928 and drifts by 32, so that offset is probed and this is what
+         * checks it. Reading it wrong would hand back a neighbouring
+         * field's bytes, so every hit is required to be a real sound tag. */
+        struct { const char *name; uint32_t bit; const char *expect; } want[] = {
+            { "shield recharging", HTA_HUDSND_SHIELD_RECHARGING, "shield_charge" },
+            { "shield damaged",    HTA_HUDSND_SHIELD_DAMAGED,    "shield_hit" },
+            { "shield low",        HTA_HUDSND_SHIELD_LOW,        "shield_low" },
+            { "shield empty",      HTA_HUDSND_SHIELD_EMPTY,      "shield_depleted" },
+            { "health low",        HTA_HUDSND_HEALTH_LOW,        "health_low_heart" },
+        };
+        int found = 0;
+        for (unsigned q = 0; q < sizeof(want) / sizeof(want[0]); q++) {
+            bool looping = false;
+            uint32_t id = hta_unit_hud_sound(&c, want[q].bit, &looping);
+            if (!id) { CHECK(0, want[q].name); continue; }
+            found++;
+            int32_t ti = hta_cache_find_tag_by_id(&c, id);
+            char path[192];
+            path[0] = '\0';
+            if (ti >= 0) {
+                hta_tag_entry t;
+                if (hta_cache_tag(&c, (uint32_t)ti, &t))
+                    hta_cache_tag_path(&c, &t, path, sizeof(path));
+            }
+            printf("  %-18s %-4s %s\n", want[q].name, looping ? "lsnd" : "snd!", path);
+            CHECK(strstr(path, want[q].expect) != NULL, want[q].name);
+
+            /* Four of the five are `lsnd`, and nothing can PLAY one -- a
+             * mixer clip comes from a `snd!`. The step between has to
+             * work or the shield stays silent. */
+            hta_loop_sound ls;
+            uint32_t play = 0;
+            if (hta_loop_sound_track(&c, id, &ls))
+                play = ls.loop ? ls.loop : ls.start;
+            hta_sound_info info;
+            CHECK(play && hta_sound_info_load(&c, play, &info, err, sizeof(err)),
+                  "  and resolves to something playable");
+        }
+        CHECK(found == 5, "the cyborg fills every one of them");
+
+        /* A condition the tag does not carry, and nonsense. */
+        bool lp = true;
+        CHECK(hta_unit_hud_sound(&c, 0u, &lp) == 0, "no condition is no sound");
+        CHECK(hta_unit_hud_sound(NULL, HTA_HUDSND_SHIELD_LOW, &lp) == 0,
+              "no cache is no sound");
     }
 
     hta_hud_free(&h);

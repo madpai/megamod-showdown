@@ -144,4 +144,26 @@ void hta_hud_set_zoom(hta_hud *h, int level);
  * die and back in as you respawn. */
 void hta_hud_set_fade(hta_hud *h, float alpha);
 
+/* The unit HUD's own sounds: the shield charging back up, the hit, the
+ * warning tones.
+ *
+ * Halo keeps these on the `unhi` rather than on the biped, as a reflexive of
+ * UnitHUDInterfaceHUDSound (56 bytes, which reconciles) at +960 -- a
+ * definition walk puts it at 928 and drifts, so that offset is probed. Each
+ * entry is a sound and a `latched to` bitfield naming the condition it plays
+ * under. Blood Gulch's cyborg fills all five.
+ *
+ * Note the classes differ: the hit is a one-shot `snd!`, everything else is
+ * an `lsnd` meant to run for as long as the condition lasts. */
+#define HTA_HUDSND_SHIELD_RECHARGING  0x01u
+#define HTA_HUDSND_SHIELD_DAMAGED     0x02u
+#define HTA_HUDSND_SHIELD_LOW         0x04u
+#define HTA_HUDSND_SHIELD_EMPTY       0x08u
+#define HTA_HUDSND_HEALTH_LOW         0x10u
+
+/* The tag a condition plays, or 0. `out_looping` says whether it is an
+ * `lsnd` (hold it while the condition lasts) or a `snd!` (fire once). */
+uint32_t hta_unit_hud_sound(const hta_cache *c, uint32_t latched_to,
+                            bool *out_looping);
+
 #endif

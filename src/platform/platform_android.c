@@ -189,6 +189,10 @@ typedef struct {
     float    dead_timer;        /* seconds until the respawn */
     float    death_pos[3];      /* where it happened, so we come back elsewhere */
     uint32_t death_quiet_snd, death_violent_snd, death_falling_snd;
+    /* The shield's own voice, from the unit HUD tag. */
+    uint32_t shield_charge_snd, shield_hit_snd, shield_low_snd;
+    uint32_t shield_empty_snd, health_low_snd;
+    bool     shield_charge_on, shield_low_on, health_low_on;
     uint32_t spawn_rng;
     hta_spawn_point spawn[64];
     uint32_t spawn_count;
@@ -478,6 +482,36 @@ static void play_tag_at(hta_android *s, uint32_t tag_id, const float at[3],
 
 /* The one continuous voice we keep; any non-zero id would do. */
 #define HTA_LOOP_FIRE 1u
+
+/* The unit HUD's own sounds. Halo hangs these off the `unhi`, latched to a
+ * condition each: the shield charging back up, the hit that broke it, the
+ * warning tones. Loop ids of their own so they can sound together -- the
+ * heartbeat under the recharge hum is exactly right. */
+#define HTA_LOOP_SHIELD_CHARGE  2u
+#define HTA_LOOP_SHIELD_LOW     3u
+#define HTA_LOOP_HEALTH_LOW     4u
+
+/* When "low" starts. Halo has no threshold for this in any tag -- the HUD
+ * flashes and the heartbeat starts on a hardcoded fraction -- so this one
+ * is ours. A quarter left is about where the real game begins to nag. */
+#define HTA_VITALS_LOW  0.25f
+
+/* Holds one of those loops while its condition lasts. Safe to call every
+ * frame: the mixer leaves a running loop alone rather than restarting it. */
+static void hud_loop(hta_android *s, uint32_t loop_id, uint32_t snd, bool on,
+                     bool *state)
+{
+    if (!snd) return;
+    if (on) {
+        int b = bank_get(s, snd);
+        if (b < 0) return;
+        hta_audio_loop(&s->audio, loop_id, s->bank[b].clip[0], 1.0f);
+        *state = true;
+    } else if (*state) {
+        hta_audio_loop_stop(&s->audio, loop_id);
+        *state = false;
+    }
+}
 
 /* Starts or stops the weapon's continuous firing sound. Calling this every
  * frame while the trigger is held is the intended use -- the mixer leaves a
@@ -1067,6 +1101,48 @@ static bool load_map(hta_android *s)
                         s->vitals.max_health, s->vitals.max_shield,
                         s->vitals.recharge_delay, s->vitals.recharge_rate * 100.0f,
                         s->vitals.fall_harmful_min, s->vitals.fall_fatal);
+            /* The shield's own voice. Every one of these is the tag's:
+             * which sound, and which condition it is latched to. */
+            {
+                bool lp = false;
+                s->shield_charge_snd =
+                    hta_unit_hud_sound(&s->cache, HTA_HUDSND_SHIELD_RECHARGING, &lp);
+                s->shield_hit_snd =
+                    hta_unit_hud_sound(&s->cache, HTA_HUDSND_SHIELD_DAMAGED, &lp);
+                s->shield_low_snd =
+                    hta_unit_hud_sound(&s->cache, HTA_HUDSND_SHIELD_LOW, &lp);
+                s->shield_empty_snd =
+                    hta_unit_hud_sound(&s->cache, HTA_HUDSND_SHIELD_EMPTY, &lp);
+                s->health_low_snd =
+                    hta_unit_hud_sound(&s->cache, HTA_HUDSND_HEALTH_LOW, &lp);
+                /* Four of the five are `lsnd`, and nothing downstream can
+                 * play one -- a mixer clip comes from a `snd!`. Resolve
+                 * each to its first track here, once. */
+                uint32_t *snds[5] = {
+                    &s->shield_charge_snd, &s->shield_hit_snd,
+                    &s->shield_low_snd, &s->shield_empty_snd,
+                    &s->health_low_snd
+                };
+                for (int q = 0; q < 5; q++) {
+                    hta_loop_sound ls;
+                    if (!*snds[q]) continue;
+                    if (hta_loop_sound_track(&s->cache, *snds[q], &ls))
+                        *snds[q] = ls.loop ? ls.loop : ls.start;
+                    else
+                        *snds[q] = 0;
+                }
+                if (s->shield_charge_snd) bank_get(s, s->shield_charge_snd);
+                if (s->shield_hit_snd)    bank_get(s, s->shield_hit_snd);
+                if (s->shield_empty_snd)  bank_get(s, s->shield_empty_snd);
+                if (s->shield_low_snd)    bank_get(s, s->shield_low_snd);
+                if (s->health_low_snd)    bank_get(s, s->health_low_snd);
+                hta_log("[player] hud sounds: charge 0x%08X hit 0x%08X "
+                        "low 0x%08X empty 0x%08X heartbeat 0x%08X",
+                        s->shield_charge_snd, s->shield_hit_snd,
+                        s->shield_low_snd, s->shield_empty_snd,
+                        s->health_low_snd);
+            }
+
             /* Your own body, for looking at once it is on the floor. */
             {
                 char aerr[HTA_ERRLEN];
@@ -1627,10 +1703,34 @@ void android_main(struct android_app *app)
                         state.player.land_speed, cost,
                         state.vitals.shield, state.vitals.health);
         }
+        /* The one-shots have to be read BEFORE the update clears them. */
+        if (state.vitals.loaded && !state.dead) {
+            if (state.vitals.shield_broke)
+                play_tag(&state, state.shield_empty_snd, 1.0f);
+            else if (state.vitals.took_damage)
+                play_tag(&state, state.shield_hit_snd, 1.0f);
+        }
         hta_vitals_update(&state.vitals, dt);
         if (state.vitals.loaded) {
             hta_hud_set_shield(&state.hud, hta_vitals_shield_fraction(&state.vitals));
             hta_hud_set_health(&state.hud, hta_vitals_health_fraction(&state.vitals));
+
+            /* The recharge hum. Its condition is the tag's own and nothing
+             * of ours: the shield is growing back exactly when the delay
+             * since the last hit has elapsed and it is not yet full. */
+            float sf = hta_vitals_shield_fraction(&state.vitals);
+            float hf = hta_vitals_health_fraction(&state.vitals);
+            bool charging = !state.dead &&
+                            state.vitals.since_damage >= state.vitals.recharge_delay &&
+                            state.vitals.shield < state.vitals.max_shield;
+            hud_loop(&state, HTA_LOOP_SHIELD_CHARGE, state.shield_charge_snd,
+                     charging, &state.shield_charge_on);
+            hud_loop(&state, HTA_LOOP_SHIELD_LOW, state.shield_low_snd,
+                     !state.dead && !charging && sf <= HTA_VITALS_LOW && sf > 0.0f,
+                     &state.shield_low_on);
+            hud_loop(&state, HTA_LOOP_HEALTH_LOW, state.health_low_snd,
+                     !state.dead && hf <= HTA_VITALS_LOW,
+                     &state.health_low_on);
         }
 
         /* Dying, and coming back. */
@@ -1639,6 +1739,12 @@ void android_main(struct android_app *app)
             state.dead_timer = HTA_RESPAWN_DELAY;
             for (int k = 0; k < 3; k++) state.death_pos[k] = state.player.pos[k];
             fire_loop(&state, false);
+            hud_loop(&state, HTA_LOOP_SHIELD_CHARGE, state.shield_charge_snd,
+                     false, &state.shield_charge_on);
+            hud_loop(&state, HTA_LOOP_SHIELD_LOW, state.shield_low_snd,
+                     false, &state.shield_low_on);
+            hud_loop(&state, HTA_LOOP_HEALTH_LOW, state.health_low_snd,
+                     false, &state.health_low_on);
             state.zoom_level = 0;
             apply_zoom(&state);
             /* A fall is its own kind of death and the tag has a line for

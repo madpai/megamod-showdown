@@ -494,6 +494,59 @@ static void load_numbers(hta_hud *h, const hta_cache *c, uint32_t base,
     }
 }
 
+/* UnitHUDInterface sounds: reflexive at +960, 56 bytes an entry, the sound
+ * at +0 and `latched to` at +16. The 56 is the definition's own; the 960 is
+ * probed, because the walk to it drifts by 32. */
+#define UNHI_SOUNDS        960u
+#define UNHI_SOUND_SIZE     56u
+#define UNHI_SOUND_LATCHED  16u
+
+uint32_t hta_unit_hud_sound(const hta_cache *c, uint32_t latched_to,
+                            bool *out_looping)
+{
+    if (out_looping) *out_looping = false;
+    if (!c || !latched_to) return 0;
+
+    uint32_t unhi = 0;
+    for (uint32_t i = 0; i < c->tag_count; i++) {
+        hta_tag_entry t;
+        if (!hta_cache_tag(c, i, &t) || t.indexed) continue;
+        if (t.primary_class != HTA_FOURCC('u','n','h','i')) continue;
+        char path[192];
+        if (!hta_cache_tag_path(c, &t, path, sizeof(path))) continue;
+        if (strstr(path, "cyborg_mp")) { unhi = t.tag_id; break; }
+    }
+    if (!unhi) return 0;
+
+    int32_t ti = hta_cache_find_tag_by_id(c, unhi);
+    hta_tag_entry ut;
+    uint32_t base = 0;
+    if (ti < 0 || !hta_cache_tag(c, (uint32_t)ti, &ut) ||
+        !hta_cache_ptr_to_offset(c, ut.tag_data_ptr, &base))
+        return 0;
+
+    uint32_t count = 0, ptr = 0, off = 0;
+    if (!hta_read_reflexive(c, base + UNHI_SOUNDS, &count, &ptr)) return 0;
+    if (!count || !hta_cache_ptr_to_offset(c, ptr, &off)) return 0;
+
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t e = off + i * UNHI_SOUND_SIZE;
+        uint32_t latch = 0;
+        if (!hta_rd_u32(c, e + UNHI_SOUND_LATCHED, &latch)) continue;
+        if (!(latch & latched_to)) continue;
+        uint32_t id = 0;
+        if (!hta_rd_u32(c, e + 12u, &id) || !id || id == 0xFFFFFFFFu) continue;
+        if (out_looping) {
+            int32_t si = hta_cache_find_tag_by_id(c, id);
+            hta_tag_entry st;
+            if (si >= 0 && hta_cache_tag(c, (uint32_t)si, &st))
+                *out_looping = (st.primary_class == HTA_FOURCC('l','s','n','d'));
+        }
+        return id;
+    }
+    return 0;
+}
+
 static void load_unit(hta_hud *h, const hta_cache *c,
                       const hta_resource_map *bitmaps)
 {

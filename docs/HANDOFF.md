@@ -85,6 +85,51 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## The shield has a voice (2026-09-21)
+
+Asked for: "isn't there supposed to be a sound effect when your shield is
+recharging?" There is, and the Trial ships all of it.
+
+Halo hangs HUD sounds off the **`unhi`**, not off the biped. The reflexive is
+`UnitHUDInterfaceHUDSound`, **56 bytes** an entry (the definition's own size),
+at **+960** -- a definition walk lands on 928 and drifts by 32, so the offset
+is probed. Each entry is a sound plus a `latched to` bitfield at +16 naming
+the condition. `ui\hud\cyborg_mp` fills all five:
+
+| bit | condition | tag | class |
+| --- | --- | --- | --- |
+| 0x01 | shield recharging | `sound\sfx\ui\shield_charge` | lsnd |
+| 0x02 | shield damaged | `sound\sfx\ui\shield_hit` | snd! |
+| 0x04 | shield low | `sound\sfx\ui\shield_low` | lsnd |
+| 0x08 | shield empty | `sound\sfx\ui\shield_depleted` | lsnd |
+| 0x10 | health low | `sound\sfx\ui\health_low_heart` | lsnd |
+
+`hta_unit_hud_sound(c, latched_to, &looping)` in hud.c.
+
+**Four of the five are `lsnd`, and nothing downstream can play one** -- a
+mixer clip comes from a `snd!`. `hta_loop_sound_track` is the step between,
+factored out of the object-attachment reader; it passes a `snd!` straight
+through, because the caller has a tag id and does not always know which it
+is. Without it the shield stays silent and `bank_get` logs a decode failure
+that looks like a broken sound rather than a wrong class.
+
+### What drives them
+
+The recharge hum's condition is **the tag's own and nothing of ours**: the
+shield is growing back exactly when `since_damage >= recharge_delay` and it
+is not yet full, which is the same test `hta_vitals_update` uses to grow it.
+
+The one-shots have to be read **before** `hta_vitals_update`, which clears
+`took_damage` and `shield_broke`.
+
+`HTA_VITALS_LOW` (0.25) **is invented.** Halo has no threshold for "low" in
+any tag -- the HUD flashes and the heartbeat starts on a hardcoded fraction.
+
+Each loop has its own id, so the heartbeat can run under the recharge hum,
+which is right. All three stop on death.
+
+---
+
 ## The rocket's poof, and watching your own body (2026-09-20)
 
 Two reports: "rocket explosion seems non-existent, just a small poof of smoke
