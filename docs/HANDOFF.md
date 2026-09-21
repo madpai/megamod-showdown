@@ -97,38 +97,32 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Release: "The Warthog drives" (2026-09-21).**
+> **Release: "The Warthog catches air" (2026-09-21).**
 >
-> 1. **Get in.** Walk up to a Warthog's driver side. SWAP should read
->    **DRIVE**; press it. The camera moves to a chase view behind the jeep and
->    the ammo readout becomes a speedometer in km/h.
-> 2. **Drive.** Left stick is throttle (up) / reverse (down) and steering
->    (left/right). Dragging the view still looks around independently. Top
->    speed should be about **90 km/h**, reached in a bit over three seconds.
->    JUMP now reads **BRAKE**.
-> 3. **Watch the fps readout while moving.** This is the main thing to report.
->    Driving costs 1.39 ms/frame on the host and parked jeeps cost nothing;
->    almost all of it is rebuilding the whole fleet's collision grid every
->    frame. If fps falls off 120 while driving and recovers when you stop,
->    that is this, and the fix is per-vehicle grids.
-> 4. **Get out.** Stop, then press **EXIT**. It refuses while you are moving
->    or airborne, and it checks four doors for ground, headroom and a clear
->    path — if all four are blocked it will refuse and log. Getting out in a
->    ditch or against a wall is the interesting case.
-> 5. **Hit things.** Drive into the canyon wall: the jeep should stop dead
->    (there is no wall-sliding yet) and reverse should free it. Shoot a
->    Warthog, throw a grenade at one, and walk into one — bullets, blasts and
->    your own body should all meet it where it actually *is*, not where it was
->    parked. Check no invisible parked jeep is left behind at a spawn point.
-> 6. **Check nothing else moved.** Weapons, HUD, pickups and the body should
->    be untouched on foot. Note that pickups, the bot and the corpse now take
->    their tagged detail maps in the dynamic pass like the world does — watch
->    for anything newly speckled.
+> 1. **Look at the parked Warthog from the side.** All four tires should reach
+>    the terrain. The previous build showed about 0.06 world units of air under
+>    them because the model tire is smaller than its physics wheel.
+> 2. **Drive and watch the wheels.** They now spin from distance travelled and
+>    the front tires turn with steering. Check for detached tires or a wrong
+>    spin direction. The 90 km/h speed limit is unchanged; it comes from the
+>    Trial vehicle tag.
+> 3. **Drive quickly across a rise.** The jeep should leave the ground over a
+>    crest, follow a short arc, and land. It should still stay planted while
+>    starting slowly on uneven ground. Retest the hill near the screenshot's
+>    HUD coordinate **55.06, -107.13**: wheel contact should no longer make a
+>    rising floor behave like a wall. If it still sticks, send a screenshot
+>    with the HUD coordinate and the direction the jeep faces.
+> 4. **Watch fps while driving.** The earlier moving screenshot read 120 fps;
+>    the later stopped screenshot read 0 fps once. The new host update costs
+>    about 1.5 ms. Report a repeatable drop while driving or stopping.
+> 5. **Exit and collide.** EXIT should refuse in flight and while moving.
+>    Walls should still stop the jeep, and reversing should free it. Bullets,
+>    grenades and the player should still meet the moving hull.
 >
-> All 57 verification checks passed, including the real Trial Warthog's entry,
-> driving and exit. Phone confirmation pending. Wheels do not spin, there are
-> no passenger or turret seats, the Warthog cannot be damaged or flipped, and
-> only human jeeps are drivable — the Scorpion, Ghost and Banshee stay parked.
+> All 57 verification checks passed, including a real-map tire-ground check
+> and a synthetic high-speed crest. Phone confirmation pending. There are no
+> passenger or turret seats, the Warthog cannot be damaged or flipped, and
+> only human jeeps are drivable.
 
 ---
 
@@ -181,7 +175,9 @@ exit. Speeds, acceleration, steering lock and turn rate all come from the
 vehicle tag; the wheelbase and mass points come from its `phys` tag. Chase
 camera, DRIVE/EXIT/BRAKE touch labels and a km/h speedometer. The moving hull
 is solid to bullets, grenades, footsteps and the player. Device confirmation
-pending.
+pending for the latest wheel and airtime changes. The tire meshes spin and
+steer by model node and travel down to meet terrain. The chassis can leave
+the ground over a crest.
 
 **Placed model textures.** Model UV scales are restored from `mod2+48/+52`;
 opaque placed `shader_model` surfaces use scene lighting. This fixes the
@@ -217,9 +213,8 @@ remain a rendering gap; phone confirmation of this fix is pending.
 | Motion tracker | Art and behaviour readable (`unhi` 620/724, `hud_globals` range and scale) but placement is not in the tag, and nothing moves to track. Deferred three times. |
 | No hit sound on the body | `weapons\*\effects\impact cyborg shield` is in the cache and is the right thing to reach for. |
 | The bot's rifle is hardcoded | Should be whatever it is carrying, once it carries anything. |
-| Vehicle wheels do not spin | `wheel_spin` is accumulated from the tag's wheel circumference but nothing consumes it: the jeep is one rigid mesh, so the wheels need their own node transforms in `pose_mesh`. |
 | A blocked jeep stops dead | No wall-sliding. Driving into the canyon wall wedges you; reverse frees it. Glancing blows should deflect, not halt. |
-| Driving re-poses the whole fleet | 1.39 ms/frame on the host, and all of it is one `hta_vehicles_pose` rebuilding all 12 jeeps' shared collision grid. Eleven are parked. Per-vehicle grids is the fix, if the phone says it needs one. |
+| Driving re-poses the whole fleet | About 1.5 ms/frame on the host, mostly rebuilding all 12 jeeps' shared collision grid. Eleven are parked. Per-vehicle grids is the fix if the phone shows a repeatable fps drop. |
 | Vehicles take no damage | You cannot destroy or flip a Warthog, and it does not hurt what it hits. |
 | Only 1 dynamic mesh slot left | The vehicle fleet took one; 7 of `HTA_GFX_MAX_DYNAMIC`'s 8 are now in use, and dropped weapons still want one. |
 
@@ -362,6 +357,7 @@ wrong, this list is the first place to look — they are all one constant.
 | `HTA_ITEMS_UPLOAD_FRAMES` | 8 | ≥ any swapchain image count |
 | `HTA_VEHICLE_ENTER_REACH` | 0.9 wu | how close to a driver's seat DRIVE appears |
 | `HTA_VEHICLE_EXIT_SPEED` | 0.5 wu/s | below this a jeep counts as stopped, for entering and exiting |
+| `HTA_VEHICLE_ADHESION_SPEED_FRACTION` | 0.25 of tagged forward speed | below this, the `phys` ground depth can keep the chassis in contact over rough terrain; above it, the jeep can fly off a crest |
 | `HTA_VEHICLE_STEP` | 1/120 s | fixed physics substep, so frame rate cannot change handling |
 | `HTA_VEHICLE_CLEARANCE` | 0.04 wu | how far a mass point may be pushed before it counts as blocked |
 | `HTA_VEHICLE_MAX_SLOPE` | 0.75 rad | cap on the pitch/roll the wheels may pose the body to (43°) |

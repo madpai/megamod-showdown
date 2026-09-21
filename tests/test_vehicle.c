@@ -17,6 +17,27 @@ static void floor_mesh(hta_bsp_mesh *m, bool wall)
     memcpy(m->indices,ix,m->index_count*sizeof(*ix));
     for(int k=0;k<2;k++){m->bounds_min[k]=-50;m->bounds_max[k]=50;}
 }
+static void crest_mesh(hta_bsp_mesh *m)
+{
+    static const float x[]={-20,0,2,4,20};
+    static const float z[]={0,0,.8f,.8f,-2.4f};
+    memset(m,0,sizeof(*m));m->vertex_count=10;m->index_count=24;
+    m->vertices=calloc(m->vertex_count,sizeof(*m->vertices));
+    m->indices=calloc(m->index_count,sizeof(*m->indices));
+    m->tri_material=calloc(m->index_count/3,1);
+    for(uint32_t i=0;i<5;i++)for(uint32_t side=0;side<2;side++){
+        hta_vertex *v=&m->vertices[i*2+side];v->pos[0]=x[i];
+        v->pos[1]=side?10:-10;v->pos[2]=z[i];
+    }
+    for(uint32_t i=0;i<4;i++){
+        uint32_t a=i*2,b=a+2,t=i*6;
+        m->indices[t+0]=a;m->indices[t+1]=b;m->indices[t+2]=b+1;
+        m->indices[t+3]=a;m->indices[t+4]=b+1;m->indices[t+5]=a+1;
+    }
+    m->bounds_min[0]=-20;m->bounds_max[0]=20;
+    m->bounds_min[1]=-10;m->bounds_max[1]=10;
+    m->bounds_min[2]=-2.4f;m->bounds_max[2]=.8f;
+}
 static void rig(hta_vehicles *v)
 {
     memset(v,0,sizeof(*v));v->loaded=true;v->count=1;v->driver=0;
@@ -68,6 +89,16 @@ static void synthetic(void)
     rig(&v);v.cars[0].speed=8.25f;v.cars[0].pos[0]=8.8f;
     run(&v,&col,1,0,false,1,1.f); /* long stall is bounded */
     CHECK(v.cars[0].pos[0]<9.2f,"long frame does not tunnel through wall");
+    hta_collision_free(&col);hta_bsp_free(&m);crest_mesh(&m);hta_collision_build(&col,&m);
+    rig(&v);v.cars[0].pos[0]=-3;v.cars[0].speed=8.25f;v.cars[0].ground_depth=.23f;
+    int airborne=0;float furthest=-3;
+    for(int i=0;i<100;i++){
+        run(&v,&col,1,0,false,1,1.f/60);
+        if(v.cars[0].pos[0]>4 && !v.cars[0].grounded)airborne++;
+        furthest=fmaxf(furthest,v.cars[0].pos[0]);
+    }
+    CHECK(furthest>6,"jeep drives across a climb and crest");
+    CHECK(airborne>5,"fast jeep leaves the ground over a falling crest");
     /* Composite grids must choose nearest hits and retain material when the
      * extra grid misses; this guards moving vehicles and all existing shots. */
     hta_bsp_mesh extra;floor_mesh(&extra,false);
@@ -102,6 +133,10 @@ static void real_map(const char *path)
         "real per-tick vehicle values converted to seconds");
     CHECK(v.collision.built && v.coll_mesh.index_count>0,"moving collider grid builds");
     CHECK(v.cars[0].seat[1]>0,"driver marker resolves on left side");
+    int wheel=-1;
+    for(uint32_t i=0;i<v.cars[1].point_count;i++)if(v.cars[1].points[i].wheel){wheel=(int)i;break;}
+    CHECK(wheel>=0 && fabsf(v.cars[1].points[wheel].visual_radius-.20f)<.03f,
+        "wheel art radius is measured from its model node, not the larger physics radius");
     hta_bsp_mesh mesh={0};hta_collision col={0};
     ok=hta_bsp_load_collision(&c,&mesh,err,sizeof(err));CHECK(ok,"map collision loads");
     if(ok){
@@ -109,6 +144,26 @@ static void real_map(const char *path)
         hta_collision_build(&col,&mesh);col.extra=&v.collision;
         run(&v,&col,0,0,false,60,1.f/60);
         CHECK(v.cars[1].grounded,"spawn-side Warthog settles on real terrain");
+        hta_vehicle *car=&v.cars[1];uint32_t vi=car->first_vertex;
+        bool tires_touch=true;
+        for(uint32_t wi=0;wi<car->point_count;wi++)if(car->points[wi].wheel){float low=INFINITY,gz=0;float bx=0,by=0;
+            for(uint32_t j=car->first_vertex;j<car->first_vertex+car->vertex_count;j++)if(v.render_nodes[j]==car->points[wi].node && v.mesh.vertices[j].pos[2]<low){low=v.mesh.vertices[j].pos[2];bx=v.mesh.vertices[j].pos[0];by=v.mesh.vertices[j].pos[1];}
+            hta_collision terrain=col;terrain.extra=NULL;
+            if(!hta_collision_ground(&terrain,bx,by,low+1,&gz) || fabsf(low-gz)>.025f)
+                tires_touch=false;
+        }
+        CHECK(tires_touch,"resting Warthog tires visually reach real terrain");
+        while(vi<car->first_vertex+car->vertex_count &&
+              v.render_nodes[vi]!=car->points[wheel].node)vi++;
+        CHECK(vi<car->first_vertex+car->vertex_count,"rendered tire vertices retain their model node");
+        if(vi<car->first_vertex+car->vertex_count){
+            float before[3];memcpy(before,v.mesh.vertices[vi].pos,sizeof(before));
+            car->wheel_spin+=1.0f;hta_vehicles_pose(&v);
+            CHECK(hypotf(v.mesh.vertices[vi].pos[0]-before[0],
+                        v.mesh.vertices[vi].pos[2]-before[2])>.02f,
+                "wheel spin moves the tire geometry around its tagged mass point");
+            car->wheel_spin-=1.0f;hta_vehicles_pose(&v);
+        }
         hta_player p;hta_player_init(&p);hta_camera cam;hta_camera_init(&cam);
         p.pos[0]=100.83f;p.pos[1]=-144.69f;p.pos[2]=.53f;
         /* Feet from the owner's screenshot, then approach the door. */

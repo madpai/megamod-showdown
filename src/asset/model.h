@@ -108,6 +108,14 @@ bool hta_model_instance(hta_bsp_mesh *world, const hta_cache *c,
                         const float pos[3], const float rot[3],
                         char *err, size_t errlen);
 
+/* Append a model and keep each rendered vertex's model node alongside it.
+ * The array grows with world->vertices; the caller owns *nodes. This is used
+ * to pose vehicle wheels from their actual GBXModel node bindings. */
+bool hta_model_instance_nodes(hta_bsp_mesh *world, uint16_t **nodes,
+                              uint32_t *node_cap, const hta_cache *c,
+                              const hta_resource_map *bitmaps, uint32_t model_tag_id,
+                              char *err, size_t errlen);
+
 /* Every scenery + vehicle placement from the scenario. */
 bool hta_scenario_add_objects(hta_bsp_mesh *world, const hta_cache *c,
                               const hta_resource_map *bitmaps,

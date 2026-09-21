@@ -17,8 +17,10 @@ weapons with their real models, animations, sounds and HUD; throw its
 grenades; pick up what the map actually places, on the map's own respawn
 timers; die and watch your body go down; and shoot a target that bleeds
 shields before health, at the damage the tags say each weapon does.
+Human Warthogs can be driven across Blood Gulch with a chase camera, steering,
+braking, wheel motion, and terrain contact.
 
-Not yet: vehicles, bots that think, menus, netcode.
+Not yet: other drivable vehicles, bots that think, menus, netcode.
 
 ## Legal
 

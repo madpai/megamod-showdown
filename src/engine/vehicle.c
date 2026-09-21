@@ -62,16 +62,20 @@ bool hta_vehicle_read(hta_vehicle *v, const hta_cache *c, uint32_t tag)
     if(!tag_offset(c,pid,HTA_FOURCC('p','h','y','s'),&po))return false;
     hta_rd_f32(c,po+28,&v->gravity_scale);
     if(!isfinite(v->gravity_scale) || v->gravity_scale<=0)v->gravity_scale=1;
+    hta_rd_f32(c,po+32,&v->ground_depth);
+    if(!isfinite(v->ground_depth) || v->ground_depth<=0)v->ground_depth=0;
     if(!array(c,po+116,&count,&arr) || count>HTA_VEHICLE_MASS_POINTS)return false;
     float front=-INFINITY,back=INFINITY; uint32_t wheels=0;
     for(uint32_t i=0;i<count;i++) {
         hta_vehicle_point *p=&v->points[v->point_count]; uint16_t powered=0xffff;
         hta_rd_u16(c,arr+i*128+32,&powered); p->wheel=powered!=0xffff;
+        hta_rd_u16(c,arr+i*128+34,&p->node);
         for(int k=0;k<3;k++)
             if(!hta_rd_f32(c,arr+i*128+56+k*4,&p->pos[k]) || !isfinite(p->pos[k]))return false;
         hta_rd_f32(c,arr+i*128+104,&p->radius);
         if(!isfinite(p->radius) || p->radius<=0)return false;
         if(p->wheel){front=fmaxf(front,p->pos[0]);back=fminf(back,p->pos[0]);wheels++;}
+        p->visual_radius=p->radius;
         v->body_radius=fmaxf(v->body_radius,hypotf(p->pos[0],p->pos[1])+p->radius);
         v->point_count++;
     }
@@ -83,20 +87,44 @@ void hta_vehicles_free(hta_vehicles *v)
 {
     if(!v)return;
     hta_collision_free(&v->collision); hta_bsp_free(&v->mesh); hta_bsp_free(&v->coll_mesh);
-    free(v->rest);free(v->coll_rest);memset(v,0,sizeof(*v));v->driver=-1;
+    free(v->rest);free(v->coll_rest);free(v->render_nodes);
+    memset(v,0,sizeof(*v));v->driver=-1;
 }
-static void pose_mesh(hta_bsp_mesh *m,const hta_vertex *rest,const hta_vehicle *v,
-                       uint32_t first,uint32_t count)
+static void pose_mesh(hta_bsp_mesh *m,const hta_vertex *rest,const uint16_t *nodes,
+                      const hta_vehicle *v,uint32_t first,uint32_t count)
 {
     float basis[3][3];
     for (int k=0;k<3;k++) { float axis[3]={0};axis[k]=1;rotate(v,axis,basis[k]); }
+    int16_t wheel_by_node[256];
+    for(uint32_t j=0;j<256;j++)wheel_by_node[j]=-1;
+    if(nodes)for(uint32_t j=0;j<v->point_count;j++)
+        if(v->points[j].wheel && v->points[j].node<256)
+            wheel_by_node[v->points[j].node]=(int16_t)j;
+    float cs=cosf(v->wheel_spin),ss=sinf(v->wheel_spin);
+    float ct=cosf(v->steering),st=sinf(v->steering);
     for(uint32_t i=first;i<first+count;i++) {
         m->vertices[i]=rest[i];
+        float p[3]={rest[i].pos[0],rest[i].pos[1],rest[i].pos[2]};
+        float n[3]={rest[i].normal[0],rest[i].normal[1],rest[i].normal[2]};
+        int16_t wheel=nodes && nodes[i]<256 ? wheel_by_node[nodes[i]] : -1;
+        if(wheel>=0) {
+            const hta_vehicle_point *pt=&v->points[wheel];
+            /* The model vertices are already in bind/model space. Rotate
+             * around the phys mass point matching their model node. */
+            float x=p[0]-pt->pos[0], y=p[1]-pt->pos[1], z=p[2]-pt->pos[2];
+            float sx=x*cs+z*ss,sz=-x*ss+z*cs;
+            float nx=n[0]*cs+n[2]*ss,nz=-n[0]*ss+n[2]*cs;
+            float c=pt->pos[0]>0 ? ct : 1,s=pt->pos[0]>0 ? st : 0;
+            p[0]=pt->pos[0]+sx*c-y*s;
+            p[1]=pt->pos[1]+sx*s+y*c;
+            p[2]=pt->pos[2]+sz+pt->travel;
+            n[0]=nx*c-n[1]*s;n[1]=nx*s+n[1]*c;n[2]=nz;
+        }
         for(int k=0;k<3;k++) {
-            m->vertices[i].pos[k]=v->pos[k]+basis[0][k]*rest[i].pos[0]+
-                basis[1][k]*rest[i].pos[1]+basis[2][k]*rest[i].pos[2];
-            m->vertices[i].normal[k]=basis[0][k]*rest[i].normal[0]+
-                basis[1][k]*rest[i].normal[1]+basis[2][k]*rest[i].normal[2];
+            m->vertices[i].pos[k]=v->pos[k]+basis[0][k]*p[0]+
+                basis[1][k]*p[1]+basis[2][k]*p[2];
+            m->vertices[i].normal[k]=basis[0][k]*n[0]+
+                basis[1][k]*n[1]+basis[2][k]*n[2];
         }
     }
 }
@@ -105,8 +133,8 @@ void hta_vehicles_pose(hta_vehicles *v)
     if(!v || !v->loaded)return;
     for(uint32_t i=0;i<v->count;i++) {
         hta_vehicle *car=&v->cars[i];
-        pose_mesh(&v->mesh,v->rest,car,car->first_vertex,car->vertex_count);
-        pose_mesh(&v->coll_mesh,v->coll_rest,car,car->first_coll,car->coll_count);
+        pose_mesh(&v->mesh,v->rest,v->render_nodes,car,car->first_vertex,car->vertex_count);
+        pose_mesh(&v->coll_mesh,v->coll_rest,NULL,car,car->first_coll,car->coll_count);
     }
     for(int k=0;k<3;k++) {v->coll_mesh.bounds_min[k]=INFINITY;v->coll_mesh.bounds_max[k]=-INFINITY;}
     for(uint32_t i=0;i<v->coll_mesh.vertex_count;i++)for(int k=0;k<3;k++) {
@@ -129,6 +157,7 @@ bool hta_vehicles_load(hta_vehicles *v,const hta_cache *c,const hta_resource_map
        !array(c,off+HTA_SCENARIO_VEHICLE_PAL,&pn,&pa))return false;
     v->mesh.textures=calloc(256,sizeof(*v->mesh.textures));
     if(!v->mesh.textures)goto fail;
+    uint32_t node_cap=0;
     for(uint32_t i=0;i<count && i<HTA_VEHICLE_PLACEMENTS;i++) {
         uint16_t type; uint32_t id=0;
         if(!hta_rd_u16(c,arr+i*120,&type) || type>=pn)continue;
@@ -141,10 +170,20 @@ bool hta_vehicles_load(hta_vehicles *v,const hta_cache *c,const hta_resource_map
         hta_rd_f32(c,arr+i*120+20,&car.yaw);
         hta_rd_f32(c,arr+i*120+24,&car.pitch);hta_rd_f32(c,arr+i*120+28,&car.roll);
         car.first_vertex=v->mesh.vertex_count;car.first_coll=v->coll_mesh.vertex_count;
-        if(!hta_model_instance(&v->mesh,c,bm,car.model_id,NULL,NULL,err,n) ||
+        if(!hta_model_instance_nodes(&v->mesh,&v->render_nodes,&node_cap,
+                                     c,bm,car.model_id,err,n) ||
            !hta_model_collision_instance(&v->coll_mesh,c,id))goto fail;
         car.vertex_count=v->mesh.vertex_count-car.first_vertex;
         car.coll_count=v->coll_mesh.vertex_count-car.first_coll;
+        for(uint32_t w=0;w<car.point_count;w++) {
+            hta_vehicle_point *pt=&car.points[w];if(!pt->wheel)continue;
+            float low=INFINITY;
+            for(uint32_t j=car.first_vertex;j<car.first_vertex+car.vertex_count;j++)
+                if(v->render_nodes[j]==pt->node)
+                    low=fminf(low,v->mesh.vertices[j].pos[2]);
+            if(isfinite(low) && pt->pos[2]>low)
+                pt->visual_radius=pt->pos[2]-low;
+        }
         v->cars[v->count++]=car;v->skip[i]=1;
     }
     if(!v->count)goto fail;
@@ -231,7 +270,11 @@ static bool blocked(const hta_vehicles *fleet,uint32_t index,const hta_vehicle *
                                   pt->radius*2,pt->radius);
         if(hypotf(x-at[0],y-at[1])>HTA_VEHICLE_CLEARANCE)return true;
         float d[3]={at[0]-prev[0],at[1]-prev[1],at[2]-prev[2]};
-        if(hta_collision_ray(world,prev,d,1,NULL,NULL,NULL))return true;
+        /* Wheel centres follow the ground by design. Sweeping their centres
+         * into a rising floor can report a hit before support lifts the body
+         * onto it, making a driveable hill act like a wall. The wheel's
+         * horizontal volume above still checks actual walls. */
+        if(!pt->wheel && hta_collision_ray(world,prev,d,1,NULL,NULL,NULL))return true;
         for(uint32_t j=0;j<fleet->count;j++) {
             if(j==index)continue;
             const hta_vehicle *other=&fleet->cars[j];
@@ -250,6 +293,7 @@ static bool blocked(const hta_vehicles *fleet,uint32_t index,const hta_vehicle *
 static void support(hta_vehicle *v,const hta_collision *world,float gravity,float dt)
 {
     bool was_grounded = v->grounded;
+    float old_z=v->pos[2];
     float front=0,back=0,left=0,right=0;unsigned nf=0,nb=0,nl=0,nr=0;
     float target=-INFINITY,width=0;
     for(uint32_t k=0;k<v->point_count;k++) {
@@ -261,17 +305,44 @@ static void support(hta_vehicle *v,const hta_collision *world,float gravity,floa
         if(pt->pos[1]>0){left+=z;nl++;}else{right+=z;nr++;}
         width=fmaxf(width,fabsf(pt->pos[1])*2);
     }
+    /* Carry the speed gained while climbing over a crest into free flight.
+     * On a rising surface, the ground itself sets height; on level or falling
+     * ground, only gravity can pull the chassis down. */
+    if(was_grounded)
+        v->fall_speed=(isfinite(target) && target>old_z+1e-4f) ? 0 : v->rise_speed;
     v->fall_speed-=gravity*v->gravity_scale*dt;
     v->pos[2]+=v->fall_speed*dt;v->grounded=false;
+    /* The physics tag's ground depth is the short suspension reach. It keeps
+     * a slow jeep planted while its wheel contacts alternate on rough ground.
+     * At road speed the chassis follows its ballistic path over a crest. */
+    float slow=fabsf(v->speed)<v->forward*HTA_VEHICLE_ADHESION_SPEED_FRACTION
+        ? v->ground_depth : 0;
     if(isfinite(target) && (v->pos[2]<=target ||
-        (was_grounded && v->pos[2]-target<=HTA_VEHICLE_CLEARANCE)) && target-v->pos[2]<0.5f) {
+       (was_grounded && v->pos[2]-target<=slow)) && target-v->pos[2]<0.5f) {
         v->pos[2]=target;v->fall_speed=0;v->grounded=true;
+        v->rise_speed=(was_grounded && fabsf(v->speed)>HTA_VEHICLE_EXIT_SPEED && target>old_z)
+            ? fminf((target-old_z)/dt,fabsf(v->speed)*tanf(HTA_VEHICLE_MAX_SLOPE)) : 0;
         if(nf && nb && nl && nr && width>0.1f) {
             float pitch=-atan2f(front/nf-back/nb,v->wheelbase);
             float roll=atan2f(left/nl-right/nr,width);
             v->pitch=approach(v->pitch,clamp(pitch,-HTA_VEHICLE_MAX_SLOPE,HTA_VEHICLE_MAX_SLOPE),dt*2);
             v->roll=approach(v->roll,clamp(roll,-HTA_VEHICLE_MAX_SLOPE,HTA_VEHICLE_MAX_SLOPE),dt*2);
         }
+    } else {
+        v->rise_speed=0;
+    }
+    for(uint32_t k=0;k<v->point_count;k++) {
+        hta_vehicle_point *pt=&v->points[k];if(!pt->wheel)continue;
+        float wanted=0,at[3],z;
+        place(v,pt->pos,at);
+        if(v->grounded && hta_collision_ground(world,at[0],at[1],at[2]+pt->radius,&z)) {
+            /* The art is smaller than the collision wheel. Allow that
+             * difference in addition to the tag's ground depth, so even
+             * the lowest wheel can reach terrain under a tilted chassis. */
+            float reach=v->ground_depth+fabsf(pt->radius-pt->visual_radius);
+            wanted=clamp(z+pt->visual_radius-at[2],-reach,reach);
+        }
+        pt->travel=wanted;
     }
 }
 void hta_vehicles_update(hta_vehicles *v,const hta_collision *world,float throttle,
@@ -301,9 +372,16 @@ void hta_vehicles_update(hta_vehicles *v,const hta_collision *world,float thrott
             /* Resting still must acquire ground support on the first update. */
             support(car,&terrain,gravity,h);
         }
-        if(car->circumference>0)car->wheel_spin+=car->speed*h/car->circumference*6.2831853f;
+        if(car->circumference>0){
+            car->wheel_spin+=car->speed*h/car->circumference*6.2831853f;
+            if(fabsf(car->wheel_spin)>6.2831853f)
+                car->wheel_spin=remainderf(car->wheel_spin,6.2831853f);
+        }
         if(memcmp(old.pos,car->pos,sizeof(old.pos)) || old.yaw!=car->yaw ||
-           old.pitch!=car->pitch || old.roll!=car->roll)changed=true;
+           old.pitch!=car->pitch || old.roll!=car->roll ||
+           old.steering!=car->steering || old.wheel_spin!=car->wheel_spin)changed=true;
+        for(uint32_t k=0;k<car->point_count;k++)
+            if(old.points[k].travel!=car->points[k].travel)changed=true;
     }
     if(changed)hta_vehicles_pose(v);
 }

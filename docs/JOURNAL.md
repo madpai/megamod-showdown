@@ -9,6 +9,48 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## The Warthog catches air (2026-09-21)
+
+The owner's first phone screenshots showed three things: visible air below the
+tires on level ground, no wheel animation, and a jeep that followed hills so
+closely it felt heavy. The moving screenshot read 90 km/h and 120 fps; a later
+stopped screenshot read 0 fps once. Speed itself is still the Trial tag's
+0.275 wu/tick, about 90 km/h, so this release does not retune it.
+
+The `phys` mass points explain the floating: the Warthog tire's physics radius
+is **0.260 wu**, while the actual `mod2` tire vertices reach **0.200 wu** below
+their center. A rigid model held at the physics wheel's contact height leaves
+0.060 wu (18 cm) of visible air. The four wheel mass points name model nodes
+14–17, and the tire vertices are bound to those exact nodes. The model loader
+now retains each rendered vertex's node for vehicle instances. `pose_mesh`
+rotates those vertices around their mass point from the tagged wheel
+circumference, steers the front pair, and extends each tire toward its own
+terrain contact. The visual reach is the tag's `ground depth` plus the measured
+art/physics radius difference. On the real spawn-side Warthog all four tire
+bottoms now lie within 0.025 wu of the terrain; this is checked with the real
+map and the static terrain grid, so the vehicle cannot falsely count as its
+own ground.
+
+The old support code snapped the chassis down to any contact within 0.04 wu
+every 120 Hz step. At full speed that can follow an indefinitely descending
+slope. It now follows gravity alone above one quarter of the vehicle's tagged
+forward speed, carrying its uphill vertical speed over a crest. At lower
+speed it may use the physics tag's 0.23 wu `ground depth` to stay planted on
+rough contacts. Without this slow contact path, the real spawn-side jeep
+briefly lost ground, reached only 0.84 wu/s after a full second of throttle,
+and failed the existing drive test. A synthetic rising and falling crest now
+checks that a fast jeep travels across the climb and spends several frames in
+the air. Wheel-center sweep rays were also removed: they hit a rising floor
+before support could lift the jeep onto it and made a hill act like a wall;
+horizontal wall volume and hull sweeps remain.
+
+The first pose pass called sine and cosine for every tire vertex and pushed a
+host update to 2.62 ms. Precomputing wheel rotations and a node-to-wheel map
+per car brought it back to about **1.52 ms/update**. All 57 verification
+checks passed, including the Android build and the real-map tire-ground and
+drive tests. The owner's hill near HUD `(55.06, -107.13)` and actual airtime
+still need phone confirmation.
+
 ## The Warthog drives (2026-09-21)
 
 The first drivable slice: enter the driver's seat, throttle, reverse, steer,
@@ -2753,4 +2795,3 @@ after building, wherever real tag physics are available.
   already model-space.
 
 ---
-

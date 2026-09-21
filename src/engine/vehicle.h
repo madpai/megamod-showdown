@@ -1,5 +1,5 @@
-/* First drivable slice: tag-driven human jeeps, kinematic chassis with
- * wheel-ground support. Not a rigid-body/suspension simulation. */
+/* Tag-driven human jeeps with ballistic airtime and visual wheel travel.
+ * Chassis contact remains kinematic rather than a full rigid-body solver. */
 #ifndef HTA_VEHICLE_H
 #define HTA_VEHICLE_H
 #include "player.h"
@@ -16,13 +16,18 @@
 #define HTA_VEHICLE_CLEARANCE 0.04f
 #define HTA_VEHICLE_MAX_SLOPE 0.75f
 #define HTA_VEHICLE_EXIT_SPEED 0.5f
+#define HTA_VEHICLE_ADHESION_SPEED_FRACTION 0.25f
 
-typedef struct { float pos[3], radius; bool wheel; } hta_vehicle_point;
+typedef struct {
+    float pos[3], radius, visual_radius, travel;
+    uint16_t node;
+    bool wheel;
+} hta_vehicle_point;
 typedef struct {
     uint32_t tag_id, model_id, placement;
     float forward, reverse, accel, decel, turn_left, turn_right, turn_rate;
-    float circumference, gravity_scale;
-    float seat[3], pos[3], yaw, pitch, roll, speed, steering, fall_speed;
+    float circumference, gravity_scale, ground_depth;
+    float seat[3], pos[3], yaw, pitch, roll, speed, steering, fall_speed, rise_speed;
     float wheel_spin;
     hta_vehicle_point points[HTA_VEHICLE_MASS_POINTS];
     uint32_t point_count;
@@ -37,6 +42,7 @@ typedef struct {
     int32_t driver;
     hta_bsp_mesh mesh, coll_mesh;
     hta_vertex *rest, *coll_rest;
+    uint16_t *render_nodes;
     hta_collision collision;
     float look_yaw, look_pitch;
     uint32_t upload_frames;
