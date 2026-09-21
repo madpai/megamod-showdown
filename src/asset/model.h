@@ -19,6 +19,8 @@
 #define HTA_OBJECT_COLLISION_ID    0x7Cu  /* Object.collision_model tag_id */
 #define HTA_MOD2_FLAGS             0x000u
 #define HTA_MOD2_FLAG_LOCAL_NODES  0x2u   /* "parts have local nodes" */
+#define HTA_MOD2_U_SCALE           48u
+#define HTA_MOD2_V_SCALE           52u
 #define HTA_MOD2_NODES             0x0B8u
 #define HTA_NODE_SIZE              156u
 #define HTA_NODE_PARENT            36u

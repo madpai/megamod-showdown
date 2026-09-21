@@ -40,7 +40,7 @@ cd /home/commander/projects/halo-trial-android
 HTA_MAP=/home/commander/halo-trial-data/extract/maps/bloodgulch.map scripts/verify.sh
 ```
 
-52 checks: host build, every unit test twice (synthetic, then against the real
+54 checks: host build, every unit test twice (synthetic, then against the real
 map), a synthetic-fixture CLI pass, an offscreen render, the APK build, and the
 APK's contents (arm64 only, no bundled audio, right entry points).
 
@@ -97,18 +97,20 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Release: "Mipmaps for moving world objects" (2026-09-21).**
+> **Release: "Warthog texture coordinates and lighting" (2026-09-21).**
 >
-> 1. Back away from the standing body and nearby weapon pickups, then strafe
->    while watching their surfaces. Fine detail should shimmer less at distance.
-> 2. Shoot the body: its flinch should stay upright, and its corpse should
->    remain correctly textured. Throw grenades and fire rockets too.
-> 3. Check the assault rifle round counter and HUD digits: they should retain
->    their previous sharpness. Report blurry digits, missing textures, or a
->    noticeable frame-rate or loading regression.
+> 1. Walk around the Warthog. Tire tread, hood/side panels and tail lights
+>    should now line up with the geometry instead of sampling unrelated
+>    patches of the texture. The body should be lit by the scene.
+> 2. Check other vehicles and trees: the model UV-scale correction applies
+>    to every model whose tag uses non-unit scales. Watch for stretched or
+>    misplaced textures, and excessively bright placed objects.
+> 3. Check held weapons and their counters, especially the fuel rod gun.
+>    Their shared model loader now restores UV scales too.
 >
-> Host verification passed; the visual improvement still needs device testing.
-> The body remains stationary and has no hit sound.
+> All 54 verification checks passed; before/after host renders inspected.
+> Phone confirmation pending. Vehicle reflections remain unsupported, and
+> vehicles are still not drivable. Next feature: a small Warthog driving slice.
 
 ---
 
@@ -153,6 +155,11 @@ uploads retain their existing filtering. Device confirmation pending.
 
 **A body to shoot at.** Stands in front of the spawn with the player's health,
 shield and collision shape, holds a rifle, flinches, dies, comes back.
+
+**Placed model textures.** Model UV scales are restored from `mod2+48/+52`;
+opaque placed `shader_model` surfaces use scene lighting. This fixes the
+Warthog sampling the wrong texture regions and being drawn unlit. Reflections
+remain a rendering gap; phone confirmation of this fix is pending.
 
 ### Not started
 
@@ -222,7 +229,7 @@ Projectile 588 · Effect 64 · EffectEvent 68 · EffectPart 104 · EffectParticl
 232 · Particle 356 · PointPhysics 64 · ShaderEnvironment 836 · ShaderModel 440
 · ShaderTransparentGlass 480 · ShaderTransparentChicago 108 · Sound 164 ·
 SoundLooping 84 · Font 156 · WeaponHUDInterface 380 · Globals 428 ·
-ModelCollisionGeometry 664 · DamageEffect 672 · Object 380 · Unit 752 ·
+GBXModel 232 · ModelCollisionGeometry 664 · DamageEffect 672 · Object 380 · Unit 752 ·
 Dialogue 4112 · Scenario 1456 · ScenarioNetgameEquipment 144 · ItemCollection
 92 · ItemCollectionPermutation 84 · ScenarioPlayerStartingProfile 104 ·
 ScenarioStartingEquipment 204 · UnitHUDInterfaceHUDSound 56 · Equipment 944

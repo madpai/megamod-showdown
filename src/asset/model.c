@@ -119,6 +119,15 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
     uint32_t moff;
     if (!hta_cache_ptr_to_offset(c, mt.tag_data_ptr, &moff)) return false;
 
+    /* GBXModel (232 bytes) normalises stored UVs by these model-wide
+     * scales. Restore them before sampling any shader map. Zero is the
+     * format's default of one; signed scales must retain their direction. */
+    float uv_scale[2] = {1.0f, 1.0f};
+    hta_rd_f32(c, moff + HTA_MOD2_U_SCALE, &uv_scale[0]);
+    hta_rd_f32(c, moff + HTA_MOD2_V_SCALE, &uv_scale[1]);
+    for (int k = 0; k < 2; k++)
+        if (!isfinite(uv_scale[k]) || uv_scale[k] == 0.0f) uv_scale[k] = 1.0f;
+
     if (sk) {
         uint32_t mflags = 0;
         hta_rd_u32(c, moff + HTA_MOD2_FLAGS, &mflags);
@@ -254,7 +263,7 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
             if (sky) { d->pos[0]=ip[0]; d->pos[1]=ip[1]; d->pos[2]=ip[2];
                        d->normal[0]=in[0]; d->normal[1]=in[1]; d->normal[2]=in[2]; }
             else { xform_p(d->pos, ip, ppos, prot); xform_n(d->normal, in, prot); }
-            d->uv[0]=uv[0]; d->uv[1]=uv[1];
+            d->uv[0]=uv[0] * uv_scale[0]; d->uv[1]=uv[1] * uv_scale[1];
             d->lm_uv[0]=d->lm_uv[1]=0;
 
             if (sk) {
@@ -334,6 +343,13 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
         sm->shader_tag_id = shader_id;
         sm->lightmap_index = 0xFFFFu;
         sm->draw_mode = hta_shader_draw_mode(c, shader_id);
+        /* Placed shader_model surfaces have no baked BSP lightmap. Keep
+         * sky/effect shaders and skinned meshes on their existing paths. */
+        int32_t sti = hta_cache_find_tag_by_id(c, shader_id);
+        hta_tag_entry shader;
+        sm->scene_lit = !sky && !sk && sm->draw_mode == HTA_DRAW_OPAQUE &&
+            sti >= 0 && hta_cache_tag(c, (uint32_t)sti, &shader) &&
+            shader.primary_class == HTA_TAG_SOSO;
         if (sky && sm->draw_mode == HTA_DRAW_SKIP) sm->draw_mode = HTA_DRAW_OPAQUE;
         uint32_t base_bm = hta_shader_base_bitmap(c, shader_id);
         if (base_bm) sm->albedo_tex = hta_mesh_intern_bitmap(dst, c, bitmaps, base_bm, 0);

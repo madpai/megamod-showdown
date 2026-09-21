@@ -51,6 +51,7 @@ typedef struct {
     uint32_t first_index, index_count;
     VkDescriptorSet set;
     uint8_t  draw_mode;
+    bool     scene_lit;
     float    detail_scale;   /* 0 = this surface has no detail map */
     float    detail2_scale;
     float    detail_mask;    /* ShaderModelDetailMask; 0 = no mask */
@@ -1194,6 +1195,7 @@ static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
             mi = mesh->submeshes[i].multi_tex;
             dmask = mesh->submeshes[i].detail_mask;
         }
+        m->submeshes[i].scene_lit = mesh->submesh_count && mesh->submeshes[i].scene_lit;
         m->submeshes[i].first_index = first;
         m->submeshes[i].index_count = count;
         m->submeshes[i].set = sets[i];
@@ -1399,6 +1401,8 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                         float det[4] = { mesh->submeshes[i].detail_scale,
                                          mesh->submeshes[i].detail2_scale,
                                          mesh->submeshes[i].detail_mask, 0.0f };
+                        float lit = mesh->submeshes[i].scene_lit ? 1.0f : 0.0f;
+                        memcpy(push + 80 + 12, &lit, sizeof(lit));
                         memcpy(push + 112, det, sizeof(det));
                         vkCmdPushConstants(cb, g->layout,
                                            VK_SHADER_STAGE_VERTEX_BIT |

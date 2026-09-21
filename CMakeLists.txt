@@ -101,6 +101,10 @@ else()
     target_link_libraries(test_bsp PRIVATE hta_engine m)
     add_test(NAME bsp COMMAND test_bsp)
 
+    add_executable(test_model tests/test_model.c)
+    target_link_libraries(test_model PRIVATE hta_engine m)
+    add_test(NAME model COMMAND test_model)
+
     add_executable(test_camera tests/test_camera.c)
     target_link_libraries(test_camera PRIVATE hta_engine m)
     add_test(NAME camera COMMAND test_camera)

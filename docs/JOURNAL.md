@@ -9,6 +9,41 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## The Warthog sampled the wrong parts of its textures (2026-09-21)
+
+Reported: the Warthog still did not look properly textured. A host render
+at eye `(104.6, -147.2, 1.7)`, yaw 132, pitch -10 reproduced it.
+Its hull and tire bitmap dependencies resolved, but `append_mod2` copied
+stored UVs directly and ignored the model's base-map scales.
+
+`GBXModel` reconciles to 232 bytes; U scale is +48, V scale is +52.
+The actual Warthog values are **1.999474 and 3.000816**. The asset pipeline
+normalises stored coordinates by those factors; restoring them is required
+for every map sampled through the model UVs. Zero defaults to one. The
+loader now restores both factors, preserving signed scales and guarding
+non-finite inputs. This affects static and skinned models through their
+shared loader. Many trees and several other vehicles also use non-unit scales.
+
+A second issue: placed vehicles lived in the BSP mesh, but had no lightmap,
+so they were drawn as raw albedo. Opaque placed `soso` submeshes now carry a
+scene-lighting flag into the static draw loop, using the existing scene
+light/ambient shading. BSP surfaces retain baked lighting; sky, transparent
+and additive effects retain their existing paths. No new lighting constants.
+
+Before/after renders visibly restore tire tread, body panels and tail lights;
+the final render also lights the body. Full reflection support is still
+absent. The model detail-mask channel mapping deserves a separate audit:
+`shader_model.json` describes PC reflection in blue and change color in
+alpha, unlike the older journal's claimed mapping. This release does not
+claim to complete the model shader.
+
+`test_model` covers synthetic UV restoration (non-unit, default, signed and
+non-finite scales), placed-material lighting selection, and real Warthog
+hull/tire texture decoding. Registered in CMake and both verify halves.
+**54 checks passed**, including the Android APK and host offscreen renders.
+Device testing should check Warthog alignment/lighting, other placed models,
+and held weapons (especially the fuel rod gun, which has non-unit scales).
+
 ## Mipmaps for moving world objects (2026-09-21)
 
 The upload code equated dynamic vertices with textures that never minify.
