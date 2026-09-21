@@ -633,3 +633,41 @@ bool hta_bsp_load_collision(const hta_cache *c, hta_bsp_mesh *out,
     }
     return true;
 }
+
+uint32_t hta_scenario_spawn_pick(const hta_spawn_point *spawns, uint32_t count,
+                                 const float avoid[3], uint32_t *rng)
+{
+    if (!spawns || !count) return 0;
+
+    uint32_t seed = rng ? *rng : 1u;
+    seed = seed * 1103515245u + 12345u;
+    if (rng) *rng = seed;
+
+    if (!avoid) return (seed >> 16) % count;
+
+    /* Furthest wins, but not always the same one: ties and near-ties on a
+     * symmetrical map like Blood Gulch would otherwise send you to the
+     * identical rock every time. Pick at random among the furthest half. */
+    float best = -1.0f;
+    for (uint32_t i = 0; i < count; i++) {
+        float dx = spawns[i].position[0] - avoid[0];
+        float dy = spawns[i].position[1] - avoid[1];
+        float dz = spawns[i].position[2] - avoid[2];
+        float d2 = dx*dx + dy*dy + dz*dz;
+        if (d2 > best) best = d2;
+    }
+    if (!(best > 0.0f)) return (seed >> 16) % count;
+
+    uint32_t good[64];
+    uint32_t n = 0;
+    const float HALF = 0.25f;   /* d^2 >= a quarter of the best is half the distance */
+    for (uint32_t i = 0; i < count && n < 64u; i++) {
+        float dx = spawns[i].position[0] - avoid[0];
+        float dy = spawns[i].position[1] - avoid[1];
+        float dz = spawns[i].position[2] - avoid[2];
+        float d2 = dx*dx + dy*dy + dz*dz;
+        if (d2 >= best * HALF) good[n++] = i;
+    }
+    if (!n) return 0;
+    return good[(seed >> 16) % n];
+}

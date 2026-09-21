@@ -64,6 +64,9 @@ typedef struct {
      * sniper's scope brackets and reticle ticks are flagged "show only when
      * zoomed" in its tag, and are grouped per level. */
     int8_t   zoom_level;
+    /* Ignores anchor, offset and scale and covers the whole screen. The
+     * death fade is the only one. */
+    bool     fullscreen;
 } hta_hud_elem;
 
 typedef struct {
@@ -105,6 +108,10 @@ typedef struct {
     float    number_cell;        /* canvas px per digit */
     float    number_base[2];     /* the tag's anchor offset */
     bool     number_leading_zeros;
+
+    /* A black sheet over everything, for dying behind. Added last so it
+     * draws last; -1 when there was no room for it. */
+    int32_t  fade_elem;
 } hta_hud;
 
 /* Reads the weapon's `wphi`, decodes its reticle, and reserves geometry.
@@ -132,5 +139,9 @@ void hta_hud_set_number(hta_hud *h, int value);
 /* Which zoom level the weapon is at, 0 for unzoomed. Shows that level's
  * scope furniture and hides every other level's. */
 void hta_hud_set_zoom(hta_hud *h, int level);
+
+/* Black over the whole screen at `alpha`, 0 for none. Halo fades out as you
+ * die and back in as you respawn. */
+void hta_hud_set_fade(hta_hud *h, float alpha);
 
 #endif

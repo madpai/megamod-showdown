@@ -211,6 +211,16 @@ bool hta_coll_bsp_append(hta_bsp_mesh *dst, const hta_cache *c, uint32_t cb_off,
 /* Reads up to max player spawn points from the scenario. Returns count read. */
 uint32_t hta_scenario_spawns(const hta_cache *c, hta_spawn_point *out, uint32_t max);
 
+/* Which spawn to come back at, given where you just died.
+ *
+ * Halo picks the spawn furthest from whatever is dangerous. With nobody else
+ * in the map the only thing known to be dangerous is the spot that just
+ * killed you, so that is what is avoided -- which also stops a fall into the
+ * same hole repeating forever. `avoid` may be NULL, in which case one is
+ * chosen at random. Returns an index, or 0 when there are none. */
+uint32_t hta_scenario_spawn_pick(const hta_spawn_point *spawns, uint32_t count,
+                                 const float avoid[3], uint32_t *rng);
+
 /* Reads a TagReflexive (count, pointer) at a file offset. */
 bool hta_read_reflexive(const hta_cache *c, uint32_t off,
                         uint32_t *count, uint32_t *ptr);

@@ -78,6 +78,7 @@ void hta_hud_free(hta_hud *h)
     if (!h) return;
     hta_bsp_free(&h->mesh);
     memset(h, 0, sizeof(*h));
+    h->fade_elem = -1;      /* zero is a valid element index; -1 is "none" */
 }
 
 /* ColorARGBInt is stored blue, green, red, alpha -- read the other way the
@@ -165,6 +166,7 @@ static int add_elem(hta_hud *h, uint32_t tex, const hta_bitmap_sprite *sp,
     e->anchor = anchor;
     e->extra_scale = 1.0f;
     e->zoom_level = 0;
+    e->fullscreen = false;
     e->uv[0] = sp->u0; e->uv[1] = sp->v0;
     e->uv[2] = sp->u1; e->uv[3] = sp->v1;
     return (int)h->elem_count++;
@@ -615,6 +617,30 @@ static void load_weapon_hud(hta_hud *h, const hta_cache *c,
     }
 }
 
+/* A black sheet for dying behind.
+ *
+ * Added LAST, because submeshes draw in order and this one goes over
+ * everything. It is one white texel drawn in mask mode, so the shader takes
+ * the art's alpha (1) times the tint's -- the tint carries both the colour
+ * and how far the fade has gone. */
+static void load_fade(hta_hud *h)
+{
+    h->fade_elem = -1;
+    static const uint8_t white[4] = { 255u, 255u, 255u, 255u };
+    uint32_t tex = intern_rgba(h, white, 1u, 1u);
+    if (tex == ~0u) return;
+    hta_bitmap_sprite sp;
+    memset(&sp, 0, sizeof(sp));
+    sp.u0 = 0.0f; sp.v0 = 0.0f; sp.u1 = 1.0f; sp.v1 = 1.0f;
+    const float black[4] = { 0.0f, 0.0f, 0.0f, 0.0f };   /* invisible until asked */
+    int e = add_elem(h, tex, &sp, 1.0f, 1.0f, 0, 0, HTA_HUD_ANCHOR_CENTER,
+                     black, -1.0f);
+    if (e < 0) return;
+    h->elem[e].fullscreen = true;
+    h->mesh.submeshes[h->elem[e].submesh].mask = 1.0f;   /* the art is a mask */
+    h->fade_elem = e;
+}
+
 bool hta_hud_load(hta_hud *h, const hta_cache *c, const hta_resource_map *bitmaps,
                   const hta_weapon_def *weap, char *err, size_t errlen)
 {
@@ -623,6 +649,7 @@ bool hta_hud_load(hta_hud *h, const hta_cache *c, const hta_resource_map *bitmap
         return false;
     }
     memset(h, 0, sizeof(*h));
+    h->fade_elem = -1;
     h->shield_meter = -1;
     h->health_meter = -1;
     h->ammo_meter = -1;
@@ -651,6 +678,7 @@ bool hta_hud_load(hta_hud *h, const hta_cache *c, const hta_resource_map *bitmap
 
     load_crosshair(h, c, bitmaps, weap);
     load_scope(h, c, bitmaps, weap);
+    load_fade(h);
 
     if (err && errlen) {
         snprintf(err, errlen, "crosshair %s, unit hud %s, ammo %s",
@@ -748,6 +776,17 @@ void hta_hud_set_zoom(hta_hud *h, int level)
     h->zoom_level = level > 0 ? level : 0;
 }
 
+void hta_hud_set_fade(hta_hud *h, float alpha)
+{
+    if (!h || !h->loaded || h->fade_elem < 0) return;
+    if ((uint32_t)h->fade_elem >= h->elem_count) return;
+    if (!(alpha > 0.0f)) alpha = 0.0f;
+    if (alpha > 1.0f) alpha = 1.0f;
+    hta_submesh *sm = &h->mesh.submeshes[h->elem[h->fade_elem].submesh];
+    sm->tint[0] = sm->tint[1] = sm->tint[2] = 0.0f;
+    sm->tint[3] = alpha;
+}
+
 void hta_hud_layout(hta_hud *h, uint32_t screen_w, uint32_t screen_h)
 {
     if (!h || !h->mesh.vertices || !screen_w || !screen_h) return;
@@ -766,6 +805,32 @@ void hta_hud_layout(hta_hud *h, uint32_t screen_w, uint32_t screen_h)
             for (uint32_t k = 0; k < 4; k++) {
                 hta_vertex *v = &h->mesh.vertices[e->vertex + k];
                 v->pos[0] = v->pos[1] = v->pos[2] = 0.0f;
+            }
+            continue;
+        }
+        if (e->fullscreen) {
+            /* The draw loop treats a tint alpha of zero as "this element
+             * has no tint" and falls back to opaque white -- so a fade of
+             * nothing would paint the screen WHITE rather than skip. It is
+             * collapsed here instead, which also costs no fill. */
+            if (h->mesh.submeshes[e->submesh].tint[3] <= 0.0f) {
+                for (uint32_t k = 0; k < 4; k++) {
+                    hta_vertex *v = &h->mesh.vertices[e->vertex + k];
+                    v->pos[0] = v->pos[1] = v->pos[2] = 0.0f;
+                }
+                continue;
+            }
+            /* Straight to the corners of clip space: no anchor, no canvas
+             * scale, no aspect ratio. */
+            const float cx4[4] = { -1.0f, 1.0f, 1.0f, -1.0f };
+            const float cy4[4] = { -1.0f, -1.0f, 1.0f, 1.0f };
+            for (uint32_t k = 0; k < 4; k++) {
+                hta_vertex *v = &h->mesh.vertices[e->vertex + k];
+                v->pos[0] = cx4[k];
+                v->pos[1] = cy4[k];
+                v->pos[2] = 0.0f;
+                v->uv[0] = (cx4[k] + 1.0f) * 0.5f;
+                v->uv[1] = (cy4[k] + 1.0f) * 0.5f;
             }
             continue;
         }

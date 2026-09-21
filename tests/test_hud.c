@@ -244,6 +244,69 @@ int main(int argc, char **argv)
         CHECK(am->meter == 1.0f, "an over-full magazine clamps");
     }
 
+
+    printf("\n[the black you die behind]\n");
+    {
+        const uint32_t W = 1560u, H = 720u;
+        printf("  %u element(s), %u texture(s), ceiling %u\n",
+               h.elem_count, h.mesh.texture_count, HTA_HUD_MAX_ELEMENTS);
+        CHECK(h.fade_elem >= 0, "the hud has a fade element");
+        if (h.fade_elem >= 0) {
+            const hta_hud_elem *fe = &h.elem[h.fade_elem];
+            CHECK(fe->fullscreen, "  which is marked full-screen");
+            /* It must be LAST, because submeshes draw in order and this one
+             * goes over everything else. */
+            CHECK((uint32_t)h.fade_elem == h.elem_count - 1u,
+                  "  and last, so it draws over the rest");
+
+            const hta_submesh *sm = &h.mesh.submeshes[fe->submesh];
+            CHECK(sm->mask > 0.5f, "  drawn as a mask, so the tint is the colour");
+
+            /* Nothing to see when the fade is off. The draw loop reads a
+             * tint alpha of zero as "this element has no tint" and falls
+             * back to opaque WHITE, so an uncollapsed quad here would
+             * flash the screen white rather than show nothing. */
+            hta_hud_set_fade(&h, 0.0f);
+            hta_hud_layout(&h, W, H);
+            float area = 0.0f;
+            for (uint32_t k = 0; k < 4; k++) {
+                const hta_vertex *v = &h.mesh.vertices[fe->vertex + k];
+                area += fabsf(v->pos[0]) + fabsf(v->pos[1]);
+            }
+            CHECK(area == 0.0f, "  a fade of nothing collapses the quad");
+
+            /* And covers the whole screen when it is on, at any shape. */
+            hta_hud_set_fade(&h, 1.0f);
+            CHECK(sm->tint[0] == 0.0f && sm->tint[1] == 0.0f &&
+                  sm->tint[2] == 0.0f, "  the tint is black, not white");
+            CHECK(sm->tint[3] == 1.0f, "  and fully opaque at 1.0");
+            const uint32_t shapes[3][2] = { {1560u, 720u}, {720u, 1560u}, {800u, 800u} };
+            for (int q = 0; q < 3; q++) {
+                hta_hud_layout(&h, shapes[q][0], shapes[q][1]);
+                float lo_x = 1e9f, hi_x = -1e9f, lo_y = 1e9f, hi_y = -1e9f;
+                for (uint32_t k = 0; k < 4; k++) {
+                    const hta_vertex *v = &h.mesh.vertices[fe->vertex + k];
+                    if (v->pos[0] < lo_x) lo_x = v->pos[0];
+                    if (v->pos[0] > hi_x) hi_x = v->pos[0];
+                    if (v->pos[1] < lo_y) lo_y = v->pos[1];
+                    if (v->pos[1] > hi_y) hi_y = v->pos[1];
+                }
+                CHECK(lo_x <= -1.0f && hi_x >= 1.0f &&
+                      lo_y <= -1.0f && hi_y >= 1.0f,
+                      "  covers the whole screen whatever its shape");
+            }
+
+            /* Out of range must not become a hole in the black. */
+            hta_hud_set_fade(&h, 5.0f);
+            CHECK(sm->tint[3] == 1.0f, "  over 1.0 clamps");
+            hta_hud_set_fade(&h, -1.0f);
+            CHECK(sm->tint[3] == 0.0f, "  under 0 clamps");
+            hta_hud_set_fade(&h, 0.0f);
+        }
+        hta_hud_set_fade(NULL, 0.5f);
+        CHECK(1, "a null hud is not a crash");
+    }
+
     hta_hud_free(&h);
     CHECK(h.mesh.vertices == NULL, "free clears the mesh");
 

@@ -19,6 +19,7 @@
 #include "../engine/projectile.h"
 #include "../engine/particle.h"
 #include "../engine/vitals.h"
+#include "../asset/dialogue.h"
 #include "../engine/ammo.h"
 #include "../engine/hud.h"
 #include "../engine/viewmodel.h"
@@ -178,6 +179,18 @@ typedef struct {
 
     /* Health and shield, and what takes them away. */
     hta_vitals vitals;
+
+    /* Dying. Halo's multiplayer respawn is five seconds; that number is the
+     * gametype's, and no gametype ships in the map, so it is ours. The rest
+     * is the tag's: the Chief has a quiet death and a violent one, and
+     * which you get depends on what killed you. */
+    bool     dead;
+    float    dead_timer;        /* seconds until the respawn */
+    float    death_pos[3];      /* where it happened, so we come back elsewhere */
+    uint32_t death_quiet_snd, death_violent_snd, death_falling_snd;
+    uint32_t spawn_rng;
+    hta_spawn_point spawn[64];
+    uint32_t spawn_count;
 
     hta_ammo ammo;
     float    dry_cooldown;   /* stops an empty trigger clicking every frame */
@@ -526,6 +539,47 @@ static void cycle_zoom(hta_android *s)
  * The GPU meshes are freed and re-uploaded, so this must not run while a
  * frame is in flight -- it is called from the game thread between frames.
  */
+/* Halo's multiplayer respawn. The five seconds are the GAMETYPE's, not any
+ * tag's -- no gametype ships inside a map -- so this one number is ours. The
+ * fade is shaped around it: black by the time the body has settled, black
+ * while you wait, and open again as you come back. */
+#define HTA_RESPAWN_DELAY   5.0f
+#define HTA_DEATH_FADE_OUT  1.5f   /* seconds from dying to full black */
+#define HTA_DEATH_FADE_IN   0.6f   /* and back, once you are standing */
+/* How far the camera sinks as the body goes down, in world units. The
+ * Trial's cyborg stands with its eye 0.62 above its feet. */
+#define HTA_DEATH_EYE_DROP  0.45f
+
+static void respawn(hta_android *s)
+{
+    if (!s->spawn_count) return;
+    uint32_t i = hta_scenario_spawn_pick(s->spawn, s->spawn_count,
+                                         s->death_pos, &s->spawn_rng);
+    hta_player_spawn(&s->player, &s->spawn[i]);
+    float gz;
+    if (s->col.built &&
+        hta_collision_ground(&s->col, s->player.pos[0], s->player.pos[1],
+                             s->player.pos[2] + 8.0f, &gz)) {
+        s->player.pos[2] = gz;
+        s->player.on_ground = true;
+    }
+    s->cam.yaw = s->spawn[i].facing;
+    s->cam.pitch = 0.0f;
+
+    hta_vitals_reset(&s->vitals);
+    /* A fresh magazine and a full reserve, and the weapon comes up unzoomed
+     * with its idle pose rather than mid-reload. */
+    hta_ammo_init(&s->ammo, &s->weap);
+    s->zoom_level = 0;
+    apply_zoom(s);
+    fire_loop(s, false);
+    if (s->vm.loaded) hta_viewmodel_play(&s->vm, HTA_VM_IDLE);
+    s->nade_count = s->nade_max;
+
+    hta_log("[player] respawned at spawn %u (%.2f %.2f %.2f)",
+            i, s->player.pos[0], s->player.pos[1], s->player.pos[2]);
+}
+
 static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
 {
     if (!weap_tag_id) return;
@@ -941,9 +995,12 @@ static bool load_map(hta_android *s)
         hta_log("[assets] sky: %s", err);
     }
 
-    /* spawn at a real player start if the scenario has one */
-    hta_spawn_point sp[64];
+    /* spawn at a real player start if the scenario has one. Kept, because
+     * dying means coming back at another one. */
+    hta_spawn_point *sp = s->spawn;
     uint32_t nsp = hta_scenario_spawns(&s->cache, sp, 64);
+    s->spawn_count = nsp;
+    s->spawn_rng = 0x9E3779B9u;
     hta_player_init(&s->player);
     {
         hta_player_physics phys;
@@ -990,6 +1047,21 @@ static bool load_map(hta_android *s)
                         s->vitals.max_health, s->vitals.max_shield,
                         s->vitals.recharge_delay, s->vitals.recharge_rate * 100.0f,
                         s->vitals.fall_harmful_min, s->vitals.fall_fatal);
+            /* What the Chief says on the way down. Blood Gulch carries one
+             * dialogue tag and it is his. */
+            {
+                uint32_t udlg = hta_dialogue_tag(&s->cache);
+                s->death_quiet_snd =
+                    hta_dialogue_sound(&s->cache, udlg, HTA_DLG_DEATH_QUIET);
+                s->death_violent_snd =
+                    hta_dialogue_sound(&s->cache, udlg, HTA_DLG_DEATH_VIOLENT);
+                s->death_falling_snd =
+                    hta_dialogue_sound(&s->cache, udlg, HTA_DLG_DEATH_FALLING);
+                if (s->death_quiet_snd) bank_get(s, s->death_quiet_snd);
+                if (s->death_violent_snd) bank_get(s, s->death_violent_snd);
+                hta_log("[player] death dialogue: quiet 0x%08X violent 0x%08X",
+                        s->death_quiet_snd, s->death_violent_snd);
+            }
             hta_collision_set_slope(&s->col, phys.max_slope);
             hta_log("[player] cyborg_mp run %.2f wu/s jump %.2f cam %.2f r %.2f slope %.0f deg",
                     phys.run_forward, phys.jump_speed, phys.cam_stand, phys.radius,
@@ -1485,6 +1557,10 @@ void android_main(struct android_app *app)
 
         hta_player_input in;
         gather_input(&state, &in, dt);
+        /* A corpse does not steer, shoot or jump. The body still falls --
+         * hta_player_update with a blank input keeps gravity and the ground
+         * query -- so dying on a slope still slides you down it. */
+        if (state.dead) memset(&in, 0, sizeof(in));
         hta_player_update(&state.player, &state.cam,
                           state.col.built ? &state.col : NULL, &in, dt);
         if (state.player.footstep && state.col.built) {
@@ -1510,6 +1586,57 @@ void android_main(struct android_app *app)
             hta_hud_set_shield(&state.hud, hta_vitals_shield_fraction(&state.vitals));
             hta_hud_set_health(&state.hud, hta_vitals_health_fraction(&state.vitals));
         }
+
+        /* Dying, and coming back. */
+        if (state.vitals.loaded && state.vitals.died && !state.dead) {
+            state.dead = true;
+            state.dead_timer = HTA_RESPAWN_DELAY;
+            for (int k = 0; k < 3; k++) state.death_pos[k] = state.player.pos[k];
+            fire_loop(&state, false);
+            state.zoom_level = 0;
+            apply_zoom(&state);
+            /* A fall is its own kind of death and the tag has a line for
+             * it; a blast is violent; anything else is the quiet one. */
+            uint32_t snd = state.death_quiet_snd;
+            if (state.player.landed && state.player.land_speed >= state.vitals.fall_fatal)
+                snd = state.death_falling_snd ? state.death_falling_snd
+                                              : state.death_violent_snd;
+            else if (state.vitals.shield <= 0.0f && state.vitals.health <= 0.0f)
+                snd = state.death_violent_snd ? state.death_violent_snd : snd;
+            play_tag(&state, snd, 1.0f);
+            hta_log("[player] died at (%.2f %.2f %.2f)",
+                    state.death_pos[0], state.death_pos[1], state.death_pos[2]);
+        }
+        float fade = 0.0f;
+        if (state.dead) {
+            state.dead_timer -= dt;
+            float gone = HTA_RESPAWN_DELAY - state.dead_timer;   /* since dying */
+            fade = gone / HTA_DEATH_FADE_OUT;
+            if (fade > 1.0f) fade = 1.0f;
+            if (state.dead_timer <= 0.0f) {
+                respawn(&state);
+                state.dead = false;
+                state.dead_timer = -HTA_DEATH_FADE_IN;   /* counts the fade back */
+            }
+        } else if (state.dead_timer < 0.0f) {
+            state.dead_timer += dt;
+            if (state.dead_timer > 0.0f) state.dead_timer = 0.0f;
+            fade = -state.dead_timer / HTA_DEATH_FADE_IN;
+            if (fade < 0.0f) fade = 0.0f;
+        }
+        hta_hud_set_fade(&state.hud, fade);
+        /* The body goes down with you. hta_player_update has already
+         * written the standing eye position into the camera, so this drops
+         * it afterwards, over the same time the screen takes to go black. */
+        if (state.dead) {
+            float gone = HTA_RESPAWN_DELAY - state.dead_timer;
+            float f = gone / HTA_DEATH_FADE_OUT;
+            if (f > 1.0f) f = 1.0f;
+            state.cam.pos[2] -= HTA_DEATH_EYE_DROP * f;
+            /* and tips forward, so the last thing you see is the ground */
+            float want = -1.2f;      /* radians, about 69 degrees down */
+            state.cam.pitch += (want - state.cam.pitch) * f;
+        }
         /* Ammo gates the shot: hta_gun_fire spends the cooldown whether or
          * not the magazine could pay, so ask before pulling. */
         hta_ammo_update(&state.ammo, dt);
@@ -1519,6 +1646,14 @@ void android_main(struct android_app *app)
         if (state.ammo.reload_began && state.vm.loaded)
             hta_viewmodel_play(&state.vm, HTA_VM_RELOAD);
         if (state.dry_cooldown > 0.0f) state.dry_cooldown -= dt;
+
+        /* None of the buttons do anything to a corpse. They are consumed
+         * rather than left pending, or every press made while dead would
+         * fire at once on respawn. */
+        if (state.dead) {
+            state.hud_swap = state.hud_zoom = state.hud_melee = false;
+            state.hud_reload = state.hud_grenade = false;
+        }
 
         /* Swapping rebuilds the viewmodel and the HUD, so do it before
          * anything this frame reads either. */
@@ -1794,7 +1929,8 @@ void android_main(struct android_app *app)
             /* Scoped means looking THROUGH the weapon, so Halo takes it
              * off the screen entirely while zoomed. Without this the sniper
              * reads as a magnified view with a rifle in front of it. */
-            if (state.gpu_fp && state.zoom_level == 0) {
+            /* And a corpse is not holding it either. */
+            if (state.gpu_fp && state.zoom_level == 0 && !state.dead) {
                 vmdraw.mesh = state.gpu_fp;
                 vmdraw.vertices = state.vm.posed;
                 vmdraw.vertex_count = state.vm.mesh.vertex_count;

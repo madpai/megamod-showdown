@@ -2,6 +2,8 @@
  * against the Trial's own cyborg. */
 #include "engine/vitals.h"
 #include "asset/cache.h"
+#include "asset/bsp.h"
+#include "asset/dialogue.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -138,6 +140,51 @@ int main(int argc, char **argv)
             printf("    a three-unit drop lands at %.1f wu/s\n", v3);
             CHECK(!v.died, "a three-unit drop is survivable");
         }
+    }
+
+
+    printf("\n[coming back]\n");
+    {
+        /* Where you respawn is chosen away from where you died. Nobody else
+         * is in the map, so the only thing known to be dangerous is the
+         * spot that just killed you -- which also stops a fall into the
+         * same hole repeating forever.
+         *
+         * Synthetic points, because what is being checked is the choosing. */
+        hta_spawn_point sp[8];
+        memset(sp, 0, sizeof(sp));
+        for (int i = 0; i < 8; i++) sp[i].position[0] = (float)i * 10.0f;
+
+        uint32_t rng = 1u;
+        float near_zero[3] = { 0.0f, 0.0f, 0.0f };
+        int picked_far = 0, picked_near = 0;
+        for (int k = 0; k < 200; k++) {
+            uint32_t i = hta_scenario_spawn_pick(sp, 8, near_zero, &rng);
+            if (sp[i].position[0] >= 40.0f) picked_far++;
+            if (sp[i].position[0] <= 20.0f) picked_near++;
+        }
+        printf("  died at x=0: %d of 200 respawns past x=40, %d at x<=20\n",
+               picked_far, picked_near);
+        CHECK(picked_far == 200, "never comes back next to where it died");
+
+        /* Not always the SAME far one, or a symmetrical map sends you to
+         * the identical rock every time. */
+        uint32_t seen[8];
+        memset(seen, 0, sizeof(seen));
+        rng = 1u;
+        for (int k = 0; k < 200; k++)
+            seen[hta_scenario_spawn_pick(sp, 8, near_zero, &rng)]++;
+        int distinct = 0;
+        for (int i = 0; i < 8; i++) if (seen[i]) distinct++;
+        printf("  and spreads over %d of the far points\n", distinct);
+        CHECK(distinct > 1, "it varies rather than always picking one");
+
+        /* Degenerate cases must not index out of bounds. */
+        CHECK(hta_scenario_spawn_pick(NULL, 0, NULL, &rng) == 0, "no points is 0");
+        CHECK(hta_scenario_spawn_pick(sp, 1, near_zero, &rng) == 0,
+              "one point is that point");
+        uint32_t any = hta_scenario_spawn_pick(sp, 8, NULL, &rng);
+        CHECK(any < 8u, "no place to avoid still returns a real index");
     }
 
     printf("\n%d checks, %d failures\n", checks, failures);

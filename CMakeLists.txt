@@ -23,6 +23,7 @@ if(ANDROID)
         src/asset/sound.c
         src/asset/font.c
         src/asset/effect.c
+        src/asset/dialogue.c
         src/asset/biped.c
         src/asset/weapon.c
         src/asset/anim.c
@@ -47,7 +48,7 @@ else()
         src/engine/projectile.c
         src/engine/particle.c
         src/engine/vitals.c src/engine/viewmodel.c src/engine/audio.c src/engine/ammo.c src/engine/hud.c
-        src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c src/asset/sound.c src/asset/effect.c src/asset/biped.c src/asset/weapon.c
+        src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c src/asset/sound.c src/asset/effect.c src/asset/dialogue.c src/asset/biped.c src/asset/weapon.c
         src/asset/anim.c src/asset/model.c src/asset/font.c)
     target_include_directories(hta_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(hta_engine PRIVATE -Wall -Wextra)

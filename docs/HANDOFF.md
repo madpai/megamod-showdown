@@ -85,6 +85,105 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## Dying (2026-09-20)
+
+`hta_vitals` has tracked health, shields, fall damage and blast damage for a
+while, and at zero **nothing happened**. You could not lose. That is now a
+death, five seconds of black, and a respawn somewhere else.
+
+### What the tags supply, and the one number they do not
+
+`udlg` (Dialogue) reconciles at **4112**. Blood Gulch carries exactly one,
+`sound\dialog\chief\chief`, so finding it by class is unambiguous rather
+than a guess -- a campaign map carries one per character and would want the
+actor variant instead. Slots, all TagDependency so the `snd!` is at +12:
+
+| | offset | Blood Gulch |
+| --- | --- | --- |
+| pain body minor / major | 112 / 128 | empty |
+| pain shield / falling | 144 / 160 | empty |
+| scream fear / pain | 176 / 192 | empty |
+| **death quiet** | **240** | `deathquiet` |
+| **death violent** | **256** | `deathviolent` |
+| death falling | 272 | `deathviolent` |
+| death agonizing | 288 | empty |
+| death instant | 304 | `deathviolent` |
+
+Four of eleven filled. The empty ones are correct -- the Chief does not grunt
+in Halo CE -- and an empty slot must read as *nothing*, not as a tag id of
+zero being valid.
+
+**`HTA_RESPAWN_DELAY` (5 s) is invented.** Respawn time is a GAMETYPE value
+and no gametype ships inside a map, so it is the only number here that is not
+the Trial's. Halo CE's default is five seconds; say so if it should be
+shorter, it is one constant.
+
+### Choosing where to come back
+
+`hta_scenario_spawn_pick` takes the 32 spawn points the scenario already
+gives us and the place you died, and picks at random among the furthest
+half. Two reasons, both needed:
+
+- Furthest, because with nobody else in the map the only thing known to be
+  dangerous is what just killed you -- and without it, falling into a hole
+  respawns you next to the hole, forever.
+- Random among them, because Blood Gulch is symmetrical and "the furthest"
+  is otherwise the same rock every single time.
+
+### Fading out, and a white flash I nearly shipped
+
+The HUD shader already had a per-element tint and a mask mode, so the fade is
+one white texel stretched to clip space, tinted black, added **last** so it
+draws over everything. `hta_hud_set_fade(h, alpha)`.
+
+The trap: the draw loop reads a tint alpha of **zero** as "this element has
+no tint" and falls back to **opaque white**. A fade of nothing would have
+flashed the screen white rather than shown nothing. `hta_hud_layout`
+collapses the quad instead, which also costs no fill. `test_hud.c` checks
+exactly that, plus that the element is last and covers the screen at any
+aspect ratio.
+
+`hta_hud_elem` gained `fullscreen`, and `add_elem` had to be taught to
+initialise it -- it sets its fields one by one rather than memsetting, so a
+new field is garbage on every other element until it is.
+
+### The sequence
+
+Die -> the dialogue line, the camera sinks `HTA_DEATH_EYE_DROP` and tips
+forward over 1.5 s while the screen goes black, input is ignored and the
+weapon leaves the screen. Buttons pressed while dead are **consumed, not
+queued**, or every one of them fires at once on respawn. At 5 s: a new spawn,
+full health and shield, a full magazine and reserve, grenades back, unzoomed,
+idle pose, and 0.6 s fading back in.
+
+The body still falls while dead -- `hta_player_update` runs with a blank
+input -- so dying on a slope still slides you down it.
+
+`vitals.died` is sticky until `hta_vitals_reset`, which is what makes the
+platform's `!dead` guard a one-shot. Blast deaths land a frame late because
+projectiles update after vitals; that is invisible.
+
+### What else the Trial actually ships (audited, not guessed)
+
+- **Announcer: all of it, in bloodgulch.map.** 39 lines under
+  `sound\dialog\multiplayer1\` -- slayer, ctf, king of the hill, oddball,
+  race, double kill, triple kill, killtacular, killing spree, running riot,
+  play ball, game over, the flag and hill calls, the vehicle names. Nearly
+  all of it needs a game mode or a second player to mean anything.
+- **Music: none, and that is correct.** No `sound\music\*` in bloodgulch at
+  all. The campaign map has it (`b30_01/02/03`, `halo_orig`, `iron_novox`,
+  `spooky2`) but Halo CE multiplayer maps carry no score.
+- **Menus: the entire shell is data.** ui.map is 811 `DeLa`
+  (ui_widget_definition) tags, 168 `ustr` string lists, 6 fonts, 222 bitmaps,
+  29 sounds, a `vcky` virtual keyboard and an `mply` map list. bloodgulch
+  itself carries another 324 `DeLa` and 54 `ustr`. A Halo-authentic main menu
+  is a widget-tree interpreter, not asset work.
+- Also sitting unused: `itmc` 14 (item collections -- what spawns where),
+  `eqip` 14 (overshield, camo, health, ammo), `snde` 1 (sound environment,
+  i.e. reverb), `vehi` 6.
+
+---
+
 ## The frame rate was never fill: it was raycasts (2026-09-20)
 
 The previous build cut particle fill by roughly ten times and the phone still

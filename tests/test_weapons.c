@@ -11,6 +11,7 @@
 #include "asset/effect.h"
 #include "asset/model.h"
 #include "asset/bsp.h"
+#include "asset/dialogue.h"
 #include "asset/sound.h"
 #include "engine/audio.h"
 #include <stdio.h>
@@ -602,6 +603,62 @@ int main(int argc, char **argv)
         /* Footsteps, detonations and the grenade land on top of these. */
         CHECK(clips + 32u <= HTA_AUDIO_MAX_CLIPS,
               "the clip table holds the roster with room to spare");
+    }
+
+
+    printf("\n[what the Chief says dying]\n");
+    {
+        /* Halo keeps every line a unit can speak in one `udlg` of 90-odd
+         * dependencies, one per situation. Blood Gulch carries exactly one
+         * and it is his, so finding it by class is unambiguous rather than
+         * a guess. Dialogue reconciles at 4112; these offsets are the
+         * check that it does. */
+        uint32_t udlg = hta_dialogue_tag(&c);
+        CHECK(udlg != 0, "the map has a dialogue tag");
+
+        uint32_t quiet   = hta_dialogue_sound(&c, udlg, HTA_DLG_DEATH_QUIET);
+        uint32_t violent = hta_dialogue_sound(&c, udlg, HTA_DLG_DEATH_VIOLENT);
+        uint32_t falling = hta_dialogue_sound(&c, udlg, HTA_DLG_DEATH_FALLING);
+        CHECK(quiet != 0, "  there is a quiet death");
+        CHECK(violent != 0, "  and a violent one");
+        CHECK(quiet != violent, "  and they are different sounds");
+        CHECK(falling != 0, "  falling has a line of its own");
+
+        /* Every slot that resolves must resolve to a SOUND. A drifting
+         * offset would still return something, and this is what catches
+         * it. */
+        const uint32_t slots[] = {
+            HTA_DLG_PAIN_BODY_MINOR, HTA_DLG_PAIN_BODY_MAJOR,
+            HTA_DLG_PAIN_SHIELD, HTA_DLG_PAIN_FALLING,
+            HTA_DLG_SCREAM_FEAR, HTA_DLG_SCREAM_PAIN,
+            HTA_DLG_DEATH_QUIET, HTA_DLG_DEATH_VIOLENT,
+            HTA_DLG_DEATH_FALLING, HTA_DLG_DEATH_AGONIZING,
+            HTA_DLG_DEATH_INSTANT
+        };
+        int filled = 0, wrong_class = 0;
+        for (unsigned i = 0; i < sizeof(slots) / sizeof(slots[0]); i++) {
+            uint32_t id = hta_dialogue_sound(&c, udlg, slots[i]);
+            if (!id) continue;
+            filled++;
+            int32_t ti = hta_cache_find_tag_by_id(&c, id);
+            if (ti < 0) { wrong_class++; continue; }
+            hta_tag_entry t;
+            if (!hta_cache_tag(&c, (uint32_t)ti, &t) ||
+                t.primary_class != HTA_FOURCC('s','n','d','!'))
+                wrong_class++;
+        }
+        printf("  %d of %u slots are filled, %d point at something that is not a sound\n",
+               filled, (unsigned)(sizeof(slots) / sizeof(slots[0])), wrong_class);
+        CHECK(filled >= 4, "several slots carry a line");
+        CHECK(wrong_class == 0, "and every one of them is a sound tag");
+
+        /* An empty slot is normal -- the Chief does not grunt in Halo CE --
+         * and must not be read as a tag id of zero being valid. */
+        CHECK(hta_dialogue_sound(&c, udlg, HTA_DLG_PAIN_BODY_MINOR) == 0 ||
+              filled == 11,
+              "an empty slot comes back as nothing, not as a bad id");
+        CHECK(hta_dialogue_sound(&c, 0, HTA_DLG_DEATH_QUIET) == 0,
+              "no dialogue tag is not a crash");
     }
 
     printf("\n%d checks, %d failures\n", checks, failures);
