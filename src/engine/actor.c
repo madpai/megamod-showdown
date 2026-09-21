@@ -75,6 +75,7 @@ bool hta_actor_load(hta_actor *a, const hta_cache *c,
         hta_anim_free(&a->graph);
         return false;
     }
+    a->model_id = model;
     a->posed = (hta_vertex *)malloc((size_t)a->mesh.vertex_count * sizeof(hta_vertex));
     if (!a->posed) {
         if (err) snprintf(err, errlen, "out of memory posing the actor");
@@ -200,4 +201,82 @@ void hta_actor_place(hta_actor *a, const float pos[3], float yaw)
         out->pos[0]=p[0]; out->pos[1]=p[1]; out->pos[2]=p[2];
         out->normal[0]=nn[0]; out->normal[1]=nn[1]; out->normal[2]=nn[2];
     }
+}
+
+bool hta_actor_hold(hta_actor *a, const hta_cache *c,
+                    const hta_resource_map *bitmaps, uint32_t model_tag_id,
+                    const char *marker, char *err, size_t errlen)
+{
+    if (!a || !a->loaded || !c || !model_tag_id) {
+        if (err) snprintf(err, errlen, "bad arguments");
+        return false;
+    }
+    /* Where the hand is: the body's own marker, which names a node and an
+     * offset within it. */
+    char node_name[32];
+    float offset[3];
+    if (!hta_model_marker(c, a->model_id, marker ? marker : "right hand",
+                          node_name, offset)) {
+        if (err) snprintf(err, errlen, "no such marker on the body");
+        return false;
+    }
+    int32_t node = hta_anim_node_index(&a->graph, node_name);
+    if (node < 0 || !a->have_rest[node]) {
+        if (err) snprintf(err, errlen, "marker node '%s' is not in the graph",
+                          node_name);
+        return false;
+    }
+
+    uint32_t first = a->mesh.vertex_count;
+    const float zero[3] = { 0.0f, 0.0f, 0.0f };
+    if (!hta_model_instance(&a->mesh, c, bitmaps, model_tag_id, zero, zero,
+                            err, errlen))
+        return false;
+    uint32_t added = a->mesh.vertex_count - first;
+    if (!added) {
+        if (err) snprintf(err, errlen, "the held model has no geometry");
+        return false;
+    }
+
+    /* hta_actor_place computes `root . world[n] . rest_inv[n] . vertex`.
+     * We want `root . world[hand] . (offset + vertex)`, so the vertices are
+     * pre-multiplied by `rest[hand] . translate(offset)` here and then bound
+     * rigidly to that node. Baking it once beats doing it every frame. */
+    hta_transform rest;
+    hta_xf_inverse(&rest, &a->rest_inv[node]);
+    hta_transform shift;
+    hta_xf_identity(&shift);
+    for (int k = 0; k < 3; k++) shift.t[k] = offset[k];
+    hta_transform bake;
+    hta_xf_mul(&bake, &rest, &shift);
+
+    for (uint32_t v = first; v < a->mesh.vertex_count; v++) {
+        hta_vertex *q = &a->mesh.vertices[v];
+        float p[3], n[3];
+        hta_xf_point(p, &bake, q->pos);
+        hta_xf_vector(n, &bake, q->normal);
+        for (int k = 0; k < 3; k++) { q->pos[k] = p[k]; q->normal[k] = n[k]; }
+    }
+
+    hta_skin_vertex *nk = (hta_skin_vertex *)realloc(
+        a->skin, (size_t)a->mesh.vertex_count * sizeof(hta_skin_vertex));
+    if (!nk) { if (err) snprintf(err, errlen, "out of memory"); return false; }
+    a->skin = nk;
+    for (uint32_t v = first; v < a->mesh.vertex_count; v++) {
+        a->skin[v].node[0] = (uint16_t)node;
+        a->skin[v].weight[0] = 1.0f;
+        a->skin[v].node[1] = HTA_SKIN_NONE;
+        a->skin[v].weight[1] = 0.0f;
+    }
+
+    hta_vertex *np = (hta_vertex *)realloc(
+        a->posed, (size_t)a->mesh.vertex_count * sizeof(hta_vertex));
+    if (!np) { if (err) snprintf(err, errlen, "out of memory"); return false; }
+    a->posed = np;
+    memcpy(a->posed, a->mesh.vertices,
+           (size_t)a->mesh.vertex_count * sizeof(hta_vertex));
+
+    if (err && errlen)
+        snprintf(err, errlen, "%u verts on '%s'", added, node_name);
+    return true;
 }

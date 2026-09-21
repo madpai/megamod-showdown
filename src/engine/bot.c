@@ -58,6 +58,42 @@ void hta_bot_free(hta_bot *b)
     memset(b, 0, sizeof(*b));
 }
 
+bool hta_bot_arm(hta_bot *b, const hta_cache *c,
+                 const hta_resource_map *bitmaps, uint32_t model_tag_id,
+                 char *err, size_t errlen)
+{
+    if (!b || !b->loaded) {
+        if (err) snprintf(err, errlen, "no body to arm");
+        return false;
+    }
+    return hta_actor_hold(&b->actor, c, bitmaps, model_tag_id, "right hand",
+                          err, errlen);
+}
+
+/* Halo's flinch: nine frames, three variants so a burst does not look like
+ * a metronome. `s-ping` is a SOFT ping -- being hit without going down. */
+static void flinch(hta_bot *b)
+{
+    static const char *const PINGS[3] = {
+        "s-ping front gut%0", "s-ping front gut%1", "s-ping front gut%2"
+    };
+    b->rng = b->rng * 1103515245u + 12345u;
+    uint32_t start = (b->rng >> 16) % 3u;
+    for (uint32_t i = 0; i < 3u; i++) {
+        if (!hta_actor_play(&b->actor, PINGS[(start + i) % 3u], false)) continue;
+        const hta_animation *an = &b->actor.graph.anims[b->actor.clip];
+        b->flinch = (float)an->frame_count / HTA_ANIM_FPS;
+        return;
+    }
+    b->flinch = 0.0f;
+}
+
+static void stand(hta_bot *b)
+{
+    if (!hta_actor_play(&b->actor, "stand rifle idle", false))
+        hta_actor_play(&b->actor, "stand unarmed idle", false);
+}
+
 void hta_bot_spawn(hta_bot *b, const float pos[3], float yaw)
 {
     if (!b || !b->loaded) return;
@@ -75,8 +111,8 @@ void hta_bot_spawn(hta_bot *b, const float pos[3], float yaw)
      * 254 animations include a dozen seated ones. Plain "idle" finds
      * `B-driver unarmed idle` -- a body sitting in a Banshee, hanging in the
      * air. `stand rifle idle` is a man on his feet holding a rifle. */
-    if (!hta_actor_play(&b->actor, "stand rifle idle", false))
-        hta_actor_play(&b->actor, "stand unarmed idle", false);
+    b->flinch = 0.0f;
+    stand(b);
     hta_actor_place(&b->actor, b->pos, b->yaw);
 }
 
@@ -99,6 +135,15 @@ void hta_bot_update(hta_bot *b, float dt)
     } else if (b->state == HTA_BOT_GONE) {
         b->timer -= dt;
         if (b->timer <= 0.0f) hta_bot_spawn(b, b->pos, b->yaw);
+    }
+
+    /* A flinch runs its nine frames and hands the body back to its idle. */
+    if (b->flinch > 0.0f) {
+        b->flinch -= dt;
+        if (b->flinch <= 0.0f) {
+            b->flinch = 0.0f;
+            if (b->state == HTA_BOT_ALIVE) stand(b);
+        }
     }
 
     hta_actor_update(&b->actor, dt);
@@ -192,7 +237,11 @@ void hta_bot_damage(hta_bot *b, float amount, const float at[3])
         for (int k = 0; k < 3; k++) b->last_hit[k] = at[k];
         b->have_last_hit = true;
     }
-    if (!b->vitals.died) return;
+    if (!b->vitals.died) {
+        /* Still up, and it should look like it noticed. */
+        flinch(b);
+        return;
+    }
 
     b->died = true;
     b->state = HTA_BOT_DYING;

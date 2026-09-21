@@ -38,6 +38,7 @@ typedef struct {
     hta_bot_state state;
     float         timer;        /* dying: clip left. gone: until it returns */
     uint32_t      rng;
+    float         flinch;       /* seconds left of a hit reaction */
     bool          loaded;
 
     /* One-shots, true for the update in which they happened. */
@@ -52,6 +53,13 @@ bool hta_bot_load(hta_bot *b, const hta_cache *c,
                   const hta_resource_map *bitmaps, uint32_t bipd_tag_id,
                   char *err, size_t errlen);
 void hta_bot_free(hta_bot *b);
+
+/* Put a weapon in its hand -- see hta_actor_hold. `stand rifle idle` poses
+ * the hands to hold a rifle, and without one the body reads as a man
+ * standing with his arms out. */
+bool hta_bot_arm(hta_bot *b, const hta_cache *c,
+                 const hta_resource_map *bitmaps, uint32_t model_tag_id,
+                 char *err, size_t errlen);
 
 /* Stand it somewhere, whole. */
 void hta_bot_spawn(hta_bot *b, const float pos[3], float yaw);

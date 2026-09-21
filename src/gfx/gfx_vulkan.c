@@ -1539,11 +1539,27 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
         {
             const uint8_t dyn_passes[3] = { HTA_DRAW_OPAQUE, HTA_DRAW_ALPHA, HTA_DRAW_ADD };
             VkPipeline dyn_pipes[3] = { g->pipeline, g->pipeline_alpha, g->pipeline_add };
+            int pushed_lit = -1;
             for (int pz = 0; pz < 3; pz++) {
                 int bound = 0;
                 for (uint32_t dq = 0; dyn && dq < dyn_count; dq++) {
                     hta_gfx_mesh *dm = dyn[dq].mesh;
                     if (!dm || !dm->index_count) continue;
+                    /* A lit mesh needs the scene's light and the marker
+                     * that says to use it. Its normals are already in world
+                     * space, so unlike the viewmodel the direction needs no
+                     * rotating. Pushed only when it CHANGES -- most frames
+                     * are all-unlit and this costs nothing. */
+                    int want_lit = dyn[dq].lit ? 1 : 0;
+                    if (want_lit != pushed_lit) {
+                        float lw = want_lit ? 1.0f : 0.0f;
+                        memcpy(push + 80 + 12, &lw, sizeof(lw));
+                        vkCmdPushConstants(cb, g->layout,
+                                           VK_SHADER_STAGE_VERTEX_BIT |
+                                           VK_SHADER_STAGE_FRAGMENT_BIT,
+                                           0, PUSH_SIZE, push);
+                        pushed_lit = want_lit;
+                    }
                     int vb_bound = 0;
                     for (uint32_t i = 0; i < dm->submesh_count; i++) {
                         if (!dm->submeshes[i].index_count) continue;

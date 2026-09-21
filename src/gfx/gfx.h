@@ -74,6 +74,14 @@ typedef struct {
     hta_gfx_mesh     *mesh;
     const hta_vertex *vertices;
     uint32_t          vertex_count;
+    /* Light it from the scene rather than from a lightmap it does not have.
+     *
+     * Everything in the world pass is drawn against its lightmap, and a
+     * mesh without one falls back to mid-grey -- which comes out as raw
+     * albedo, flat and washed out. That is right for a particle, which
+     * glows, and wrong for a BODY: the same reason the first-person weapon
+     * needed lighting, and the same path. */
+    bool              lit;
 } hta_gfx_dynamic;
 
 /* `dyn` is an array: projectiles in flight and the particles they throw

@@ -35,6 +35,7 @@ typedef struct {
 
     float    pos[3];
     float    yaw;                  /* radians about +Z */
+    uint32_t model_id;             /* the body's own, for finding markers */
 
     bool     loaded;
 } hta_actor;
@@ -56,6 +57,20 @@ bool hta_actor_play(hta_actor *a, const char *name, bool hold);
  * direction the blow came from; without a direction to work with, any of
  * them reads as a body going down. */
 bool hta_actor_play_death(hta_actor *a, uint32_t *rng);
+
+/* Put something in its hand.
+ *
+ * Halo's third-person weapon is not skinned to the body -- it is a rigid
+ * model riding a marker, and the cyborg has `right hand` on `bip01 r hand`
+ * for exactly this. Without it the idle reads as a man standing with his
+ * arms out: `stand rifle idle` poses the hands to HOLD a rifle, and a rifle
+ * that is not there is the whole difference.
+ *
+ * The geometry is appended to the actor's own mesh, so it poses, uploads and
+ * draws as one thing. Call after loading and before the first place. */
+bool hta_actor_hold(hta_actor *a, const hta_cache *c,
+                    const hta_resource_map *bitmaps, uint32_t model_tag_id,
+                    const char *marker, char *err, size_t errlen);
 
 /* Advance the clip. */
 void hta_actor_update(hta_actor *a, float dt);

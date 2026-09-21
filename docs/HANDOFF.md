@@ -85,6 +85,65 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## Why he looked ugly (2026-09-21)
+
+Reported: "he looks ugly which leads me to believe this is how we will all
+look. He doesn't react to gunfire but he does die." Three separate things,
+and the model was not one of them.
+
+### He was unlit
+
+Everything in the world pass is drawn against its lightmap, and a mesh
+without one falls back to mid-grey -- which multiplies out to **raw albedo**,
+flat and washed out. Right for a particle, which glows. Wrong for a body.
+
+It is the same problem the first-person weapon had and the same fix:
+`hta_gfx_dynamic` gained a **`lit`** flag, and the dynamic pass pushes the
+scene's light for those meshes. Unlike the viewmodel the direction needs no
+rotating -- an actor's normals are already in world space.
+
+Pushed only when the flag CHANGES between meshes in the list, so the usual
+all-unlit frame costs nothing.
+
+### He had nothing in his hands
+
+`stand rifle idle` poses the hands to **hold a rifle**. Without one, the arms
+read as a man standing with them out -- which is exactly what the screenshot
+showed. The skinning was never wrong: 19 nodes, all rest poses known, **zero
+unbound vertices**, every limb carrying geometry.
+
+`hta_actor_hold` puts a rigid model on a marker, which is how Halo carries a
+third-person weapon -- it is not skinned. The cyborg has **`right hand`** on
+`bip01 r hand` at offset (0.045, 0.009, -0.001).
+
+The trick is where the bake happens. `hta_actor_place` computes
+`root . world[n] . rest_inv[n] . vertex`, and what is wanted is
+`root . world[hand] . (offset + vertex)`. So the held model's vertices are
+pre-multiplied **once, at load** by `rest[hand] . translate(offset)` and then
+bound rigidly to that node. The AR lands 0.05 wu from the hand at chest
+height; the test checks that distance, because getting the pre-multiply wrong
+leaves the gun at the body's feet or out in the map and both look like
+success from a vertex count.
+
+### He did not flinch
+
+Halo has **`s-ping front gut%0/1/2`** -- nine frames, three variants so a
+burst does not look like a metronome. Played on damage that is survived, and
+the body is handed back to its idle when it finishes. 0.30 s: a flinch, not
+a stagger.
+
+### Still to do on the body
+
+- The **corpse** uses the same lit flag now, but nothing else does. Any
+  future character wants `lit = true`.
+- The held weapon is the assault rifle, hardcoded at load. It should be
+  whatever the body is carrying once there is anything to carry.
+- No hit SOUND yet. The cyborg's material impact effects exist
+  (`weapons\*\effects\impact cyborg shield` is in the cache) and are the
+  right thing to reach for.
+
+---
+
 ## Somebody to shoot at (2026-09-21)
 
 Melee needed a target before it could be said to work, and so did grenades

@@ -1221,10 +1221,30 @@ static bool load_map(hta_android *s)
                 s->melee_damage = hta_biped_melee_damage(&s->cache, bip);
                 if (bip && hta_bot_load(&s->bot, &s->cache,
                                         s->bitmaps_ok ? &s->bitmaps_rm : NULL,
-                                        bip, berr, sizeof(berr)))
+                                        bip, berr, sizeof(berr))) {
                     hta_log("[bot] %s; melee does %.0f", berr, s->melee_damage);
-                else
+                    /* Something in its hands. `stand rifle idle` poses them
+                     * to hold a rifle; without one it reads as a man
+                     * standing with his arms out. */
+                    uint32_t ar = 0;
+                    for (uint32_t i = 0; i < s->cache.tag_count && !ar; i++) {
+                        hta_tag_entry t;
+                        if (!hta_cache_tag(&s->cache, i, &t)) continue;
+                        if (t.primary_class != HTA_FOURCC('m','o','d','2')) continue;
+                        char p[160];
+                        hta_cache_tag_path(&s->cache, &t, p, sizeof(p));
+                        if (strcmp(p, "weapons\\assault rifle\\assault rifle") == 0)
+                            ar = t.tag_id;
+                    }
+                    if (ar && hta_bot_arm(&s->bot, &s->cache,
+                                          s->bitmaps_ok ? &s->bitmaps_rm : NULL,
+                                          ar, berr, sizeof(berr)))
+                        hta_log("[bot] armed: %s", berr);
+                    else
+                        hta_log("[bot] unarmed (%s)", berr);
+                } else {
                     hta_log("[bot] none (%s)", berr);
+                }
             }
 
             /* The shield's own voice. Every one of these is the tag's:
@@ -2561,6 +2581,7 @@ void android_main(struct android_app *app)
                 for (int k = 0; k < 3; k++) vmdraw.offset[k] = state.weap.fp_offset[k];
             }
             hta_gfx_dynamic dynlist[HTA_GFX_MAX_DYNAMIC];
+            memset(dynlist, 0, sizeof(dynlist));   /* `lit` defaults off */
             uint32_t dyncount = 0;
             if (state.gpu_proj) {
                 dynlist[dyncount].mesh = state.gpu_proj;
@@ -2585,6 +2606,7 @@ void android_main(struct android_app *app)
                 dynlist[dyncount].mesh = state.gpu_bot;
                 dynlist[dyncount].vertices = state.bot.actor.posed;
                 dynlist[dyncount].vertex_count = state.bot.actor.mesh.vertex_count;
+                dynlist[dyncount].lit = true;     /* a body, not a spark */
                 dyncount++;
             }
             if (state.gpu_items && dyncount < HTA_GFX_MAX_DYNAMIC) {
@@ -2605,6 +2627,7 @@ void android_main(struct android_app *app)
                 dynlist[dyncount].mesh = state.gpu_corpse;
                 dynlist[dyncount].vertices = state.corpse.posed;
                 dynlist[dyncount].vertex_count = state.corpse.mesh.vertex_count;
+                dynlist[dyncount].lit = true;
                 dyncount++;
             }
             if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh,
