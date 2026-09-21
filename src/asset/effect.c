@@ -260,6 +260,113 @@ bool hta_effect_detonation(const hta_cache *c, uint32_t effect_tag_id,
     return any;
 }
 
+bool hta_damage_effect(const hta_cache *c, uint32_t jpt_tag_id,
+                       float *out_radius, float *out_core, float *out_damage)
+{
+    if (out_radius) *out_radius = 0.0f;
+    if (out_core) *out_core = 0.0f;
+    if (out_damage) *out_damage = 0.0f;
+    if (!c || !jpt_tag_id || jpt_tag_id == 0xFFFFFFFFu) return false;
+    int32_t di = hta_cache_find_tag_by_id(c, jpt_tag_id);
+    if (di < 0) return false;
+    hta_tag_entry dt;
+    if (!hta_cache_tag(c, (uint32_t)di, &dt) || dt.indexed) return false;
+    if (dt.primary_class != HTA_FOURCC('j','p','t','!')) return false;
+    uint32_t db = 0;
+    if (!hta_cache_ptr_to_offset(c, dt.tag_data_ptr, &db)) return false;
+
+    float r0 = 0.0f, r1 = 0.0f, core = 0.0f, dmg = 0.0f;
+    hta_rd_f32(c, db + JPT_RADIUS, &r0);
+    hta_rd_f32(c, db + JPT_RADIUS + 4u, &r1);
+    hta_rd_f32(c, db + JPT_AOE_CORE, &core);
+    hta_rd_f32(c, db + JPT_DAMAGE, &dmg);
+    if (out_radius) *out_radius = r1 > r0 ? r1 : r0;
+    if (out_core) *out_core = core;
+    if (out_damage) *out_damage = dmg;
+    return dmg > 0.0f;
+}
+
+/* DamageEffect's per-material multipliers: one float each, MaterialType in
+ * order, starting at `dirt`. */
+#define JPT_MATERIALS    512u
+#define JPT_MATERIAL_COUNT 33u
+
+float hta_damage_vs(const hta_cache *c, uint32_t jpt_tag_id, uint8_t material)
+{
+    float dmg = 0.0f;
+    if (!hta_damage_effect(c, jpt_tag_id, NULL, NULL, &dmg)) return 0.0f;
+    if (material >= JPT_MATERIAL_COUNT) return dmg;
+    int32_t di = hta_cache_find_tag_by_id(c, jpt_tag_id);
+    if (di < 0) return dmg;
+    hta_tag_entry dt;
+    if (!hta_cache_tag(c, (uint32_t)di, &dt)) return dmg;
+    uint32_t db = 0;
+    if (!hta_cache_ptr_to_offset(c, dt.tag_data_ptr, &db)) return dmg;
+    float mul = 1.0f;
+    hta_rd_f32(c, db + JPT_MATERIALS + 4u * (uint32_t)material, &mul);
+    return dmg * mul;
+}
+
+/* Probed: the definition walk drifts long before here. */
+#define PROJ_IMPACT_DAMAGE 548u
+
+uint32_t hta_projectile_impact_damage(const hta_cache *c, uint32_t projectile_id)
+{
+    if (!c || !projectile_id || projectile_id == 0xFFFFFFFFu) return 0;
+    int32_t pi = hta_cache_find_tag_by_id(c, projectile_id);
+    if (pi < 0) return 0;
+    hta_tag_entry pt;
+    if (!hta_cache_tag(c, (uint32_t)pi, &pt) || pt.indexed) return 0;
+    uint32_t base = 0;
+    if (!hta_cache_ptr_to_offset(c, pt.tag_data_ptr, &base)) return 0;
+    /* The impact slot first, then anything. The needler carries no impact
+     * damage at all -- a needle hurts when the cluster goes off, and its
+     * `detonation damage` sits earlier in the tag -- so a projectile with
+     * nothing at +548 is asked what damage it has ANYWHERE rather than
+     * being reported as harmless. */
+    uint32_t want[2] = { PROJ_IMPACT_DAMAGE, 0u };
+    for (int pass = 0; pass < 2; pass++) {
+        uint32_t from = want[pass];
+        uint32_t to   = pass ? 588u : PROJ_IMPACT_DAMAGE + 4u;
+        for (uint32_t off = from; off + 16u <= to; off += 4u) {
+            uint32_t jpt = 0;
+            if (!hta_rd_u32(c, base + off + 12u, &jpt)) continue;
+            if (!jpt || jpt == 0xFFFFFFFFu) continue;
+            /* Only if it really is one: a wrong offset would hand back a
+             * neighbouring field's bytes as a tag id. */
+            int32_t ji = hta_cache_find_tag_by_id(c, jpt);
+            if (ji < 0) continue;
+            hta_tag_entry jt;
+            if (!hta_cache_tag(c, (uint32_t)ji, &jt)) continue;
+            if (jt.primary_class != HTA_FOURCC('j','p','t','!')) continue;
+            float dmg = 0.0f;
+            hta_damage_effect(c, jpt, NULL, NULL, &dmg);
+            if (dmg > 0.0f) return jpt;
+        }
+    }
+    return 0;
+}
+
+/* Object 380 + Unit's own: `melee damage` is at 268 within Unit, and Unit's
+ * fields begin after the Object header. */
+#define UNIT_MELEE_DAMAGE  (380u + 268u)
+
+float hta_biped_melee_damage(const hta_cache *c, uint32_t bipd_tag_id)
+{
+    if (!c || !bipd_tag_id) return 0.0f;
+    int32_t ti = hta_cache_find_tag_by_id(c, bipd_tag_id);
+    if (ti < 0) return 0.0f;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t) || t.indexed) return 0.0f;
+    uint32_t base = 0;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return 0.0f;
+    uint32_t jpt = 0;
+    if (!hta_rd_u32(c, base + UNIT_MELEE_DAMAGE + 12u, &jpt)) return 0.0f;
+    float dmg = 0.0f;
+    hta_damage_effect(c, jpt, NULL, NULL, &dmg);
+    return dmg;
+}
+
 bool hta_effect_damage(const hta_cache *c, uint32_t effect_tag_id,
                        float *out_radius, float *out_core, float *out_damage)
 {

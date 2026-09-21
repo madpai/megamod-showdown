@@ -22,6 +22,7 @@
 #include "../asset/dialogue.h"
 #include "../engine/actor.h"
 #include "../engine/pickup.h"
+#include "../engine/bot.h"
 #include "../engine/ammo.h"
 #include "../engine/hud.h"
 #include "../engine/viewmodel.h"
@@ -235,6 +236,13 @@ typedef struct {
      * them, and the place to hang the next debug thing off. */
     int           hud_debug;
     uint32_t      debug_weapon;  /* where the roster walk has got to */
+
+    /* Somebody to shoot at. One for now, and the reason melee, grenades and
+     * every weapon can be said to work at all. */
+    hta_bot       bot;
+    hta_gfx_mesh *gpu_bot;
+    uint32_t      impact_jpt;    /* the held weapon's own damage tag */
+    float         melee_damage;  /* the cyborg's, 1000 -- see the handoff */
 
     hta_ammo ammo;
     float    dry_cooldown;   /* stops an empty trigger clicking every frame */
@@ -619,6 +627,25 @@ static void cycle_zoom(hta_android *s)
  * tag says how long it lasts but not how much it gives. */
 #define HTA_OVERSHIELD_MULT 3.0f
 
+/* How much of a blast reaches a point: full inside the core, tapering to
+ * nothing at the edge. The player already had this inline twice; a rocket
+ * and a grenade now have to ask it about a body as well. */
+static float blast_falloff(const float centre[3], const float at[3],
+                           float core, float radius)
+{
+    float dx = at[0] - centre[0];
+    float dy = at[1] - centre[1];
+    float dz = at[2] - centre[2];
+    float dist = sqrtf(dx*dx + dy*dy + dz*dz);
+    if (dist >= radius) return 0.0f;
+    if (dist <= core || radius <= core) return 1.0f;
+    return 1.0f - (dist - core) / (radius - core);
+}
+
+/* How far a swing reaches, in world units -- about a metre and a half.
+ * Ours: no tag carries a melee range, only what the blow does. */
+#define HTA_MELEE_REACH 0.5f
+
 /* Halo's multiplayer respawn. The five seconds are the GAMETYPE's, not any
  * tag's -- no gametype ships inside a map -- so this one number is ours. The
  * fade is shaped around it: black by the time the body has settled, black
@@ -734,6 +761,8 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
     if (s->weap.zoom_out_snd_id) bank_get(s, s->weap.zoom_out_snd_id);
     /* Impacts are this projectile's, so forget the last weapon's. */
     memset(s->impact_known, 0, sizeof(s->impact_known));
+    /* And what a round of it does to a man. */
+    s->impact_jpt = hta_projectile_impact_damage(&s->cache, s->weap.projectile_id);
 
     /* And the art its marks are drawn with. A rocket chars; a rifle leaves
      * a hole. Halo hangs the decal off the impact effect, so take the first
@@ -1177,6 +1206,27 @@ static bool load_map(hta_android *s)
                         s->vitals.max_health, s->vitals.max_shield,
                         s->vitals.recharge_delay, s->vitals.recharge_rate * 100.0f,
                         s->vitals.fall_harmful_min, s->vitals.fall_fatal);
+            /* Somebody to shoot at, out in front of the spawn. */
+            {
+                char berr[HTA_ERRLEN];
+                uint32_t bip = 0;
+                for (uint32_t i = 0; i < s->cache.tag_count && !bip; i++) {
+                    hta_tag_entry t;
+                    if (!hta_cache_tag(&s->cache, i, &t)) continue;
+                    if (t.primary_class != HTA_FOURCC('b','i','p','d')) continue;
+                    char p[128];
+                    hta_cache_tag_path(&s->cache, &t, p, sizeof(p));
+                    if (strstr(p, "cyborg_mp")) bip = t.tag_id;
+                }
+                s->melee_damage = hta_biped_melee_damage(&s->cache, bip);
+                if (bip && hta_bot_load(&s->bot, &s->cache,
+                                        s->bitmaps_ok ? &s->bitmaps_rm : NULL,
+                                        bip, berr, sizeof(berr)))
+                    hta_log("[bot] %s; melee does %.0f", berr, s->melee_damage);
+                else
+                    hta_log("[bot] none (%s)", berr);
+            }
+
             /* The shield's own voice. Every one of these is the tag's:
              * which sound, and which condition it is latched to. */
             {
@@ -1273,6 +1323,21 @@ static bool load_map(hta_android *s)
             s->player.pos[2] = gz;
             s->player.on_ground = true;
             hta_log("[assets] snapped spawn to ground z=%.2f", gz);
+        }
+        /* Eight world units in front of where you start, facing you --
+         * far enough to shoot at, near enough to walk up and hit. */
+        if (s->bot.loaded) {
+            float bp[3] = {
+                s->player.pos[0] + cosf(sp[0].facing) * 8.0f,
+                s->player.pos[1] + sinf(sp[0].facing) * 8.0f,
+                s->player.pos[2]
+            };
+            float gz;
+            if (s->col.built &&
+                hta_collision_ground(&s->col, bp[0], bp[1], bp[2] + 8.0f, &gz))
+                bp[2] = gz;
+            hta_bot_spawn(&s->bot, bp, sp[0].facing + 3.14159265f);
+            hta_log("[bot] standing at (%.2f %.2f %.2f)", bp[0], bp[1], bp[2]);
         }
         hta_log("[assets] %u spawn points; spawning at (%.2f %.2f %.2f)",
                 nsp, s->player.pos[0], s->player.pos[1], s->player.pos[2]);
@@ -1502,6 +1567,11 @@ static void start_gfx(hta_android *s)
                                                         err, sizeof(err));
             if (!s->gpu_corpse) hta_log("[gfx] corpse upload FAILED: %s", err);
         }
+        if (s->bot.loaded && s->bot.actor.mesh.index_count) {
+            s->gpu_bot = hta_gfx_mesh_upload_dynamic(s->gfx, &s->bot.actor.mesh,
+                                                     err, sizeof(err));
+            if (!s->gpu_bot) hta_log("[gfx] bot upload FAILED: %s", err);
+        }
         if (s->items.have_mesh && s->items.mesh.index_count) {
             s->gpu_items = hta_gfx_mesh_upload_dynamic(s->gfx, &s->items.mesh,
                                                        err, sizeof(err));
@@ -1525,6 +1595,7 @@ static void start_gfx(hta_android *s)
 
 static void stop_gfx(hta_android *s)
 {
+    if (s->gpu_bot) { hta_gfx_mesh_free(s->gfx, s->gpu_bot); s->gpu_bot = NULL; }
     if (s->gpu_items) { hta_gfx_mesh_free(s->gfx, s->gpu_items); s->gpu_items = NULL; }
     if (s->gpu_corpse) { hta_gfx_mesh_free(s->gfx, s->gpu_corpse); s->gpu_corpse = NULL; }
     if (s->gpu_hud) { hta_gfx_mesh_free(s->gfx, s->gpu_hud); s->gpu_hud = NULL; }
@@ -2108,6 +2179,24 @@ void android_main(struct android_app *app)
         if (state.hud_melee) {
             state.hud_melee = false;
             if (!swinging && state.ammo.phase != HTA_AMMO_RELOADING) {
+                /* A swing connects with whatever is within arm's reach in
+                 * front of you. The damage is the cyborg's own `melee
+                 * damage` tag -- 1000, at a x1.00 multiplier against both
+                 * armour and shield, so it kills outright. Halo's front /
+                 * back distinction is engine logic, not tag data. */
+                if (state.bot.loaded && state.melee_damage > 0.0f) {
+                    float fwd[3];
+                    hta_camera_forward(&state.cam, fwd);
+                    float reach[3];
+                    for (int k = 0; k < 3; k++)
+                        reach[k] = state.player.pos[k] + fwd[k] * HTA_MELEE_REACH;
+                    if (hta_bot_near(&state.bot, reach, HTA_MELEE_REACH)) {
+                        float ctr[3];
+                        hta_bot_centre(&state.bot, ctr);
+                        hta_bot_damage(&state.bot, state.melee_damage, ctr);
+                        hta_log("[bot] melee connected");
+                    }
+                }
                 hta_viewmodel_play(&state.vm, HTA_VM_MELEE);
                 swinging = state.vm.state == HTA_VM_MELEE;
             }
@@ -2131,8 +2220,39 @@ void android_main(struct android_app *app)
                         hta_projectiles_fire(&state.proj, muzzle, dir);
                     }
                 } else {
-                    hta_gun_fire(&state.gun, state.col.built ? &state.col : NULL,
-                                 &state.cam);
+                    /* Two halves, so a body can stop the round before the
+                     * wall does: aim picks the direction out of the error
+                     * cone, then whatever is nearest takes it. */
+                    float dir[3];
+                    if (hta_gun_aim(&state.gun, &state.cam, dir)) {
+                        float bt = -1.0f, bhit[3];
+                        bool onbot = hta_bot_ray(&state.bot, state.cam.pos, dir,
+                                                 HTA_GUN_RANGE, &bt, bhit);
+                        hta_gun_impact(&state.gun,
+                                       state.col.built ? &state.col : NULL,
+                                       &state.cam, dir, onbot ? bt : -1.0f);
+                        if (onbot) {
+                            /* What a round does depends on WHAT it hits:
+                             * the same shotgun pellet is 8 into armour and
+                             * 4 into a shield, and a plasma bolt is the
+                             * other way round. The tag knows. */
+                            uint8_t mat = state.bot.vitals.shield > 0.0f
+                                        ? HTA_MATERIAL_CYBORG_SHIELD
+                                        : HTA_MATERIAL_CYBORG_ARMOR;
+                            float dmg = hta_damage_vs(&state.cache,
+                                                      state.impact_jpt, mat);
+                            /* PROJECTILES per shot, not rounds: the
+                             * shotgun spends one shell and throws eight
+                             * pellets, and at 4 a pellet into a shield the
+                             * difference is a weapon that works and one
+                             * that does not. */
+                            int pellets = state.weap.projectiles_per_shot > 0
+                                        ? state.weap.projectiles_per_shot : 1;
+                            if (pellets > 32) pellets = 32;
+                            for (int r = 0; r < pellets; r++)
+                                hta_bot_damage(&state.bot, dmg, bhit);
+                        }
+                    }
                     play_impact_at(&state, state.gun.hit_material,
                                    state.gun.last_hit);
                     /* And the dust the round kicks off that surface. */
@@ -2278,6 +2398,16 @@ void android_main(struct android_app *app)
                 if (state.nade_recipe != HTA_PART_NO_RECIPE)
                     hta_particles_burst(&state.parts, state.nade_recipe,
                                         state.nades.hit, state.nades.hit_normal);
+                if (state.bot.loaded && state.nades.blast_damage > 0.0f) {
+                    float ctr[3];
+                    hta_bot_centre(&state.bot, ctr);
+                    float f = blast_falloff(state.nades.hit, ctr,
+                                            state.nades.blast_core,
+                                            state.nades.blast_damage_radius);
+                    if (f > 0.0f)
+                        hta_bot_damage(&state.bot,
+                                       state.nades.blast_damage * f, ctr);
+                }
                 if (state.vitals.loaded && state.nades.blast_damage > 0.0f) {
                     float dx = state.cam.pos[0] - state.nades.hit[0];
                     float dy = state.cam.pos[1] - state.nades.hit[1];
@@ -2297,11 +2427,40 @@ void android_main(struct android_app *app)
             }
         }
 
+        /* The body standing out there: animation, dying, coming back. */
+        if (state.bot.loaded) hta_bot_update(&state.bot, dt);
+
         /* Rounds in flight. A detonation leaves the same scorch and plays
          * the same material impact a hitscan round would. */
         if (state.proj.loaded) {
             hta_projectiles_update(&state.proj,
                                    state.col.built ? &state.col : NULL, dt);
+            /* A round that reaches the body stops there. The projectile
+             * layer only knows about the world, so this is the one place a
+             * flying round is asked whether it has hit somebody. */
+            if (state.bot.loaded && state.bot.state == HTA_BOT_ALIVE) {
+                for (uint32_t q = 0; q < HTA_PROJ_MAX; q++) {
+                    hta_projectile *pr = &state.proj.live[q];
+                    if (!pr->alive) continue;
+                    if (!hta_bot_near(&state.bot, pr->pos, state.bot.radius))
+                        continue;
+                    uint8_t mat = state.bot.vitals.shield > 0.0f
+                                ? HTA_MATERIAL_CYBORG_SHIELD
+                                : HTA_MATERIAL_CYBORG_ARMOR;
+                    float dmg = hta_damage_vs(&state.cache, state.impact_jpt, mat);
+                    hta_bot_damage(&state.bot, dmg, pr->pos);
+                    /* It goes off where it stopped, not where it would
+                     * have reached. */
+                    float up[3] = { 0.0f, 0.0f, 1.0f };
+                    if (state.det_recipe != HTA_PART_NO_RECIPE)
+                        hta_particles_burst(&state.parts, state.det_recipe,
+                                            pr->pos, up);
+                    if (state.proj.detonation_snd)
+                        play_tag_at(&state, state.proj.detonation_snd,
+                                    pr->pos, 1.0f);
+                    pr->alive = false;
+                }
+            }
             if (state.proj.detonated) {
                 hta_gun_add_mark(&state.gun, state.proj.hit, state.proj.hit_normal,
                                  state.proj.blast_radius);
@@ -2321,6 +2480,16 @@ void android_main(struct android_app *app)
                  * full inside 0.6 world units and gone by 2.0 -- which is
                  * why firing one at your own feet is a bad idea in Halo
                  * and now here too. */
+                if (state.bot.loaded && state.proj.blast_damage > 0.0f) {
+                    float ctr[3];
+                    hta_bot_centre(&state.bot, ctr);
+                    float f = blast_falloff(state.proj.hit, ctr,
+                                            state.proj.blast_core,
+                                            state.proj.blast_damage_radius);
+                    if (f > 0.0f)
+                        hta_bot_damage(&state.bot,
+                                       state.proj.blast_damage * f, ctr);
+                }
                 if (state.vitals.loaded && state.proj.blast_damage > 0.0f) {
                     float dx = state.cam.pos[0] - state.proj.hit[0];
                     float dy = state.cam.pos[1] - state.proj.hit[1];
@@ -2409,6 +2578,13 @@ void android_main(struct android_app *app)
                 dynlist[dyncount].mesh = state.gpu_parts;
                 dynlist[dyncount].vertices = state.parts.mesh.vertices;
                 dynlist[dyncount].vertex_count = state.parts.mesh.vertex_count;
+                dyncount++;
+            }
+            if (state.bot.loaded && state.gpu_bot &&
+                dyncount < HTA_GFX_MAX_DYNAMIC) {
+                dynlist[dyncount].mesh = state.gpu_bot;
+                dynlist[dyncount].vertices = state.bot.actor.posed;
+                dynlist[dyncount].vertex_count = state.bot.actor.mesh.vertex_count;
                 dyncount++;
             }
             if (state.gpu_items && dyncount < HTA_GFX_MAX_DYNAMIC) {

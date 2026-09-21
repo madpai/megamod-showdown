@@ -15,6 +15,7 @@ if(ANDROID)
         src/engine/vitals.c
         src/engine/actor.c
         src/engine/pickup.c
+        src/engine/bot.c
         src/engine/viewmodel.c
         src/engine/audio.c
         src/engine/ammo.c
@@ -52,7 +53,8 @@ else()
         src/engine/particle.c
         src/engine/vitals.c
         src/engine/actor.c
-        src/engine/pickup.c src/engine/viewmodel.c src/engine/audio.c src/engine/ammo.c src/engine/hud.c
+        src/engine/pickup.c
+        src/engine/bot.c src/engine/viewmodel.c src/engine/audio.c src/engine/ammo.c src/engine/hud.c
         src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c src/asset/sound.c src/asset/effect.c src/asset/dialogue.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
         src/asset/anim.c src/asset/model.c src/asset/font.c)
     target_include_directories(hta_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -131,6 +133,10 @@ else()
     add_executable(test_pickup tests/test_pickup.c)
     target_link_libraries(test_pickup PRIVATE hta_engine m)
     add_test(NAME pickup COMMAND test_pickup)
+
+    add_executable(test_bot tests/test_bot.c)
+    target_link_libraries(test_bot PRIVATE hta_engine m)
+    add_test(NAME bot COMMAND test_bot)
 
     add_executable(test_particle tests/test_particle.c)
     target_link_libraries(test_particle PRIVATE hta_engine m)

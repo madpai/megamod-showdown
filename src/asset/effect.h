@@ -156,6 +156,36 @@ uint32_t hta_decal_bitmap(const hta_cache *c, uint32_t decal_tag_id);
 bool hta_effect_damage(const hta_cache *c, uint32_t effect_tag_id,
                        float *out_radius, float *out_core, float *out_damage);
 
+/* What a `jpt!` does, read directly rather than through an effect. A
+ * biped's melee is one of these hung straight off the unit. */
+bool hta_damage_effect(const hta_cache *c, uint32_t jpt_tag_id,
+                       float *out_radius, float *out_core, float *out_damage);
+
+/* Halo's MaterialType for a Spartan's armour and for its energy shield.
+ * A `jpt!` carries a multiplier per material, and those two are how much of
+ * a hit a player actually takes. */
+#define HTA_MATERIAL_CYBORG_ARMOR  21u
+#define HTA_MATERIAL_CYBORG_SHIELD 22u
+
+/* What that `jpt!` does to that material.
+ *
+ * This is the whole Halo damage model and it is all in the tag: the same
+ * bullet does 10 either way, a shotgun pellet does 8 to armour and 4 to a
+ * shield, and a plasma bolt does 5 to armour and 20 to a shield. Multiplier
+ * table at DamageEffect +512, one float per MaterialType. */
+float hta_damage_vs(const hta_cache *c, uint32_t jpt_tag_id, uint8_t material);
+
+/* The `jpt!` a projectile does on impact -- Projectile +548. A walk of the
+ * definition drifts long before that, so it is probed; every playable
+ * weapon in the Trial lands on one, and the numbers that come out are
+ * Halo's own. */
+uint32_t hta_projectile_impact_damage(const hta_cache *c, uint32_t projectile_id);
+
+/* The damage a biped's melee does. Unit +268 is a `jpt!` -- the Trial's
+ * cyborg hits for a fixed amount whatever it is holding. Returns 0 when the
+ * biped has none. */
+float hta_biped_melee_damage(const hta_cache *c, uint32_t bipd_tag_id);
+
 /* `foot` (material_effects): the sound this biped makes stepping on that
  * MaterialType. Group 0 is the walk set. Returns 0 when the material has no
  * sound of its own -- plenty do not, and silence is the right answer. */

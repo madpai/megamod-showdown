@@ -73,6 +73,21 @@ void hta_gun_free(hta_gun *g);
 int  hta_gun_ready(const hta_gun *g);
 /* Returns 1 if a shot fired (and possibly hit). */
 int  hta_gun_fire(hta_gun *g, const hta_collision *col, const hta_camera *cam);
+
+/* The same shot in two halves, for when something other than the world can
+ * stop the round.
+ *
+ * hta_gun_fire resolves its own hit, which leaves nowhere to put a body:
+ * the shot direction comes out of the trigger's error cone INSIDE the call,
+ * so a caller cannot test anything against it beforehand. Aim picks the
+ * direction and spends the cooldown; Impact resolves it, and `block_t` is
+ * how far away something else already stopped it (negative for nothing), so
+ * a round that hit a man does not also scorch the wall behind him.
+ *
+ * `hta_gun_fire` is these two with block_t = -1. */
+int  hta_gun_aim(hta_gun *g, const hta_camera *cam, float out_dir[3]);
+void hta_gun_impact(hta_gun *g, const hta_collision *col,
+                    const hta_camera *cam, const float dir[3], float block_t);
 /* Spend the cooldown and hand back the direction this round would take,
  * WITHOUT tracing it. For a weapon whose round is an object you can watch
  * fly: the projectile does its own collision, and reports back through

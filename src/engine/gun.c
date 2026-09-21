@@ -120,23 +120,43 @@ int hta_gun_ready(const hta_gun *g)
     return g && g->cooldown <= 0.0f;
 }
 
-int hta_gun_fire(hta_gun *g, const hta_collision *col, const hta_camera *cam)
+int hta_gun_aim(hta_gun *g, const hta_camera *cam, float out_dir[3])
 {
-    if (!g || !cam) return 0;
+    if (!g || !cam || !out_dir) return 0;
     if (g->cooldown > 0.0f) return 0;
     g->cooldown = (g->fire_interval > 0.02f) ? g->fire_interval : HTA_GUN_COOLDOWN;
-    float aim[3], dir[3];
+    float aim[3];
     hta_camera_forward(cam, aim);
     /* Where the round actually goes: inside the trigger's own error cone,
      * which widens while the trigger is held. */
-    hta_gun_shot_dir(g, aim, dir);
+    hta_gun_shot_dir(g, aim, out_dir);
     g->since_shot = 0.0f;
+    return 1;
+}
+
+void hta_gun_impact(hta_gun *g, const hta_collision *col,
+                    const hta_camera *cam, const float dir[3], float block_t)
+{
+    if (!g || !cam || !dir) return;
     float hit[3], nrm[3], t;
     g->hit_material = HTA_MATERIAL_NONE;
     if (!hta_collision_ray_material(col, cam->pos, dir, HTA_GUN_RANGE, &t, hit, nrm,
                                     &g->hit_material))
-        return 1; /* shot fired, missed */
+        return;                              /* fired, missed everything */
+    if (block_t >= 0.0f && block_t < t) {
+        /* Something nearer already took it. No mark: a round that hit a man
+         * must not scorch the wall behind him as well. */
+        g->hit_material = HTA_MATERIAL_NONE;
+        return;
+    }
     hta_gun_add_mark(g, hit, nrm, HTA_MARK_SIZE);
+}
+
+int hta_gun_fire(hta_gun *g, const hta_collision *col, const hta_camera *cam)
+{
+    float dir[3];
+    if (!hta_gun_aim(g, cam, dir)) return 0;
+    hta_gun_impact(g, col, cam, dir, -1.0f);
     return 1;
 }
 

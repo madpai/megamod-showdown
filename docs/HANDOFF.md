@@ -85,6 +85,93 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## Somebody to shoot at (2026-09-21)
+
+Melee needed a target before it could be said to work, and so did grenades
+and every weapon. `src/engine/bot.c` is a body in the world with health, a
+shield and a shape that stops bullets. **It does not think yet** -- it stands
+where it is put, reacts, dies and comes back -- and that is deliberate: the
+thinking is a separate problem to solve on top of a body that already takes
+damage properly.
+
+Almost none of it is new. `hta_actor` is the skinned cyborg from the death
+camera, `hta_vitals` is the player's own health and shield, and the hit shape
+is the biped tag's collision cylinder -- the one the player already walks
+around inside (0.40 wu across, 0.70 tall).
+
+### The damage model was in the tags the whole time
+
+`Projectile` carries an **`impact damage`** `jpt!` at **+548** -- probed,
+because the definition walk drifts long before there -- and `DamageEffect`
+carries a **multiplier per MaterialType at +512**, one float each in order.
+A Spartan is material **21 (cyborg armour)** and **22 (cyborg energy
+shield)**.
+
+Put together, that is the whole of Halo's feel, and none of it is invented:
+
+| weapon | vs shield | vs armour | to strip 75 + 75 |
+| --- | --- | --- | --- |
+| assault rifle | 10.0 | 10.0 | 15 |
+| pistol | 25.0 | **37.5** | 5 |
+| shotgun (per pellet) | **4.0** | 8.0 | 4 shots of 8 |
+| plasma rifle | **20.0** | 5.0 | 18 |
+| sniper rifle | 101.0 | 101.0 | 2 |
+| plasma pistol | 6.0 | 6.0 | 25 |
+| needler | 10.0 | 10.0 | 15 |
+
+A shotgun is weak against shields and strong against bodies; a plasma bolt is
+the other way round; the pistol is better against flesh. That is Halo, read
+straight out.
+
+**PROJECTILES per shot, not rounds.** The shotgun spends one shell and throws
+eight pellets, and at 4 a pellet into a shield the difference is a weapon
+that works and one that does not. `weap.projectiles_per_shot`.
+
+The needler has **no impact damage at all** -- a needle hurts when the
+cluster goes off, and its `detonation damage` sits earlier in the tag. So the
+lookup falls back to scanning the projectile for any `jpt!` that does
+damage rather than reporting it harmless.
+
+### Melee kills outright, and the tag says so
+
+`characters\cyborg\melee` does **1000**, at a **x1.00** multiplier against
+both cyborg armour and cyborg energy shield. Against 75 + 75 that is a
+one-hit kill, and that is what the data says. Halo's front-versus-back
+distinction is engine logic, not tag data, and we do not have it.
+
+`HTA_MELEE_REACH` (0.5 wu) is ours -- no tag carries a melee range, only what
+the blow does.
+
+### Wiring
+
+- **Hitscan** needed `hta_gun_fire` split. It resolved its own hit, and the
+  shot direction comes out of the error cone INSIDE the call, so a caller
+  could not test a body against it beforehand. Now `hta_gun_aim` picks the
+  direction and spends the cooldown, and `hta_gun_impact` resolves it with a
+  `block_t` -- how far away something else already stopped the round, so one
+  that hit a man does not also scorch the wall behind him.
+- **Projectiles** are checked against the body after their own update; the
+  projectile layer only knows about the world.
+- **Blasts** got `blast_falloff` factored out -- the player had it inline
+  twice and a rocket now has to ask it about a body too.
+
+### Traps
+
+- `hta_actor_play` matches a **substring**, and the cyborg's 254 animations
+  include a dozen seated ones. Plain `"idle"` finds `B-driver unarmed idle`:
+  a body sitting in a Banshee, hanging in the air. It wants
+  `"stand rifle idle"`.
+- A corpse must stop no bullets, or a dead body soaks the magazine you meant
+  for the next one.
+
+### Next, toward bots
+
+The body is the hard half. What it needs to become an opponent: somewhere to
+walk (the collision grid is already there and fast), something to walk
+towards, an eye test, and a trigger. None of that touches what is above.
+
+---
+
 ## A debug pad (2026-09-21)
 
 Making the map's item layout the authority cost access to the needler and
