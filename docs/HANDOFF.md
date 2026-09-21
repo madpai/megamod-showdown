@@ -97,30 +97,20 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Release: "The Warthog rebounds" (2026-09-21).**
+> **Vehicle slice accepted for now (2026-09-21).** The owner says handling is
+> much better and wants to move on. There is no active vehicle phone test.
+> The latest collision release (`8f6ecca`) passed all 57 verification checks;
+> its rebound, powered pivot and jeep-to-jeep impulse have host coverage, but
+> no separate phone report confirming those exact behaviors. Keep the planar
+> collision, damage and seat gaps below visible when returning to vehicles.
 >
-> 1. **Hit a wall at moderate speed.** The jeep should recoil briefly or
->    deflect along a glancing surface instead of snapping to 0 km/h. It should
->    lose energy quickly; this is a 2-D collision impulse, not a vehicle flip.
-> 2. **Hold throttle while blocked.** The speedometer may read 0 while the
->    tires keep spinning. Turn the stick left and right: engine force at the
->    front axle now applies yaw torque and can pivot the jeep around a contact
->    if there is room. Try the narrow passage in the screenshot at **74.83,
->    -78.56**. A genuinely too-narrow passage can still trap the body; reverse
->    should help it back out.
-> 3. **Bump the parked black Warthog** near **41.84, -130.23**. It should move
->    a little from the hit, with some recoil on your jeep. The two bodies must
->    remain separate and reversing must still work.
-> 4. **Watch handling and fps.** Sloped-ground steering, the parked body
->    height, wheel placement and fast-crest airtime should still behave as in
->    the previous build. Moving screenshots have read about 120 fps; report a
->    repeatable drop after a collision.
->
-> All 57 verification checks passed. Host collision tests cover rebound,
-> glancing deflection, tire spin against a wall, powered pivot, a narrow
-> corridor, and momentum transfer between jeeps. Host driving still costs
-> about 1.52 ms/update. Phone confirmation pending. No passenger or turret
-> seats, vehicle damage or flip.
+> **Next session, when the owner prompts: begin netcode/multiplayer.** First
+> inspect the live gameplay loop and choose the smallest two-instance
+> connection/replication slice. Then implement and verify that slice. The
+> existing scope decision is our own protocol behind a transport interface;
+> no networking implementation exists yet. For the first device test, name
+> the exact connection, remote-player visibility and failure signs in this
+> section after there is a build to test.
 
 ---
 
@@ -172,13 +162,14 @@ Blood Gulch placements are drivable: enter, throttle, reverse, steer, brake,
 exit. Speeds, acceleration, steering lock and turn rate all come from the
 vehicle tag; the wheelbase and mass points come from its `phys` tag. Chase
 camera, DRIVE/EXIT/BRAKE touch labels and a km/h speedometer. The moving hull
-is solid to bullets, grenades, footsteps and the player. Device confirmation
-pending for the latest wheel and airtime changes. The tire meshes spin and
-steer by model node and travel down to meet terrain. The chassis can leave
-the ground over a crest. Wall and vehicle contacts now exchange a 2-D impulse
-using the `phys` mass, centre of mass and yaw inertia; throttle keeps spinning
-the tires under load and can pivot a blocked jeep. Phone confirmation pending
-for this collision response.
+is solid to bullets, grenades, footsteps and the player. The owner has tested
+the driving revisions on device and accepted this vehicle slice for now. The
+tire meshes spin and steer by model node and travel down to meet terrain. The
+chassis can leave the ground over a crest. Wall and vehicle contacts now
+exchange a 2-D impulse using the `phys` mass, centre of mass and yaw inertia;
+throttle keeps spinning the tires under load and can pivot a blocked jeep.
+The exact behavior of the latest collision release is host-verified; a
+separate phone result was not reported.
 
 **Placed model textures.** Model UV scales are restored from `mod2+48/+52`;
 opaque placed `shader_model` surfaces use scene lighting. This fixes the
@@ -192,7 +183,9 @@ remain a rendering gap; phone confirmation of this fix is pending.
   Ghost and Banshee are all still untouched.
 - **Bots.** The body exists; it needs somewhere to walk, something to walk
   towards, an eye test and a trigger. None of that touches what is there.
-- **Netcode.** Parked deliberately.
+- **Netcode.** No implementation yet. This is the next requested area of work,
+  to start when the owner prompts in the next session. Our own protocol behind
+  a transport interface is the established scope decision (investigation §5.2).
 - **Menus.** `ui.map` holds the entire Halo shell as 811 `DeLa` widget
   definitions, 168 string lists, 6 fonts, 222 bitmaps, a virtual keyboard and
   a map list. A faithful main menu is a widget-tree interpreter, not asset
@@ -202,6 +195,21 @@ remain a rendering gap; phone confirmation of this fix is pending.
   game over. They need a game mode to mean anything.
 - **Music.** There is none in Blood Gulch, and that is correct — Halo CE
   multiplayer maps carry no score. The campaign map has it.
+
+### Multiplayer starting point for the next session
+
+- The gameplay state and per-frame update currently live in
+  `src/platform/platform_android.c` (`hta_android`, `android_main`). The
+  player, vehicles, projectiles, vitals and other mechanics already have
+  portable `src/engine/` modules. Read the live loop before deciding where
+  shared session state, simulation timing and network messages belong.
+- Begin with a small, verifiable two-instance connection and remote-player
+  visibility slice; plan shooting, hit registration, death/respawn, score and
+  vehicles as later multiplayer milestones. The eventual target remains two
+  devices in one Blood Gulch session (investigation stage 8).
+- Preserve the asset boundary: each client imports its own Trial data. Do not
+  send or bundle map assets. Use the existing `scripts/verify.sh` gate before
+  publishing an APK for device testing.
 
 ### Known gaps worth fixing
 

@@ -9,6 +9,16 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## Vehicle slice closed for now (2026-09-21)
+
+The owner reported the Warthog was behaving much better and chose to move on
+to multiplayer in the next session. The current vehicle baseline is
+`8f6ecca`: settled parked suspension, visible tire spin and steering, crest
+airtime, escape from shallow overlap, and planar collision momentum and drive
+torque under load. The last release passed 57 verification checks. The owner
+did not report a separate on-device result for its exact rebound/pivot behavior.
+Known limits remain in `HANDOFF.md`; no netcode was started in this closeout.
+
 ## The Warthog rebounds (2026-09-21)
 
 The owner drove into the narrow rock passage around HUD `(74.83, -78.56)`.

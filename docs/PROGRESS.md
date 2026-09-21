@@ -1,6 +1,10 @@
 # Progress
 
-Last updated: **2026-09-18** (Phase 4: FP guns animated from tags; next is sound)
+Last updated: **2026-09-21** (vehicle slice accepted; multiplayer next session)
+
+This is the milestone log. For the current implementation and next-session
+instructions, use `docs/HANDOFF.md`; older test counts below record their
+original milestone rather than the latest full suite.
 
 Legend: ✅ done & verified · 🟡 built but not verified on device · ⬜ not started · 🚫 blocked
 
@@ -65,18 +69,22 @@ Run `scripts/device_test.sh` with the S24+ connected to convert remaining 🟡.
   in the host offscreen renderer (`htaview --fp`); the fabricated `fp_offset` is gone —
   the tag's own value is (0,0,0) and the hold comes from `frame gun` hanging off
   `frame r wriste`.
-- 🟡 **Viewmodel on device** — *not yet confirmed on the S24+*. The GPU path is new
-  (dynamic per-frame vertex buffer); build, sideload and look.
-- 🟡 Weapons still hitscan: `proj`, magazines/ammo and all audio are parsed but unwired.
-  **Next slice is sound** — `snd!` / `effe` from `sounds.map`, which SetupActivity does
-  not pick yet. Owner: no synthesized or substituted gunshots. See `docs/HANDOFF.md`.
-- ✅ Touch HUD: stick, fire, jump, crouch
+- ✅ Eleven playable weapons with tagged viewmodels, animation and original
+  sounds; hitscan and object projectiles, impacts, grenades, damage, death and
+  respawn. See `docs/HANDOFF.md` for remaining gaps.
+- ✅ Touch HUD: stick, fire, jump, crouch, weapon controls and driving controls.
+- ✅ Drivable human Warthogs with tag-based handling, wheel animation, crest
+  airtime and planar collision response. Owner accepted this slice for now;
+  exact behavior of the last collision release remains without a separate
+  phone report. Full verification: 57/57 at `8f6ecca`.
 
 ## Phase 5 — Multiplayer (the product)
 
 - ✅ **Scope decided (2026-09-18): our own protocol.** Transport stays behind an
   interface so wire-compatibility with real Halo servers can be attempted later
   without rearchitecting. See Decisions.
+- ⬜ Implementation begins when the owner prompts next session. Start with a
+  two-instance connection and remote-player visibility slice; see `HANDOFF.md`.
 - ⬜ Two clients connect
 - ⬜ Players see each other
 - ⬜ Shooting / hit registration over network
@@ -106,13 +114,9 @@ No licence file = all rights reserved. Usable as documentation only, never as co
 `halo_cache_symbols.exe` comes from the Dec 2024 unauthorised Digsite leak.
 Use `demon-old`'s legitimate Trial targeting and Demon's public struct definitions instead.
 
-### 5. First on-device map load — **THE MAIN REMAINING GAP**
-Vulkan on the S24+ is proven (magenta frame, 2026-09-18). The first APK could
-not see `bloodgulch.map` in Downloads: `MANAGE_EXTERNAL_STORAGE` is a special
-setting, not "Files and media", and Termux cannot read another app's logcat.
-Fix: `SetupActivity` uses the system document picker and copies the map into
-app-private storage. Retest: install the new APK, Pick map, Play. Sky blue +
-terrain = success; magenta = picker copy didn't land where native looks.
+### 5. ~~First on-device map load~~ — **RESOLVED 2026-09-18**
+`SetupActivity` uses the system document picker to copy the owner's map into
+app-private storage. Blood Gulch has since rendered and played on the S24+.
 
 ### 6. ~~No Trial assets present~~ — **RESOLVED 2026-09-18**
 The owner supplied their own `HaloTrialSetup.exe`. Extracted to
