@@ -85,6 +85,28 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## A debug pad (2026-09-21)
+
+Making the map's item layout the authority cost access to the needler and
+the plasma pistol, because Blood Gulch places neither. The DBG pad on the
+left edge is the way back to them.
+
+Tapping it hands over **the next weapon in the cache's roster**, into the
+hand you are using -- so repeated taps walk all eleven without breaking the
+two-weapon rule the rest of the game plays by.
+
+It is deliberately built as **`nativeHudDebug(int action)`** rather than one
+JNI entry point per function: adding the next debug thing is a case in a
+switch and a number, nothing else. The platform holds it as `action + 1` so
+zero means nothing pending, like the other one-shot HUD flags.
+
+It does nothing while you are dead, along with every other button.
+
+`dbgCx/dbgCy` sit at 3.5%/42% of the screen -- the left edge, clear of the
+stick below and the readout above.
+
+---
+
 ## Two weapons, and throwing with your arm (2026-09-21)
 
 Asked: is there a cap on how many weapons you can hold, what do you spawn

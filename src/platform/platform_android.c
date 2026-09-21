@@ -229,6 +229,12 @@ typedef struct {
     float         powerup_timer;
     hta_item_kind powerup;
     bool          throwing;      /* the arm is mid-throw-grenade */
+    /* The DBG pad, as (action + 1) so zero means nothing pending. Blood
+     * Gulch places neither the needler nor the plasma pistol, so playing
+     * the map honestly puts them out of reach; this is the way back to
+     * them, and the place to hang the next debug thing off. */
+    int           hud_debug;
+    uint32_t      debug_weapon;  /* where the roster walk has got to */
 
     hta_ammo ammo;
     float    dry_cooldown;   /* stops an empty trigger clicking every frame */
@@ -1704,6 +1710,13 @@ Java_net_hta_halotrial_GameActivity_nativeHudGrenade(JNIEnv *env, jclass cls)
     (void)env; (void)cls;
     if (g_android) g_android->hud_grenade = true;
 }
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudDebug(JNIEnv *env, jclass cls,
+                                                   jint action)
+{
+    (void)env; (void)cls;
+    if (g_android) g_android->hud_debug = (int)action + 1;   /* 0 = nothing pending */
+}
 
 void android_main(struct android_app *app)
 {
@@ -2040,12 +2053,38 @@ void android_main(struct android_app *app)
             }
         }
 
+        /* The debug pad. Not part of the game: it exists because the map's
+         * own item layout is the authority now, and Blood Gulch places
+         * neither the needler nor the plasma pistol. */
+        if (state.hud_debug) {
+            int action = state.hud_debug - 1;
+            state.hud_debug = 0;
+            if (action == 0 && state.weapon_count && !state.dead) {
+                /* Hand over the next weapon in the cache's roster, into the
+                 * hand you are using. Walking the whole roster one tap at a
+                 * time reaches everything without breaking the two-weapon
+                 * rule the rest of the game plays by. */
+                state.debug_weapon = (state.debug_weapon + 1u) % state.weapon_count;
+                uint32_t give = state.weapons[state.debug_weapon];
+                if (state.held_count < HTA_CARRY_MAX) {
+                    state.held_slot = state.held_count;
+                    state.held[state.held_count++] = give;
+                } else {
+                    state.held[state.held_slot] = give;
+                }
+                equip_weapon(&state, give);
+                hta_log("[debug] gave %s (%u of %u)", state.weap.path,
+                        state.debug_weapon + 1u, state.weapon_count);
+            }
+        }
+
         /* None of the buttons do anything to a corpse. They are consumed
          * rather than left pending, or every press made while dead would
          * fire at once on respawn. */
         if (state.dead) {
             state.hud_swap = state.hud_zoom = state.hud_melee = false;
             state.hud_reload = state.hud_grenade = false;
+            state.hud_debug = 0;
         }
 
         /* Swapping rebuilds the viewmodel and the HUD, so do it before

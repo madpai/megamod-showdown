@@ -141,6 +141,11 @@ public class GameActivity extends NativeActivity {
     static native void nativeHudSwap();
     static native void nativeHudZoom();
     static native void nativeHudGrenade();
+    /* Debug actions, by number rather than one entry point each, so adding
+     * the next one is a case in the switch and nothing else.
+     *   0  hand over the next weapon in the cache's roster
+     */
+    static native void nativeHudDebug(int action);
     static native String nativeDebugText();
     static native String nativeAmmoText();
 
@@ -158,6 +163,7 @@ public class GameActivity extends NativeActivity {
         private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint debug = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint ammo = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint dbgP = new Paint(Paint.ANTI_ALIAS_FLAG);
 
         private float stickCx, stickCy, stickR, stickTx, stickTy;
         private float fireCx, fireCy, fireR;
@@ -168,9 +174,13 @@ public class GameActivity extends NativeActivity {
         private float swapCx, swapCy, swapR;
         private float zoomCx, zoomCy, zoomR;
         private float nadeCx, nadeCy, nadeR;
+        /* A debug pad on the left edge, clear of the stick below it and the
+         * readout above it. Deliberately small and dull -- it is not part of
+         * the game. */
+        private float dbgCx, dbgCy, dbgR;
         private int stickPtr = -1, firePtr = -1, jumpPtr = -1, crouchPtr = -1;
         private int reloadPtr = -1, meleePtr = -1, swapPtr = -1, zoomPtr = -1;
-        private int nadePtr = -1;
+        private int nadePtr = -1, dbgPtr = -1;
         private final float[] lastX = new float[16];
         private final float[] lastY = new float[16];
 
@@ -189,6 +199,7 @@ public class GameActivity extends NativeActivity {
             meleeP.setColor(0xCC6E3BA8);
             swapP.setColor(0xCC2E7D6B);
             zoomP.setColor(0xCC3C5A8C);
+            dbgP.setColor(0x99202830);
             label.setColor(0xFFFFFFFF);
             ammo.setColor(0xF2FFFFFF);
             ammo.setTextAlign(Paint.Align.RIGHT);
@@ -230,6 +241,9 @@ public class GameActivity extends NativeActivity {
             nadeR = m * 0.058f;
             nadeCx = w * 0.725f;
             nadeCy = h * 0.90f;
+            dbgR = m * 0.045f;
+            dbgCx = w * 0.035f;
+            dbgCy = h * 0.42f;
             label.setTextSize(m * 0.032f);
             ammo.setTextSize(m * 0.085f);
             excludeFromSystemGestures();
@@ -287,6 +301,9 @@ public class GameActivity extends NativeActivity {
                 } else if (in(x, y, zoomCx, zoomCy, zoomR * 1.15f) && zoomPtr < 0) {
                     zoomPtr = id;
                     GameActivity.nativeHudZoom();
+                } else if (in(x, y, dbgCx, dbgCy, dbgR * 1.25f) && dbgPtr < 0) {
+                    dbgPtr = id;
+                    GameActivity.nativeHudDebug(0);
                 } else if (in(x, y, nadeCx, nadeCy, nadeR * 1.15f) && nadePtr < 0) {
                     nadePtr = id;
                     GameActivity.nativeHudGrenade();
@@ -325,6 +342,7 @@ public class GameActivity extends NativeActivity {
                     swapPtr = -1;
                     zoomPtr = -1;
                     nadePtr = -1;
+                    dbgPtr = -1;
                 } else {
                     if (id == stickPtr) releaseStick();
                     if (id == firePtr) releaseFire();
@@ -335,6 +353,7 @@ public class GameActivity extends NativeActivity {
                     if (id == swapPtr) swapPtr = -1;
                     if (id == zoomPtr) zoomPtr = -1;
                     if (id == nadePtr) nadePtr = -1;
+                    if (id == dbgPtr) dbgPtr = -1;
                 }
                 break;
             default:
@@ -396,6 +415,10 @@ public class GameActivity extends NativeActivity {
             c.drawCircle(stickCx, stickCy, stickR, fill);
             c.drawCircle(stickCx, stickCy, stickR, ring);
             c.drawCircle(stickTx, stickTy, stickR * 0.38f, thumb);
+
+            c.drawCircle(dbgCx, dbgCy, dbgR, dbgP);
+            c.drawCircle(dbgCx, dbgCy, dbgR, ring);
+            c.drawText("DBG", dbgCx, dbgCy + label.getTextSize() * 0.35f, label);
 
             c.drawCircle(fireCx, fireCy, fireR, fireP);
             c.drawCircle(fireCx, fireCy, fireR, ring);
