@@ -17,6 +17,7 @@
 #define HTA_VEHICLE_MAX_SLOPE 0.75f
 #define HTA_VEHICLE_EXIT_SPEED 0.5f
 #define HTA_VEHICLE_ADHESION_SPEED_FRACTION 0.25f
+#define HTA_VEHICLE_SETTLE_TIME 0.5f
 
 typedef struct {
     float pos[3], radius, visual_radius, travel;
@@ -28,12 +29,13 @@ typedef struct {
     float forward, reverse, accel, decel, turn_left, turn_right, turn_rate;
     float circumference, gravity_scale, ground_depth;
     float seat[3], pos[3], yaw, pitch, roll, speed, steering, fall_speed, rise_speed;
+    float rest_time;
     float wheel_spin;
     hta_vehicle_point points[HTA_VEHICLE_MASS_POINTS];
     uint32_t point_count;
     float wheelbase, body_radius;
     uint32_t first_vertex, vertex_count, first_coll, coll_count;
-    bool grounded;
+    bool grounded, traction;
 } hta_vehicle;
 typedef struct {
     hta_vehicle cars[HTA_VEHICLE_MAX];

@@ -97,32 +97,33 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Release: "The Warthog catches air" (2026-09-21).**
+> **Release: "The Warthog settles and escapes" (2026-09-21).**
 >
-> 1. **Look at the parked Warthog from the side.** All four tires should reach
->    the terrain. The previous build showed about 0.06 world units of air under
->    them because the model tire is smaller than its physics wheel.
-> 2. **Drive and watch the wheels.** They now spin from distance travelled and
->    the front tires turn with steering. Check for detached tires or a wrong
->    spin direction. The 90 km/h speed limit is unchanged; it comes from the
->    Trial vehicle tag.
-> 3. **Drive quickly across a rise.** The jeep should leave the ground over a
->    crest, follow a short arc, and land. It should still stay planted while
->    starting slowly on uneven ground. Retest the hill near the screenshot's
->    HUD coordinate **55.06, -107.13**: wheel contact should no longer make a
->    rising floor behave like a wall. If it still sticks, send a screenshot
->    with the HUD coordinate and the direction the jeep faces.
-> 4. **Watch fps while driving.** The earlier moving screenshot read 120 fps;
->    the later stopped screenshot read 0 fps once. The new host update costs
->    about 1.5 ms. Report a repeatable drop while driving or stopping.
-> 5. **Exit and collide.** EXIT should refuse in flight and while moving.
->    Walls should still stop the jeep, and reversing should free it. Bullets,
->    grenades and the player should still meet the moving hull.
+> 1. **Look at a parked Warthog before entering.** At the spawn near
+>    **100.60, -144.57**, the body should sit near its tires. In the last
+>    screenshot the hull was high and the wheels hung below it because parked
+>    cars stopped settling after one physics step. Wait a second after load
+>    and check the side view again.
+> 2. **Turn across sloped ground.** The suspension can now provide steering
+>    while the chassis follows a short free arc close to the ground. Try the
+>    same slopes that felt impossible to turn into; send the HUD coordinate
+>    and direction faced if steering still disappears.
+> 3. **Bump another vehicle and reverse.** The last stuck screenshot was near
+>    **41.84, -130.23**. A collision should stop forward motion, then reverse
+>    should separate the two jeeps even if their collision proxies overlap.
+>    Retest against the parked black Warthog shown there.
+> 4. **Watch wheel motion and airtime.** Tires should spin and steer without
+>    hanging far below the body. A fast drive across a crest should still
+>    lift the jeep, and steering should fade only when the tires are truly
+>    clear of the ground. The tagged top speed remains 90 km/h.
+> 5. **Watch fps.** The phone screenshots while driving have read 120 fps.
+>    Report any repeatable drop on hills or during a collision.
 >
-> All 57 verification checks passed, including a real-map tire-ground check
-> and a synthetic high-speed crest. Phone confirmation pending. There are no
-> passenger or turret seats, the Warthog cannot be damaged or flipped, and
-> only human jeeps are drivable.
+> All 57 verification checks passed. The real-map spawn Warthog now settles
+> to a body pitch near -0.135 rad, with all four visual tire travels about
+> -0.06 wu rather than one extending -0.29 wu. Synthetic and real Warthog
+> overlap tests back out while forward collision still blocks. Phone
+> confirmation pending. No passenger or turret seats, vehicle damage or flip.
 
 ---
 
@@ -213,7 +214,7 @@ remain a rendering gap; phone confirmation of this fix is pending.
 | Motion tracker | Art and behaviour readable (`unhi` 620/724, `hud_globals` range and scale) but placement is not in the tag, and nothing moves to track. Deferred three times. |
 | No hit sound on the body | `weapons\*\effects\impact cyborg shield` is in the cache and is the right thing to reach for. |
 | The bot's rifle is hardcoded | Should be whatever it is carrying, once it carries anything. |
-| A blocked jeep stops dead | No wall-sliding. Driving into the canyon wall wedges you; reverse frees it. Glancing blows should deflect, not halt. |
+| A blocked jeep stops dead | No wall-sliding. Driving into the canyon wall wedges you; reverse frees it. Glancing blows should deflect, not halt. Vehicle overlaps now allow a separating reverse move; phone confirmation pending. |
 | Driving re-poses the whole fleet | About 1.5 ms/frame on the host, mostly rebuilding all 12 jeeps' shared collision grid. Eleven are parked. Per-vehicle grids is the fix if the phone shows a repeatable fps drop. |
 | Vehicles take no damage | You cannot destroy or flip a Warthog, and it does not hurt what it hits. |
 | Only 1 dynamic mesh slot left | The vehicle fleet took one; 7 of `HTA_GFX_MAX_DYNAMIC`'s 8 are now in use, and dropped weapons still want one. |
@@ -358,6 +359,7 @@ wrong, this list is the first place to look — they are all one constant.
 | `HTA_VEHICLE_ENTER_REACH` | 0.9 wu | how close to a driver's seat DRIVE appears |
 | `HTA_VEHICLE_EXIT_SPEED` | 0.5 wu/s | below this a jeep counts as stopped, for entering and exiting |
 | `HTA_VEHICLE_ADHESION_SPEED_FRACTION` | 0.25 of tagged forward speed | below this, the `phys` ground depth can keep the chassis in contact over rough terrain; above it, the jeep can fly off a crest |
+| `HTA_VEHICLE_SETTLE_TIME` | 0.5 s | time an undriven jeep keeps posing its chassis on terrain before sleeping |
 | `HTA_VEHICLE_STEP` | 1/120 s | fixed physics substep, so frame rate cannot change handling |
 | `HTA_VEHICLE_CLEARANCE` | 0.04 wu | how far a mass point may be pushed before it counts as blocked |
 | `HTA_VEHICLE_MAX_SLOPE` | 0.75 rad | cap on the pitch/roll the wheels may pose the body to (43°) |

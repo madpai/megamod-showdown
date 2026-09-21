@@ -262,6 +262,7 @@ bool hta_vehicles_exit(hta_vehicles *v,const hta_collision *world,hta_player *p,
 static bool blocked(const hta_vehicles *fleet,uint32_t index,const hta_vehicle *next,
                       const hta_vehicle *old,const hta_collision *world)
 {
+    float old_overlap=0,new_overlap=0;
     for(uint32_t k=0;k<next->point_count;k++) {
         const hta_vehicle_point *pt=&next->points[k];float at[3],prev[3];
         place(next,pt->pos,at);place(old,pt->pos,prev);
@@ -284,11 +285,17 @@ static bool blocked(const hta_vehicles *fleet,uint32_t index,const hta_vehicle *
                 float b[3];place(other,other->points[q].pos,b);
                 float dx=at[0]-b[0],dy=at[1]-b[1],dz=at[2]-b[2];
                 float r=pt->radius+other->points[q].radius;
-                if(dx*dx+dy*dy+dz*dz<r*r)return true;
+                float next_d2=dx*dx+dy*dy+dz*dz;
+                if(next_d2<r*r)new_overlap+=r*r-next_d2;
+                dx=prev[0]-b[0];dy=prev[1]-b[1];dz=prev[2]-b[2];
+                float old_d2=dx*dx+dy*dy+dz*dz;
+                if(old_d2<r*r)old_overlap+=r*r-old_d2;
             }
         }
     }
-    return false;
+    /* A hard contact may leave two proxy spheres overlapping. Permit a move
+     * that decreases total penetration, so reverse can release the car. */
+    return new_overlap>0 && (old_overlap==0 || new_overlap>=old_overlap-1e-5f);
 }
 static void support(hta_vehicle *v,const hta_collision *world,float gravity,float dt)
 {
@@ -331,19 +338,25 @@ static void support(hta_vehicle *v,const hta_collision *world,float gravity,floa
     } else {
         v->rise_speed=0;
     }
+    unsigned touching=0;
     for(uint32_t k=0;k<v->point_count;k++) {
         hta_vehicle_point *pt=&v->points[k];if(!pt->wheel)continue;
         float wanted=0,at[3],z;
         place(v,pt->pos,at);
-        if(v->grounded && hta_collision_ground(world,at[0],at[1],at[2]+pt->radius,&z)) {
+        if(hta_collision_ground(world,at[0],at[1],at[2]+pt->radius,&z)) {
             /* The art is smaller than the collision wheel. Allow that
              * difference in addition to the tag's ground depth, so even
              * the lowest wheel can reach terrain under a tilted chassis. */
             float reach=v->ground_depth+fabsf(pt->radius-pt->visual_radius);
-            wanted=clamp(z+pt->visual_radius-at[2],-reach,reach);
+            float gap=at[2]-pt->radius-z;
+            if(gap<=v->ground_depth && gap>=-v->ground_depth) {
+                touching++;
+                wanted=clamp(z+pt->visual_radius-at[2],-reach,reach);
+            }
         }
         pt->travel=wanted;
     }
+    v->traction=touching>=2;
 }
 void hta_vehicles_update(hta_vehicles *v,const hta_collision *world,float throttle,
                          float steer,bool brake,float gravity,float dt)
@@ -355,15 +368,17 @@ void hta_vehicles_update(hta_vehicles *v,const hta_collision *world,float thrott
     for(unsigned step=0;step<steps;step++)for(uint32_t i=0;i<v->count;i++) {
         hta_vehicle *car=&v->cars[i],old=*car;
         bool driven=(int32_t)i==v->driver;
-        if (!driven && car->grounded && car->speed == 0.0f) continue;
+        if (!driven && car->grounded && car->speed == 0.0f &&
+            car->rest_time >= HTA_VEHICLE_SETTLE_TIME) continue;
         float gas=driven?clamp(throttle,-1,1):0;
         float turn=driven?clamp(steer,-1,1):0;
         float target=gas>=0?gas*car->forward:gas*car->reverse;
         float rate=car->accel;
         if(!driven || brake || fabsf(gas)<0.01f || gas*car->speed<0){rate=car->decel;target=0;}
-        if(car->grounded)car->speed=approach(car->speed,target,rate*h);
+        if(car->grounded || car->traction)car->speed=approach(car->speed,target,rate*h);
         car->steering=approach(car->steering,turn<0?-turn*car->turn_left:turn*car->turn_right,car->turn_rate*h);
-        if(car->grounded)car->yaw+=car->speed*tanf(car->steering)/car->wheelbase*h;
+        if(car->grounded || car->traction)
+            car->yaw+=car->speed*tanf(car->steering)/car->wheelbase*h;
         car->pos[0]+=cosf(car->yaw)*car->speed*h;
         car->pos[1]+=sinf(car->yaw)*car->speed*h;
         support(car,&terrain,gravity,h);
@@ -372,6 +387,8 @@ void hta_vehicles_update(hta_vehicles *v,const hta_collision *world,float thrott
             /* Resting still must acquire ground support on the first update. */
             support(car,&terrain,gravity,h);
         }
+        car->rest_time=(!driven && car->grounded && car->speed==0)
+            ? fminf(HTA_VEHICLE_SETTLE_TIME,car->rest_time+h) : 0;
         if(car->circumference>0){
             car->wheel_spin+=car->speed*h/car->circumference*6.2831853f;
             if(fabsf(car->wheel_spin)>6.2831853f)

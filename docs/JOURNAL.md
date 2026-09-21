@@ -9,6 +9,42 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## The Warthog settles and escapes (2026-09-21)
+
+The next phone screenshots showed the spawn Warthog's hull much too high with
+tires hanging below, steering that felt absent on slopes, and a nose-to-nose
+contact with a black Warthog at 0 km/h that would not release. The moving
+shots still read 120 fps.
+
+The parked-height problem was a sleep bug, not a need for a new suspension
+height formula. `hta_vehicles_update` skipped any undriven, grounded jeep
+immediately after its first contact step. At the real spawn it froze at
+`z=0.784`, pitch `-0.017`, and one wheel needed `-0.289` wu of visual travel
+to reach the grass. Continuing the tag-driven support pose for 0.5 seconds
+lets the body follow the four wheel contacts: `z=0.665`, pitch `-0.135`, roll
+`-0.085`, and all four tires travel about `-0.06` wu. The test now checks both
+the body angle and tire distance from the body on the real Trial map.
+
+`grounded` had also been used for steering and throttle. After the prior
+airtime change, the chassis could be slightly above a downslope while the
+wheels were still within the `phys` ground depth, so yaw stopped responding
+at exactly the terrain transitions the owner tried. The support step now
+counts wheel contacts separately: at least two wheels within tagged ground
+depth provide traction and steering while the chassis remains ballistic.
+A synthetic test holds the chassis above a flat floor, proves it is airborne,
+and proves the reachable wheels can still steer it.
+
+Vehicle collision was an unconditional yes/no overlap. If two mass-point
+spheres had already penetrated, every new pose was rejected, including a
+reverse move that would reduce the penetration. Collision now sums overlap
+across the whole pair and allows a move only when that total decreases;
+fresh overlaps and deeper contacts remain blocked. A synthetic two-jeep test
+checks forward contact and reverse escape, and a second test uses the real
+Warthog's 15 mass points for the overlap escape. The exact phone collision
+near HUD `(41.84, -130.23)` still needs retesting.
+
+All 57 verification checks passed, including Android and offscreen render.
+
 ## The Warthog catches air (2026-09-21)
 
 The owner's first phone screenshots showed three things: visible air below the

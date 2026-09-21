@@ -44,6 +44,7 @@ static void rig(hta_vehicles *v)
     hta_vehicle *c=&v->cars[0];c->forward=8.25f;c->reverse=3.6f;c->accel=2.52f;c->decel=9.9f;
     c->turn_left=0.5235988f;c->turn_right=-c->turn_left;c->turn_rate=3.14159265f;
     c->gravity_scale=1;c->wheelbase=1.3f;c->circumference=1;c->grounded=true;c->pos[2]=0.07f;
+    c->body_radius=1.1f;
     c->point_count=4;
     for(int i=0;i<4;i++){
         c->points[i].wheel=true;c->points[i].pos[0]=i<2?0.67f:-0.63f;
@@ -99,6 +100,20 @@ static void synthetic(void)
     }
     CHECK(furthest>6,"jeep drives across a climb and crest");
     CHECK(airborne>5,"fast jeep leaves the ground over a falling crest");
+    hta_collision_free(&col);hta_bsp_free(&m);floor_mesh(&m,false);hta_collision_build(&col,&m);
+    rig(&v);v.cars[0].pos[2]=.2f;v.cars[0].grounded=false;
+    v.cars[0].speed=2;v.cars[0].ground_depth=.23f;
+    run(&v,&col,1,1,false,2,1.f/60);
+    CHECK(!v.cars[0].grounded && v.cars[0].traction && v.cars[0].yaw<0,
+        "suspension contact can steer while chassis follows a free arc");
+    rig(&v);v.count=2;v.cars[1]=v.cars[0];v.cars[1].pos[0]=2.15f;
+    run(&v,&col,-1,0,false,60,1.f/60);
+    CHECK(v.cars[0].pos[0]<-.1f && v.cars[0].speed<0,
+        "reverse frees a jeep whose collision proxies already overlap another jeep");
+    rig(&v);v.count=2;v.cars[1]=v.cars[0];v.cars[1].pos[0]=2.5f;
+    run(&v,&col,1,0,false,120,1.f/60);
+    CHECK(v.cars[0].pos[0]<1 && v.cars[0].speed==0,
+        "driving into another jeep still stops before passing through it");
     /* Composite grids must choose nearest hits and retain material when the
      * extra grid misses; this guards moving vehicles and all existing shots. */
     hta_bsp_mesh extra;floor_mesh(&extra,false);
@@ -133,6 +148,20 @@ static void real_map(const char *path)
         "real per-tick vehicle values converted to seconds");
     CHECK(v.collision.built && v.coll_mesh.index_count>0,"moving collider grid builds");
     CHECK(v.cars[0].seat[1]>0,"driver marker resolves on left side");
+    hta_bsp_mesh flat;floor_mesh(&flat,false);hta_collision flat_col={0};
+    hta_collision_build(&flat_col,&flat);
+    hta_vehicles pair={0};pair.loaded=true;pair.count=2;pair.driver=0;
+    pair.cars[0]=v.cars[1];pair.cars[1]=v.cars[1];
+    for(int i=0;i<2;i++){
+        hta_vehicle *p=&pair.cars[i];p->pos[0]=i?2.15f:0;p->pos[1]=0;p->pos[2]=.07f;
+        p->yaw=p->pitch=p->roll=p->speed=p->fall_speed=p->rise_speed=0;
+        p->grounded=true;p->traction=true;p->rest_time=0;
+        p->first_vertex=p->vertex_count=p->first_coll=p->coll_count=0;
+    }
+    run(&pair,&flat_col,-1,0,false,60,1.f/60);
+    CHECK(pair.cars[0].pos[0]<-.1f && pair.cars[0].speed<0,
+        "real Warthog mass points can back out of an existing vehicle overlap");
+    hta_collision_free(&flat_col);hta_bsp_free(&flat);
     int wheel=-1;
     for(uint32_t i=0;i<v.cars[1].point_count;i++)if(v.cars[1].points[i].wheel){wheel=(int)i;break;}
     CHECK(wheel>=0 && fabsf(v.cars[1].points[wheel].visual_radius-.20f)<.03f,
@@ -145,14 +174,19 @@ static void real_map(const char *path)
         run(&v,&col,0,0,false,60,1.f/60);
         CHECK(v.cars[1].grounded,"spawn-side Warthog settles on real terrain");
         hta_vehicle *car=&v.cars[1];uint32_t vi=car->first_vertex;
+        CHECK(car->rest_time>=HTA_VEHICLE_SETTLE_TIME && car->pitch<-.08f,
+            "parked Warthog keeps settling its body angle before sleeping");
         bool tires_touch=true;
+        bool tires_near_body=true;
         for(uint32_t wi=0;wi<car->point_count;wi++)if(car->points[wi].wheel){float low=INFINITY,gz=0;float bx=0,by=0;
             for(uint32_t j=car->first_vertex;j<car->first_vertex+car->vertex_count;j++)if(v.render_nodes[j]==car->points[wi].node && v.mesh.vertices[j].pos[2]<low){low=v.mesh.vertices[j].pos[2];bx=v.mesh.vertices[j].pos[0];by=v.mesh.vertices[j].pos[1];}
             hta_collision terrain=col;terrain.extra=NULL;
             if(!hta_collision_ground(&terrain,bx,by,low+1,&gz) || fabsf(low-gz)>.025f)
                 tires_touch=false;
+            if(fabsf(car->points[wi].travel)>.12f)tires_near_body=false;
         }
         CHECK(tires_touch,"resting Warthog tires visually reach real terrain");
+        CHECK(tires_near_body,"parked chassis settles near its wheels");
         while(vi<car->first_vertex+car->vertex_count &&
               v.render_nodes[vi]!=car->points[wheel].node)vi++;
         CHECK(vi<car->first_vertex+car->vertex_count,"rendered tire vertices retain their model node");
