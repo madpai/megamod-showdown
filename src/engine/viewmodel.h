@@ -24,6 +24,7 @@ typedef enum {
     HTA_VM_FIRE,
     HTA_VM_RELOAD,
     HTA_VM_MELEE,
+    HTA_VM_THROW,       /* `first-person throw-grenade`, on every weapon */
     HTA_VM_STATE_COUNT
 } hta_vm_state;
 
@@ -69,6 +70,15 @@ typedef struct {
     uint32_t          flash_sprite_count;
     uint32_t          flash_pick;
     uint32_t          flash_rng;
+    /* True for the one update in which the current clip passes the moment
+     * it DOES its thing -- for the throw, when the grenade leaves your
+     * hand. Released on the button press instead it appears out of your
+     * chest before the arm has begun to move.
+     *
+     * Halo has a `key frame index` for this and every throw clip in the
+     * Trial sets it to ZERO, so it has to be a fraction of the clip
+     * instead. See HTA_VM_KEY_FRACTION. */
+    bool              key_frame_hit;
     /* Where the flash marker sits this frame, in the viewmodel's own
      * space. The flamethrower's jet comes out of the same marker its
      * flash hangs off (`spawn fire`), so the caller can emit from it. */

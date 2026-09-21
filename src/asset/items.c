@@ -24,6 +24,12 @@
  * Equipment declares 944 = 776 + 168, and the powerup types that come out
  * are exactly right -- camouflage 3, overshield 2, health 5, grenade 6, and
  * 0 for the ammo powerups -- which is the check. */
+/* Scenario +912, 204 bytes: up to six item collections a block. */
+#define SCN_START_EQUIP     912u
+#define STARTEQ_SIZE        204u
+#define STARTEQ_COLLECTIONS  60u
+#define STARTEQ_MAX_COLL      6u
+
 #define OBJ_MODEL            40u
 #define EQIP_POWERUP_TYPE   776u
 #define EQIP_GRENADE_TYPE   778u
@@ -198,4 +204,48 @@ uint32_t hta_item_pick(const hta_item_spawn *s, uint32_t *rng)
         if (r <= run) return i;
     }
     return s->choice_count - 1u;
+}
+
+uint32_t hta_scenario_starting_weapons(const hta_cache *c, uint32_t *out,
+                                       uint32_t max)
+{
+    if (!c || !out || !max) return 0;
+    int32_t si = hta_cache_find_tag_by_id(c, c->scenario_tag_id);
+    if (si < 0) return 0;
+    hta_tag_entry st;
+    if (!hta_cache_tag(c, (uint32_t)si, &st)) return 0;
+    uint32_t base = 0;
+    if (!hta_cache_ptr_to_offset(c, st.tag_data_ptr, &base)) return 0;
+
+    uint32_t count = 0, ptr = 0, off = 0;
+    if (!hta_read_reflexive(c, base + SCN_START_EQUIP, &count, &ptr)) return 0;
+    if (!count || !hta_cache_ptr_to_offset(c, ptr, &off)) return 0;
+
+    /* The FIRST block. Blood Gulch carries two, and the second is a variant
+     * -- a plasma pistol, flagged -- rather than more of the first. */
+    uint32_t n = 0;
+    for (uint32_t k = 0; k < STARTEQ_MAX_COLL && n < max; k++) {
+        uint32_t itmc = 0;
+        if (!hta_rd_u32(c, off + STARTEQ_COLLECTIONS + 16u * k + 12u, &itmc))
+            continue;
+        if (!itmc || itmc == 0xFFFFFFFFu) continue;
+
+        int32_t ii = hta_cache_find_tag_by_id(c, itmc);
+        if (ii < 0) continue;
+        hta_tag_entry it;
+        if (!hta_cache_tag(c, (uint32_t)ii, &it) || it.indexed) continue;
+        uint32_t ib = 0;
+        if (!hta_cache_ptr_to_offset(c, it.tag_data_ptr, &ib)) continue;
+
+        uint32_t pc = 0, pp = 0, po = 0;
+        if (!hta_read_reflexive(c, ib + ITMC_PERMUTATIONS, &pc, &pp)) continue;
+        if (!pc || !hta_cache_ptr_to_offset(c, pp, &po)) continue;
+
+        /* A starting collection is one weapon, not a draw. */
+        uint32_t item = 0;
+        if (!hta_rd_u32(c, po + ITMCPERM_ITEM + 12u, &item)) continue;
+        if (hta_item_kind_of(c, item, NULL, 0) != HTA_ITEM_WEAPON) continue;
+        out[n++] = item;
+    }
+    return n;
 }

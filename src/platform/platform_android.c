@@ -149,9 +149,19 @@ typedef struct {
     uint8_t  impact_known[33];
 
     /* Every weapon in the cache a player could hold, and which one is up. */
+    /* Every weapon the cache has, kept only so a missing loadout has
+     * something to fall back on. What you are actually CARRYING is `held`. */
     uint32_t weapons[24];
     uint32_t weapon_count;
-    uint32_t weapon_slot;
+    /* Two, because the scenario says two: its player starting profile has a
+     * primary weapon and a secondary and nowhere to put a third, and the
+     * map's starting equipment hands out exactly two collections. `held_slot`
+     * is the one in your hands. */
+    uint32_t held[HTA_CARRY_MAX];
+    uint32_t held_count;
+    uint32_t held_slot;
+    uint32_t start_weapon[HTA_CARRY_MAX];
+    uint32_t start_count;
     bool     hud_swap;
     bool     hud_zoom;
     int      zoom_level;     /* 0 = not zoomed */
@@ -218,6 +228,7 @@ typedef struct {
     uint32_t      pickup_snd_ammo;
     float         powerup_timer;
     hta_item_kind powerup;
+    bool          throwing;      /* the arm is mid-throw-grenade */
 
     hta_ammo ammo;
     float    dry_cooldown;   /* stops an empty trigger clicking every frame */
@@ -626,6 +637,8 @@ static void cycle_zoom(hta_android *s)
 #define HTA_DEATH_LOOK_AT   0.35f   /* up the body from its feet, to the chest */
 #define HTA_DEATH_PULLBACK  1.2f    /* seconds for the camera to get there */
 
+static void equip_weapon(hta_android *s, uint32_t weap_tag_id);
+
 static void respawn(hta_android *s)
 {
     if (!s->spawn_count) return;
@@ -643,6 +656,16 @@ static void respawn(hta_android *s)
     s->cam.pitch = 0.0f;
 
     hta_vitals_reset(&s->vitals);
+    /* You come back with what the map arms you with, not with whatever you
+     * had scavenged. */
+    bool rearm = s->start_count &&
+                 (s->held_count != s->start_count || s->held[0] != s->start_weapon[0]);
+    if (rearm) {
+        s->held_count = s->start_count;
+        for (uint32_t i = 0; i < s->start_count; i++) s->held[i] = s->start_weapon[i];
+        s->held_slot = 0;
+        equip_weapon(s, s->held[0]);
+    }
     /* A fresh magazine and a full reserve, and the weapon comes up unzoomed
      * with its idle pose rather than mid-reload. */
     hta_ammo_init(&s->ammo, &s->weap);
@@ -1066,18 +1089,29 @@ static bool load_map(hta_android *s)
     s->weapon_count = hta_weapon_list_playable(&s->cache, s->weapons,
                                                (uint32_t)(sizeof(s->weapons)/sizeof(s->weapons[0])));
     hta_log("[weapon] %u playable weapon(s) in this cache", s->weapon_count);
-    /* Start on whatever the default picker prefers -- the assault rifle -- and
-     * remember where it sits in the roster so SWAP carries on from there. */
-    if (hta_weapon_load_default(&s->cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL, &s->weap, NULL, err, sizeof(err))) {
-        for (uint32_t i = 0; i < s->weapon_count; i++) {
-            hta_weapon_def probe;
-            if (hta_weapon_load_id(&s->cache, NULL, s->weapons[i], &probe, NULL, NULL, 0) &&
-                strcmp(probe.path, s->weap.path) == 0) { s->weapon_slot = i; break; }
-        }
-        equip_weapon(s, s->weap.path[0] ? s->weapons[s->weapon_slot] : 0);
-    } else {
-        hta_log("[weapon] %s", err);
+    /* What the MAP says you spawn holding: Blood Gulch's starting equipment
+     * names the assault rifle and the pistol, and the campaign map's player
+     * starting profile agrees down to the magazines. Nothing here is
+     * chosen by us. */
+    s->start_count = hta_scenario_starting_weapons(&s->cache, s->start_weapon,
+                                                   HTA_CARRY_MAX);
+    if (!s->start_count && s->weapon_count) {
+        /* A map with no loadout at all still has to arm you. */
+        s->start_weapon[0] = s->weapons[0];
+        s->start_count = 1;
+        hta_log("[weapon] no starting equipment in this map; taking the first");
     }
+    for (uint32_t i = 0; i < s->start_count; i++) {
+        hta_weapon_def probe;
+        if (hta_weapon_load_id(&s->cache, NULL, s->start_weapon[i], &probe,
+                               NULL, NULL, 0))
+            hta_log("[weapon] spawn with %s", probe.path);
+    }
+    s->held_count = s->start_count;
+    for (uint32_t i = 0; i < s->start_count; i++) s->held[i] = s->start_weapon[i];
+    s->held_slot = 0;
+    if (s->held_count) equip_weapon(s, s->held[0]);
+    else hta_log("[weapon] nothing to hold");
     if (hta_sky_load(&s->sky, &s->cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL, err, sizeof(err))) {
         s->have_sky = true;
         hta_log("[assets] sky %u verts / %u submeshes", s->sky.vertex_count, s->sky.submesh_count);
@@ -1946,21 +1980,32 @@ void android_main(struct android_app *app)
                 }
             }
 
-            /* SWAP on a weapon takes it instead of cycling. */
+            /* SWAP on a weapon PICKS IT UP; off one it switches between the
+             * two you are carrying. Halo splits these across two actions and
+             * we have one button, so standing on a gun means you want it. */
             if (state.hud_swap) {
                 int32_t wslot = hta_pickups_at_kind(&state.items, feet,
                                                     HTA_ITEM_WEAPON);
                 const hta_item_choice *w = hta_pickups_item(&state.items, wslot);
-                if (w && w->tag_id != state.weapons[state.weapon_slot]) {
+                bool already = false;
+                for (uint32_t i = 0; w && i < state.held_count; i++)
+                    if (state.held[i] == w->tag_id) already = true;
+                if (w && !already) {
                     state.hud_swap = false;
-                    /* It joins the roster in the slot it replaces, so the
-                     * next SWAP cycles from where you are rather than
-                     * jumping back to whatever you started with. */
-                    state.weapons[state.weapon_slot] = w->tag_id;
+                    if (state.held_count < HTA_CARRY_MAX) {
+                        /* A free hand: take it and hold it. */
+                        state.held_slot = state.held_count;
+                        state.held[state.held_count++] = w->tag_id;
+                    } else {
+                        /* Full: it replaces the one you are holding, which
+                         * is the one you were looking at when you chose. */
+                        state.held[state.held_slot] = w->tag_id;
+                    }
                     equip_weapon(&state, w->tag_id);
                     hta_pickups_take(&state.items, wslot);
                     play_tag(&state, w->pickup_snd, 1.0f);
-                    hta_log("[items] picked up %s", w->path);
+                    hta_log("[items] picked up %s (holding %u)",
+                            w->path, state.held_count);
                 }
             }
 
@@ -2007,9 +2052,9 @@ void android_main(struct android_app *app)
          * anything this frame reads either. */
         if (state.hud_swap) {
             state.hud_swap = false;
-            if (state.weapon_count > 1) {
-                state.weapon_slot = (state.weapon_slot + 1u) % state.weapon_count;
-                equip_weapon(&state, state.weapons[state.weapon_slot]);
+            if (state.held_count > 1) {
+                state.held_slot = (state.held_slot + 1u) % state.held_count;
+                equip_weapon(&state, state.held[state.held_slot]);
             }
         }
 
@@ -2141,11 +2186,34 @@ void android_main(struct android_app *app)
         }
         hta_audio_android_poll(&state.audio);
         hta_viewmodel_update(&state.vm, dt);
-        /* Throw a grenade. It leaves from the eye, forward and a little
-         * up, the way Halo lobs one. */
+        /* Throw a grenade.
+         *
+         * The arm goes first. Every weapon carries a `first-person
+         * throw-grenade` clip of about 1.2 s, and the grenade leaves at the
+         * clip's key frame -- so the button STARTS the throw and the
+         * projectile appears when your hand does. Letting it go on the press
+         * put a grenade out of the player's chest with the weapon still
+         * sitting there, which is what it looked like. */
         if (state.hud_grenade) {
             state.hud_grenade = false;
-            if (state.nades.loaded && state.nade_count > 0 && !swinging) {
+            if (state.nades.loaded && state.nade_count > 0 && !swinging &&
+                !state.throwing && state.ammo.phase != HTA_AMMO_RELOADING) {
+                if (state.vm.loaded && state.vm.clip[HTA_VM_THROW] >= 0) {
+                    hta_viewmodel_play(&state.vm, HTA_VM_THROW);
+                    state.throwing = true;
+                } else {
+                    state.throwing = true;
+                    state.vm.key_frame_hit = true;   /* no clip: go at once */
+                }
+            }
+        }
+        if (state.throwing &&
+            (state.vm.key_frame_hit || state.vm.state != HTA_VM_THROW)) {
+            /* Either the hand reached the release, or the clip was
+             * interrupted -- a throw that is cut short still throws, the
+             * same way Halo will not swallow the grenade. */
+            state.throwing = false;
+            if (state.nades.loaded && state.nade_count > 0) {
                 float fwd[3], up[3];
                 hta_camera_forward(&state.cam, fwd);
                 hta_camera_up(&state.cam, up);

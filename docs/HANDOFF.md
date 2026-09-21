@@ -85,6 +85,90 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## Two weapons, and throwing with your arm (2026-09-21)
+
+Asked: is there a cap on how many weapons you can hold, what do you spawn
+with, and does swapping on the ground work. The tags answer all three, and
+SWAP cycling the whole roster was a debug affordance that had outlived its
+purpose.
+
+### Two, and the tags say so
+
+`ScenarioPlayerStartingProfile` (104, reconciles) has a **`primary weapon`**
+and a **`secondary weapon`** and nowhere to put a third. That is the cap:
+`HTA_CARRY_MAX` is 2 because the data has two fields, not because Halo "feels
+like two".
+
+| | offset |
+| --- | --- |
+| player starting profile | Scenario +840, stride 104 |
+| primary weapon / rounds loaded / reserved | +40 / +56 / +58 |
+| secondary weapon / rounds loaded / reserved | +60 / +76 / +78 |
+| starting frag / plasma grenades | +80 / +81 |
+| starting equipment | Scenario +912, stride 204 |
+| its item collections (up to 6) | +60, 16 apart |
+
+### What you spawn with
+
+**Blood Gulch has ZERO player starting profiles.** In multiplayer the loadout
+belongs to the gametype, and a gametype does not ship inside a map. What it
+does carry is two **`starting equipment`** blocks, and the first names two
+item collections: **the assault rifle and the pistol**.
+
+The campaign map is the proof the offsets are right -- `b30.map` has a real
+profile, `player0_starting_profile`: assault rifle 60/240, pistol 12/72, four
+frags. Exactly Halo's loadout, read straight out.
+
+The second Blood Gulch block is a **variant** (a plasma pistol, flagged), not
+more of the first; taking both would arm you with three.
+
+### The flow
+
+- Spawn holding the AR and the pistol, AR up.
+- **SWAP off an item** switches between the two you are carrying.
+- **SWAP while standing on a weapon** picks it up. A free hand takes it; two
+  full hands means it replaces **the one you are holding**, which is the one
+  you were looking at when you decided.
+- Dying gives you the map's loadout back, not what you had scavenged.
+
+Halo splits "switch weapon" and "pick up" across two actions and the phone
+has one button, so standing on a gun is read as wanting it.
+
+**Consequence worth knowing: the needler and plasma pistol are now
+unreachable.** Blood Gulch does not place either -- the roster had them
+because it listed everything playable, and the map's own item layout is the
+authority now. That is faithful, and it is also a thing to remember before
+wondering where the needler went.
+
+### Still missing
+
+A weapon you swap OFF is gone rather than dropped where you stand. Drawing a
+dropped weapon needs geometry for a model the item mesh was not built with,
+so it wants a small second dynamic mesh holding every weapon model once. The
+headroom in `HTA_GFX_MAX_DYNAMIC` is for that.
+
+## Throwing with your arm
+
+Reported: the grenade "just flies out from my body". It did -- the button
+threw it immediately while the weapon sat still.
+
+**Every weapon carries `first-person throw-grenade`**, 37 to 43 frames, about
+1.2 s, and the plasma weapons carry a `throw-overheated` beside it. The
+button now starts the clip and the grenade leaves when your hand does.
+
+Halo has a **`key frame index`** on every animation for exactly this moment
+-- and **every throw clip in the Trial leaves it at ZERO**. So where the tag
+says nothing, `HTA_VM_KEY_FRACTION` (0.35) is used: a third of the way in,
+where the arm has come back and is coming forward. That fraction is ours and
+is the only invented number in the throw.
+
+`vm->key_frame_hit` is the one-shot, cleared by `hta_viewmodel_play` so a cue
+belongs to the clip that raised it. A throw cut short still throws -- the
+platform watches for the state leaving `HTA_VM_THROW` as well -- because Halo
+will not swallow a grenade you have committed to.
+
+---
+
 ## Pickups (2026-09-21)
 
 Blood Gulch's own item layout, running. Every position, facing, respawn time

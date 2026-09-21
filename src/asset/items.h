@@ -75,6 +75,24 @@ uint32_t hta_scenario_items(const hta_cache *c, hta_item_spawn *out,
  * advanced. Returns an index into `choice`, or 0 when there is nothing. */
 uint32_t hta_item_pick(const hta_item_spawn *s, uint32_t *rng);
 
+/* You carry TWO. That is not a number of ours: the scenario's player
+ * starting profile has a `primary weapon` and a `secondary weapon` and
+ * nowhere to put a third, and the map's starting equipment hands out
+ * exactly two collections. */
+#define HTA_CARRY_MAX 2u
+
+/* What the map starts you holding.
+ *
+ * Blood Gulch has NO player starting profile -- in multiplayer the loadout
+ * belongs to the gametype, which does not ship inside a map -- but it does
+ * carry `starting equipment` (Scenario +912, 204 bytes), and its first block
+ * names two item collections: the assault rifle and the pistol. The campaign
+ * map's profile agrees, down to the magazines: AR 60/240, pistol 12/72.
+ *
+ * Fills `out` with weapon tag ids in order and returns how many. */
+uint32_t hta_scenario_starting_weapons(const hta_cache *c, uint32_t *out,
+                                       uint32_t max);
+
 /* What an item tag is, from its class and path. Exposed because the
  * platform decides what a pickup DOES from this. */
 hta_item_kind hta_item_kind_of(const hta_cache *c, uint32_t tag_id,

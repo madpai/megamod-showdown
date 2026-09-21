@@ -17,12 +17,16 @@
  * the plasma weapons' "misfire-1", so the specific spellings come first.
  * The same goes for reload, where "reload-full" is preferred over
  * "reload-empty" when a weapon has both. */
+/* Where a clip's action lands when its tag does not say. */
+#define HTA_VM_KEY_FRACTION 0.35f
+
 static const char *const CLIP_NAMES[HTA_VM_STATE_COUNT][4] = {
     { "ready",       NULL,           NULL,     NULL },
     { "idle",        NULL,           NULL,     NULL },
     { "fire-1",      "firing",       "fire-2", NULL },
     { "reload-full", "reload-empty", "reload", NULL },
     { "melee",       NULL,           NULL,     NULL },
+    { "throw-grenade", "throw",      NULL,     NULL },
 };
 
 static void free_partial(hta_viewmodel *vm)
@@ -477,6 +481,8 @@ void hta_viewmodel_flash(hta_viewmodel *vm)
 
 void hta_viewmodel_play(hta_viewmodel *vm, hta_vm_state s)
 {
+    /* A cue belongs to the clip that raised it, not to the next one. */
+    if (vm) vm->key_frame_hit = false;
     if (!vm || s >= HTA_VM_STATE_COUNT || vm->clip[s] < 0) return;
     vm->state = s;
     vm->frame = 0.0f;
@@ -602,6 +608,20 @@ void hta_viewmodel_update(hta_viewmodel *vm, float dt)
             if (vm->move_frame > ease) vm->move_frame -= ease;
             else vm->move_frame = 0.0f;
         }
+    }
+
+    /* The moment the clip does its thing. Halo has a `key frame index` for
+     * exactly this, and every throw-grenade clip in the Trial leaves it at
+     * ZERO -- so where the tag says nothing, a third of the way through is
+     * where the arm has come back and is coming forward. Ours, and the only
+     * invented number in the throw. */
+    vm->key_frame_hit = false;
+    {
+        float span = (float)(a->frame_count > 1 ? a->frame_count - 1 : 1);
+        float cue = (a->key_frame > 0 && a->key_frame < (int16_t)a->frame_count)
+                  ? (float)a->key_frame
+                  : span * HTA_VM_KEY_FRACTION;
+        if (prev <= cue && vm->frame > cue) vm->key_frame_hit = true;
     }
 
     if (a->sound_index >= 0 && (uint32_t)a->sound_index < vm->graph.sound_count) {

@@ -167,6 +167,43 @@ int main(int argc, char **argv)
         }
     }
 
+
+    printf("\n[what you spawn holding]\n");
+    {
+        /* Blood Gulch has NO player starting profile -- in multiplayer the
+         * loadout belongs to the gametype, which does not ship inside a
+         * map -- but it does carry `starting equipment`, and its first
+         * block names the assault rifle and the pistol. The campaign map's
+         * profile agrees down to the magazines (AR 60/240, pistol 12/72),
+         * which is what says these offsets are right. */
+        uint32_t w[8];
+        uint32_t k = hta_scenario_starting_weapons(&c, w, 8);
+        printf("  %u weapon(s), carry cap %u\n", k, HTA_CARRY_MAX);
+        CHECK(k == 2u, "the map arms you with two");
+        CHECK(k <= HTA_CARRY_MAX, "which is what you can carry");
+
+        int saw_ar = 0, saw_pistol = 0;
+        for (uint32_t i = 0; i < k; i++) {
+            char path[96];
+            hta_item_kind kind = hta_item_kind_of(&c, w[i], path, sizeof(path));
+            printf("    %s\n", path);
+            CHECK(kind == HTA_ITEM_WEAPON, "  and it is a weapon");
+            if (strstr(path, "assault rifle")) saw_ar = 1;
+            if (strstr(path, "pistol") && !strstr(path, "plasma")) saw_pistol = 1;
+        }
+        CHECK(saw_ar, "an assault rifle");
+        CHECK(saw_pistol, "and a pistol");
+
+        /* The second starting-equipment block is a variant, not more of the
+         * first: taking it too would arm you with three. */
+        CHECK(hta_scenario_starting_weapons(&c, w, 1) == 1u,
+              "asking for one gives one");
+        CHECK(hta_scenario_starting_weapons(&c, NULL, 8) == 0,
+              "nowhere to put them is none");
+        CHECK(hta_scenario_starting_weapons(NULL, w, 8) == 0,
+              "no cache is none");
+    }
+
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }
