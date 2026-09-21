@@ -61,6 +61,11 @@ typedef struct {
     float pos[3], vel[3];
     float age, life;
     float radius0, radius1;   /* Halo grows a particle over its life */
+    /* Settled on the floor: no more physics, no more raycasts. Brass lives
+     * thirty seconds and there can be sixty of it, so a casing that keeps
+     * asking the world where the ground is long after it has landed is the
+     * single most expensive thing in the frame. */
+    bool  at_rest;
     float fade_in, fade_out;  /* seconds */
     /* From the particle's own `pphy`. Gravity is SIGNED: negative falls,
      * positive rises -- a spent casing is -1.0 and plasma residue is

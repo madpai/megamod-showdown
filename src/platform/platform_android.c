@@ -85,7 +85,11 @@ bool hta_probe_fixed_map(uint64_t addr, size_t len)
 
 /* ------------------------------------------------------------------ */
 
-#define HTA_SND_MAX_BANK   24u
+/* Tags, not clips -- see HTA_AUDIO_MAX_CLIPS. Weapon fire, dry-fire, zoom
+ * in and out, one impact per material the map contains, the projectile's
+ * detonation, the grenade's, and a footstep per material: Blood Gulch asks
+ * for around thirty of these, and 24 was not enough to hold them. */
+#define HTA_SND_MAX_BANK   64u
 #define HTA_SND_MAX_PERMS   8u
 
 typedef struct {
@@ -336,7 +340,13 @@ static int bank_get(hta_android *s, uint32_t tag_id)
     if (!tag_id || tag_id == 0xFFFFFFFFu || !s->audio_ok) return -1;
     for (uint32_t i = 0; i < s->bank_count; i++)
         if (s->bank[i].tag_id == tag_id) return (int)i;
-    if (s->bank_count >= HTA_SND_MAX_BANK) return -1;
+    if (s->bank_count >= HTA_SND_MAX_BANK) {
+        /* Never let this starve quietly again: it cost three weapons their
+         * sound and looked like a decoder bug. */
+        hta_log("[audio] sound bank FULL at %u tags; 0x%08X will be silent",
+                s->bank_count, tag_id);
+        return -1;
+    }
 
     char err[HTA_ERRLEN] = {0};
     hta_sound_info info;
@@ -359,7 +369,12 @@ static int bank_get(hta_android *s, uint32_t tag_id)
         }
         uint32_t clip = hta_audio_add_clip(&s->audio, pcm.samples, pcm.frame_count,
                                            pcm.sample_rate, pcm.channels);
-        if (clip == HTA_AUDIO_NO_CLIP) { hta_pcm_free(&pcm); break; }
+        if (clip == HTA_AUDIO_NO_CLIP) {
+            hta_log("[audio] clip table FULL; 0x%08X keeps %u of %u "
+                    "permutation(s)", tag_id, s->bank[idx].count, want);
+            hta_pcm_free(&pcm);
+            break;
+        }
         uint32_t k = s->bank[idx].count++;
         s->bank[idx].clip[k] = clip;
         s->bank[idx].pcm[k] = pcm.samples;   /* the mixer holds this pointer */

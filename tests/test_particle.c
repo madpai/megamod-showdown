@@ -2,6 +2,7 @@
  * every number here is a tag's. */
 #include "engine/particle.h"
 #include "engine/projectile.h"
+#include "engine/player.h"
 #include "asset/cache.h"
 #include "asset/weapon.h"
 #include "asset/effect.h"
@@ -610,6 +611,86 @@ int main(int argc, char **argv)
                    strrchr(w.path, '\\') + 1, fresh, p.type[t].slots);
             CHECK(fresh > 0, "  the gun is still ejecting");
             hta_particles_free(&p);
+        }
+    }
+
+
+    printf("\n[brass settles and stops asking the world questions]\n");
+    {
+        /* A colliding particle raycasts the map every frame it is alive.
+         * Brass lives THIRTY seconds and there can be sixty of it, so a
+         * casing that keeps querying long after it has landed is the most
+         * expensive thing in the frame -- this and the brute-force ray
+         * query together are what took the phone from 120 fps to 14.
+         *
+         * A synthetic floor, because what is being checked is the settling,
+         * not Blood Gulch. */
+        hta_bsp_mesh floor;
+        memset(&floor, 0, sizeof(floor));
+        static hta_vertex fv[4];
+        static uint32_t fi[6] = { 0, 1, 2, 0, 2, 3 };
+        const float span = 40.0f;
+        float corners[4][2] = { {-span,-span}, {span,-span}, {span,span}, {-span,span} };
+        for (int k = 0; k < 4; k++) {
+            fv[k].pos[0] = corners[k][0];
+            fv[k].pos[1] = corners[k][1];
+            fv[k].pos[2] = 0.0f;
+            fv[k].normal[2] = 1.0f;
+        }
+        floor.vertices = fv; floor.vertex_count = 4;
+        floor.indices = fi;  floor.index_count = 6;
+        /* hta_collision_build sizes its grid from the mesh bounds. */
+        for (int k = 0; k < 3; k++) {
+            floor.bounds_min[k] = -span;
+            floor.bounds_max[k] =  span;
+        }
+        hta_collision col2;
+        if (!hta_collision_build(&col2, &floor)) {
+            CHECK(0, "the test floor builds");
+        } else {
+            int settled = 0, tried = 0;
+            for (uint32_t i = 0; i < count; i++) {
+                hta_weapon_def w;
+                if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err)))
+                    continue;
+                hta_particles p;
+                hta_particles_init(&p);
+                uint32_t ej = hta_particles_add_marker(&p, &c, &bm, w.firing_fx_id,
+                                                       "primary ejection");
+                if (ej == HTA_PART_NO_RECIPE ||
+                    !hta_particles_build(&p, err, sizeof(err))) {
+                    hta_particles_free(&p);
+                    continue;
+                }
+                if (!p.recipe[ej].emit[0].collides) { hta_particles_free(&p); continue; }
+                tried++;
+
+                float o[3] = { 0.0f, 0.0f, 2.0f }, dir[3] = { 1.0f, 0.0f, 0.0f };
+                hta_particles_burst(&p, ej, o, dir);
+                float t = 0.0f;
+                int moving = 1;
+                for (int k = 0; k < 1200 && moving; k++) {
+                    hta_particles_update(&p, &col2, NULL, 1.0f / 60.0f);
+                    t += 1.0f / 60.0f;
+                    moving = 0;
+                    for (uint32_t q = 0; q < HTA_PART_MAX; q++)
+                        if (p.live[q].alive && !p.live[q].at_rest) moving = 1;
+                }
+                int at_rest = 0, alive = 0;
+                for (uint32_t q = 0; q < HTA_PART_MAX; q++)
+                    if (p.live[q].alive) { alive++; if (p.live[q].at_rest) at_rest++; }
+                printf("  %-16s quiet after %.2f s (%d of %d landed)\n",
+                       strrchr(w.path, '\\') + 1, (double)t, at_rest, alive);
+                /* It must stop long before its thirty-second life runs out,
+                 * or the saving is imaginary. */
+                CHECK(t < 8.0f, "  it stops simulating well inside its lifespan");
+                if (at_rest) settled++;
+                hta_particles_free(&p);
+            }
+            printf("  %d of %d colliding casings came to rest\n", settled, tried);
+            CHECK(tried > 0, "some weapons eject something that collides");
+            CHECK(settled > 0, "and it lands rather than shivering forever");
+            hta_collision_free(&col2);
         }
     }
 

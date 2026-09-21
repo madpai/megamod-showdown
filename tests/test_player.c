@@ -667,6 +667,78 @@ int main(void)
               "ground query still works after realloc+rebind");
     }
 
+
+    printf("\n[the ray query walks the grid, and agrees with brute force]\n");
+    {
+        /* hta_collision_ray_material used to test every triangle in the
+         * map. That is fine for the handful of rays the player casts and
+         * ruinous at sixty: spent brass collides, lives thirty seconds and
+         * asks for a ray every frame it is alive, which is what took the
+         * phone from 120 fps to 14. It walks the XY grid now.
+         *
+         * The grid walk has to return exactly what the exhaustive search
+         * would, or every bullet, bounce and scorch mark is wrong. Nothing
+         * else in this file would notice, so it is checked here directly
+         * against a brute-force reference. */
+        unsigned seed = 12345u;
+        int agree = 0, differ = 0, hits = 0;
+        for (int i = 0; i < 4000; i++) {
+            float o[3], d[3];
+            for (int k = 0; k < 3; k++) {
+                seed = seed * 1103515245u + 12345u;
+                o[k] = (float)((seed >> 16) % 3800u) / 20.0f;   /* 0..190 */
+                seed = seed * 1103515245u + 12345u;
+                d[k] = (float)((int)((seed >> 16) % 2000u) - 1000) / 1000.0f;
+            }
+            /* The fixture is a 48x48 heightfield of 4-unit cells spanning
+             * roughly +/-6 in z, so this straddles it. */
+            o[2] = o[2] * 0.2f - 19.0f;
+            float dl = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+            if (dl < 1e-3f) continue;
+            for (int k = 0; k < 3; k++) d[k] /= dl;
+            float max_t = (i & 1) ? 0.5f : 400.0f;   /* a particle, or a bullet */
+
+            float t_grid = 0.0f;
+            int got = hta_collision_ray(&col, o, d, max_t, &t_grid, NULL, NULL);
+
+            /* The reference: every triangle, nearest wins. */
+            float t_ref = max_t;
+            int ref = 0;
+            const float EPS = 1e-7f;
+            for (uint32_t t = 0; t < col.tri_count; t++) {
+                const float *v0 = col.verts[col.indices[t*3+0]].pos;
+                const float *v1 = col.verts[col.indices[t*3+1]].pos;
+                const float *v2 = col.verts[col.indices[t*3+2]].pos;
+                float e1[3] = { v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2] };
+                float e2[3] = { v2[0]-v0[0], v2[1]-v0[1], v2[2]-v0[2] };
+                float pv[3] = { d[1]*e2[2]-d[2]*e2[1], d[2]*e2[0]-d[0]*e2[2],
+                                d[0]*e2[1]-d[1]*e2[0] };
+                float det = e1[0]*pv[0] + e1[1]*pv[1] + e1[2]*pv[2];
+                if (det > -EPS && det < EPS) continue;
+                float inv = 1.0f / det;
+                float tv[3] = { o[0]-v0[0], o[1]-v0[1], o[2]-v0[2] };
+                float u = (tv[0]*pv[0] + tv[1]*pv[1] + tv[2]*pv[2]) * inv;
+                if (u < 0.0f || u > 1.0f) continue;
+                float qv[3] = { tv[1]*e1[2]-tv[2]*e1[1], tv[2]*e1[0]-tv[0]*e1[2],
+                                tv[0]*e1[1]-tv[1]*e1[0] };
+                float v = (d[0]*qv[0] + d[1]*qv[1] + d[2]*qv[2]) * inv;
+                if (v < 0.0f || u + v > 1.0f) continue;
+                float tt = (e2[0]*qv[0] + e2[1]*qv[1] + e2[2]*qv[2]) * inv;
+                if (tt <= EPS || tt >= t_ref) continue;
+                t_ref = tt;
+                ref = 1;
+            }
+
+            if (ref) hits++;
+            if (got == ref && (!ref || fabsf(t_grid - t_ref) < 1e-3f)) agree++;
+            else differ++;
+        }
+        printf("  %d rays, %d hit something, %d agree, %d differ\n",
+               agree + differ, hits, agree, differ);
+        CHECK(hits > 200, "the sample actually hits geometry");
+        CHECK(differ == 0, "the grid walk finds the same nearest hit as brute force");
+    }
+
     hta_collision_free(&col);
     CHECK(col.tri_index == NULL, "collision free clears state");
     hta_bsp_free(&mesh);

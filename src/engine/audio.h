@@ -16,7 +16,15 @@
 #include <stdint.h>
 #include <stdatomic.h>
 
-#define HTA_AUDIO_MAX_CLIPS   64
+/* A clip is one PERMUTATION, and Halo's sounds carry several: the assault
+ * rifle's shot has 4, its impacts 5 to 7 each, the plasma rifle's shot 5.
+ * One weapon's full set is twenty-odd clips, so a table of 64 filled after
+ * about two of them -- and once it was full every later sound resolved to
+ * nothing. That is why the sniper, needler and flamethrower went silent
+ * after swapping through the roster. The whole Trial weapon set decodes to
+ * 55 clips and 2.8 MB; 256 leaves room for footsteps, detonations and the
+ * grenade on top of it. */
+#define HTA_AUDIO_MAX_CLIPS  256
 #define HTA_AUDIO_MAX_VOICES  12
 #define HTA_AUDIO_REQ_RING    32   /* power of two */
 

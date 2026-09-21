@@ -85,6 +85,80 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## The frame rate was never fill: it was raycasts (2026-09-20)
+
+The previous build cut particle fill by roughly ten times and the phone still
+read **14 fps** while shooting a wall. It was the wrong suspect. Idle is 120
+fps; the cost is not on the GPU at all.
+
+### hta_collision_ray tested every triangle in the map
+
+`hta_collision_ray_material` brute-forced all 5,940 collision triangles, every
+call. That is fine for the handful of rays the player casts a frame and
+ruinous at sixty: **a colliding particle asks for a ray every frame it is
+alive**, spent brass collides, and brass lives thirty seconds. A floor
+littered with casings was running millions of triangle tests a frame.
+
+The fix is not new machinery -- the XY uniform grid has been there all along,
+built by `hta_collision_build` and used by the height query. The ray walks it
+now, 2D DDA, stopping as soon as the nearest hit so far beats anything the
+next cell could hold.
+
+Measured on the real map, 64 colliding particles:
+
+| | per frame |
+| --- | --- |
+| every triangle (what it did) | **1.867 ms** |
+| grid walk | **0.057 ms** |
+
+33x, and that is a desktop; the phone is the one that was drowning. A 60 wu
+bullet ray is 0.0036 ms.
+
+**`test_player.c` checks the grid walk against a brute-force reference** on
+4000 random rays, short and long -- 861 of them hit, zero disagree. Nothing
+else in the suite would have noticed a wrong answer here, and every bullet,
+bounce and scorch mark depends on it.
+
+### Brass kept asking after it had landed
+
+Gravity adds 0.057 wu/s back every frame, so a casing bouncing at 0.35
+elasticity never truly stops -- it shivers against the floor for the rest of
+its thirty seconds, raycasting all the way. A bounce that leaves it under
+**0.15 wu/s** (about half a metre a second, two frames' worth of falling) now
+marks it `at_rest`: no physics, no ray, still drawn and still ageing out. It
+goes quiet after about 2.2 s.
+
+`PART_REST_SPEED` cannot be made arbitrarily small. Anything below one
+frame's gravity is never reached.
+
+### Three weapons went silent because a table was full
+
+Unrelated, reported in the same message: the sniper, needler and flamethrower
+lost their sound after swapping through the roster.
+
+A clip is one **permutation**, and Halo's sounds carry several -- the rifle's
+shot has 4, its impacts 5 to 7 each, the plasma rifle's shot 5. One weapon's
+set is twenty-odd clips. `HTA_AUDIO_MAX_CLIPS` was **64**, so the table filled
+after about two weapons, `hta_audio_add_clip` started returning
+`HTA_AUDIO_NO_CLIP`, `bank_get` gave up, and everything later was silent. The
+three that broke are simply the ones late in the roster.
+
+The whole Trial weapon set is **21 tags, 55 clips, 2.8 MB** of PCM. Ceilings
+are now 256 clips and 64 bank entries, and **both paths log loudly when they
+fill** -- this looked like a decoder bug for a whole build. `test_weapons.c`
+counts the roster's demand from the tags and fails if it stops fitting.
+
+### If it is still slow
+
+In order of what to suspect:
+
+1. Something else calling `hta_collision_ray` per-entity per-frame.
+2. `HTA_PART_AREA` (12 sq wu) -- the fill budget, genuinely a GPU knob.
+3. The dynamic mesh upload, which is `slot_count` quads a frame whether or
+   not they are alive.
+
+---
+
 ## 18 fps, and brass that hung in the air (2026-09-20)
 
 The owner reported lag and "bullet casings fall in slow motion and are kind

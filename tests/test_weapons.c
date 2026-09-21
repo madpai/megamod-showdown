@@ -11,6 +11,8 @@
 #include "asset/effect.h"
 #include "asset/model.h"
 #include "asset/bsp.h"
+#include "asset/sound.h"
+#include "engine/audio.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -545,6 +547,62 @@ int main(int argc, char **argv)
     }
     CHECK(silent == 1, "exactly one weapon has no firing-effect sound");
     CHECK(loops == 1, "and exactly one continuous weapon");
+
+
+    printf("\n[the sound tables hold the whole roster]\n");
+    {
+        /* A clip is one PERMUTATION, and Halo's sounds carry several: the
+         * rifle's shot has four, its impacts five to seven each. One
+         * weapon's set is twenty-odd clips, so a table of 64 filled after
+         * about two of them -- and once full, every later sound resolved to
+         * nothing. The sniper, needler and flamethrower went silent after
+         * swapping through the roster, which looked like a decoder bug and
+         * was a ceiling.
+         *
+         * Counted from the tags rather than by decoding, so this runs
+         * without sounds.map. */
+        uint32_t seen[256];
+        uint32_t nseen = 0, clips = 0;
+        const uint8_t mats[] = { 1, 2, 8, 12 };   /* what Blood Gulch is made of */
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def w;
+            if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err)))
+                continue;
+            uint32_t ask[16];
+            uint32_t nask = 0;
+            ask[nask++] = hta_effect_first_sound(&c, w.firing_fx_id);
+            ask[nask++] = hta_effect_first_sound(&c, w.empty_fx_id);
+            ask[nask++] = w.zoom_in_snd_id;
+            ask[nask++] = w.zoom_out_snd_id;
+            hta_loop_sound ls;
+            if (hta_object_loop_sound(&c, ids[i], "primary trigger", &ls))
+                ask[nask++] = ls.loop ? ls.loop : ls.start;
+            for (unsigned m = 0; m < sizeof(mats); m++)
+                ask[nask++] = hta_projectile_impact_sound(&c, w.projectile_id,
+                                                          mats[m]);
+            for (uint32_t k = 0; k < nask; k++) {
+                uint32_t id = ask[k];
+                if (!id || id == 0xFFFFFFFFu) continue;
+                int dup = 0;
+                for (uint32_t q = 0; q < nseen; q++) if (seen[q] == id) dup = 1;
+                if (dup || nseen >= 256) continue;
+                seen[nseen++] = id;
+                hta_sound_info info;
+                if (!hta_sound_info_load(&c, id, &info, err, sizeof(err))) continue;
+                uint32_t perms = info.permutations;
+                if (perms > 8u) perms = 8u;    /* what the platform keeps */
+                clips += perms;
+            }
+        }
+        printf("  the roster asks for %u sound tag(s) and %u clip(s)\n",
+               nseen, clips);
+        printf("  the tables hold %u and %u\n",
+               64u /* HTA_SND_MAX_BANK, platform-side */, HTA_AUDIO_MAX_CLIPS);
+        CHECK(nseen > 15, "the roster really does want a lot of sounds");
+        /* Footsteps, detonations and the grenade land on top of these. */
+        CHECK(clips + 32u <= HTA_AUDIO_MAX_CLIPS,
+              "the clip table holds the roster with room to spare");
+    }
 
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

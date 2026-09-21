@@ -8,6 +8,14 @@
 /* Halo's own, and what the player and the projectiles fall at. */
 #define PART_GRAVITY 3.4f
 
+/* Below this a bounced particle is treated as landed, in world units a
+ * second. It cannot be arbitrarily small: gravity adds 3.4/60 = 0.057 wu/s
+ * back every frame, so anything under that is never reached and the casing
+ * shivers against the floor forever. A couple of frames' worth of falling
+ * is the right scale -- 0.15 wu/s is about half a metre a second, and brass
+ * at 0.35 elasticity is below it after four bounces. */
+#define PART_REST_SPEED 0.15f
+
 
 void hta_particles_init(hta_particles *p)
 {
@@ -395,6 +403,10 @@ void hta_particles_update(hta_particles *p, const hta_collision *col,
             q->age += dt;
             if (q->age >= q->life) { q->alive = false; hide_slot(p, slot); continue; }
 
+            /* A settled casing still has to be drawn -- the billboard turns
+             * with the camera -- but it has nowhere left to go. */
+            if (q->at_rest) goto draw;
+
             float damp = 1.0f - q->drag * dt;
             if (damp < 0.0f) damp = 0.0f;
 
@@ -420,6 +432,18 @@ void hta_particles_update(hta_particles *p, const hta_collision *col,
                             q->pos[k] = hit[k] + nrm[k] * 0.01f;
                         }
                         step[0] = step[1] = step[2] = 0.0f;
+                        /* Elasticity is 0.35 on brass, so each bounce keeps
+                         * a third of the speed and the next is smaller
+                         * again. Below a centimetre a second it has landed:
+                         * stop simulating it rather than let it shiver
+                         * against the floor for the rest of its thirty
+                         * seconds, raycasting every frame. */
+                        float sp2 = q->vel[0]*q->vel[0] + q->vel[1]*q->vel[1]
+                                  + q->vel[2]*q->vel[2];
+                        if (sp2 < PART_REST_SPEED * PART_REST_SPEED) {
+                            q->vel[0] = q->vel[1] = q->vel[2] = 0.0f;
+                            q->at_rest = true;
+                        }
                     }
                 }
             }
@@ -432,6 +456,7 @@ void hta_particles_update(hta_particles *p, const hta_collision *col,
              * and drifts up. */
             q->vel[2] += q->gravity * PART_GRAVITY * dt;
 
+        draw:;
             float life = q->age / q->life;
             float radius = q->radius0 + (q->radius1 - q->radius0) * life;
 

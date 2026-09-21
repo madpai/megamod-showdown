@@ -432,6 +432,54 @@ void hta_collision_depenetrate(const hta_collision *c,
     }
 }
 
+/* One triangle against the ray, Moller-Trumbore. Updates the running best. */
+static void ray_tri(const hta_collision *c, uint32_t t,
+                    const float orig[3], const float dir[3],
+                    float *best, int *found, int32_t *best_tri)
+{
+    const float EPS = 1e-7f;
+    const float *v0 = c->verts[c->indices[t * 3 + 0]].pos;
+    const float *v1 = c->verts[c->indices[t * 3 + 1]].pos;
+    const float *v2 = c->verts[c->indices[t * 3 + 2]].pos;
+    float e1[3] = { v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2] };
+    float e2[3] = { v2[0]-v0[0], v2[1]-v0[1], v2[2]-v0[2] };
+    float pvec[3] = {
+        dir[1]*e2[2] - dir[2]*e2[1],
+        dir[2]*e2[0] - dir[0]*e2[2],
+        dir[0]*e2[1] - dir[1]*e2[0]
+    };
+    float det = e1[0]*pvec[0] + e1[1]*pvec[1] + e1[2]*pvec[2];
+    if (det > -EPS && det < EPS) return;
+    float inv = 1.0f / det;
+    float tvec[3] = { orig[0]-v0[0], orig[1]-v0[1], orig[2]-v0[2] };
+    float u = (tvec[0]*pvec[0] + tvec[1]*pvec[1] + tvec[2]*pvec[2]) * inv;
+    if (u < 0.0f || u > 1.0f) return;
+    float qvec[3] = {
+        tvec[1]*e1[2] - tvec[2]*e1[1],
+        tvec[2]*e1[0] - tvec[0]*e1[2],
+        tvec[0]*e1[1] - tvec[1]*e1[0]
+    };
+    float v = (dir[0]*qvec[0] + dir[1]*qvec[1] + dir[2]*qvec[2]) * inv;
+    if (v < 0.0f || u + v > 1.0f) return;
+    float tt = (e2[0]*qvec[0] + e2[1]*qvec[1] + e2[2]*qvec[2]) * inv;
+    if (tt <= EPS || tt >= *best) return;
+    *best = tt;
+    *found = 1;
+    *best_tri = (int32_t)t;
+}
+
+/* Ray against the collision mesh, walking the XY grid the height query has
+ * always used.
+ *
+ * This used to test EVERY triangle in the map, which is fine at a handful of
+ * rays a frame -- the player casts a few -- and ruinous at sixty. Spent brass
+ * collides, lives thirty seconds and asks for a ray each frame it is alive,
+ * so a floor littered with casings was running tens of millions of triangle
+ * tests a frame. That, not fill, was what took the phone from 120 fps to 14.
+ *
+ * A particle's ray is centimetres long and touches one cell. A bullet's
+ * crosses the map and touches a diagonal of them, and the walk stops as soon
+ * as the nearest hit so far is closer than the next cell can possibly be. */
 bool hta_collision_ray_material(const hta_collision *c,
                                 const float orig[3], const float dir[3], float max_t,
                                 float *out_t, float hit[3], float nrm[3],
@@ -443,36 +491,64 @@ bool hta_collision_ray_material(const hta_collision *c,
     int found = 0;
     int32_t best_tri = -1;
     float bn[3] = {0, 0, 1};
-    const float EPS = 1e-7f;
-    for (uint32_t t = 0; t < c->tri_count; t++) {
+
+    if (!c->cell_start || !c->tri_index || c->cell <= 0.0f) {
+        for (uint32_t t = 0; t < c->tri_count; t++)
+            ray_tri(c, t, orig, dir, &best, &found, &best_tri);
+    } else {
+        /* 2D DDA over the grid. A triangle straddling a cell boundary is
+         * listed in both and may be tested twice; that costs a little and
+         * cannot change which hit is nearest. */
+        float px = (orig[0] - c->min[0]) / c->cell;
+        float py = (orig[1] - c->min[1]) / c->cell;
+        int cx = (int)floorf(px), cy = (int)floorf(py);
+        float dx = dir[0] / c->cell, dy = dir[1] / c->cell;
+
+        int stepx = dx > 0.0f ? 1 : (dx < 0.0f ? -1 : 0);
+        int stepy = dy > 0.0f ? 1 : (dy < 0.0f ? -1 : 0);
+        /* Distance along the ray to the next boundary in each axis, and how
+         * far one whole cell is. INFINITY where the ray does not move in
+         * that axis, which is what makes a straight-down ray work. */
+        float tmaxx = INFINITY, tdx = INFINITY;
+        float tmaxy = INFINITY, tdy = INFINITY;
+        if (stepx) {
+            float next = (float)(cx + (stepx > 0 ? 1 : 0));
+            tmaxx = (next - px) / dx;
+            tdx = (float)stepx / dx;
+        }
+        if (stepy) {
+            float next = (float)(cy + (stepy > 0 ? 1 : 0));
+            tmaxy = (next - py) / dy;
+            tdy = (float)stepy / dy;
+        }
+
+        float t_enter = 0.0f;
+        for (uint32_t guard = 0; guard < 4096u; guard++) {
+            if (cx >= 0 && cy >= 0 && cx < (int)c->nx && cy < (int)c->ny) {
+                uint32_t ci = (uint32_t)cy * c->nx + (uint32_t)cx;
+                uint32_t k0 = c->cell_start[ci], k1 = c->cell_start[ci + 1u];
+                for (uint32_t k = k0; k < k1; k++)
+                    ray_tri(c, c->tri_index[k], orig, dir, &best, &found, &best_tri);
+            }
+            /* Nothing further along the ray can beat what we already have. */
+            if (found && best <= t_enter) break;
+            float t_next = tmaxx < tmaxy ? tmaxx : tmaxy;
+            if (t_next > max_t || t_next == INFINITY) break;
+            if (tmaxx < tmaxy) { cx += stepx; t_enter = tmaxx; tmaxx += tdx; }
+            else               { cy += stepy; t_enter = tmaxy; tmaxy += tdy; }
+            /* Once outside the grid in the direction of travel, stop. */
+            if ((cx < 0 && stepx <= 0) || (cx >= (int)c->nx && stepx >= 0)) break;
+            if ((cy < 0 && stepy <= 0) || (cy >= (int)c->ny && stepy >= 0)) break;
+        }
+    }
+
+    if (found && best_tri >= 0) {
+        uint32_t t = (uint32_t)best_tri;
         const float *v0 = c->verts[c->indices[t * 3 + 0]].pos;
         const float *v1 = c->verts[c->indices[t * 3 + 1]].pos;
         const float *v2 = c->verts[c->indices[t * 3 + 2]].pos;
         float e1[3] = { v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2] };
         float e2[3] = { v2[0]-v0[0], v2[1]-v0[1], v2[2]-v0[2] };
-        float pvec[3] = {
-            dir[1]*e2[2] - dir[2]*e2[1],
-            dir[2]*e2[0] - dir[0]*e2[2],
-            dir[0]*e2[1] - dir[1]*e2[0]
-        };
-        float det = e1[0]*pvec[0] + e1[1]*pvec[1] + e1[2]*pvec[2];
-        if (det > -EPS && det < EPS) continue;
-        float inv = 1.0f / det;
-        float tvec[3] = { orig[0]-v0[0], orig[1]-v0[1], orig[2]-v0[2] };
-        float u = (tvec[0]*pvec[0] + tvec[1]*pvec[1] + tvec[2]*pvec[2]) * inv;
-        if (u < 0.0f || u > 1.0f) continue;
-        float qvec[3] = {
-            tvec[1]*e1[2] - tvec[2]*e1[1],
-            tvec[2]*e1[0] - tvec[0]*e1[2],
-            tvec[0]*e1[1] - tvec[1]*e1[0]
-        };
-        float v = (dir[0]*qvec[0] + dir[1]*qvec[1] + dir[2]*qvec[2]) * inv;
-        if (v < 0.0f || u + v > 1.0f) continue;
-        float tt = (e2[0]*qvec[0] + e2[1]*qvec[1] + e2[2]*qvec[2]) * inv;
-        if (tt <= EPS || tt >= best) continue;
-        best = tt;
-        found = 1;
-        best_tri = (int32_t)t;
         float nx = e1[1]*e2[2] - e1[2]*e2[1];
         float ny = e1[2]*e2[0] - e1[0]*e2[2];
         float nz = e1[0]*e2[1] - e1[1]*e2[0];
