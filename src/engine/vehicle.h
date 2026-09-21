@@ -18,6 +18,9 @@
 #define HTA_VEHICLE_EXIT_SPEED 0.5f
 #define HTA_VEHICLE_ADHESION_SPEED_FRACTION 0.25f
 #define HTA_VEHICLE_SETTLE_TIME 0.5f
+/* No collision restitution or yaw damping is carried by the Trial tags. */
+#define HTA_VEHICLE_RESTITUTION 0.20f
+#define HTA_VEHICLE_YAW_DAMP 2.0f
 
 typedef struct {
     float pos[3], radius, visual_radius, travel;
@@ -27,10 +30,11 @@ typedef struct {
 typedef struct {
     uint32_t tag_id, model_id, placement;
     float forward, reverse, accel, decel, turn_left, turn_right, turn_rate;
-    float circumference, gravity_scale, ground_depth;
+    float circumference, gravity_scale, ground_depth, ground_friction, mass, yaw_inertia;
+    float center_of_mass[3];
     float seat[3], pos[3], yaw, pitch, roll, speed, steering, fall_speed, rise_speed;
-    float rest_time;
-    float wheel_spin;
+    float rest_time, lateral_vel[2], yaw_rate;
+    float wheel_spin, wheel_speed;
     hta_vehicle_point points[HTA_VEHICLE_MASS_POINTS];
     uint32_t point_count;
     float wheelbase, body_radius;

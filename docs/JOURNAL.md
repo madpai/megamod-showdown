@@ -9,6 +9,44 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## The Warthog rebounds (2026-09-21)
+
+The owner drove into the narrow rock passage around HUD `(74.83, -78.56)`.
+The jeep was wedged at 0 km/h: collision simply restored the previous pose
+and zeroed scalar speed, so there was no rebound, lateral motion or tire spin
+under power. Steering in a wedge could not change its pose either.
+
+The `phys` tag supplies **mass 5000**, centre of mass `(0.1069, 0, 0.3218)`
+and yaw moment **1990.22**. The collision step now uses them for a planar
+normal impulse, including the lever arm at the actual colliding mass point.
+A wall reflects part of the approach; a second Warthog receives some of the
+impulse and wakes from rest. The perpendicular component becomes lateral
+velocity, which is reduced by the vehicle's tagged deceleration and ground
+friction. Contact yaw velocity decays separately. Normal restitution 0.20
+and yaw damping 2/s are invented, since no crash restitution or yaw-damping
+law is present in the tags. There is still no full 3-D rigid-body suspension,
+rollover or damage response.
+
+Wheel speed is now independent of chassis speed. Under throttle the tires
+accelerate toward the tag's target speed even if the body cannot translate;
+braking or releasing the throttle winds them back down. A blocked jeep also
+gets yaw torque from its tagged drive acceleration acting through the turned
+front axle and the tagged yaw moment. A safe candidate rotation pivots around
+the collision point, rather than the chassis centre. Structure overlap is
+scored before and after a move, allowing a move that reduces existing wall
+penetration. Fresh or deeper penetration remains blocked. On a synthetic
+one-wall wedge, three seconds of powered steering changes yaw by about 0.15
+rad and shifts the chassis 0.1 wu sideways; a canted jeep also traverses a
+1.7-wu-wide synthetic corridor. The owner's exact tunnel still needs phone
+testing, and a physically too-narrow gap can remain impassable.
+
+The tag walk caught a previous mistake: `phys+32` is **ground friction 0.23**,
+not ground depth. Ground depth is **phys+36 = 0.15**. Earlier releases used
+0.23 for suspension reach; the parser and a real-map assertion now pin both
+fields. The collision path also does its second depenetration pass only when
+there is contact, keeping a 4-second host drive at **1.52 ms/update**. All
+57 verification checks passed, including the Android APK build.
+
 ## The Warthog settles and escapes (2026-09-21)
 
 The next phone screenshots showed the spawn Warthog's hull much too high with
@@ -61,8 +99,9 @@ their center. A rigid model held at the physics wheel's contact height leaves
 now retains each rendered vertex's node for vehicle instances. `pose_mesh`
 rotates those vertices around their mass point from the tagged wheel
 circumference, steers the front pair, and extends each tire toward its own
-terrain contact. The visual reach is the tag's `ground depth` plus the measured
-art/physics radius difference. On the real spawn-side Warthog all four tire
+terrain contact. The visual reach used the value then read as `ground depth`
+plus the measured art/physics radius difference (the field correction is in
+the entry above). On the real spawn-side Warthog all four tire
 bottoms now lie within 0.025 wu of the terrain; this is checked with the real
 map and the static terrain grid, so the vehicle cannot falsely count as its
 own ground.
@@ -71,7 +110,7 @@ The old support code snapped the chassis down to any contact within 0.04 wu
 every 120 Hz step. At full speed that can follow an indefinitely descending
 slope. It now follows gravity alone above one quarter of the vehicle's tagged
 forward speed, carrying its uphill vertical speed over a crest. At lower
-speed it may use the physics tag's 0.23 wu `ground depth` to stay planted on
+speed it used 0.23 wu then misread as `ground depth` to stay planted on
 rough contacts. Without this slow contact path, the real spawn-side jeep
 briefly lost ground, reached only 0.84 wu/s after a full second of throttle,
 and failed the existing drive test. A synthetic rising and falling crest now

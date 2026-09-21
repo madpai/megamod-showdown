@@ -38,12 +38,27 @@ static void crest_mesh(hta_bsp_mesh *m)
     m->bounds_min[1]=-10;m->bounds_max[1]=10;
     m->bounds_min[2]=-2.4f;m->bounds_max[2]=.8f;
 }
+static void corridor_mesh(hta_bsp_mesh *m)
+{
+    floor_mesh(m,false);
+    m->vertices=realloc(m->vertices,12*sizeof(*m->vertices));
+    m->indices=realloc(m->indices,18*sizeof(*m->indices));
+    m->tri_material=realloc(m->tri_material,6);
+    memset(m->tri_material+2,0,4);
+    const float wall[8][3]={
+        {-10,-.85f,0},{10,-.85f,0},{10,-.85f,5},{-10,-.85f,5},
+        {-10,.85f,0},{10,.85f,0},{10,.85f,5},{-10,.85f,5}};
+    for(int i=0;i<8;i++)memcpy(m->vertices[4+i].pos,wall[i],sizeof(wall[i]));
+    const uint32_t ix[12]={4,5,6,4,6,7,8,9,10,8,10,11};
+    memcpy(m->indices+6,ix,sizeof(ix));m->vertex_count=12;m->index_count=18;
+}
 static void rig(hta_vehicles *v)
 {
     memset(v,0,sizeof(*v));v->loaded=true;v->count=1;v->driver=0;
     hta_vehicle *c=&v->cars[0];c->forward=8.25f;c->reverse=3.6f;c->accel=2.52f;c->decel=9.9f;
     c->turn_left=0.5235988f;c->turn_right=-c->turn_left;c->turn_rate=3.14159265f;
     c->gravity_scale=1;c->wheelbase=1.3f;c->circumference=1;c->grounded=true;c->pos[2]=0.07f;
+    c->mass=5000;c->yaw_inertia=1990;c->ground_friction=.23f;c->ground_depth=.15f;
     c->body_radius=1.1f;
     c->point_count=4;
     for(int i=0;i<4;i++){
@@ -86,10 +101,33 @@ static void synthetic(void)
     CHECK(p.on_ground && fabsf(p.pos[2])<.01f,"exit starts on ground");
     hta_collision_free(&col);hta_bsp_free(&m);floor_mesh(&m,true);hta_collision_build(&col,&m);
     rig(&v);run(&v,&col,1,0,false,600,1.f/60);
-    CHECK(v.cars[0].pos[0]<9.2f && v.cars[0].speed==0,"wheel/body volume stops before a wall");
+    CHECK(v.cars[0].pos[0]<9.2f && fabsf(v.cars[0].speed)<1,
+        "wheel/body volume stops before a wall");
+    CHECK(v.cars[0].wheel_speed>5,
+        "powered tires keep spinning against a wall while the chassis barely moves");
     rig(&v);v.cars[0].speed=8.25f;v.cars[0].pos[0]=8.8f;
+    bool bounced=false;
+    for(int q=0;q<8;q++){
+        run(&v,&col,1,0,false,1,1.f/120);
+        if(v.cars[0].speed<-.5f)bounced=true;
+    }
+    CHECK(bounced,"a fast wall hit produces a short rebound instead of zeroing speed");
     run(&v,&col,1,0,false,1,1.f); /* long stall is bounded */
     CHECK(v.cars[0].pos[0]<9.2f,"long frame does not tunnel through wall");
+    rig(&v);v.cars[0].pos[0]=9.07f;
+    run(&v,&col,1,1,false,180,1.f/60);
+    CHECK(v.cars[0].yaw<-.1f && v.cars[0].pos[1]>.08f && v.cars[0].wheel_speed>5,
+        "powered steering pivots a blocked jeep around its contact");
+    rig(&v);v.cars[0].pos[0]=8.5f;v.cars[0].pos[1]=-3;v.cars[0].yaw=.7854f;
+    v.cars[0].speed=6;v.cars[0].wheel_speed=6;
+    run(&v,&col,1,0,false,120,1.f/60);
+    CHECK(v.cars[0].pos[0]<9.2f && v.cars[0].pos[1]>0 && fabsf(v.cars[0].speed)>3,
+        "a glancing wall impact deflects the jeep without killing its momentum");
+    hta_collision_free(&col);hta_bsp_free(&m);corridor_mesh(&m);hta_collision_build(&col,&m);
+    rig(&v);v.cars[0].yaw=.35f;
+    run(&v,&col,1,1,false,180,1.f/60);
+    CHECK(v.cars[0].pos[0]>1 && fabsf(v.cars[0].pos[1])<.5f,
+        "powered steering works a canted jeep through a narrow corridor");
     hta_collision_free(&col);hta_bsp_free(&m);crest_mesh(&m);hta_collision_build(&col,&m);
     rig(&v);v.cars[0].pos[0]=-3;v.cars[0].speed=8.25f;v.cars[0].ground_depth=.23f;
     int airborne=0;float furthest=-3;
@@ -112,8 +150,8 @@ static void synthetic(void)
         "reverse frees a jeep whose collision proxies already overlap another jeep");
     rig(&v);v.count=2;v.cars[1]=v.cars[0];v.cars[1].pos[0]=2.5f;
     run(&v,&col,1,0,false,120,1.f/60);
-    CHECK(v.cars[0].pos[0]<1 && v.cars[0].speed==0,
-        "driving into another jeep still stops before passing through it");
+    CHECK(v.cars[0].pos[0]<1 && v.cars[1].pos[0]>2.52f,
+        "vehicle impulse transfers motion without letting jeeps pass through");
     /* Composite grids must choose nearest hits and retain material when the
      * extra grid misses; this guards moving vehicles and all existing shots. */
     hta_bsp_mesh extra;floor_mesh(&extra,false);
@@ -146,6 +184,10 @@ static void real_map(const char *path)
     CHECK(v.count==12,"all twelve standard and rocket Warthog placements move");
     CHECK(fabsf(v.cars[0].forward-8.25f)<.001f && fabsf(v.cars[0].accel-2.52f)<.001f,
         "real per-tick vehicle values converted to seconds");
+    CHECK(fabsf(v.cars[0].ground_depth-.15f)<.001f &&
+          fabsf(v.cars[0].ground_friction-.23f)<.001f &&
+          fabsf(v.cars[0].mass-5000)<1 && fabsf(v.cars[0].yaw_inertia-1990.22f)<.1f,
+        "real suspension depth, friction, mass and yaw inertia use distinct phys fields");
     CHECK(v.collision.built && v.coll_mesh.index_count>0,"moving collider grid builds");
     CHECK(v.cars[0].seat[1]>0,"driver marker resolves on left side");
     hta_bsp_mesh flat;floor_mesh(&flat,false);hta_collision flat_col={0};

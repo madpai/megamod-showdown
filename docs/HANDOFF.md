@@ -97,33 +97,30 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Release: "The Warthog settles and escapes" (2026-09-21).**
+> **Release: "The Warthog rebounds" (2026-09-21).**
 >
-> 1. **Look at a parked Warthog before entering.** At the spawn near
->    **100.60, -144.57**, the body should sit near its tires. In the last
->    screenshot the hull was high and the wheels hung below it because parked
->    cars stopped settling after one physics step. Wait a second after load
->    and check the side view again.
-> 2. **Turn across sloped ground.** The suspension can now provide steering
->    while the chassis follows a short free arc close to the ground. Try the
->    same slopes that felt impossible to turn into; send the HUD coordinate
->    and direction faced if steering still disappears.
-> 3. **Bump another vehicle and reverse.** The last stuck screenshot was near
->    **41.84, -130.23**. A collision should stop forward motion, then reverse
->    should separate the two jeeps even if their collision proxies overlap.
->    Retest against the parked black Warthog shown there.
-> 4. **Watch wheel motion and airtime.** Tires should spin and steer without
->    hanging far below the body. A fast drive across a crest should still
->    lift the jeep, and steering should fade only when the tires are truly
->    clear of the ground. The tagged top speed remains 90 km/h.
-> 5. **Watch fps.** The phone screenshots while driving have read 120 fps.
->    Report any repeatable drop on hills or during a collision.
+> 1. **Hit a wall at moderate speed.** The jeep should recoil briefly or
+>    deflect along a glancing surface instead of snapping to 0 km/h. It should
+>    lose energy quickly; this is a 2-D collision impulse, not a vehicle flip.
+> 2. **Hold throttle while blocked.** The speedometer may read 0 while the
+>    tires keep spinning. Turn the stick left and right: engine force at the
+>    front axle now applies yaw torque and can pivot the jeep around a contact
+>    if there is room. Try the narrow passage in the screenshot at **74.83,
+>    -78.56**. A genuinely too-narrow passage can still trap the body; reverse
+>    should help it back out.
+> 3. **Bump the parked black Warthog** near **41.84, -130.23**. It should move
+>    a little from the hit, with some recoil on your jeep. The two bodies must
+>    remain separate and reversing must still work.
+> 4. **Watch handling and fps.** Sloped-ground steering, the parked body
+>    height, wheel placement and fast-crest airtime should still behave as in
+>    the previous build. Moving screenshots have read about 120 fps; report a
+>    repeatable drop after a collision.
 >
-> All 57 verification checks passed. The real-map spawn Warthog now settles
-> to a body pitch near -0.135 rad, with all four visual tire travels about
-> -0.06 wu rather than one extending -0.29 wu. Synthetic and real Warthog
-> overlap tests back out while forward collision still blocks. Phone
-> confirmation pending. No passenger or turret seats, vehicle damage or flip.
+> All 57 verification checks passed. Host collision tests cover rebound,
+> glancing deflection, tire spin against a wall, powered pivot, a narrow
+> corridor, and momentum transfer between jeeps. Host driving still costs
+> about 1.52 ms/update. Phone confirmation pending. No passenger or turret
+> seats, vehicle damage or flip.
 
 ---
 
@@ -178,7 +175,10 @@ camera, DRIVE/EXIT/BRAKE touch labels and a km/h speedometer. The moving hull
 is solid to bullets, grenades, footsteps and the player. Device confirmation
 pending for the latest wheel and airtime changes. The tire meshes spin and
 steer by model node and travel down to meet terrain. The chassis can leave
-the ground over a crest.
+the ground over a crest. Wall and vehicle contacts now exchange a 2-D impulse
+using the `phys` mass, centre of mass and yaw inertia; throttle keeps spinning
+the tires under load and can pivot a blocked jeep. Phone confirmation pending
+for this collision response.
 
 **Placed model textures.** Model UV scales are restored from `mod2+48/+52`;
 opaque placed `shader_model` surfaces use scene lighting. This fixes the
@@ -214,7 +214,7 @@ remain a rendering gap; phone confirmation of this fix is pending.
 | Motion tracker | Art and behaviour readable (`unhi` 620/724, `hud_globals` range and scale) but placement is not in the tag, and nothing moves to track. Deferred three times. |
 | No hit sound on the body | `weapons\*\effects\impact cyborg shield` is in the cache and is the right thing to reach for. |
 | The bot's rifle is hardcoded | Should be whatever it is carrying, once it carries anything. |
-| A blocked jeep stops dead | No wall-sliding. Driving into the canyon wall wedges you; reverse frees it. Glancing blows should deflect, not halt. Vehicle overlaps now allow a separating reverse move; phone confirmation pending. |
+| Vehicle collision remains planar | Wall and jeep contacts rebound, deflect and apply yaw torque, but there is no full 3-D rigid body or flip. A truly too-narrow passage can still trap the Warthog; reverse or exit if safe. |
 | Driving re-poses the whole fleet | About 1.5 ms/frame on the host, mostly rebuilding all 12 jeeps' shared collision grid. Eleven are parked. Per-vehicle grids is the fix if the phone shows a repeatable fps drop. |
 | Vehicles take no damage | You cannot destroy or flip a Warthog, and it does not hurt what it hits. |
 | Only 1 dynamic mesh slot left | The vehicle fleet took one; 7 of `HTA_GFX_MAX_DYNAMIC`'s 8 are now in use, and dropped weapons still want one. |
@@ -360,6 +360,8 @@ wrong, this list is the first place to look — they are all one constant.
 | `HTA_VEHICLE_EXIT_SPEED` | 0.5 wu/s | below this a jeep counts as stopped, for entering and exiting |
 | `HTA_VEHICLE_ADHESION_SPEED_FRACTION` | 0.25 of tagged forward speed | below this, the `phys` ground depth can keep the chassis in contact over rough terrain; above it, the jeep can fly off a crest |
 | `HTA_VEHICLE_SETTLE_TIME` | 0.5 s | time an undriven jeep keeps posing its chassis on terrain before sleeping |
+| `HTA_VEHICLE_RESTITUTION` | 0.20 | normal-velocity rebound on wall and jeep contacts; no crash restitution is tagged |
+| `HTA_VEHICLE_YAW_DAMP` | 2.0 /s | decay of collision-induced yaw velocity; no tagged yaw damping law |
 | `HTA_VEHICLE_STEP` | 1/120 s | fixed physics substep, so frame rate cannot change handling |
 | `HTA_VEHICLE_CLEARANCE` | 0.04 wu | how far a mass point may be pushed before it counts as blocked |
 | `HTA_VEHICLE_MAX_SLOPE` | 0.75 rad | cap on the pitch/roll the wheels may pose the body to (43°) |

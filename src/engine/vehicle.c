@@ -62,8 +62,15 @@ bool hta_vehicle_read(hta_vehicle *v, const hta_cache *c, uint32_t tag)
     if(!tag_offset(c,pid,HTA_FOURCC('p','h','y','s'),&po))return false;
     hta_rd_f32(c,po+28,&v->gravity_scale);
     if(!isfinite(v->gravity_scale) || v->gravity_scale<=0)v->gravity_scale=1;
-    hta_rd_f32(c,po+32,&v->ground_depth);
+    hta_rd_f32(c,po+36,&v->ground_depth);
     if(!isfinite(v->ground_depth) || v->ground_depth<=0)v->ground_depth=0;
+    hta_rd_f32(c,po+32,&v->ground_friction);
+    if(!isfinite(v->ground_friction) || v->ground_friction<0)v->ground_friction=0;
+    hta_rd_f32(c,po+8,&v->mass);
+    hta_rd_f32(c,po+88,&v->yaw_inertia);
+    for(int k=0;k<3;k++)hta_rd_f32(c,po+12+k*4,&v->center_of_mass[k]);
+    if(!isfinite(v->mass) || v->mass<=0 || !isfinite(v->yaw_inertia) ||
+       v->yaw_inertia<=0)return false;
     if(!array(c,po+116,&count,&arr) || count>HTA_VEHICLE_MASS_POINTS)return false;
     float front=-INFINITY,back=INFINITY; uint32_t wheels=0;
     for(uint32_t i=0;i<count;i++) {
@@ -208,7 +215,9 @@ int32_t hta_vehicles_near(const hta_vehicles *v,const hta_collision *world,const
     float best=HTA_VEHICLE_ENTER_REACH;int32_t result=-1;
     hta_collision terrain={0};if(world){terrain=*world;terrain.extra=NULL;}
     for(uint32_t i=0;i<v->count;i++) {
-        const hta_vehicle *car=&v->cars[i];if(fabsf(car->speed)>HTA_VEHICLE_EXIT_SPEED)continue;
+        const hta_vehicle *car=&v->cars[i];
+        if(hypotf(car->speed,hypotf(car->lateral_vel[0],car->lateral_vel[1]))>
+           HTA_VEHICLE_EXIT_SPEED)continue;
         float seat[3];place(car,car->seat,seat);
         float d[3]={seat[0]-feet[0],seat[1]-feet[1],seat[2]-feet[2]-0.35f};
         float dist=sqrtf(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);
@@ -231,7 +240,8 @@ bool hta_vehicles_exit(hta_vehicles *v,const hta_collision *world,hta_player *p,
 {
     if(!v || v->driver<0 || !world || !p || !cam)return false;
     hta_vehicle *car=&v->cars[v->driver];
-    if(fabsf(car->speed)>HTA_VEHICLE_EXIT_SPEED || !car->grounded)return false;
+    if(hypotf(car->speed,hypotf(car->lateral_vel[0],car->lateral_vel[1]))>
+       HTA_VEHICLE_EXIT_SPEED || fabsf(car->yaw_rate)>.2f || !car->grounded)return false;
     const float candidates[4][3]={{0,1.1f,0.3f},{0,-1.1f,0.3f},{-1.5f,0,0.3f},{1.5f,0,0.3f}};
     for(int i=0;i<4;i++) {
         float at[3],z;place(car,candidates[i],at);
@@ -254,28 +264,55 @@ bool hta_vehicles_exit(hta_vehicles *v,const hta_collision *world,hta_player *p,
         p->on_ground=true;p->landed=false;p->eye_height=p->phys.cam_stand;p->crouch_t=0;
         cam->yaw=car->yaw+v->look_yaw;cam->pitch=0;
         memcpy(cam->pos,p->pos,sizeof(p->pos));cam->pos[2]+=p->eye_height;
-        car->speed=0;v->driver=-1;return true;
+        car->speed=0;car->lateral_vel[0]=car->lateral_vel[1]=0;
+        car->yaw_rate=0;v->driver=-1;return true;
     }
     return false;
 }
 
-static bool blocked(const hta_vehicles *fleet,uint32_t index,const hta_vehicle *next,
-                      const hta_vehicle *old,const hta_collision *world)
+typedef struct {
+    float normal[2], point[3], other_point[3];
+    int32_t other; /* -1 for fixed terrain */
+} hta_vehicle_hit;
+static void hit_normal(hta_vehicle_hit *hit,float x,float y)
 {
-    float old_overlap=0,new_overlap=0;
+    float len=hypotf(x,y);
+    hit->normal[0]=len>1e-6f ? x/len : -1;
+    hit->normal[1]=len>1e-6f ? y/len : 0;
+}
+static bool blocked(const hta_vehicles *fleet,uint32_t index,const hta_vehicle *next,
+                    const hta_vehicle *old,const hta_collision *world,
+                    hta_vehicle_hit *hit)
+{
+    float old_overlap=0,new_overlap=0,deepest=0;
+    float old_static=0,new_static=0,deepest_static=0;
+    bool ray_hit=false;
+    hta_vehicle_hit fixed={.other=-1};
+    hta_vehicle_hit pair={.other=-1};
     for(uint32_t k=0;k<next->point_count;k++) {
         const hta_vehicle_point *pt=&next->points[k];float at[3],prev[3];
         place(next,pt->pos,at);place(old,pt->pos,prev);
         float x=at[0],y=at[1];
         hta_collision_depenetrate(world,&x,&y,at[2]-pt->radius+HTA_VEHICLE_CLEARANCE,
                                   pt->radius*2,pt->radius);
-        if(hypotf(x-at[0],y-at[1])>HTA_VEHICLE_CLEARANCE)return true;
+        float push=hypotf(x-at[0],y-at[1]);
+        if(push>HTA_VEHICLE_CLEARANCE){
+            float pen=push-HTA_VEHICLE_CLEARANCE;new_static+=pen;
+            if(pen>deepest_static){deepest_static=pen;
+                memcpy(fixed.point,at,sizeof(at));
+                hit_normal(&fixed,x-at[0],y-at[1]);}
+        }
         float d[3]={at[0]-prev[0],at[1]-prev[1],at[2]-prev[2]};
         /* Wheel centres follow the ground by design. Sweeping their centres
          * into a rising floor can report a hit before support lifts the body
          * onto it, making a driveable hill act like a wall. The wheel's
          * horizontal volume above still checks actual walls. */
-        if(!pt->wheel && hta_collision_ray(world,prev,d,1,NULL,NULL,NULL))return true;
+        float normal[3];
+        if(!pt->wheel && hta_collision_ray(world,prev,d,1,NULL,NULL,normal)){
+            ray_hit=true;
+            if(!deepest_static){memcpy(fixed.point,at,sizeof(at));
+                hit_normal(&fixed,normal[0],normal[1]);}
+        }
         for(uint32_t j=0;j<fleet->count;j++) {
             if(j==index)continue;
             const hta_vehicle *other=&fleet->cars[j];
@@ -286,7 +323,13 @@ static bool blocked(const hta_vehicles *fleet,uint32_t index,const hta_vehicle *
                 float dx=at[0]-b[0],dy=at[1]-b[1],dz=at[2]-b[2];
                 float r=pt->radius+other->points[q].radius;
                 float next_d2=dx*dx+dy*dy+dz*dz;
-                if(next_d2<r*r)new_overlap+=r*r-next_d2;
+                if(next_d2<r*r){
+                    float pen=r*r-next_d2;new_overlap+=pen;
+                    if(pen>deepest){deepest=pen;pair.other=(int32_t)j;
+                        memcpy(pair.point,at,sizeof(at));
+                        memcpy(pair.other_point,b,sizeof(b));
+                        hit_normal(&pair,dx,dy);}
+                }
                 dx=prev[0]-b[0];dy=prev[1]-b[1];dz=prev[2]-b[2];
                 float old_d2=dx*dx+dy*dy+dz*dz;
                 if(old_d2<r*r)old_overlap+=r*r-old_d2;
@@ -295,7 +338,78 @@ static bool blocked(const hta_vehicles *fleet,uint32_t index,const hta_vehicle *
     }
     /* A hard contact may leave two proxy spheres overlapping. Permit a move
      * that decreases total penetration, so reverse can release the car. */
-    return new_overlap>0 && (old_overlap==0 || new_overlap>=old_overlap-1e-5f);
+    /* Most steps never touch a structure. Only score the old pose when a
+     * candidate has contact; it permits motion out of an existing wedge
+     * without doubling every ordinary collision query. */
+    if(new_static>0 || ray_hit)for(uint32_t k=0;k<old->point_count;k++){
+        const hta_vehicle_point *pt=&old->points[k];float prev[3];
+        place(old,pt->pos,prev);
+        float ox=prev[0],oy=prev[1];
+        hta_collision_depenetrate(world,&ox,&oy,prev[2]-pt->radius+HTA_VEHICLE_CLEARANCE,
+                                  pt->radius*2,pt->radius);
+        float old_push=hypotf(ox-prev[0],oy-prev[1]);
+        if(old_push>HTA_VEHICLE_CLEARANCE)
+            old_static+=old_push-HTA_VEHICLE_CLEARANCE;
+    }
+    bool separating_static=old_static>0 && new_static<old_static-1e-5f;
+    if((new_static>0 && !separating_static) || (ray_hit && !separating_static)){
+        if(hit)*hit=fixed;
+        return true;
+    }
+    bool stop=new_overlap>0 && (old_overlap==0 || new_overlap>=old_overlap-1e-5f);
+    if(stop && hit)*hit=pair;
+    return stop;
+}
+static void planar_velocity(const hta_vehicle *car,float out[2])
+{
+    out[0]=cosf(car->yaw)*car->speed+car->lateral_vel[0];
+    out[1]=sinf(car->yaw)*car->speed+car->lateral_vel[1];
+}
+static void set_planar_velocity(hta_vehicle *car,const float v[2])
+{
+    float fwd[2]={cosf(car->yaw),sinf(car->yaw)};
+    car->speed=v[0]*fwd[0]+v[1]*fwd[1];
+    car->lateral_vel[0]=v[0]-car->speed*fwd[0];
+    car->lateral_vel[1]=v[1]-car->speed*fwd[1];
+}
+static float contact_arm(const hta_vehicle *car,const float point[3],const float normal[2])
+{
+    float center[3];place(car,car->center_of_mass,center);
+    return (point[0]-center[0])*normal[1]-(point[1]-center[1])*normal[0];
+}
+/* A 2-D rigid-body normal impulse. The mass, centre of mass and yaw moment
+ * are from phys; only restitution is our own choice. The perpendicular
+ * velocity remains as lateral slip and gradually loses energy to the tires. */
+static void impact(hta_vehicles *fleet,uint32_t index,const hta_vehicle_hit *hit)
+{
+    hta_vehicle *car=&fleet->cars[index];
+    hta_vehicle *other=hit->other>=0 ? &fleet->cars[hit->other] : NULL;
+    if(car->mass<=0 || car->yaw_inertia<=0)return;
+    float a[2],b[2]={0,0};planar_velocity(car,a);
+    if(other)planar_velocity(other,b);
+    float arm=contact_arm(car,hit->point,hit->normal);
+    float other_arm=other ? contact_arm(other,hit->other_point,hit->normal) : 0;
+    float relative=(a[0]-b[0])*hit->normal[0]+(a[1]-b[1])*hit->normal[1]
+        +car->yaw_rate*arm-(other ? other->yaw_rate*other_arm : 0);
+    if(relative>=0)return;
+    float inverse=1/car->mass+arm*arm/car->yaw_inertia;
+    if(other && other->mass>0 && other->yaw_inertia>0)
+        inverse+=1/other->mass+other_arm*other_arm/other->yaw_inertia;
+    if(inverse<=0)return;
+    float impulse=-(1+HTA_VEHICLE_RESTITUTION)*relative/inverse;
+    a[0]+=impulse*hit->normal[0]/car->mass;
+    a[1]+=impulse*hit->normal[1]/car->mass;
+    car->yaw_rate=clamp(car->yaw_rate+impulse*arm/car->yaw_inertia,
+                        -car->turn_rate,car->turn_rate);
+    set_planar_velocity(car,a);
+    if(other && other->mass>0 && other->yaw_inertia>0){
+        b[0]-=impulse*hit->normal[0]/other->mass;
+        b[1]-=impulse*hit->normal[1]/other->mass;
+        other->yaw_rate=clamp(other->yaw_rate-impulse*other_arm/other->yaw_inertia,
+                              -other->turn_rate,other->turn_rate);
+        set_planar_velocity(other,b);
+        other->rest_time=0;
+    }
 }
 static void support(hta_vehicle *v,const hta_collision *world,float gravity,float dt)
 {
@@ -369,28 +483,75 @@ void hta_vehicles_update(hta_vehicles *v,const hta_collision *world,float thrott
         hta_vehicle *car=&v->cars[i],old=*car;
         bool driven=(int32_t)i==v->driver;
         if (!driven && car->grounded && car->speed == 0.0f &&
-            car->rest_time >= HTA_VEHICLE_SETTLE_TIME) continue;
+            car->lateral_vel[0]==0 && car->lateral_vel[1]==0 &&
+            car->yaw_rate==0 && car->rest_time >= HTA_VEHICLE_SETTLE_TIME) continue;
         float gas=driven?clamp(throttle,-1,1):0;
         float turn=driven?clamp(steer,-1,1):0;
         float target=gas>=0?gas*car->forward:gas*car->reverse;
         float rate=car->accel;
         if(!driven || brake || fabsf(gas)<0.01f || gas*car->speed<0){rate=car->decel;target=0;}
         if(car->grounded || car->traction)car->speed=approach(car->speed,target,rate*h);
+        float lateral=hypotf(car->lateral_vel[0],car->lateral_vel[1]);
+        if(lateral>0 && (car->grounded || car->traction)){
+            float left=fmaxf(0,lateral-car->decel*car->ground_friction*h);
+            car->lateral_vel[0]*=left/lateral;car->lateral_vel[1]*=left/lateral;
+        }
+        car->yaw_rate*=expf(-HTA_VEHICLE_YAW_DAMP*h);
+        if(fabsf(car->yaw_rate)<.001f)car->yaw_rate=0;
         car->steering=approach(car->steering,turn<0?-turn*car->turn_left:turn*car->turn_right,car->turn_rate*h);
         if(car->grounded || car->traction)
             car->yaw+=car->speed*tanf(car->steering)/car->wheelbase*h;
-        car->pos[0]+=cosf(car->yaw)*car->speed*h;
-        car->pos[1]+=sinf(car->yaw)*car->speed*h;
+        car->yaw+=car->yaw_rate*h;
+        car->pos[0]+=(cosf(car->yaw)*car->speed+car->lateral_vel[0])*h;
+        car->pos[1]+=(sinf(car->yaw)*car->speed+car->lateral_vel[1])*h;
         support(car,&terrain,gravity,h);
-        if(blocked(v,i,car,&old,&terrain)) {
-            *car=old;car->speed=0;
-            /* Resting still must acquire ground support on the first update. */
+        hta_vehicle_hit hit={.other=-1};
+        if(blocked(v,i,car,&old,&terrain,&hit)) {
+            hta_vehicle attempted=*car;
+            *car=old;
+            car->steering=attempted.steering;
+            car->speed=attempted.speed;
+            memcpy(car->lateral_vel,attempted.lateral_vel,sizeof(car->lateral_vel));
+            car->yaw_rate=attempted.yaw_rate;
+            /* The blocked horizontal move still advances suspension/gravity. */
             support(car,&terrain,gravity,h);
+            impact(v,i,&hit);
+            /* Engine force at a turned front axle produces torque even when
+             * translation is blocked. This lets the tires work the jeep out
+             * of a shallow wedge, subject to the same collision check next
+             * step. Mass/inertia and drive acceleration come from the tags. */
+            if(driven && (car->grounded || car->traction) && !brake &&
+               fabsf(gas)>.01f && fabsf(car->steering)>.01f){
+                float alpha=car->mass*car->accel*gas*sinf(car->steering)*
+                            (car->wheelbase*.5f)/car->yaw_inertia;
+                car->yaw_rate=clamp(car->yaw_rate+alpha*h,-car->turn_rate,car->turn_rate);
+            }
+            /* Rotate around the contact point when drive/impact torque can
+             * improve the fit. A centre pivot often jams both ends of a
+             * long jeep against the walls of a narrow passage. */
+            if(fabsf(car->yaw_rate)>.001f){
+                hta_vehicle pivot=*car;
+                float angle=clamp(car->yaw_rate*h,-.03f,.03f);
+                float dx=car->pos[0]-hit.point[0],dy=car->pos[1]-hit.point[1];
+                float c=cosf(angle),s=sinf(angle);
+                pivot.pos[0]=hit.point[0]+dx*c-dy*s;
+                pivot.pos[1]=hit.point[1]+dx*s+dy*c;
+                pivot.yaw+=angle;
+                if(!blocked(v,i,&pivot,car,&terrain,NULL))*car=pivot;
+            }
+            changed=true;
         }
-        car->rest_time=(!driven && car->grounded && car->speed==0)
+        car->rest_time=(!driven && car->grounded && car->speed==0 &&
+                        car->lateral_vel[0]==0 && car->lateral_vel[1]==0 &&
+                        car->yaw_rate==0)
             ? fminf(HTA_VEHICLE_SETTLE_TIME,car->rest_time+h) : 0;
         if(car->circumference>0){
-            car->wheel_spin+=car->speed*h/car->circumference*6.2831853f;
+            float wheel_target=driven && !brake && fabsf(gas)>.01f
+                ? (gas>=0?gas*car->forward:gas*car->reverse) : car->speed;
+            float wheel_rate=driven && !brake && fabsf(gas)>.01f &&
+                             car->wheel_speed*wheel_target>=0 ? car->accel : car->decel;
+            car->wheel_speed=approach(car->wheel_speed,wheel_target,wheel_rate*h);
+            car->wheel_spin+=car->wheel_speed*h/car->circumference*6.2831853f;
             if(fabsf(car->wheel_spin)>6.2831853f)
                 car->wheel_spin=remainderf(car->wheel_spin,6.2831853f);
         }
@@ -412,7 +573,9 @@ void hta_vehicles_camera(hta_vehicles *v,const hta_collision *world,hta_player *
     cam->yaw=car->yaw+v->look_yaw;cam->pitch=v->look_pitch;
     float seat[3];place(car,car->seat,seat);memcpy(p->pos,seat,sizeof(seat));
     p->pos[2]-=p->phys.cam_stand;p->footstep=false;p->landed=false;p->on_ground=car->grounded;
-    p->velocity[0]=cosf(car->yaw)*car->speed;p->velocity[1]=sinf(car->yaw)*car->speed;p->velocity[2]=car->fall_speed;
+    p->velocity[0]=cosf(car->yaw)*car->speed+car->lateral_vel[0];
+    p->velocity[1]=sinf(car->yaw)*car->speed+car->lateral_vel[1];
+    p->velocity[2]=car->fall_speed;
     cam->fov_y=p->phys.fov_y;
     float origin[3]={car->pos[0],car->pos[1],car->pos[2]+HTA_VEHICLE_CAMERA_UP};
     float fwd[3];hta_camera_forward(cam,fwd);

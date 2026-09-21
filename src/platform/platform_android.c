@@ -2712,7 +2712,10 @@ void android_main(struct android_app *app)
             state.fps_frames++;
             if (driving && state.vehicles.driver >= 0)
                 snprintf(g_ammo_text, sizeof(g_ammo_text), "%.0f km/h",
-                    fabsf(state.vehicles.cars[state.vehicles.driver].speed) * 3.048f * 3.6f);
+                    hypotf(state.vehicles.cars[state.vehicles.driver].speed,
+                           hypotf(state.vehicles.cars[state.vehicles.driver].lateral_vel[0],
+                                  state.vehicles.cars[state.vehicles.driver].lateral_vel[1]))
+                    * 3.048f * 3.6f);
             else if (state.ammo.phase == HTA_AMMO_RELOADING)
                 snprintf(g_ammo_text, sizeof(g_ammo_text), "-- / %d", state.ammo.reserve);
             else
