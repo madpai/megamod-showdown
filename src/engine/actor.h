@@ -1,0 +1,67 @@
+/* A skinned character standing in the WORLD, as opposed to the viewmodel's
+ * pair of hands stapled to the camera.
+ *
+ * There has never been one of these: the only body in the game was the
+ * player's own, and you never saw it. Dying is what needs it -- Halo cuts to
+ * a third-person view of your corpse -- and it is the same machinery any
+ * other player or bot would want, which is why it is its own module rather
+ * than a branch inside the viewmodel.
+ *
+ * The heavy lifting is already shared: hta_model_append_skinned binds any
+ * `mod2` to any animation graph by node name, and the skinning loop is the
+ * viewmodel's. What is new here is that the result is placed somewhere in
+ * the world, by a position and a facing, rather than in view space.
+ */
+#ifndef HTA_ACTOR_H
+#define HTA_ACTOR_H
+
+#include "../asset/anim.h"
+#include "../asset/bsp.h"
+#include "../asset/model.h"
+#include "../asset/cache.h"
+
+typedef struct {
+    hta_bsp_mesh      mesh;        /* bind pose; owns its textures */
+    hta_vertex       *posed;       /* what the renderer draws, world space */
+    hta_skin_vertex  *skin;
+    hta_anim_graph    graph;
+    hta_transform     rest_inv[HTA_ANIM_MAX_NODES];
+    uint8_t           have_rest[HTA_ANIM_MAX_NODES];
+
+    int32_t  clip;                 /* the animation playing, -1 for none */
+    float    frame;
+    bool     hold_last;            /* stop on the final frame, do not loop */
+    bool     finished;             /* it has reached that frame */
+
+    float    pos[3];
+    float    yaw;                  /* radians about +Z */
+
+    bool     loaded;
+} hta_actor;
+
+/* Loads the biped's own model and animation graph. `bipd_tag_id` is the
+ * biped, not the model: the model and the graph are both hung off it. */
+bool hta_actor_load(hta_actor *a, const hta_cache *c,
+                    const hta_resource_map *bitmaps, uint32_t bipd_tag_id,
+                    char *err, size_t errlen);
+void hta_actor_free(hta_actor *a);
+
+/* Start an animation by substring, the way hta_anim_find matches. `hold`
+ * stops it on the last frame instead of looping, which is what a death
+ * wants. False if the graph has no such clip. */
+bool hta_actor_play(hta_actor *a, const char *name, bool hold);
+
+/* One of Halo's death animations, chosen at random. The cyborg names them
+ * `h-kill ...` for a hard death and `s-kill ...` for a soft one, by the
+ * direction the blow came from; without a direction to work with, any of
+ * them reads as a body going down. */
+bool hta_actor_play_death(hta_actor *a, uint32_t *rng);
+
+/* Advance the clip. */
+void hta_actor_update(hta_actor *a, float dt);
+
+/* Put it at `pos` facing `yaw` and write world-space vertices into
+ * `a->posed`. Call after update, before uploading. */
+void hta_actor_place(hta_actor *a, const float pos[3], float yaw);
+
+#endif

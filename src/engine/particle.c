@@ -78,12 +78,15 @@ static uint32_t demand_for(int16_t count_max, float life)
  * blend. Called once per emit entry as recipes are added; spent in
  * hta_particles_build, which is the only place that knows the whole load. */
 static void note_demand(hta_particles *p, uint32_t t, uint32_t want,
-                        float radius_max)
+                        uint32_t burst, float radius_max)
 {
     if (t >= HTA_PART_TYPES) return;
     if (want < 1u) want = 1u;
     if (want > HTA_PART_PER_TYPE) want = HTA_PART_PER_TYPE;
+    if (burst < 1u) burst = 1u;
+    if (burst > HTA_PART_PER_TYPE) burst = HTA_PART_PER_TYPE;
     if (want > p->type[t].want) p->type[t].want = want;
+    if (burst > p->type[t].burst) p->type[t].burst = burst;
     float area = radius_max * radius_max;
     if (area > p->type[t].quad_area) p->type[t].quad_area = area;
 }
@@ -194,9 +197,33 @@ uint32_t hta_particles_add_marker(hta_particles *p, const hta_cache *c,
         em->drag       = ep.drag;
         em->elasticity = ep.elasticity;
         em->collides   = ep.collides;
-        note_demand(p, t, demand_for(em->count_max, em->life), em->radius_max);
     }
     if (!rec.emit_count) return HTA_PART_NO_RECIPE;
+
+    /* Tally what this ONE effect asks of each type. Several of an effect's
+     * particle entries commonly share a bitmap -- the plasma impact has six
+     * entries over four types -- and they all go off together, so a type's
+     * burst is the SUM of the entries using it, not the largest of them.
+     * Taking the largest left the plasma impact two sprites short of what
+     * the tag asks for. */
+    {
+        uint32_t burst[HTA_PART_TYPES];
+        uint32_t want[HTA_PART_TYPES];
+        float    rad[HTA_PART_TYPES];
+        memset(burst, 0, sizeof(burst));
+        memset(want, 0, sizeof(want));
+        memset(rad, 0, sizeof(rad));
+        for (uint32_t k = 0; k < rec.emit_count; k++) {
+            const hta_particle_emit *em = &rec.emit[k];
+            uint32_t t = em->type;
+            if (t >= HTA_PART_TYPES) continue;
+            burst[t] += (uint32_t)(em->count_max > 0 ? em->count_max : 1);
+            want[t]  += demand_for(em->count_max, em->life);
+            if (em->radius_max > rad[t]) rad[t] = em->radius_max;
+        }
+        for (uint32_t t = 0; t < HTA_PART_TYPES; t++)
+            if (burst[t]) note_demand(p, t, want[t], burst[t], rad[t]);
+    }
 
     p->recipe[p->recipe_count] = rec;
     return p->recipe_count++;
@@ -248,14 +275,12 @@ bool hta_particles_build(hta_particles *p, char *err, size_t errlen)
             uint32_t afford = (left > 0.0f) ? (uint32_t)(left / cost) : 0u;
             if (n > afford) n = afford;
         }
-        /* Every type draws at least something: one particle of an
-         * expensive effect is the effect happening, and refusing it
-         * outright would silently delete the rocket's fireball. But the
-         * floor is ONE where a single quad is already a quarter of the
-         * whole budget -- the rocket's fireball is 12 square units on its
-         * own, and two of those is most of a frame's blending. */
-        uint32_t floor_n = (cost > HTA_PART_AREA * 0.25f)
-                         ? 1u : HTA_PART_PER_TYPE_MIN;
+        /* A complete burst is the floor. The budget decides how many
+         * bursts may overlap; it does not get to decide that an explosion
+         * is four puffs instead of fifty-one, which is what an area-only
+         * floor did to the rocket. */
+        uint32_t floor_n = p->type[t].burst;
+        if (floor_n < HTA_PART_PER_TYPE_MIN) floor_n = HTA_PART_PER_TYPE_MIN;
         if (n < floor_n) n = floor_n;
         if (n > HTA_PART_PER_TYPE) n = HTA_PART_PER_TYPE;
         if (slots + n > HTA_PART_MAX) n = HTA_PART_MAX - slots;
@@ -678,7 +703,8 @@ uint32_t hta_particles_add_system(hta_particles *p, const hta_cache *c,
     em->collides = false;
     /* An emitter's demand is its whole stream: everything it throws in one
      * particle's lifetime is alive at once. */
-    note_demand(p, ty, (uint32_t)(rate * life + 1.0f), em->radius_max);
+    note_demand(p, ty, (uint32_t)(rate * life + 1.0f),
+                (uint32_t)(rate * life + 1.0f), em->radius_max);
 
 
     p->recipe[p->recipe_count] = rec;

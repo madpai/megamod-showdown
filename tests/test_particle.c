@@ -694,6 +694,58 @@ int main(int argc, char **argv)
         }
     }
 
+
+    printf("\n[an explosion is allowed to be an explosion]\n");
+    {
+        /* The area budget decides how many BURSTS may overlap. It does not
+         * get to decide that a rocket's explosion is four puffs instead of
+         * the fifty-one the tag authors -- which is exactly what an
+         * area-only floor did, and it read on device as "a small poof of
+         * smoke where it lands but a lot of damage". A complete burst of
+         * every type is the floor now. */
+        for (uint32_t i = 0; i < count; i++) {
+            hta_weapon_def w;
+            if (!hta_weapon_load_id(&c, NULL, ids[i], &w, NULL, err, sizeof(err)))
+                continue;
+            uint32_t fx = 0;
+            for (uint8_t m = 0; m < 20u && !fx; m++)
+                fx = hta_projectile_response_effect(&c, w.projectile_id, m);
+            if (!fx) continue;
+
+            hta_particles p;
+            hta_particles_init(&p);
+            uint32_t r = hta_particles_add(&p, &c, &bm, fx);
+            if (r == HTA_PART_NO_RECIPE || !hta_particles_build(&p, err, sizeof(err))) {
+                hta_particles_free(&p);
+                continue;
+            }
+            /* Every emit must have room for its own count_max at once. */
+            int starved = 0, biggest = 0;
+            for (uint32_t k = 0; k < p.recipe[r].emit_count; k++) {
+                const hta_particle_emit *em = &p.recipe[r].emit[k];
+                uint32_t need = (uint32_t)(em->count_max > 0 ? em->count_max : 1);
+                if (need > HTA_PART_PER_TYPE) need = HTA_PART_PER_TYPE;
+                if (p.type[em->type].slots < need) starved++;
+                if ((int)need > biggest) biggest = (int)need;
+            }
+            /* And firing one really does put that many in the air. */
+            float o[3] = { 0.0f, 0.0f, 0.0f }, d[3] = { 0.0f, 0.0f, 1.0f };
+            hta_particles_burst(&p, r, o, d);
+            uint32_t alive = hta_particles_count(&p);
+            uint32_t asked = 0;
+            for (uint32_t k = 0; k < p.recipe[r].emit_count; k++)
+                asked += (uint32_t)(p.recipe[r].emit[k].count_min > 0
+                                    ? p.recipe[r].emit[k].count_min : 1);
+            printf("  %-16s %u emit(s), biggest %d, %u alive after one hit "
+                   "(the tag's minimum is %u)\n",
+                   strrchr(w.path, '\\') + 1, p.recipe[r].emit_count,
+                   biggest, alive, asked);
+            CHECK(starved == 0, "  every emit has room for a full burst");
+            CHECK(alive >= asked, "  and one hit really spawns that many");
+            hta_particles_free(&p);
+        }
+    }
+
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

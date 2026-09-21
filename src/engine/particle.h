@@ -47,7 +47,16 @@
 #define HTA_PART_MAX     768u   /* geometry ceiling, rarely reached */
 #define HTA_PART_PER_TYPE 64u   /* the deepest any one type can be */
 #define HTA_PART_PER_TYPE_MIN 2u
-#define HTA_PART_AREA     12.0f /* sq world units of live quad, all types */
+/* Square world units of live quad across every type.
+ *
+ * This was 12 while the frame rate was believed to be a fill problem. It was
+ * not -- it was the collision ray testing every triangle in the map -- and
+ * the radius fix in the same build had already quartered the real fill. At
+ * 12 a rocket's explosion, which the tag authors as fifty-one puffs nearly
+ * four metres across, was cut to FOUR: a small poof where a fireball should
+ * be. One rocket burst is about 80 of these, so the budget has to clear
+ * that with room for the sparks and smoke alongside it. */
+#define HTA_PART_AREA    120.0f
 /* How often an effect can be assumed to recur, in seconds. A type's demand
  * is `count_max * lifespan / this`: a spent casing lives 30 seconds and
  * wants a lot of slots, a plasma flash lives 0.43 and wants one burst's
@@ -93,7 +102,12 @@ typedef struct {
      * what the tags ask for, `quad_area` is what one of them costs to
      * blend, and `slots`/`first_slot` are what it actually got. */
     uint32_t want;
-    float    quad_area;       /* (2 * radius_max)^2, world units squared */
+    /* One complete burst of this type. The budget may trim `want`, which is
+     * about how many bursts overlap, but never this: below it the effect
+     * simply never plays as it was authored, which is how the rocket ended
+     * up with four smoke puffs out of fifty-one. */
+    uint32_t burst;
+    float    quad_area;       /* radius_max^2, world units squared */
     uint32_t first_slot, slots;
 } hta_particle_type;
 

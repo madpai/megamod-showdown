@@ -20,6 +20,7 @@
 #include "../engine/particle.h"
 #include "../engine/vitals.h"
 #include "../asset/dialogue.h"
+#include "../engine/actor.h"
 #include "../engine/ammo.h"
 #include "../engine/hud.h"
 #include "../engine/viewmodel.h"
@@ -191,6 +192,11 @@ typedef struct {
     uint32_t spawn_rng;
     hta_spawn_point spawn[64];
     uint32_t spawn_count;
+    /* Your own body, for looking at from outside. The only third-person
+     * thing in the game so far. */
+    hta_actor     corpse;
+    hta_gfx_mesh *gpu_corpse;
+    bool          corpse_up;
 
     hta_ammo ammo;
     float    dry_cooldown;   /* stops an empty trigger clicking every frame */
@@ -544,11 +550,24 @@ static void cycle_zoom(hta_android *s)
  * fade is shaped around it: black by the time the body has settled, black
  * while you wait, and open again as you come back. */
 #define HTA_RESPAWN_DELAY   5.0f
-#define HTA_DEATH_FADE_OUT  1.5f   /* seconds from dying to full black */
+/* The black comes at the END, not the start. Fading out as you die would
+ * mean the body you have just been shown is on screen for half a second
+ * before the screen swallows it; Halo lets you watch the whole time and
+ * only closes the shot to cover the respawn. */
+#define HTA_DEATH_FADE_OUT  0.8f   /* seconds of black BEFORE coming back */
 #define HTA_DEATH_FADE_IN   0.6f   /* and back, once you are standing */
 /* How far the camera sinks as the body goes down, in world units. The
  * Trial's cyborg stands with its eye 0.62 above its feet. */
 #define HTA_DEATH_EYE_DROP  0.45f
+/* Where the camera goes to watch. World units: 1 wu is 3.05 m, so this
+ * settles about 6 m behind the body and 2.5 m above it, aimed at its chest.
+ * Halo's own death camera is closer than that, but Halo's is looking at a
+ * ragdoll that is still moving -- ours holds the last frame of a kill
+ * animation, and a little distance is kinder to it. */
+#define HTA_DEATH_CAM_BACK  2.0f
+#define HTA_DEATH_CAM_UP    0.8f
+#define HTA_DEATH_LOOK_AT   0.35f   /* up the body from its feet, to the chest */
+#define HTA_DEATH_PULLBACK  1.2f    /* seconds for the camera to get there */
 
 static void respawn(hta_android *s)
 {
@@ -576,6 +595,7 @@ static void respawn(hta_android *s)
     if (s->vm.loaded) hta_viewmodel_play(&s->vm, HTA_VM_IDLE);
     s->nade_count = s->nade_max;
 
+    s->corpse_up = false;
     hta_log("[player] respawned at spawn %u (%.2f %.2f %.2f)",
             i, s->player.pos[0], s->player.pos[1], s->player.pos[2]);
 }
@@ -1047,6 +1067,26 @@ static bool load_map(hta_android *s)
                         s->vitals.max_health, s->vitals.max_shield,
                         s->vitals.recharge_delay, s->vitals.recharge_rate * 100.0f,
                         s->vitals.fall_harmful_min, s->vitals.fall_fatal);
+            /* Your own body, for looking at once it is on the floor. */
+            {
+                char aerr[HTA_ERRLEN];
+                uint32_t bip = 0;
+                for (uint32_t i = 0; i < s->cache.tag_count && !bip; i++) {
+                    hta_tag_entry t;
+                    if (!hta_cache_tag(&s->cache, i, &t)) continue;
+                    if (t.primary_class != HTA_FOURCC('b','i','p','d')) continue;
+                    char p[128];
+                    hta_cache_tag_path(&s->cache, &t, p, sizeof(p));
+                    if (strstr(p, "cyborg_mp")) bip = t.tag_id;
+                }
+                if (bip && hta_actor_load(&s->corpse, &s->cache,
+                                          s->bitmaps_ok ? &s->bitmaps_rm : NULL,
+                                          bip, aerr, sizeof(aerr)))
+                    hta_log("[player] body: %s", aerr);
+                else
+                    hta_log("[player] no body to leave behind (%s)", aerr);
+            }
+
             /* What the Chief says on the way down. Blood Gulch carries one
              * dialogue tag and it is his. */
             {
@@ -1305,6 +1345,11 @@ static void start_gfx(hta_android *s)
         if (s->nades.loaded && s->nades.mesh.index_count)
             s->gpu_nades = hta_gfx_mesh_upload_dynamic(s->gfx, &s->nades.mesh,
                                                        err, sizeof(err));
+        if (s->corpse.loaded && s->corpse.mesh.index_count) {
+            s->gpu_corpse = hta_gfx_mesh_upload_dynamic(s->gfx, &s->corpse.mesh,
+                                                        err, sizeof(err));
+            if (!s->gpu_corpse) hta_log("[gfx] corpse upload FAILED: %s", err);
+        }
         if (s->have_fp) {
             s->gpu_fp = hta_gfx_mesh_upload_dynamic(s->gfx, &s->vm.mesh, err, sizeof(err));
             if (!s->gpu_fp) hta_log("[gfx] fp weapon upload FAILED: %s", err);
@@ -1322,6 +1367,7 @@ static void start_gfx(hta_android *s)
 
 static void stop_gfx(hta_android *s)
 {
+    if (s->gpu_corpse) { hta_gfx_mesh_free(s->gfx, s->gpu_corpse); s->gpu_corpse = NULL; }
     if (s->gpu_hud) { hta_gfx_mesh_free(s->gfx, s->gpu_hud); s->gpu_hud = NULL; }
     if (s->gpu_fp) { hta_gfx_mesh_free(s->gfx, s->gpu_fp); s->gpu_fp = NULL; }
     if (s->gpu_nades) { hta_gfx_mesh_free(s->gfx, s->gpu_nades); s->gpu_nades = NULL; }
@@ -1604,15 +1650,28 @@ void android_main(struct android_app *app)
             else if (state.vitals.shield <= 0.0f && state.vitals.health <= 0.0f)
                 snd = state.death_violent_snd ? state.death_violent_snd : snd;
             play_tag(&state, snd, 1.0f);
+            /* The body stays where it fell and the camera goes to look at
+             * it. Halo does this and it is the whole reason dying reads as
+             * an event rather than a fade. */
+            if (state.corpse.loaded &&
+                hta_actor_play_death(&state.corpse, &state.spawn_rng)) {
+                state.corpse_up = true;
+                hta_actor_place(&state.corpse, state.death_pos, state.cam.yaw);
+                hta_log("[player] body playing '%s'",
+                        state.corpse.graph.anims[state.corpse.clip].name);
+            }
             hta_log("[player] died at (%.2f %.2f %.2f)",
                     state.death_pos[0], state.death_pos[1], state.death_pos[2]);
         }
         float fade = 0.0f;
         if (state.dead) {
             state.dead_timer -= dt;
-            float gone = HTA_RESPAWN_DELAY - state.dead_timer;   /* since dying */
-            fade = gone / HTA_DEATH_FADE_OUT;
-            if (fade > 1.0f) fade = 1.0f;
+            /* Clear while you watch; black only over the last moment. */
+            if (state.dead_timer < HTA_DEATH_FADE_OUT) {
+                fade = 1.0f - state.dead_timer / HTA_DEATH_FADE_OUT;
+                if (fade > 1.0f) fade = 1.0f;
+                if (fade < 0.0f) fade = 0.0f;
+            }
             if (state.dead_timer <= 0.0f) {
                 respawn(&state);
                 state.dead = false;
@@ -1625,16 +1684,55 @@ void android_main(struct android_app *app)
             if (fade < 0.0f) fade = 0.0f;
         }
         hta_hud_set_fade(&state.hud, fade);
-        /* The body goes down with you. hta_player_update has already
-         * written the standing eye position into the camera, so this drops
-         * it afterwards, over the same time the screen takes to go black. */
-        if (state.dead) {
+        /* Outside yourself, watching the body. */
+        if (state.dead && state.corpse_up) {
+            hta_actor_update(&state.corpse, dt);
+            hta_actor_place(&state.corpse, state.death_pos, state.corpse.yaw);
+
             float gone = HTA_RESPAWN_DELAY - state.dead_timer;
-            float f = gone / HTA_DEATH_FADE_OUT;
+            float f = gone / HTA_DEATH_PULLBACK;
+            if (f > 1.0f) f = 1.0f;
+
+            /* Aim at the chest rather than the feet, and pull back along
+             * the way the body is facing so you see its front. */
+            float look[3] = { state.death_pos[0], state.death_pos[1],
+                              state.death_pos[2] + HTA_DEATH_LOOK_AT };
+            float back = HTA_DEATH_CAM_BACK * f;
+            float want[3] = {
+                look[0] + cosf(state.corpse.yaw) * back,
+                look[1] + sinf(state.corpse.yaw) * back,
+                look[2] + HTA_DEATH_CAM_UP * f
+            };
+            /* Do not go through a wall to get there. The ray query is a
+             * grid walk now, so this costs nothing. */
+            if (state.col.built) {
+                float d[3] = { want[0]-look[0], want[1]-look[1], want[2]-look[2] };
+                float len = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+                if (len > 1e-4f) {
+                    for (int k = 0; k < 3; k++) d[k] /= len;
+                    float t = 0.0f, hit[3], nrm[3];
+                    if (hta_collision_ray(&state.col, look, d, len, &t, hit, nrm)) {
+                        float keep = t * 0.8f;   /* stop short of the surface */
+                        for (int k = 0; k < 3; k++) want[k] = look[k] + d[k] * keep;
+                    }
+                }
+            }
+            for (int k = 0; k < 3; k++) state.cam.pos[k] = want[k];
+
+            float to[3] = { look[0]-state.cam.pos[0], look[1]-state.cam.pos[1],
+                            look[2]-state.cam.pos[2] };
+            float flat = sqrtf(to[0]*to[0] + to[1]*to[1]);
+            if (flat > 1e-4f || fabsf(to[2]) > 1e-4f) {
+                state.cam.yaw = atan2f(to[1], to[0]);
+                state.cam.pitch = atan2f(to[2], flat);
+            }
+        } else if (state.dead) {
+            /* No body to watch -- sink and tip forward instead. */
+            float gone = HTA_RESPAWN_DELAY - state.dead_timer;
+            float f = gone / HTA_DEATH_PULLBACK;
             if (f > 1.0f) f = 1.0f;
             state.cam.pos[2] -= HTA_DEATH_EYE_DROP * f;
-            /* and tips forward, so the last thing you see is the ground */
-            float want = -1.2f;      /* radians, about 69 degrees down */
+            float want = -1.2f;
             state.cam.pitch += (want - state.cam.pitch) * f;
         }
         /* Ammo gates the shot: hta_gun_fire spends the cooldown whether or
@@ -1936,7 +2034,7 @@ void android_main(struct android_app *app)
                 vmdraw.vertex_count = state.vm.mesh.vertex_count;
                 for (int k = 0; k < 3; k++) vmdraw.offset[k] = state.weap.fp_offset[k];
             }
-            hta_gfx_dynamic dynlist[3];
+            hta_gfx_dynamic dynlist[HTA_GFX_MAX_DYNAMIC];
             uint32_t dyncount = 0;
             if (state.gpu_proj) {
                 dynlist[dyncount].mesh = state.gpu_proj;
@@ -1954,6 +2052,13 @@ void android_main(struct android_app *app)
                 dynlist[dyncount].mesh = state.gpu_parts;
                 dynlist[dyncount].vertices = state.parts.mesh.vertices;
                 dynlist[dyncount].vertex_count = state.parts.mesh.vertex_count;
+                dyncount++;
+            }
+            if (state.corpse_up && state.gpu_corpse &&
+                dyncount < HTA_GFX_MAX_DYNAMIC) {
+                dynlist[dyncount].mesh = state.gpu_corpse;
+                dynlist[dyncount].vertices = state.corpse.posed;
+                dynlist[dyncount].vertex_count = state.corpse.mesh.vertex_count;
                 dyncount++;
             }
             if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh,

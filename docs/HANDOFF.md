@@ -85,6 +85,87 @@ Git author on this repo has been Phase2 `<schultz0@proton.me>`. Do not push unle
 
 ---
 
+## The rocket's poof, and watching your own body (2026-09-20)
+
+Two reports: "rocket explosion seems non-existent, just a small poof of smoke
+where it lands but a lot of damage", and "you would ragdoll in the original
+with some sort of third person view of your ragdoll".
+
+### The area budget was starving the explosion
+
+The rocket's detonation is `weapons\rocket launcher\effects\rocket
+explosion`: **40 to 60 smoke puffs at radius 0.85 to 1.75 wu** -- up to five
+metres across -- plus a 2.0 wu lens flare. The area budget was giving that
+type **2 slots**. Hence a poof.
+
+The budget was sized at 12 sq wu while the frame rate was believed to be a
+fill problem. It was not, it was the collision ray, and the radius fix in the
+same build had already quartered real fill. So:
+
+- **A complete burst is now the FLOOR.** `type[t].burst` is what one firing
+  of the effect needs, and the budget may never cut below it. The budget's
+  job is deciding how many bursts OVERLAP; it does not get to decide that an
+  explosion is four puffs instead of fifty-one.
+- `HTA_PART_AREA` is **120** sq wu. One rocket burst is about 80 of those.
+- A type's burst is the **SUM** of the emits using it, not the largest. The
+  plasma impact has six particle entries over four types and they all go off
+  together; taking the largest left it two sprites short of the tag.
+
+The rocket now puts **58** particles up per detonation where it managed about
+four. `test_particle.c` pins it: every emit must have room for its own
+`count_max`, and one burst must really spawn at least the tag's minimum.
+
+Two of the rocket's four impact entries are `create in` = **water**. They are
+correctly filtered; do not go looking for them.
+
+### A body to look at
+
+There has never been a character in the world -- the only body was the
+player's and you never saw it. `src/engine/actor.c` is one:
+`hta_actor_load/play/play_death/update/place`. Most of it was already
+shared -- `hta_model_append_skinned` binds any `mod2` to any animation graph
+by node name, and the skinning loop is the viewmodel's. What is new is that
+the result lands somewhere in the WORLD, by position and facing, rather than
+in view space.
+
+The cyborg: `characters\cyborg\cyborg`, **19 nodes, 254 animations**, 2256
+vertices, 4 submeshes, 3 textures.
+
+**There is no animation called "die".** Halo names them by how hard the blow
+was and where it came from: `s-kill front gut`, `h-kill front head`,
+`s-kill back gut` and so on, plus `stand airborne-dead` and `stand
+landing-dead`. `hta_actor_play_death` picks among them.
+
+Measured: the body starts at **2.06 m** upright and collapses to **0.63 m**
+over 44 frames (1.4 s), then holds its last frame. Holding matters -- these
+clips do not loop back to standing, and letting them would stand the corpse
+up again.
+
+**The texture table has to exist before anything interns into it.**
+`hta_model_append_skinned` fills `mesh.textures`, it does not create it, so
+the cyborg first loaded with four submeshes and no art at all. The viewmodel
+calloc's 256 entries for exactly this reason.
+
+### The death camera
+
+The camera leaves your head, pulls out along the way the body is facing over
+1.2 s, and looks at its chest -- about 6 m back and 2.5 m up. A ray from the
+body to where the camera wants to be pulls it in short of any wall, which
+costs nothing now the ray walks the grid.
+
+**The fade moved to the END.** Fading out as you die would swallow the body
+half a second after showing it. It is clear for the whole five seconds and
+black only for the last 0.8, which covers the respawn.
+
+Not a ragdoll: it is the last frame of a kill animation, held. A real ragdoll
+is a physics solver we do not have. The camera keeps a little more distance
+than Halo's for that reason.
+
+If there is no body -- the biped failed to load -- the old behaviour remains:
+the view sinks and tips forward.
+
+---
+
 ## Dying (2026-09-20)
 
 `hta_vitals` has tracked health, shields, fall damage and blast damage for a
