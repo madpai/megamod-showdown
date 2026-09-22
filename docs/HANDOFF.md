@@ -104,19 +104,64 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **2026-09-22, build `339c6b4`: one APK, main menu, Slayer against bots.**
-> The owner installs a single personal APK (`publish_apk.sh --with-assets`)
-> carrying their own maps. It opens on the Trial's main menu (ui.map ring,
-> sky, HALO logo, menu words, title music). MULTIPLAYER starts Slayer
-> against 0-7 bots (set in SETTINGS, Easy..Legendary); first to 25.
-> Check on device: menu layout on the phone's aspect, music and taps;
-> fps with bots in view; bots stuck or walking through walls; weapons in
-> bot hands; kill feed / banner / announcer; the new Blood Gulch sky
-> (clouds, Threshold, Basis, the ring). The first launch builds the bots'
-> nav grid (a few seconds); later launches read it from app storage.
-> None of this has been seen on a device yet. The LAN build from
-> `97d7cea` is still untested on Android; LAN sessions run with no bots.
+> **Build `2c7cd8b` (2026-09-22), published at http://100.89.1.14:8731/.**
+> One personal APK with the owner's data built in. Nothing from this build
+> has been seen on a device yet, so read the first screenshots carefully.
 >
+> 1. **Launch**: the Trial's main menu (ring, space sky, HALO logo, menu
+>    words, title theme). Taps select/activate the word under the finger.
+>    Check the layout on the phone's aspect ratio.
+> 2. **MULTIPLAYER**: Slayer vs bots (count/difficulty in SETTINGS, default
+>    3 on Normal). First launch builds the nav grid (seconds; cached after).
+>    Look at fps with bots in view, bots stuck or clipping, guns in hands,
+>    kill feed / banner / announcer, score line, post-game scoreboard.
+> 3. **Hit flinch**: bots shot while running/crouching/holding pistols must
+>    jerk, not flip (owner reported flipping on `339c6b4`; fixed in
+>    `2c7cd8b`).
+> 4. **Sky**: Blood Gulch now draws its sky (clouds, Threshold, Basis, ring).
+> 5. **Pause**: BACK or the II button; Resume / Quit to main menu.
+>
+> LAN (`97d7cea` era) is still untested on Android; LAN runs with no bots.
+
+## NEXT OBJECTIVE: the other vehicles
+
+Only the Warthog (and, being type 1 too, probably the rocket Warthog) drives.
+The session ended having read everything below from the tags; no code yet.
+
+| vehicle | `vehi+756` type | seats (unit+740, 284 each; flags bit2 driver, bit3 gunner) | driving floats (vehi+760, per tick) | phys mass points |
+|---|---|---|---|---|
+| `scorpion_mp` | 0 tank | driver (0x1c: drives AND fires), 4 riders `passenger lf/rf/lb/rb` | fwd .14 rev .12 accel .002 decel .006; turn fields 0 | 8 `tread` points powered 0/1, hull, turret |
+| `ghost_mp` | 4 alien scout | driver 0x1c | fwd .225 accel .005; no reverse, no slide | 5: seat, hull, two powered wings |
+| `banshee_mp` | 5 alien fighter | driver 0x1c | fwd .22 rev .03 accel .008 decel .016, turn L 1.571, rate .13; fixed gun pitch .26 | 22 hull/wing/canopy points |
+| `c gun turret_mp` | 6 turret | gunner 0x1c | all 0 | 4 (feet + body) |
+| `mp_warthog` / `rwarthog` | 1 jeep | driver 0x14, passenger 0x60, gunner 0x198 (`camera gunner`) | as now | 4 tires + hull |
+
+Weapons (unit+728, 36 each): `warthog gun`, `rwarthog_gun`, `scorpion cannon`
+(plus a secondary trigger), `mp_ghost gun`, `mp_banshee gun` (primary bolts,
+secondary fuel rod), `mp gun turret gun`. They fire from the vehicle MODEL's
+markers `primary trigger` / `secondary trigger` (weapon models are none).
+Weapons are excluded from `hta_weapon_list_playable`; the game roster needs
+them with a "vehicle" flag.
+
+Suggested order: (1) generalise `hta_vehicle_read` beyond type 1 and give
+`hta_vehicles_update` a per-type motion model — tank = throttle + turn in
+place on the tread points (turn rate is ours, the tag's is 0), ghost = hover
+on its support points, steered toward the camera yaw like Halo, banshee =
+fly along the camera's forward, land when slow near ground, turret = aim
+only; (2) seat choice by nearest seat marker, gunner seat for the Warthogs;
+(3) vehicle weapons through `hta_game` (fire from the marker, the gunner's
+aim); (4) vehicle damage/destruction; (5) bots entering vehicles. Draw
+moving vehicles with `hta_gfx_set_instances` rather than re-posing the whole
+fleet on the CPU (the 1.5 ms/frame noted below). `htaview --drive` and
+`test_vehicle` are the places to prove each type.
+
+Other outstanding work, roughly by value: multiple remote players in LAN
+(render per-peer actors from `hta_game` units) and server-authoritative
+damage; CTF/Oddball/KOTH (lines, flag and ball weapons are in the map);
+dropped weapons carrying their ammo; spinning powerups and camouflage
+rendering (instanced path); motion tracker; player colours (shader change
+colour); campaign (`b30.map` sits unused in the data folder).
+
 ---
 
 ## Where things stand
@@ -158,8 +203,8 @@ switch or to pick up.
 now upload mipmaps once alongside their textures. HUD, viewmodel and particle
 uploads retain their existing filtering. Device confirmation pending.
 
-**A body to shoot at.** Stands in front of the spawn with the player's health,
-shield and collision shape, holds a rifle, flinches, dies, comes back.
+**Bots and Slayer** (host-verified; see "New on 2026-09-22"). The old
+stationary target is replaced by bots whenever bots are on.
 
 **A drivable Warthog.** Human jeeps (`vehi+756 == 1`) come out of the static
 world into their own render mesh and their own collision grid, and the twelve
@@ -353,6 +398,19 @@ the full story.
   vehicles silently stop being solid.
 - **Vehicle physics must walk the STATIC grid** (`extra = NULL`). Given the
   whole world, every jeep collides with its own hull and cannot move.
+- **Type-1 overlays are DELTAS from their own first frame**, on the body as
+  on the viewmodel: `local = ov[f] . ov[0]^-1 . local`. Substituting them
+  flips a running body upside down (bit twice). Type 2 substitutes.
+  `test_actor` sweeps 63 stance/overlay pairs.
+- **The sky lives 6,400-98,000 units out.** It has its own depth range in
+  the sky pass; never draw it with the world's far plane.
+- **The local player's vitals are the game's** (`s->vit`). Damage the local
+  player through `hta_game_*` so it is attributed; the game notices deaths.
+- **Menu → game → menu relaunches GameActivity** only after the old native
+  thread has exited (`onDestroy`); two `android_main`s would share the
+  static state.
+- **The nav cache key** is map CRC + biped radius/height/slope. Change the
+  nav algorithm → bump `NAV_VERSION` in `nav.c`.
 - **Dynamic meshes write one vertex slot per in-flight frame.** Uploading a
   change once leaves stale geometry in the other slots. The count belongs to
   the swapchain, so re-upload for several frames.
@@ -413,6 +471,14 @@ wrong, this list is the first place to look — they are all one constant.
 
 ## Tools
 
+**If host Vulkan fails** (`VK_ERROR_INCOMPATIBLE_DRIVER`: NVIDIA userspace
+newer than the loaded kernel module until a reboot), use the unpacked Mesa
+lavapipe: `export VK_ICD_FILENAMES=$PWD/scratch/lvp/usr/share/vulkan/icd.d/lvp_icd.json`
+before `scripts/verify.sh`. `scripts/tagwalk.py <Struct> [filter]`
+prints Invader struct offsets and checks the total against the declared size.
+`scripts/ndkcheck.sh` syntax-checks `platform_android.c` with the NDK in a
+second (verify.sh is still the real gate).
+
 ```
 # look at the first-person view without a device
 ./build-host/htaview $HTA_MAP --fp idle   --shots 2 --out /tmp/fp
@@ -423,6 +489,10 @@ wrong, this list is the first place to look — they are all one constant.
 ./build-host/htaprobe $HTA_MAP --at 96.57 -155.72 --z 0.81   # why it pushes
 ./build-host/htaprobe $HTA_MAP --find 0.81 --near 96 -155    # if a digit is unreadable
 ./build-host/htaview  $HTA_MAP --eye 96.57 -155.72 1.43 --yaw 180
+
+# a bot match / the main menu, rendered offscreen
+./build-host/htamatch $HTA_MAP --bots 6 --seconds 20 --shots 4 --back -0.9
+./build-host/htamenu  $(dirname $HTA_MAP)/ui.map --select 1
 
 # tags and sounds
 ./build-host/htainfo  $HTA_MAP
@@ -477,6 +547,13 @@ Put them in the session scratchpad, not the repo. Relink after every rebuild.
 | Android glue, game loop, JNI | `src/platform/platform_android.c` |
 | Touch HUD, DBG pad | `android/.../GameActivity.java` |
 | Map picker | `android/.../SetupActivity.java` |
+| **Game rules, units, Slayer, events** | `src/game/game.c` |
+| Bot AI | `src/game/brain.c` |
+| Nav grid, A*, disk cache | `src/game/nav.c` |
+| Bodies + held weapons for units | `src/game/view.c` |
+| Main menu from ui.map | `src/game/menu.c` |
+| `ustr` string lists | `src/asset/strings.c` |
+| Ogg Vorbis (stb_vorbis) | `src/asset/ogg.c`, `src/third_party/stb_vorbis.c` |
 | Tests | `tests/test_*.c` — most take `$HTA_MAP` |
 
 ---

@@ -9,6 +9,116 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## Bots, Slayer, the menu, one APK, and the sky that was never there (2026-09-22, long session)
+
+Builds published: `31ff130` (Slayer vs bots, one APK), `339c6b4` (menu +
+sky), `2c7cd8b` (flinch fix + pause). All gates green (67/67). **None of it
+has been seen on a device yet** — the first phone report on this work is the
+next thing to read.
+
+### The host's GPU was the first failure, not the code
+
+The baseline gate failed three render checks before anything was touched:
+`vkCreateInstance` → `VK_ERROR_INCOMPATIBLE_DRIVER`. NVIDIA userspace had been
+upgraded to 615.71 while the loaded kernel module was still 610.57 (needs a
+reboot). Workaround used all session: Mesa's lavapipe, unpacked (not
+installed) into `scratch/lvp/` and selected with
+`VK_ICD_FILENAMES=$PWD/scratch/lvp/usr/share/vulkan/icd.d/lvp_icd.json`.
+If `scratch/lvp` is gone: `pacman -Sp vulkan-swrast`, curl it, `tar
+--force-local -xf`, point the json's `library_path` at the absolute `.so`.
+
+### A game layer, so bots and scoring are testable without a phone
+
+All game rules had lived in `platform_android.c`. They now live in portable
+`src/game/`: `game.c` (units, attributed damage, Slayer, events), `brain.c`
+(bot AI), `nav.c` (walkable grid), `view.c` (how units look), `menu.c`.
+The local player is *mirrored* into the game each frame
+(`hta_game_sync_local`); its vitals are the game's
+(`s->vit = &game.units[me].vitals`, which is why `platform_android.c` says
+`vit->` everywhere). Bots and remote players are simulated entirely inside
+the game from an input record — the same record a network packet would fill,
+which is the point for server authority later.
+
+`test_game` plays a whole 6-bot match to 25 on the real map in ~3 s of host
+time and checks every death is somebody's kill or their own.
+
+Words are the Trial's: kill feed and multikill text from
+`ui\multiplayer_game_text` (index 78 "%s was killed by %s", 85 "Double
+Kill!", 64 "In %s place with %s %s"...), bot names from
+`ui\random_player_names` — read by the new `asset/strings.c` (`ustr`).
+
+**Melee was an instant kill and should not have been.** The platform used the
+cyborg's unit melee (1000). The weapon's own `player melee damage` (weap
++916) is 56; a swing from behind kills (engine logic, `HTA_BACKSMACK_MULT`).
+
+### Nav: rebuilding what the MP maps never shipped
+
+Blood Gulch has no AI pathfinding data. `nav.c` samples the collision mesh on
+a 0.35 wu grid, keeps every floor in a column (base interiors under roofs),
+keeps a node where the biped's own cylinder fits (the player's depenetrate
+decides), links neighbours whose rise is a step or a walkable slope, and
+lets drops go one way. 75k nodes, 1.2 s to build on the host, cached to the
+phone's app storage keyed by map CRC + biped numbers (`hta_nav_save/load`,
+validated against truncation and out-of-range links). The test walks a real
+biped on the Trial's physics base to base along an A* path: 62 s for
+138 wu, i.e. optimal at 2.25 wu/s.
+
+### Drawing bots: instances, not uploads
+
+Nine third-person weapon models copied per bot would have been ~2 MB of
+vertex upload a frame. Weapons are rigid, so the renderer gained
+`hta_gfx_set_instances`: a static mesh plus a transform per draw.
+`hta_actor` now keeps `node_world[]` and gives a marker's matrix
+(`hta_actor_marker_matrix`); a held weapon rides `right hand`. That same
+path is what spinning powerups and CPU-free vehicles should use next.
+
+Stance words come from the graph itself: `stand rifle ar fire-1` says the AR
+is a "rifle"; the flamethrower and fuel rod have no clips and borrow the
+`zstand flame` / `zstand cannon` sets.
+
+### The flinch turned them upside down — again
+
+Owner: "when taking damage, players, bots flip upside down". The 2026-09-21
+fix substituted an overlay's keyframed nodes, which only looked right over
+the target bot's one rifle idle. **Type-1 overlays are deltas from their own
+first frame** (the viewmodel learned this on the needler, 2026-09-20):
+`local = ov[f] . ov[0]^-1 . local`. Type-2 replacements (melee) still
+substitute. `test_actor` now plays 7 overlays over 9 stances and fails the
+old code (0.54 wu pop at frame 0).
+
+### The sky was never drawn
+
+Every "sky blue" in every screenshot was the clear colour. The sky model is
+6,400–98,000 units out and the world's far plane is ~750, so every triangle
+was clipped. The sky pass now has its own depth range (10..200000), draws
+each layer with its own blend, and — because skies are chicago shaders —
+a new chicago mode folds up to three maps at their own repeats by their
+colour/alpha functions (`hta_chicago_maps`; `sky clear blue` is twinkle x12
+times stars x8, added over the gradient). Blood Gulch now shows clouds,
+Threshold, Basis and the ring.
+
+### The main menu is the Trial's own
+
+`ui.map`'s level is empty BSP + one scenery object (`scenery\halo\halo`)
+under `sky_ui`, seen from named cutscene camera points (scenario +1264, 104
+each: `uicam`, `multiplayer`, `settings`, ...). The logo and words are
+bitmaps (`ui\shell\main_menu\halo_logo`, `menu_multiplayer` etc.: frame 0
+half-transparent plain, frame 1 glowing selected; the word fills the top
+half of its 256x64). Layout was measured from a PC screenshot the owner
+sent. Title music is `sound\music\title1` — **Ogg Vorbis**, cut into
+permutations that name the next (+42) — decoded with vendored stb_vorbis
+and `hta_sound_decode_chain`.
+
+### One APK
+
+Owner asked to stop sideloading map files. `publish_apk.sh --with-assets`
+stages their own maps (hardlinks) into `assets/maps/` stored uncompressed;
+native maps them out of the APK (`apk:maps/...` paths,
+`AAsset_openFileDescriptor64`, page-aligned mmap). The gate still builds and
+checks the shareable, asset-free APK. The personal APK must not be shared.
+Name "Halo: MP", original adaptive icon (helmet in a ring). `versionCode`
+is the commit count.
+
 ## Network session closeout (2026-09-22)
 
 The owner requested a phone build that can host on LAN and join its own game.

@@ -1,4 +1,4 @@
-# halo-trial-android
+# Halo: MP (halo-trial-android)
 
 A native ARM64 Android engine for the free **Halo: Combat Evolved Trial**,
 playing **Blood Gulch**. C, Vulkan, AAudio, no engine dependencies. It reads
@@ -11,24 +11,26 @@ next, how to read Halo's tags, and the traps that have already cost a session.
 
 ## Where it got to
 
-Blood Gulch renders with its lightmaps and detail maps. You can run, crouch,
-jump and fall on the Trial's own biped physics; carry two of its eleven
-weapons with their real models, animations, sounds and HUD; throw its
-grenades; pick up what the map actually places, on the map's own respawn
-timers; die and watch your body go down; and shoot a target that bleeds
-shields before health, at the damage the tags say each weapon does.
-Human Warthogs can be driven across Blood Gulch with a chase camera, steering,
-braking, wheel motion, and terrain contact.
+The app opens on the Trial's own main menu (from `ui.map`): the ring, the
+space sky, the HALO logo and the title theme. MULTIPLAYER plays Slayer on
+Blood Gulch against 0-7 bots that walk a nav grid rebuilt from the map's
+collision, pick up weapons and powerups, and fight with the tags' own
+damage; the kill feed and announcer use the Trial's own words and voice.
+Blood Gulch renders with lightmaps, detail maps and (new) its real sky. You
+can run, crouch, jump, carry two of the eleven weapons with real models,
+animations, sounds and HUD, throw grenades, drive Warthogs, die and respawn.
+BACK pauses.
 
-Not yet: other drivable vehicles, bots that think, menus, authoritative
-multiplayer combat. The first LAN movement/action replication slice is underway;
-see [`docs/NETWORK_PROGRESS.md`](docs/NETWORK_PROGRESS.md).
+Not yet: the Scorpion, Ghost, Banshee and turret; Warthog gunner seats;
+vehicle damage; more than one remote player in LAN and server-authoritative
+combat; CTF/Oddball/KOTH; the campaign. See [`docs/HANDOFF.md`](docs/HANDOFF.md).
 
 ## Legal
 
-- **No Halo assets, executables, or DLLs are ever committed here or bundled in
-  an APK.** The player supplies their own Trial copy; assets are imported
-  on-device at runtime.
+- **No Halo assets, executables, or DLLs are ever committed here.** The
+  shareable APK carries none; the player supplies their own Trial copy. The
+  owner's personal build (`publish_apk.sh --with-assets`) embeds their own
+  maps for their own device only and is never distributed.
 - This project does **not** use the December 2024 Halo "Digsite" leak material
   that the current upstream Demon depends on.
 - No DRM is involved and none is circumvented.

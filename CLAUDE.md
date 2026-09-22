@@ -43,7 +43,10 @@ ls -lt scratch/uploads/ | head
 ```
 
 `src/platform/platform_android.c` is **only** built by the Android target —
-`cmake --build build-host` will not catch mistakes in it, only `verify.sh`.
+`cmake --build build-host` will not catch mistakes in it; `scripts/ndkcheck.sh`
+does in a second, `verify.sh` for real. Publish the owner's build with
+`--with-assets`. If host Vulkan is broken, see "Tools" in HANDOFF.md
+(lavapipe in `scratch/lvp`).
 
 End every session by updating the **CURRENT TESTING OBJECTIVE** section of
 `docs/HANDOFF.md` with what to try on device next.
