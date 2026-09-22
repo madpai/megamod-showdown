@@ -183,12 +183,30 @@ void hta_actor_place(hta_actor *a, const float pos[3], float yaw)
      * in a sampled overlay carries the animation's own default rather than
      * the pose underneath, so taking the lot turns the body inside out. */
     if (a->overlay >= 0) {
-        hta_transform ov[HTA_ANIM_MAX_NODES];
-        if (hta_anim_sample(&a->graph, (uint32_t)a->overlay,
-                            a->overlay_frame, ov)) {
-            for (uint32_t i = 0; i < a->graph.node_count; i++)
-                if (hta_anim_animates(&a->graph, (uint32_t)a->overlay, i))
+        hta_transform ov[HTA_ANIM_MAX_NODES], ref[HTA_ANIM_MAX_NODES];
+        bool additive = a->graph.anims[a->overlay].type == 1;
+        if (hta_anim_sample(&a->graph, (uint32_t)a->overlay, a->overlay_frame, ov) &&
+            (!additive || hta_anim_sample(&a->graph, (uint32_t)a->overlay, 0.0f, ref))) {
+            for (uint32_t i = 0; i < a->graph.node_count; i++) {
+                if (!hta_anim_animates(&a->graph, (uint32_t)a->overlay, i)) continue;
+                if (additive) {
+                    /* A type-1 overlay (a flinch, a recoil) is what the
+                     * clip has moved SINCE ITS FIRST FRAME, laid on the
+                     * pose underneath -- the viewmodel's rule. Taking its
+                     * absolute values instead only looked right over the
+                     * one stance it was tried on; over a run or a pistol
+                     * stance it turned the body upside down. */
+                    hta_transform inv, delta, posed;
+                    hta_xf_inverse(&inv, &ref[i]);
+                    hta_xf_mul(&delta, &ov[i], &inv);
+                    hta_xf_mul(&posed, &delta, &local[i]);
+                    local[i] = posed;
+                } else {
+                    /* A replacement (type 2: melee, reload) takes over the
+                     * nodes it animates outright. */
                     local[i] = ov[i];
+                }
+            }
         }
     }
     hta_anim_world(&a->graph, local, world);

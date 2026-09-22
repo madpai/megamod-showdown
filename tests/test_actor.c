@@ -174,6 +174,69 @@ int main(int argc, char **argv)
         CHECK(moved > 0.01f, "  facing rotates the body");
     }
 
+    /* The report: "players and bots flip upside down when getting hit".
+     * Every overlay a body plays -- the flinches and the recoils -- over
+     * every stance a bot stands, runs or crouches in, must leave it on its
+     * feet, and at an overlay's own first frame must change nothing. */
+    printf("\n[overlays over every stance]\n");
+    {
+        static const char *const BASES[] = {
+            "stand rifle idle", "stand rifle move-front", "stand rifle move-left",
+            "stand pistol idle", "stand pistol move-front", "crouch rifle idle",
+            "crouch pistol move-front", "stand missile idle", "stand rifle airborne",
+        };
+        static const char *const OVERLAYS[] = {
+            "s-ping front gut%0", "s-ping front gut%1", "s-ping front gut%2",
+            "stand rifle ar fire-1", "stand pistol hp fire-1", "stand missile rl fire-1",
+            "stand rifle sg fire-1",
+        };
+        const float at[3] = { 0.0f, 0.0f, 0.0f };
+        int upright = 0, still = 0, total = 0;
+        float worst = 0.0f, worst_start = 0.0f;
+        for (size_t b = 0; b < sizeof(BASES) / sizeof(BASES[0]); b++)
+        for (size_t o = 0; o < sizeof(OVERLAYS) / sizeof(OVERLAYS[0]); o++) {
+            if (!hta_actor_play(&a, BASES[b], false)) continue;
+            a.overlay = -1;
+            hta_actor_place(&a, at, 0.0f);
+            float zmin = 1e9f, zmax = -1e9f;
+            for (uint32_t v = 0; v < a.mesh.vertex_count; v++) {
+                zmin = fminf(zmin, a.posed[v].pos[2]); zmax = fmaxf(zmax, a.posed[v].pos[2]);
+            }
+            static hta_vertex before[8192];
+            uint32_t nv = a.mesh.vertex_count < 8192 ? a.mesh.vertex_count : 8192;
+            memcpy(before, a.posed, nv * sizeof(hta_vertex));
+            if (!hta_actor_play_overlay(&a, OVERLAYS[o])) continue;
+            total++;
+            /* Frame 0: the pose underneath, untouched. */
+            hta_actor_place(&a, at, 0.0f);
+            float drift = 0.0f;
+            for (uint32_t v = 0; v < nv; v++)
+                for (int k = 0; k < 3; k++)
+                    drift = fmaxf(drift, fabsf(a.posed[v].pos[k] - before[v].pos[k]));
+            if (drift < 0.02f) still++;
+            if (drift > worst_start) worst_start = drift;
+            /* Mid-clip: the head end still above the feet. */
+            const hta_animation *an = &a.graph.anims[a.overlay];
+            a.overlay_frame = (float)(an->frame_count > 1 ? an->frame_count - 1 : 0) * 0.5f;
+            hta_actor_place(&a, at, 0.0f);
+            /* The highest point must stay near where the head was: upside
+             * down puts the feet up there instead. */
+            float top = -1e9f, bottom = 1e9f;
+            for (uint32_t v = 0; v < a.mesh.vertex_count; v++) {
+                top = fmaxf(top, a.posed[v].pos[2]); bottom = fminf(bottom, a.posed[v].pos[2]);
+            }
+            float off = fmaxf(fabsf(top - zmax), fabsf(bottom - zmin));
+            if (off > worst) worst = off;
+            if (off < 0.15f) upright++;
+            a.overlay = -1;
+        }
+        printf("  %d stance/overlay pairs; worst height change %.3f wu, worst frame-0 drift %.4f wu\n",
+               total, (double)worst, (double)worst_start);
+        CHECK(total >= 40, "  the cyborg has these stances and overlays");
+        CHECK(upright == total, "  every one stays on its feet mid-overlay");
+        CHECK(still == total, "  and changes nothing at its first frame");
+    }
+
     printf("\n[clips it does not have]\n");
     CHECK(!hta_actor_play(&a, "no such animation at all", false),
           "an unknown clip is refused");
