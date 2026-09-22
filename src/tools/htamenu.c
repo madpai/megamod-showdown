@@ -36,18 +36,20 @@ static bool ppm(const char *path, const uint8_t *rgba, uint32_t w, uint32_t h)
 
 int main(int argc, char **argv)
 {
-    if (argc < 2) { fprintf(stderr, "usage: htamenu <ui.map> [--out prefix] [--width W] [--height H] [--time S] [--select N]\n"); return 2; }
+    if (argc < 2) { fprintf(stderr, "usage: htamenu <ui.map> [--out prefix] [--width W] [--height H] [--time S] [--select N] [--focus camera]\n"); return 2; }
     const char *prefix = "menu";
     uint32_t W = 960, H = 540;
     float at = 0.0f;
     int select = 0;
     float yaw_override = -100.0f, pitch_override = 0.0f;
+    const char *focus = NULL;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--out") && i + 1 < argc) prefix = argv[++i];
         else if (!strcmp(argv[i], "--width") && i + 1 < argc) W = (uint32_t)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--height") && i + 1 < argc) H = (uint32_t)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--time") && i + 1 < argc) at = strtof(argv[++i], NULL);
         else if (!strcmp(argv[i], "--select") && i + 1 < argc) select = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--focus") && i + 1 < argc) focus = argv[++i];
         else if (!strcmp(argv[i], "--look") && i + 2 < argc) {
             yaw_override = strtof(argv[++i], NULL); pitch_override = strtof(argv[++i], NULL);
         }
@@ -72,6 +74,24 @@ int main(int argc, char **argv)
         fprintf(stderr, "menu: %s\n", err); return 1;
     }
     printf("menu           %s\n", err);
+    /* The submenus' art and words, which the phone's overlay draws. */
+    static hta_shell shell;
+    hta_shell_load(&shell, &c, bdata ? &bm : NULL);
+    int arts = 0, words = 0;
+    for (int i = 0; i < HTA_SHELL_ART_COUNT; i++) arts += shell.art[i].rgba != NULL;
+    for (const char *p = shell.text, *q = p; p && *p; p = q + 1) {
+        q = strchr(p, 0x1E); if (!q) break;
+        words += q > p;
+    }
+    printf("shell          %d/%d art, %d/%d words\n", arts, HTA_SHELL_ART_COUNT,
+           words, HTA_SHELL_TEXT_COUNT);
+    hta_shell_free(&shell);
+    if (focus) {
+        /* A submenu's shot: the glide finished, words hidden. */
+        hta_menu_focus(&menu, focus);
+        menu.cam_blend = 1.0f;
+        menu.shell = true;
+    }
     hta_gfx *g = hta_gfx_create_offscreen(W, H, err, sizeof(err));
     if (!g) { fprintf(stderr, "Vulkan: %s\n", err); return 1; }
     hta_gfx_mesh *scene = menu.scene.index_count ? hta_gfx_mesh_upload(g, &menu.scene, err, sizeof(err)) : NULL;

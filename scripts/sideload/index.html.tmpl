@@ -26,6 +26,9 @@
 <p class=muted>This APK has your own Trial data built in. It is for this phone
 only &mdash; do not share it. Anyone else installs the plain build and picks
 their own maps.</p>
+<a class="btn alt" href="halo-trial-guest.apk">⬇ Guest APK — no Trial maps</a>
+<p class=muted>Give guests this APK only. They must import their own Trial maps
+before joining your match.</p>
 
 <h2>Send a screenshot</h2>
 <p>Tap the box and pick the screenshot from your gallery. It only travels over
@@ -44,13 +47,14 @@ Tailscale to this desktop — nothing public.</p>
 <ol>
 <li>Tap the APK. Allow <b>install unknown apps</b> if prompted. It installs
 over the previous build; nothing else to download.</li>
-<li>Launch <b>Halo: MP</b>, choose bots and difficulty, tap <b>Play Slayer</b>.</li>
+<li>Launch <b>Halo: MP</b>. The bundled Trial maps open the main menu. Tap
+<b>SINGLEPLAYER</b> for a bot match or <b>MULTIPLAYER</b> to create or join.</li>
 </ol>
 
 <h2>What you should see</h2>
 <ul>
 <li><b>Sky blue + terrain</b> → map loaded, you're in Blood Gulch.</li>
-<li><b>Magenta screen</b> → Vulkan works but no map.</li>
+<li><b>Magenta screen</b> → the Blood Gulch map did not load.</li>
 <li><b>Portrait / sideways world, landscape controls</b> → known; upload a shot.</li>
 </ul>
 
@@ -58,11 +62,11 @@ over the previous build; nothing else to download.</li>
 <ul>
 <li><b>Left half</b> of screen — drag to move (virtual stick)</li>
 <li><b>Right half</b> — drag to look</li>
-<li><b>Bottom-right corner</b> — jump</li>
-<li><b>Gamepad</b> — left stick move, right stick look, A jump, B noclip</li>
-<li><b>Back gesture</b> — clean exit</li>
+<li><b>JUMP</b> button — jump</li>
+<li><b>II</b> button — pause, resume, or quit to the main menu</li>
 </ul>
-<p class=muted>The app bundles no game data. It only reads the copy you supply.</p>
+<p class=muted>This personal APK bundles the owner's Trial maps. Keep it on
+the owner's devices; the shareable APK is built separately without maps.</p>
 <script>
 const drop = document.getElementById('drop');
 const file = document.getElementById('file');

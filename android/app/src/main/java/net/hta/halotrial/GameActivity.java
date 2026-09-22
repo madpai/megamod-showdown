@@ -1,8 +1,10 @@
 package net.hta.halotrial;
 
 import android.app.NativeActivity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Canvas;
+import android.graphics.Bitmap;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
@@ -17,9 +19,15 @@ import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.widget.EditText;
+import android.text.InputType;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.net.InterfaceAddress;
+import java.net.NetworkInterface;
+import java.util.Enumeration;
+import java.net.InetAddress;
 
 /**
  * NativeActivity plus a COD-Mobile-style touch HUD: visible stick, a large
@@ -35,6 +43,7 @@ public class GameActivity extends NativeActivity {
     }
 
     private HudOverlay hud;
+    private final ShellMenu shell = new ShellMenu(this);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -155,6 +164,8 @@ public class GameActivity extends NativeActivity {
     static native String nativeDebugText();
     static native String nativeAmmoText();
     static native int nativeVehicleMode();
+    static native int nativeDamageFlash();
+    static native int nativeNetStatus();
     /* Banner, place, kill feed and scoreboard, separated by 0x1E. */
     static native String nativeGameText();
     /* 1 while the main menu is up: the overlay draws no controls and hands
@@ -174,6 +185,15 @@ public class GameActivity extends NativeActivity {
         finish();
     }
     static native void nativeMenuTouch(int action, float x, float y);
+    static native String nativeShellText();
+    static native int[] nativeShellArt(int which);
+    static native void nativeShellScreen(int screen);
+    static native void nativeShellSound(int which);
+    static native void nativeStartMatch(int[] config, String host, String name);
+    static native String nativeLanScan(String targets, int port, int milliseconds);
+
+    public void openSolo() { runOnUiThread(() -> { shell.open(2); if (hud != null) hud.invalidate(); }); }
+    public void openMultiplayer() { runOnUiThread(() -> { shell.open(1); if (hud != null) hud.invalidate(); }); }
 
     static volatile boolean creditsUp;
 
@@ -190,6 +210,292 @@ public class GameActivity extends NativeActivity {
     /** Called from native when CREDITS is chosen. */
     public void showCredits() {
         creditsUp = true;
+    }
+
+    private static final class ShellMenu {
+        private final GameActivity owner;
+        private final Paint panel = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint row = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint title = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Bitmap[] art = new Bitmap[16];
+        private final boolean[] artRead = new boolean[16];
+        private String[] words;
+        private int screen;
+        private int bots = 3, skill = 1, kills = 25, minutes = 0, respawn = 5;
+        private int maxPlayers = 8, port = 32270;
+        private String serverName = "Halo", address = "";
+        private String[] lanGames = new String[0];
+        private boolean scanning;
+
+        ShellMenu(GameActivity owner) {
+            this.owner = owner;
+            panel.setColor(0xC8102038);
+            row.setColor(0xAA234567);
+            title.setColor(0xFFE3F2FF);
+            title.setTypeface(Typeface.DEFAULT_BOLD);
+            title.setTextAlign(Paint.Align.CENTER);
+            text.setColor(0xFFFFFFFF);
+            text.setTextAlign(Paint.Align.CENTER);
+        }
+
+        void open(int next) {
+            screen = next;
+            nativeShellScreen(next == 2 ? 1 : 2);
+            nativeShellSound(1);
+            if (words == null) {
+                String raw = nativeShellText();
+                words = raw == null ? new String[0] : raw.split("\u001e", -1);
+            }
+            if (next == 5) scan();
+        }
+
+        private String word(int n, String fallback) {
+            return n < words.length && !words[n].isEmpty() ? words[n] : fallback;
+        }
+
+        private Bitmap image(int n) {
+            if (artRead[n]) return art[n];
+            artRead[n] = true;
+            int[] data = nativeShellArt(n);
+            if (data == null || data.length < 3) return null;
+            int w = data[0], h = data[1];
+            if (w < 1 || h < 1 || (long) w * h != data.length - 2) return null;
+            art[n] = Bitmap.createBitmap(data, 2, w, w, h, Bitmap.Config.ARGB_8888);
+            return art[n];
+        }
+
+        private String heading() {
+            switch (screen) {
+            case 1: return word(46, "MULTIPLAYER");
+            case 2: return "SINGLEPLAYER";
+            case 3: return "CREATE GAME";
+            case 4: return word(0, "JOIN GAME");
+            case 5: return "LAN GAMES";
+            default: return "INTERNET GAME";
+            }
+        }
+
+        private String[] rows() {
+            switch (screen) {
+            case 1: return new String[] { word(1, "CREATE GAME"), word(0, "JOIN GAME"), word(18, "BACK") };
+            case 2: return new String[] { "BOTS: " + bots, "BOT SKILL: " + skillName(),
+                    word(21, "KILLS TO WIN") + " " + (kills == 0 ? "NONE" : kills),
+                    "TIME LIMIT: " + (minutes == 0 ? "NONE" : minutes + " MIN"),
+                    word(22, "RESPAWN TIME") + " " + respawn + " SEC",
+                    word(12, "START GAME"), word(18, "BACK") };
+            case 3: return new String[] { word(10, "SERVER NAME") + ": " + serverName,
+                    word(11, "MAX PLAYERS") + ": " + maxPlayers,
+                    "BOTS: " + bots, "BOT SKILL: " + skillName(),
+                    word(21, "KILLS TO WIN") + " " + (kills == 0 ? "NONE" : kills),
+                    "TIME LIMIT: " + (minutes == 0 ? "NONE" : minutes + " MIN"),
+                    word(22, "RESPAWN TIME") + " " + respawn + " SEC",
+                    word(12, "START GAME"), word(18, "BACK") };
+            case 4: return new String[] { word(3, "LAN"), word(2, "INTERNET") + " / DIRECT IP", word(18, "BACK") };
+            case 5: {
+                int count = Math.min(5, lanGames.length);
+                String[] r = new String[count + 2];
+                for (int i = 0; i < count; i++) {
+                    String[] f = lanGames[i].split("\t", -1);
+                    r[i] = f.length >= 5 ? f[2] + "  " + f[3] + "/" + f[4] +
+                            (gameFull(f) ? "  FULL" : "  " + f[0]) : lanGames[i];
+                }
+                r[count] = scanning ? "SCANNING..." : word(30, "REFRESH");
+                r[count + 1] = word(18, "BACK");
+                return r;
+            }
+            default: return new String[] { word(16, "SERVER ADDRESS") + ": " +
+                    (address.isEmpty() ? "TAP TO ENTER" : address), word(31, "JOIN GAME"), word(18, "BACK") };
+            }
+        }
+
+        private String skillName() {
+            String[] fallback = { "Easy", "Normal", "Heroic", "Legendary" };
+            return word(26 + skill, fallback[skill]);
+        }
+
+        void draw(Canvas c, int w, int h) {
+            if (screen == 0) return;
+            String[] r = rows();
+            float scale = Math.min(w, h);
+            float left = w * 0.18f, right = w * 0.82f;
+            c.drawRoundRect(left, h * 0.08f, right, h * 0.94f, 18f, 18f, panel);
+            int headArt = screen == 1 ? 0 : screen == 3 ? 4 : screen == 5 ? 1 : screen == 6 ? 2 : -1;
+            Bitmap header = headArt >= 0 ? image(headArt) : null;
+            if (header != null) {
+                float aspect = (float) header.getWidth() / header.getHeight();
+                float hh = h * 0.11f;
+                c.drawBitmap(header, null, new Rect((int)(w * 0.5f - hh * aspect * 0.5f),
+                        (int)(h * 0.10f), (int)(w * 0.5f + hh * aspect * 0.5f),
+                        (int)(h * 0.10f + hh)), null);
+            } else {
+                title.setTextSize(scale * 0.075f);
+                c.drawText(heading(), w * 0.5f, h * 0.20f, title);
+            }
+            float step = 0.65f / Math.max(8, r.length);
+            text.setTextSize(scale * (r.length >= 7 ? 0.044f : 0.055f));
+            for (int i = 0; i < r.length; i++) {
+                float y = h * (0.255f + i * step);
+                Bitmap background = image(8);
+                if (background != null) c.drawBitmap(background, null,
+                        new Rect((int)left + 12, (int)y, (int)right - 12, (int)(y + h * step * 0.86f)), null);
+                c.drawRoundRect(left + 12, y, right - 12, y + h * step * 0.86f, 8, 8, row);
+                c.drawText(r[i], w * 0.5f, y + h * step * 0.58f, text);
+            }
+            if (screen == 5 && !scanning && lanGames.length == 0) {
+                text.setTextSize(scale * 0.035f);
+                c.drawText("No LAN games found. Tap REFRESH to scan again.",
+                        w * 0.5f, h * 0.77f, text);
+            }
+        }
+
+        void drawMainSolo(Canvas c, int w, int h) {
+            // The Trial calls this slot CAMPAIGN. Until campaign maps work,
+            // its action is a configurable solo Slayer match.
+            row.setColor(0xE0193457);
+            c.drawRoundRect(w * 0.35f, h * 0.515f, w * 0.65f, h * 0.583f,
+                    8, 8, row);
+            row.setColor(0xAA234567);
+            title.setTextSize(Math.min(w, h) * 0.055f);
+            c.drawText("SINGLEPLAYER", w * 0.5f, h * 0.563f, title);
+        }
+
+        void tap(float x, float y) {
+            if (screen == 0 || x < 0.18f || x > 0.82f) return;
+            String[] r = rows();
+            float step = 0.65f / Math.max(8, r.length);
+            int i = (int)((y - 0.255f) / step);
+            if (y < 0.255f || i < 0 || i >= r.length || y > 0.255f + (i + 0.86f) * step) return;
+            nativeShellSound(1);
+            switch (screen) {
+            case 1:
+                if (i == 0) open(3); else if (i == 1) open(4); else back();
+                break;
+            case 2:
+                if (i == 0) bots = (bots + 1) % 8;
+                else if (i == 1) skill = (skill + 1) % 4;
+                else if (i == 2) kills = next(kills, new int[] { 0, 10, 25, 50, 100 });
+                else if (i == 3) minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 });
+                else if (i == 4) respawn = next(respawn, new int[] { 2, 5, 10, 15 });
+                else if (i == 5) start(0, ""); else back();
+                break;
+            case 3:
+                if (i == 0) edit(false);
+                else if (i == 1) maxPlayers = maxPlayers == 8 ? 2 : maxPlayers + 1;
+                else if (i == 2) bots = (bots + 1) % 8;
+                else if (i == 3) skill = (skill + 1) % 4;
+                else if (i == 4) kills = next(kills, new int[] { 0, 10, 25, 50, 100 });
+                else if (i == 5) minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 });
+                else if (i == 6) respawn = next(respawn, new int[] { 2, 5, 10, 15 });
+                else if (i == 7) start(1, "127.0.0.1"); else back();
+                break;
+            case 4:
+                if (i == 0) open(5); else if (i == 1) open(6); else back();
+                break;
+            case 5:
+                if (i < r.length - 2) {
+                    String[] f = lanGames[i].split("\t", -1);
+                    if (f.length >= 2) {
+                        if (gameFull(f)) {
+                            new AlertDialog.Builder(owner).setMessage("This game is full. Refresh to find an open game.")
+                                    .setPositiveButton("OK", null).show();
+                            break;
+                        }
+                        try { port = Integer.parseInt(f[1]); } catch (NumberFormatException ignored) { port = 32270; }
+                        start(2, f[0]);
+                    }
+                } else if (i == r.length - 2) scan(); else back();
+                break;
+            case 6:
+                if (i == 0) edit(true);
+                else if (i == 1) {
+                    if (validIPv4(address)) start(2, address);
+                    else new AlertDialog.Builder(owner).setMessage("Enter a valid server IPv4 address.")
+                            .setPositiveButton("OK", null).show();
+                }
+                else if (i == 2) back();
+                break;
+            default: break;
+            }
+            if (owner.hud != null) owner.hud.invalidate();
+        }
+
+        private int next(int current, int[] values) {
+            for (int i = 0; i < values.length; i++)
+                if (values[i] == current) return values[(i + 1) % values.length];
+            return values[0];
+        }
+
+        private boolean gameFull(String[] fields) {
+            if (fields.length < 5) return false;
+            try { return Integer.parseInt(fields[3]) >= Integer.parseInt(fields[4]); }
+            catch (NumberFormatException ignored) { return false; }
+        }
+
+        private boolean validIPv4(String value) {
+            String[] parts = value.split("\\.", -1);
+            if (parts.length != 4) return false;
+            for (String part : parts) {
+                if (part.isEmpty() || part.length() > 3) return false;
+                for (int k = 0; k < part.length(); k++)
+                    if (part.charAt(k) < '0' || part.charAt(k) > '9') return false;
+                if (Integer.parseInt(part) > 255) return false;
+            }
+            return true;
+        }
+
+        private void start(int mode, String host) {
+            nativeStartMatch(new int[] { mode, bots, skill, kills, minutes, respawn, maxPlayers, port },
+                    host, serverName);
+            screen = 0;
+        }
+
+        private void back() {
+            nativeShellSound(2);
+            if (screen == 1 || screen == 2) { screen = 0; nativeShellScreen(0); }
+            else if (screen == 3 || screen == 4) open(1);
+            else open(4);
+        }
+
+        private void edit(boolean ip) {
+            EditText input = new EditText(owner);
+            input.setSingleLine(true);
+            input.setInputType(ip ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
+                    : InputType.TYPE_CLASS_TEXT);
+            input.setText(ip ? address : serverName);
+            new AlertDialog.Builder(owner).setTitle(ip ? "Server IPv4 address" : "Server name")
+                    .setView(input).setPositiveButton("OK", (d, which) -> {
+                        String value = input.getText().toString().trim();
+                        if (ip) address = value; else if (!value.isEmpty()) serverName = value;
+                        if (owner.hud != null) owner.hud.invalidate();
+                    }).setNegativeButton("Cancel", null).show();
+        }
+
+        private void scan() {
+            if (scanning) return;
+            scanning = true;
+            lanGames = new String[0];
+            new Thread(() -> {
+                StringBuilder targets = new StringBuilder("255.255.255.255");
+                try {
+                    Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+                    while (interfaces != null && interfaces.hasMoreElements()) {
+                        NetworkInterface iface = interfaces.nextElement();
+                        if (!iface.isUp() || iface.isLoopback()) continue;
+                        for (InterfaceAddress ia : iface.getInterfaceAddresses()) {
+                            InetAddress broadcast = ia.getBroadcast();
+                            if (broadcast != null) targets.append(',').append(broadcast.getHostAddress());
+                        }
+                    }
+                } catch (Exception ignored) { }
+                String result = nativeLanScan(targets.toString(), 32270, 1500);
+                owner.runOnUiThread(() -> {
+                    lanGames = result == null || result.isEmpty() ? new String[0] : result.split("\n");
+                    scanning = false;
+                    if (owner.hud != null) owner.hud.invalidate();
+                });
+            }, "halo-lan-scan").start();
+        }
     }
 
     private static final class HudOverlay extends View {
@@ -211,6 +517,7 @@ public class GameActivity extends NativeActivity {
         private final Paint feed = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint board = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint boardBg = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint damage = new Paint(Paint.ANTI_ALIAS_FLAG);
 
         private float stickCx, stickCy, stickR, stickTx, stickTy;
         private float fireCx, fireCy, fireR;
@@ -270,6 +577,7 @@ public class GameActivity extends NativeActivity {
             board.setColor(0xFFE6E9EF);
             board.setTypeface(Typeface.MONOSPACE);
             boardBg.setColor(0xB0101820);
+            damage.setColor(0xFFFF3030);
         }
 
         @Override
@@ -345,6 +653,11 @@ public class GameActivity extends NativeActivity {
                 if (creditsUp) {
                     if (a == MotionEvent.ACTION_UP) creditsUp = false;
                     invalidate();
+                    return true;
+                }
+                if (owner.shell.screen != 0) {
+                    if (a == MotionEvent.ACTION_UP && getWidth() > 0 && getHeight() > 0)
+                        owner.shell.tap(e.getX() / getWidth(), e.getY() / getHeight());
                     return true;
                 }
                 int code = a == MotionEvent.ACTION_DOWN ? 0
@@ -576,6 +889,8 @@ public class GameActivity extends NativeActivity {
         protected void onDraw(Canvas c) {
             if (GameActivity.nativeMenuMode() != 0) {
                 if (creditsUp) drawCredits(c);
+                else if (owner.shell.screen != 0) owner.shell.draw(c, getWidth(), getHeight());
+                else owner.shell.drawMainSolo(c, getWidth(), getHeight());
                 postInvalidateDelayed(100);
                 return;
             }
@@ -593,6 +908,31 @@ public class GameActivity extends NativeActivity {
                 return;
             }
             int vehicleMode = GameActivity.nativeVehicleMode();
+            int netStatus = GameActivity.nativeNetStatus();
+            if (netStatus != 0) {
+                String connection = netStatus == 1 ? "CONNECTING TO GAME..." :
+                        netStatus == 2 ? "CONNECTED" :
+                        netStatus == 3 ? "HOSTING · WAITING FOR PLAYER" :
+                        netStatus == 4 ? "HOSTING · PLAYER JOINED" :
+                        netStatus == 6 ? "WAITING FOR MATCH STATE" :
+                        netStatus == 7 ? "MAPS DO NOT MATCH" :
+                        netStatus == 8 ? "GAME IS FULL" : "NETWORK UNAVAILABLE";
+                c.drawText(connection, getWidth() * 0.5f, getHeight() * 0.135f, label);
+            }
+            int hit = GameActivity.nativeDamageFlash();
+            if (hit > 0) {
+                int w = getWidth(), h = getHeight();
+                float edge = Math.min(w, h) * 0.035f;
+                damage.setStyle(Paint.Style.FILL);
+                damage.setAlpha(hit * 35 / 255);
+                c.drawRect(0, 0, w, h, damage);
+                damage.setStyle(Paint.Style.STROKE);
+                damage.setStrokeWidth(edge);
+                damage.setAlpha(hit * 190 / 255);
+                c.drawRect(edge * 0.5f, edge * 0.5f,
+                        w - edge * 0.5f, h - edge * 0.5f, damage);
+                damage.setStyle(Paint.Style.FILL);
+            }
             if (vehicleMode != 0) {
                 float savedSize = label.getTextSize();
                 label.setTextSize(Math.min(getWidth(), getHeight()) * 0.026f);

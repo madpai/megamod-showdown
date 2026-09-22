@@ -234,6 +234,10 @@ typedef struct {
     bool          game_on;
     int32_t       me;
     int           bot_count, bot_skill;
+    /* The match the menu set up: kills to win (0 leaves the game's
+     * default), minutes of play (0 none), seconds to come back. */
+    int           score_limit, time_limit_min;
+    float         respawn_delay;
     hta_gfx_mesh *gpu_units[HTA_GAME_MAX_UNITS];
     hta_gfx_mesh *gpu_held[HTA_GAME_MAX_WEAPONS];
     hta_gfx_mesh *gpu_pools[HTA_GAME_MAX_POOLS];
@@ -258,6 +262,7 @@ typedef struct {
      * is the tag's: the Chief has a quiet death and a violent one, and
      * which you get depends on what killed you. */
     bool     dead;
+    float    damage_flash_left;
     float    dead_timer;        /* seconds until the respawn */
     float    death_pos[3];      /* where it happened, so we come back elsewhere */
     uint32_t death_quiet_snd, death_violent_snd, death_falling_snd;
@@ -314,6 +319,17 @@ typedef struct {
     double        remote_snapshot_time, net_last_send;
     uint64_t      net_last_snapshots;
     uint32_t      net_event_id;
+    int8_t        peer_unit[HTA_NET_MAX_PLAYERS];
+    uint16_t      peer_melee_seen[HTA_NET_MAX_PLAYERS];
+    uint16_t      peer_grenade_seen[HTA_NET_MAX_PLAYERS];
+    uint16_t      peer_reload_seen[HTA_NET_MAX_PLAYERS];
+    uint16_t      peer_pickup_seen[HTA_NET_MAX_PLAYERS];
+    uint16_t      net_melee_count, net_grenade_count, net_reload_count, net_pickup_count;
+    hta_net_control net_control;
+    uint16_t      world_round;
+    uint32_t      world_applied_tick;
+    uint32_t      projectile_applied_tick;
+    bool          world_local_bound;
     hta_net_stats net_stats_prev;
     double        remote_action_until;
     bool          net_spawned;
@@ -372,8 +388,21 @@ typedef struct {
 
 static hta_android *g_android;
 static _Atomic int g_vehicle_mode; /* 0 walk, 1 nearby driver seat, 2 driving */
+/* 0..255 edge flash, read by the Java overlay on its own thread. */
+static _Atomic int g_damage_flash;
+#define HTA_DAMAGE_FLASH_TIME 0.55f
+/* 0 solo, 1 joining, 2 in match, 3 hosting alone, 4 hosting with peer,
+ * 5 unavailable, 6 connected without match state, 7 map mismatch, 8 full. */
+static _Atomic int g_net_status;
 /* The pause screen is up: the world holds still and the HUD shows it. */
 static _Atomic int g_paused;
+/* Which submenu the Java overlay has up: 0 none (the main menu), 1 solo,
+ * 2 multiplayer. It decides the camera shot and what BACK does. */
+static _Atomic int g_shell_screen;
+static hta_shell g_shell;
+static _Atomic int g_shell_ready;
+static int g_shell_shown = -1;
+static void call_activity(hta_android *s, const char *method);
 static bool         g_hud_wanted;
 
 /* ---------------------------- asset loading ---------------------------- */
@@ -791,6 +820,7 @@ static float blast_falloff(const float centre[3], const float at[3],
  * fade is shaped around it: black by the time the body has settled, black
  * while you wait, and open again as you come back. */
 #define HTA_RESPAWN_DELAY   5.0f
+#define HTA_RESPAWN_MIN     1.5f   /* "INSTANT": the fall, then the fade. Ours */
 /* The black comes at the END, not the start. Fading out as you die would
  * mean the body you have just been shown is on screen for half a second
  * before the screen swallows it; Halo lets you watch the whole time and
@@ -1623,7 +1653,10 @@ static void start_game(hta_android *s)
         return;
     }
     hta_log("[game] %s", err);
-    int bots = s->net_enabled ? 0 : s->bot_count;
+    s->game.score_limit = s->score_limit;
+    s->game.time_limit = (float)s->time_limit_min * 60.0f;
+    s->game.respawn_time = s->respawn_delay;
+    int bots = s->net_enabled && !s->net_hosting ? 0 : s->bot_count;
     if (bots > 0) {
         double t0 = hta_time_seconds();
         hta_nav_params prm = { s->game.phys.radius, s->game.phys.coll_stand,
@@ -1657,10 +1690,12 @@ static void start_game(hta_android *s)
      * what the tags already gave them. */
     s->game.units[s->me].vitals = *s->vit;
     s->vit = &s->game.units[s->me].vitals;
-    if (s->game.unit_count > 1 &&
-        !hta_game_view_load(&s->gview, &s->game, bm, s->game.unit_count, err, sizeof(err)))
+    if ((s->game.unit_count > 1 || s->net_enabled) &&
+        !hta_game_view_load(&s->gview, &s->game, bm,
+                            s->net_enabled ? HTA_GAME_MAX_UNITS : s->game.unit_count,
+                            err, sizeof(err)))
         hta_log("[game] bodies: %s", err);
-    else if (s->game.unit_count > 1)
+    else if (s->game.unit_count > 1 || s->net_enabled)
         hta_log("[game] %s", err);
     static const char *const LINES[HTA_LINE_COUNT] = {
         NULL,
@@ -1679,11 +1714,16 @@ static void start_game(hta_android *s)
     for (uint32_t p = 0; p < s->game.pool_count; p++)
         if (s->game.pools[p].detonation_snd) bank_get(s, s->game.pools[p].detonation_snd);
     s->game_on = true;
+    if (s->net_enabled) {
+        s->net.map_crc=s->cache.crc32;
+        if (s->net_hosting) s->host_server.map_crc=s->cache.crc32;
+    }
     hta_game_start(&s->game);
+    s->world_round = 1;
     /* The practice target is gone: there are real people to shoot now. */
     if (bots > 0) hta_bot_free(&s->bot);
-    hta_log("[game] Slayer: you and %d bot(s) at skill %d, first to %d",
-            bots, s->bot_skill, s->game.score_limit);
+    hta_log("[game] Slayer: you and %d bot(s) at skill %d, first to %d, %d min, respawn %.0f s",
+            bots, s->bot_skill, s->game.score_limit, s->time_limit_min, s->respawn_delay);
 }
 
 static void game_gpu_upload(hta_android *s)
@@ -1719,6 +1759,18 @@ static void game_events(hta_android *s)
     hta_game_event e;
     char buf[96];
     while (hta_game_pop(&s->game, &e)) {
+        if (s->net_hosting && (e.a==-1 || (e.a>=0 && e.a<HTA_GAME_MAX_UNITS)) &&
+            (e.kind==HTA_EV_FIRE || e.kind==HTA_EV_HIT_WORLD ||
+             e.kind==HTA_EV_DETONATE)) {
+            hta_net_fx fx={0};
+            fx.kind=e.kind==HTA_EV_FIRE ? HTA_NET_FX_FIRE :
+                    e.kind==HTA_EV_HIT_WORLD ? HTA_NET_FX_IMPACT : HTA_NET_FX_DETONATE;
+            fx.entity=e.a<0 ? 255 : (uint8_t)e.a;
+            fx.weapon=(uint8_t)(e.kind==HTA_EV_DETONATE ? e.pool : e.weapon);
+            fx.material=e.material;
+            for (int k=0;k<3;k++) { fx.pos[k]=e.pos[k]; fx.dir[k]=e.dir[k]; }
+            hta_net_server_fx(&s->host_server,&fx);
+        }
         switch (e.kind) {
         case HTA_EV_FIRE:
             if (e.a == s->me || e.weapon < 0 || e.weapon >= HTA_GAME_MAX_WEAPONS) break;
@@ -1763,6 +1815,18 @@ static void game_events(hta_android *s)
             }
             break;
         case HTA_EV_KILL:
+            if (s->net_hosting && e.a>=0 && e.a<HTA_GAME_MAX_UNITS) {
+                hta_net_kill kill={0};
+                kill.victim=(uint8_t)e.a;
+                kill.killer=e.b>=0 && e.b<HTA_GAME_MAX_UNITS ? (uint8_t)e.b : 255;
+                size_t k=0;
+                while (k<sizeof(kill.text)-1 && e.text[k]) {
+                    unsigned char ch=(unsigned char)e.text[k];
+                    kill.text[k]=(char)(ch>=32 && ch<127 ? ch : '?'); k++;
+                }
+                kill.text[k]=0;
+                hta_net_server_kill(&s->host_server,&kill,s->last_time);
+            }
             if (e.b == s->me && e.a != s->me) {
                 char fmt[64];
                 if (!hta_ustr_get(&s->cache, s->game.text_tag, 88, fmt, sizeof(fmt)))
@@ -1910,6 +1974,10 @@ static bool menu_load(hta_android *s)
         return false;
     }
     hta_log("[menu] %s", err);
+    if (!atomic_load(&g_shell_ready) &&
+        hta_shell_load(&g_shell, &s->ui_cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL))
+        atomic_store(&g_shell_ready, 1);
+    g_shell_shown = -1;
     s->menu_clip[0] = menu_clip(s, s->menu.snd_cursor, false);
     s->menu_clip[1] = menu_clip(s, s->menu.snd_forward, false);
     s->menu_clip[2] = menu_clip(s, s->menu.snd_back, false);
@@ -1971,7 +2039,9 @@ static void menu_activate(hta_android *s, int item)
 {
     menu_sound(s, 1);
     switch (item) {
-    case HTA_MENU_MULTIPLAYER: s->menu_go = true; break;
+    /* The submenus are the Java overlay's; it tells us which is up. */
+    case HTA_MENU_CAMPAIGN:    call_activity(s, "openSolo"); break;
+    case HTA_MENU_MULTIPLAYER: call_activity(s, "openMultiplayer"); break;
     case HTA_MENU_SETTINGS:    call_activity(s, "openSettings"); break;
     case HTA_MENU_CREDITS:     call_activity(s, "showCredits"); break;
     case HTA_MENU_QUIT:        ANativeActivity_finish(s->app->activity); break;
@@ -2026,11 +2096,227 @@ Java_net_hta_halotrial_GameActivity_nativeMenuMode(JNIEnv *env, jclass cls)
     return atomic_load(&g_menu_mode);
 }
 
+
+/* ---- the submenus -------------------------------------------------
+ * The Java overlay draws them over the ring, with ui.map's art and words,
+ * which are copied out here once and kept for the life of the process, so
+ * the UI thread can read them while this thread loads and frees levels. */
+JNIEXPORT jstring JNICALL
+Java_net_hta_halotrial_GameActivity_nativeShellText(JNIEnv *env, jclass cls)
+{
+    (void)cls;
+    if (!atomic_load(&g_shell_ready) || !g_shell.text) return NULL;
+    return (*env)->NewStringUTF(env, g_shell.text);
+}
+
+/* One piece of art as { width, height, ARGB... }, or null. */
+JNIEXPORT jintArray JNICALL
+Java_net_hta_halotrial_GameActivity_nativeShellArt(JNIEnv *env, jclass cls, jint which)
+{
+    (void)cls;
+    if (!atomic_load(&g_shell_ready) || which < 0 || which >= HTA_SHELL_ART_COUNT) return NULL;
+    const hta_shell_image *im = &g_shell.art[which];
+    if (!im->rgba || !im->width || !im->height) return NULL;
+    size_t n = (size_t)im->width * im->height;
+    jint *px = (jint *)malloc((n + 2u) * sizeof(jint));
+    if (!px) return NULL;
+    px[0] = (jint)im->width; px[1] = (jint)im->height;
+    for (size_t i = 0; i < n; i++) {
+        const uint8_t *c = im->rgba + i * 4u;
+        px[i + 2] = (jint)(((uint32_t)c[3] << 24) | ((uint32_t)c[0] << 16) |
+                           ((uint32_t)c[1] << 8) | c[2]);
+    }
+    jintArray out = (*env)->NewIntArray(env, (jsize)(n + 2u));
+    if (out) (*env)->SetIntArrayRegion(env, out, 0, (jsize)(n + 2u), px);
+    free(px);
+    return out;
+}
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeShellScreen(JNIEnv *env, jclass cls, jint screen)
+{
+    (void)env; (void)cls;
+    atomic_store(&g_shell_screen, (int)screen);
+}
+
+/* The shell's clicks: 0 cursor, 1 forward, 2 back. */
+static _Atomic int g_shell_sounds;
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeShellSound(JNIEnv *env, jclass cls, jint which)
+{
+    (void)env; (void)cls;
+    if (which >= 0 && which < 3) atomic_fetch_or(&g_shell_sounds, 1 << which);
+}
+
+/* A match set up in the submenus, handed over once. */
+typedef struct {
+    int  mode;               /* 0 solo, 1 host, 2 join */
+    int  bots, skill, kills, minutes, respawn, max_players, port;
+    char host[64];
+    char name[HTA_NET_NAME];
+} match_setup;
+static match_setup g_match;
+static _Atomic int g_match_ready;
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeStartMatch(JNIEnv *env, jclass cls, jintArray cfg,
+                                                     jstring host, jstring name)
+{
+    (void)cls;
+    if (atomic_load(&g_match_ready)) return;     /* one is already on its way */
+    match_setup m;
+    memset(&m, 0, sizeof(m));
+    jint v[8] = { 0, 3, 1, 25, 0, 5, 8, 32270 };
+    jsize n = cfg ? (*env)->GetArrayLength(env, cfg) : 0;
+    if (n > 8) n = 8;
+    if (n > 0) (*env)->GetIntArrayRegion(env, cfg, 0, n, v);
+    m.mode = v[0]; m.bots = v[1]; m.skill = v[2]; m.kills = v[3];
+    m.minutes = v[4]; m.respawn = v[5]; m.max_players = v[6]; m.port = v[7];
+    const char *u;
+    if (host && (u = (*env)->GetStringUTFChars(env, host, NULL))) {
+        snprintf(m.host, sizeof(m.host), "%s", u);
+        (*env)->ReleaseStringUTFChars(env, host, u);
+    }
+    if (name && (u = (*env)->GetStringUTFChars(env, name, NULL))) {
+        snprintf(m.name, sizeof(m.name), "%s", u);
+        (*env)->ReleaseStringUTFChars(env, name, u);
+    }
+    g_match = m;
+    atomic_store(&g_match_ready, 1);             /* publishes g_match */
+}
+
+/* Ask the LAN (or given addresses) who is hosting. `targets` is a comma
+ * list of IPv4 addresses, broadcast ones included; each answer is a line
+ * "ip \t port \t name \t players \t max \t kills \t minutes". Blocks for
+ * `ms`; call it off the UI thread. */
+JNIEXPORT jstring JNICALL
+Java_net_hta_halotrial_GameActivity_nativeLanScan(JNIEnv *env, jclass cls, jstring targets,
+                                                  jint port, jint ms)
+{
+    (void)cls;
+    char list[512] = "", out[2048] = "";
+    const char *u;
+    if (targets && (u = (*env)->GetStringUTFChars(env, targets, NULL))) {
+        snprintf(list, sizeof(list), "%s", u);
+        (*env)->ReleaseStringUTFChars(env, targets, u);
+    }
+    hta_net_scan scan;
+    if (!hta_net_scan_open(&scan)) return (*env)->NewStringUTF(env, "");
+    if (port <= 0 || port > 65535) port = 32270;
+    double t0 = hta_time_seconds(), next_send = t0;
+    size_t len = 0;
+    char seen[16][16];
+    int nseen = 0;
+    while (hta_time_seconds() - t0 < (double)ms / 1000.0) {
+        if (hta_time_seconds() >= next_send) {
+            /* A few tries: broadcasts get dropped on busy Wi-Fi. */
+            char tmp[512];
+            snprintf(tmp, sizeof(tmp), "%s", list);
+            for (char *tok = strtok(tmp, ","); tok; tok = strtok(NULL, ","))
+                hta_net_scan_send(&scan, tok, (uint16_t)port);
+            next_send += 0.4;
+        }
+        hta_net_info info;
+        char ip[16];
+        uint16_t from = 0;
+        while (hta_net_scan_recv(&scan, &info, ip, &from)) {
+            int dup = 0;
+            for (int i = 0; i < nseen; i++) dup |= !strcmp(seen[i], ip);
+            if (dup || nseen >= 16) continue;
+            snprintf(seen[nseen++], 16, "%s", ip);
+            int w = snprintf(out + len, sizeof(out) - len, "%s\t%u\t%s\t%u\t%u\t%u\t%u\n",
+                             ip, from, info.name, info.players, info.max_players,
+                             info.score_limit, info.time_limit);
+            if (w > 0 && (size_t)w < sizeof(out) - len) len += (size_t)w;
+        }
+        struct timespec nap = { 0, 20 * 1000 * 1000 };
+        nanosleep(&nap, NULL);
+    }
+    hta_net_scan_close(&scan);
+    return (*env)->NewStringUTF(env, out);
+}
+
+/* Open the network side of a match: host (a server here, and this phone
+ * joins it through loopback) or join someone else's. */
+static void net_begin(hta_android *s, const char *host, bool hosting, uint16_t port,
+                      const hta_net_info *info)
+{
+    if (!host || !host[0]) return;
+    if (hosting) {
+        s->net_hosting = hta_net_server_open(&s->host_server, port);
+        if (!s->net_hosting) hta_log("[net] could not bind LAN host UDP %u", port);
+        else if (info) {
+            uint8_t max = s->host_server.info.max_players;
+            s->host_server.info = *info;
+            if (!s->host_server.info.max_players) s->host_server.info.max_players = max;
+        }
+    }
+    s->net_enabled = hta_net_client_open(&s->net, host, port);
+    if (!s->net_enabled && s->net_hosting) {
+        hta_net_server_close(&s->host_server);
+        s->net_hosting = false;
+    }
+    if (hosting && !s->net_hosting && s->net_enabled) {
+        hta_net_client_close(&s->net); s->net_enabled = false;
+    }
+    atomic_store(&g_net_status, s->net_enabled ? 1 : 5);
+    hta_log("[net] %s %s:%u", s->net_enabled ? (hosting ? "hosting, joined" : "joining")
+                                            : "bad address", host, port);
+}
+
+/* The submenus have set up a match: take it, and go. */
+static void match_take(hta_android *s)
+{
+    match_setup m = g_match;
+    s->bot_count = m.mode == 2 ? 0 : m.bots;
+    if (s->bot_count < 0) s->bot_count = 0;
+    if (s->bot_count > 7) s->bot_count = 7;
+    s->bot_skill = m.skill < 0 ? 0 : m.skill > 3 ? 3 : m.skill;
+    s->score_limit = m.kills > 0 ? m.kills : 0;
+    s->time_limit_min = m.minutes > 0 ? m.minutes : 0;
+    /* Halo's INSTANT still has to show you your body go down. Ours. */
+    s->respawn_delay = m.respawn < HTA_RESPAWN_MIN ? HTA_RESPAWN_MIN : (float)m.respawn;
+    uint16_t port = (uint16_t)(m.port > 0 && m.port < 65536 ? m.port : 32270);
+    if (m.mode == 1) {
+        hta_net_info info;
+        memset(&info, 0, sizeof(info));
+        info.max_players = (uint8_t)(m.max_players < 2 ? 2 : m.max_players > (int)HTA_NET_MAX_PLAYERS
+                                     ? (int)HTA_NET_MAX_PLAYERS : m.max_players);
+        info.score_limit = (uint8_t)(s->score_limit ? s->score_limit : HTA_SLAYER_SCORE_LIMIT);
+        info.time_limit = (uint8_t)s->time_limit_min;
+        snprintf(info.name, sizeof(info.name), "%s", m.name[0] ? m.name : "Halo");
+        net_begin(s, "127.0.0.1", true, port, &info);
+    } else if (m.mode == 2) {
+        net_begin(s, m.host, false, port, NULL);
+    }
+    hta_log("[menu] match: mode %d, %d bot(s) skill %d, %d kills, %d min, respawn %.0f s",
+            m.mode, s->bot_count, s->bot_skill, s->score_limit, s->time_limit_min,
+            s->respawn_delay);
+    atomic_store(&g_match_ready, 0);
+    atomic_store(&g_shell_screen, 0);
+    s->menu_go = true;
+}
+
 /* One menu frame: the camera drifts, the words answer the finger, the
  * music plays. */
 static void menu_frame(hta_android *s, float dt)
 {
+    if (atomic_load(&g_match_ready)) { match_take(s); return; }
+    int snd = atomic_exchange(&g_shell_sounds, 0);
+    for (int k = 0; k < 3; k++) if (snd & (1 << k)) menu_sound(s, k);
+    int screen = atomic_load(&g_shell_screen);
+    if (screen != g_shell_shown) {
+        /* The Trial's own camera points; `multiplayer` looks at the ring's
+         * inner face, which we still draw washed out, so the dark shots. */
+        static const char *const SHOT[3] = { "uicam", "new_campaign", "load_campaign" };
+        hta_menu_focus(&s->menu, SHOT[screen >= 0 && screen < 3 ? screen : 0]);
+        s->menu.shell = screen != 0;
+        s->menu_pressed = -1;
+        g_shell_shown = screen;
+    }
     int action = atomic_exchange(&g_menu_touch_action, -1);
+    if (s->menu.shell) action = -1;     /* the overlay has the finger */
     if (action >= 0 && s->gfx) {
         uint32_t w = 0, h = 0;
         hta_gfx_extent(s->gfx, &w, &h);
@@ -2190,7 +2476,10 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
             /* In the menu, BACK leaves the app. In a game it pauses, the
              * way Halo's does; the pause screen offers the way out. */
             if (down) {
-                if (s->menu_mode || !s->map_loaded) {
+                if (s->menu_mode && atomic_load(&g_shell_screen)) {
+                    /* A submenu is up: BACK goes up one, as Halo's does. */
+                    call_activity(s, "shellBack");
+                } else if (s->menu_mode || !s->map_loaded) {
                     hta_log("[input] BACK -> exit");
                     ANativeActivity_finish(app->activity);
                 } else {
@@ -2450,17 +2739,419 @@ static int intent_int(struct android_app *app, const char *key, int def)
 
 static void net_action(hta_android *s, uint8_t kind)
 {
+    if (kind==HTA_NET_EVENT_MELEE) s->net_melee_count++;
+    if (kind==HTA_NET_EVENT_GRENADE) s->net_grenade_count++;
     if (!s->net_enabled || !s->net.connected) return;
+    if (s->net_hosting && kind==HTA_NET_EVENT_FIRE && s->game_on) {
+        int32_t weapon=held_roster(s);
+        if (weapon>=0) {
+            hta_net_fx fx={.kind=HTA_NET_FX_FIRE,.entity=(uint8_t)s->me,
+                           .weapon=(uint8_t)weapon};
+            for (int k=0;k<3;k++) fx.pos[k]=s->cam.pos[k];
+            hta_camera_forward(&s->cam,fx.dir);
+            hta_net_server_fx(&s->host_server,&fx);
+        }
+    }
     hta_net_event e={s->net.id,kind,(uint8_t)s->held_slot,++s->net_event_id};
     hta_net_client_event(&s->net,&e);
 }
 
-static void net_frame(hta_android *s, double now, float dt)
+static void net_host_peers(hta_android *s, double now)
+{
+    if (!s->game_on) return;
+    for (unsigned i=0;i<HTA_NET_MAX_PLAYERS;i++) {
+        hta_net_peer *p=&s->host_server.peers[i];
+        int32_t unit=s->peer_unit[i];
+        if (!p->active) {
+            if (unit>=0 && unit!=s->me) hta_game_remove(&s->game,unit);
+            s->peer_unit[i]=-1;
+            s->peer_melee_seen[i]=s->peer_grenade_seen[i]=0;
+            s->peer_reload_seen[i]=s->peer_pickup_seen[i]=0;
+            continue;
+        }
+        if (p->player.id==s->net.id) {
+            s->peer_unit[i]=(int8_t)s->me;
+            continue;
+        }
+        if (unit<0) {
+            char name[HTA_GAME_NAME];
+            snprintf(name,sizeof(name),"Player %u",p->player.id);
+            unit=hta_game_add(&s->game,HTA_UNIT_REMOTE,name,0);
+            if (unit<0) continue;
+            s->peer_unit[i]=(int8_t)unit;
+            hta_game_spawn(&s->game,unit);
+            game_gpu_upload(s);
+            hta_log("[net] player %u joined game unit %d",p->player.id,unit);
+        }
+        hta_unit *u=&s->game.units[unit];
+        hta_unit_input *in=&u->in;
+        if (!p->has_control || now-p->last_control_at>0.3) {
+            in->move.move_forward=in->move.move_right=0.0f;
+            in->move.fire=in->move.jump=in->move.crouch=false;
+            continue;
+        }
+        const hta_net_control *c=&p->control;
+        in->move.move_forward=c->forward;
+        in->move.move_right=c->right;
+        in->move.jump=(c->flags&HTA_NET_JUMP)!=0;
+        in->move.fire=(c->flags&HTA_NET_TRIGGER)!=0;
+        in->move.crouch=(c->flags&HTA_NET_DUCK)!=0;
+        in->move.look_yaw=in->move.look_pitch=0.0f;
+        u->eye.yaw=c->yaw; u->eye.pitch=c->pitch;
+        if (u->slot!=c->weapon_slot) in->swap=true;
+        if (s->peer_melee_seen[i]!=c->melee_count) {
+            s->peer_melee_seen[i]=c->melee_count; in->melee=true;
+        }
+        if (s->peer_grenade_seen[i]!=c->grenade_count) {
+            s->peer_grenade_seen[i]=c->grenade_count; in->grenade=true;
+        }
+        if (s->peer_reload_seen[i]!=c->reload_count) {
+            s->peer_reload_seen[i]=c->reload_count; in->reload=true;
+        }
+        if (s->peer_pickup_seen[i]!=c->pickup_count) {
+            s->peer_pickup_seen[i]=c->pickup_count; in->pickup=true;
+        }
+    }
+}
+
+static void net_host_world(hta_android *s)
+{
+    if (!s->game_on || !s->net.connected) return;
+    if (s->me>=0 && s->me<(int32_t)s->game.unit_count) {
+        hta_unit *local=&s->game.units[s->me];
+        local->slot=s->held_slot&1u;
+        for (unsigned slot=0;slot<2;slot++)
+            local->carry[slot].weapon=slot<s->held_count ?
+                hta_game_weapon_index(&s->game,s->held[slot]) : -1;
+        local->carry[local->slot].ammo=s->ammo;
+        local->grenades=s->nade_count;
+        local->powerup=s->powerup;
+    }
+    hta_net_world w={0};
+    w.time=s->game.time; w.round=s->world_round;
+    w.bot_count=(uint8_t)s->bot_count; w.over=s->game.over;
+    w.winner=s->game.winner>=0 && s->game.winner<HTA_GAME_MAX_UNITS
+        ? (uint8_t)s->game.winner : 255;
+    w.score_limit=(uint8_t)s->game.score_limit;
+    w.time_limit=(uint8_t)s->time_limit_min;
+    w.respawn_time=(uint8_t)s->respawn_delay;
+    if (s->items.loaded) {
+        w.item_count=(uint8_t)s->items.count;
+        for (uint8_t i=0;i<w.item_count;i++) {
+            if (s->items.slot[i].present) w.item_present[i>>3]|=(uint8_t)(1u<<(i&7u));
+            w.item_choice[i]=(uint8_t)s->items.slot[i].choice;
+        }
+    }
+    for (uint32_t i=0;i<s->game.unit_count && w.count<HTA_NET_MAX_ENTITIES;i++) {
+        const hta_unit *u=&s->game.units[i];
+        if (u->kind==HTA_UNIT_NONE) continue;
+        hta_net_entity *e=&w.entities[w.count++];
+        e->id=(uint8_t)i;
+        e->kind=u->kind==HTA_UNIT_BOT ? HTA_NET_ENTITY_BOT : HTA_NET_ENTITY_PLAYER;
+        e->peer_id=u->kind==HTA_UNIT_LOCAL ? s->net.id : 0;
+        if (u->kind==HTA_UNIT_REMOTE)
+            for (unsigned p=0;p<HTA_NET_MAX_PLAYERS;p++)
+                if (s->peer_unit[p]==(int8_t)i) e->peer_id=s->host_server.peers[p].player.id;
+        if (u->alive) e->flags|=HTA_NET_ENTITY_ALIVE;
+        if (u->body.on_ground) e->flags|=HTA_NET_ENTITY_GROUNDED;
+        if (u->body.crouch_t>0.5f) e->flags|=HTA_NET_ENTITY_CROUCH;
+        if (u->fired) e->flags|=HTA_NET_ENTITY_FIRE;
+        if (u->meleed) e->flags|=HTA_NET_ENTITY_MELEE;
+        if (u->threw) e->flags|=HTA_NET_ENTITY_GRENADE;
+        const hta_game_weapon *held=hta_game_held(&s->game,(int32_t)i);
+        e->weapon=held ? (uint8_t)(held-s->game.weapons) : 255;
+        for (int k=0;k<3;k++) e->pos[k]=u->body.pos[k];
+        for (int k=0;k<2;k++) e->velocity[k]=u->body.velocity[k];
+        e->yaw=u->eye.yaw; e->pitch=u->eye.pitch;
+        e->health=u->vitals.health; e->shield=u->vitals.shield;
+        e->score=(int16_t)u->score; e->kills=(int16_t)u->kills;
+        e->deaths=(int16_t)u->deaths;
+        for (int slot=0;slot<2;slot++)
+            e->carry[slot]=u->carry[slot].weapon>=0 ?
+                (uint8_t)u->carry[slot].weapon : 255;
+        e->slot=(uint8_t)(u->slot&1u);
+        e->grenades=(uint8_t)u->grenades;
+        e->powerup=u->powerup;
+        const hta_ammo *ammo=&u->carry[e->slot].ammo;
+        e->ammo_loaded=(uint16_t)ammo->loaded;
+        e->ammo_reserve=(uint16_t)ammo->reserve;
+        size_t j=0;
+        while (j<HTA_NET_ENTITY_NAME-1 && u->name[j]) {
+            unsigned char ch=(unsigned char)u->name[j];
+            e->name[j]=(char)(ch>=32 && ch<127 ? ch : '?'); j++;
+        }
+        e->name[j]=0;
+    }
+    hta_net_server_world(&s->host_server,&w);
+    hta_net_projectiles projectiles={0};
+    for (uint32_t p=0;p<s->game.pool_count;p++)
+        for (uint32_t slot=0;slot<HTA_PROJ_MAX;slot++) {
+            const hta_projectile *q=&s->game.pools[p].live[slot];
+            if (!q->alive || projectiles.count>=HTA_NET_MAX_PROJECTILES) continue;
+            hta_net_projectile *out=&projectiles.live[projectiles.count++];
+            out->pool=(uint8_t)p; out->slot=(uint8_t)slot;
+            for (int k=0;k<3;k++) { out->pos[k]=q->pos[k]; out->dir[k]=q->dir[k]; }
+            out->speed=q->speed;
+        }
+    const hta_projectiles *local_pools[2]={&s->proj,&s->nades};
+    for (uint8_t p=0;p<2;p++) {
+        const hta_projectiles *pool=local_pools[p];
+        if (!pool->loaded) continue;
+        for (uint8_t slot=0;slot<HTA_PROJ_MAX;slot++) {
+            const hta_projectile *q=&pool->live[slot];
+            if (!q->alive || projectiles.count>=HTA_NET_MAX_PROJECTILES) continue;
+            hta_net_projectile *out=&projectiles.live[projectiles.count++];
+            out->pool=(uint8_t)(4+p); out->slot=slot;
+            for (int k=0;k<3;k++) { out->pos[k]=q->pos[k]; out->dir[k]=q->dir[k]; }
+            out->speed=q->speed;
+        }
+    }
+    hta_net_server_projectiles(&s->host_server,&projectiles);
+}
+
+static void net_client_projectiles(hta_android *s)
+{
+    if (!s->game_on || !s->net.have_projectiles ||
+        s->net.last_projectile_tick==s->projectile_applied_tick) return;
+    s->projectile_applied_tick=s->net.last_projectile_tick;
+    for (uint32_t p=0;p<s->game.pool_count;p++)
+        for (uint32_t slot=0;slot<HTA_PROJ_MAX;slot++)
+            s->game.pools[p].live[slot].alive=false;
+    for (uint32_t slot=0;slot<HTA_PROJ_MAX;slot++) {
+        s->proj.live[slot].alive=false;
+        s->nades.live[slot].alive=false;
+    }
+    for (uint8_t i=0;i<s->net.projectiles.count;i++) {
+        const hta_net_projectile *in=&s->net.projectiles.live[i];
+        if (in->slot>=HTA_PROJ_MAX) continue;
+        hta_projectiles *pool=in->pool==4 ? &s->proj :
+                              in->pool==5 ? &s->nades :
+                              in->pool<s->game.pool_count ? &s->game.pools[in->pool] : NULL;
+        if (!pool || !pool->loaded) continue;
+        hta_projectile *q=&pool->live[in->slot];
+        q->alive=true; q->speed=in->speed; q->fuse=-1.0f;
+        for (int k=0;k<3;k++) { q->pos[k]=in->pos[k]; q->dir[k]=in->dir[k]; }
+    }
+    for (uint32_t p=0;p<s->game.pool_count;p++)
+        hta_projectiles_update(&s->game.pools[p],NULL,0.0f);
+    if (s->proj.loaded) hta_projectiles_update(&s->proj,NULL,0.0f);
+    if (s->nades.loaded) hta_projectiles_update(&s->nades,NULL,0.0f);
+}
+
+static void net_client_world(hta_android *s)
+{
+    if (!s->game_on || !s->net.have_world ||
+        s->world_applied_tick==s->net.last_world_tick) return;
+    const hta_net_world *w=&s->net.world;
+    int32_t mine=-1;
+    for (uint8_t i=0;i<w->count;i++)
+        if (w->entities[i].peer_id==s->net.id) mine=w->entities[i].id;
+    if (mine<0 || mine>=HTA_GAME_MAX_UNITS) return;
+    if (!s->world_local_bound) {
+        if (mine!=s->me) {
+            s->game.units[mine]=s->game.units[s->me];
+            s->game.units[s->me].kind=HTA_UNIT_NONE;
+            s->game.units[s->me].alive=false;
+            s->me=mine;
+            s->game.local=mine;
+            s->vit=&s->game.units[mine].vitals;
+        }
+        s->world_local_bound=true;
+    }
+    if (s->world_round!=w->round) {
+        s->world_round=w->round;
+        memset(s->feed,0,sizeof(s->feed));
+        s->banner[0]=0; s->over_timer=0.0f;
+    }
+    s->world_applied_tick=s->net.last_world_tick;
+    s->bot_count=w->bot_count;
+    bool was_over=s->game.over;
+    s->game.time=w->time; s->game.over=w->over!=0;
+    s->game.winner=w->winner==255 ? HTA_GAME_NONE : w->winner;
+    s->game.score_limit=w->score_limit;
+    s->game.time_limit=(float)w->time_limit*60.0f;
+    s->game.respawn_time=w->respawn_time;
+    s->respawn_delay=w->respawn_time;
+    if (s->items.loaded && s->items.count==w->item_count) {
+        for (uint8_t i=0;i<w->item_count;i++) {
+            bool shown=(w->item_present[i>>3]&(1u<<(i&7u)))!=0;
+            if (s->items.slot[i].present!=shown ||
+                s->items.slot[i].choice!=w->item_choice[i]) {
+                s->items.slot[i].present=shown;
+                s->items.slot[i].choice=w->item_choice[i];
+                s->items.dirty=true;
+            }
+        }
+    }
+    bool present[HTA_GAME_MAX_UNITS]={0};
+    for (uint8_t i=0;i<w->count;i++) {
+        const hta_net_entity *e=&w->entities[i];
+        int32_t idx=e->id;
+        present[idx]=true;
+        if (s->game.unit_count<=(uint32_t)idx) s->game.unit_count=(uint32_t)idx+1u;
+        hta_unit *u=&s->game.units[idx];
+        bool was_alive=u->kind!=HTA_UNIT_NONE && u->alive;
+        if (u->kind==HTA_UNIT_NONE) {
+            memset(u,0,sizeof(*u));
+            hta_player_init(&u->body);
+            hta_player_apply_physics(&u->body,&s->game.phys);
+            hta_camera_init(&u->eye);
+            u->vitals=s->game.vitals_template;
+        }
+        u->kind=idx==s->me ? HTA_UNIT_LOCAL :
+                e->kind==HTA_NET_ENTITY_BOT ? HTA_UNIT_BOT : HTA_UNIT_REMOTE;
+        snprintf(u->name,sizeof(u->name),"%s",e->name);
+        u->alive=(e->flags&HTA_NET_ENTITY_ALIVE)!=0;
+        if (was_alive && !u->alive) {
+            u->dead_for=0.0f;
+            u->death_yaw=e->yaw;
+        } else if (!u->alive) u->dead_for+=0.05f;
+        u->score=e->score; u->kills=e->kills; u->deaths=e->deaths;
+        u->fired=(e->flags&HTA_NET_ENTITY_FIRE)!=0;
+        u->meleed=(e->flags&HTA_NET_ENTITY_MELEE)!=0;
+        u->threw=(e->flags&HTA_NET_ENTITY_GRENADE)!=0;
+        u->body.on_ground=(e->flags&HTA_NET_ENTITY_GROUNDED)!=0;
+        u->body.crouch_t=(e->flags&HTA_NET_ENTITY_CROUCH)!=0 ? 1.0f : 0.0f;
+        u->slot=0;
+        for (int slot=0;slot<2;slot++)
+            u->carry[slot].weapon=e->carry[slot]==255 ? -1 : e->carry[slot];
+        u->slot=e->slot;
+        u->grenades=e->grenades;
+        u->powerup=e->powerup;
+        if (idx!=s->me) {
+            for (int k=0;k<3;k++) u->body.pos[k]=e->pos[k];
+            for (int k=0;k<2;k++) u->body.velocity[k]=e->velocity[k];
+            u->eye.yaw=e->yaw; u->eye.pitch=e->pitch;
+            for (int k=0;k<3;k++) u->eye.pos[k]=e->pos[k];
+            u->eye.pos[2]+=u->body.eye_height;
+        }
+        if (idx==s->me && !u->alive && !s->dead) u->vitals.died=true;
+        if (u->alive &&
+            e->health+e->shield < u->vitals.health+u->vitals.shield-0.01f) {
+            u->hurt=true;
+            if (idx==s->me) {
+                u->vitals.took_damage=true;
+                if (u->vitals.shield>0.0f && e->shield<=0.0f)
+                    u->vitals.shield_broke=true;
+            }
+        }
+        u->vitals.health=e->health; u->vitals.shield=e->shield;
+        if (idx==s->me && u->alive) {
+            if (s->dead) {
+                respawn(s);
+                s->dead=false;
+                s->dead_timer=-HTA_DEATH_FADE_IN;
+                s->cam.yaw=e->yaw; s->cam.pitch=e->pitch;
+            }
+            float dx=e->pos[0]-s->player.pos[0];
+            float dy=e->pos[1]-s->player.pos[1];
+            float dz=e->pos[2]-s->player.pos[2];
+            float dist=sqrtf(dx*dx+dy*dy+dz*dz);
+            float f=dist>0.5f || !s->net_spawned ? 1.0f : 0.12f;
+            for (int k=0;k<3;k++) {
+                float delta=(e->pos[k]-s->player.pos[k])*f;
+                s->player.pos[k]+=delta;
+                s->cam.pos[k]+=delta;
+            }
+            u->vitals.died=false;
+        }
+        if (idx==s->me) {
+            uint32_t held[2]={0}; unsigned held_count=0;
+            for (int slot=0;slot<2;slot++)
+                if (u->carry[slot].weapon>=0 &&
+                    (uint32_t)u->carry[slot].weapon<s->game.weapon_count)
+                    held[held_count++]=s->game.weapons[u->carry[slot].weapon].tag;
+            if (held_count) {
+                unsigned slot=e->slot<held_count ? e->slot : 0;
+                bool change=s->held_count!=held_count || s->held_slot!=slot;
+                for (unsigned k=0;k<held_count;k++)
+                    if (s->held[k]!=held[k]) change=true;
+                s->held_count=held_count; s->held_slot=slot;
+                for (unsigned k=0;k<held_count;k++) s->held[k]=held[k];
+                if (change) equip_weapon(s,s->held[slot]);
+            }
+            s->ammo.loaded=e->ammo_loaded;
+            s->ammo.reserve=e->ammo_reserve;
+            s->nade_count=e->grenades;
+            s->powerup=e->powerup;
+        }
+    }
+    for (uint32_t i=0;i<s->game.unit_count;i++)
+        if (!present[i] && (int32_t)i!=s->me) {
+            s->game.units[i].kind=HTA_UNIT_NONE;
+            s->game.units[i].alive=false;
+        }
+    if (s->game.over && !was_over) {
+        const char *winner="Nobody";
+        if (s->game.winner>=0 && s->game.winner<(int32_t)s->game.unit_count)
+            winner=s->game.units[s->game.winner].name;
+        snprintf(s->banner,sizeof(s->banner),"%s",s->game.winner==s->me ?
+                 "You won" : winner);
+        s->banner_age=0.0f;
+    }
+    game_gpu_upload(s);
+}
+
+static void net_frame(hta_android *s, double now, float dt, const hta_player_input *in)
 {
     if (!s->net_enabled) return;
     if (s->net_hosting) hta_net_server_pump(&s->host_server,now);
     hta_net_client_pump(&s->net,now);
-    if (!s->net.connected) { s->net_spawned=false; s->remote_visible=false; }
+    hta_net_fx fx;
+    while (hta_net_client_pop_fx(&s->net,&fx)) {
+        if (s->net_hosting || !s->game_on || fx.entity==(uint8_t)s->me) continue;
+        if (fx.kind==HTA_NET_FX_FIRE && fx.weapon<s->game.weapon_count) {
+            if (!s->unit_fire_known[fx.weapon]) {
+                s->unit_fire_known[fx.weapon]=1;
+                s->unit_fire_snd[fx.weapon]=hta_effect_first_sound(&s->cache,
+                    s->game.weapons[fx.weapon].def.firing_fx_id);
+            }
+            if (s->unit_fire_snd[fx.weapon])
+                play_tag_at(s,s->unit_fire_snd[fx.weapon],fx.pos,1.0f);
+        } else if (fx.kind==HTA_NET_FX_IMPACT && fx.weapon<s->game.weapon_count) {
+            uint32_t proj=s->game.weapons[fx.weapon].def.projectile_id;
+            uint32_t sound=hta_projectile_impact_sound(&s->cache,proj,fx.material);
+            if (sound) play_tag_at(s,sound,fx.pos,0.8f);
+            hta_gun_add_mark(&s->gun,fx.pos,fx.dir,HTA_MARK_SIZE);
+        } else if (fx.kind==HTA_NET_FX_DETONATE && fx.weapon<s->game.pool_count) {
+            const hta_projectiles *pool=&s->game.pools[fx.weapon];
+            if (pool->detonation_snd)
+                play_tag_at(s,pool->detonation_snd,fx.pos,1.0f);
+            if (s->pool_recipe[fx.weapon]!=HTA_PART_NO_RECIPE)
+                hta_particles_burst(&s->parts,s->pool_recipe[fx.weapon],fx.pos,fx.dir);
+            if (pool->blast_radius>0.0f)
+                hta_gun_add_mark(&s->gun,fx.pos,fx.dir,pool->blast_radius);
+        }
+    }
+    hta_net_kill kill;
+    while (hta_net_client_pop_kill(&s->net,&kill)) {
+        if (s->net_hosting) continue;
+        if (kill.killer==s->me && kill.victim!=s->me &&
+            kill.victim<s->game.unit_count) {
+            char line[96];
+            snprintf(line,sizeof(line),"You killed %s",s->game.units[kill.victim].name);
+            feed_push(s,line);
+        } else feed_push(s,kill.text);
+    }
+    if (s->net_hosting) net_host_peers(s,now);
+    if (!s->net.connected) {
+        s->net_spawned=false; s->remote_visible=false;
+        if (!s->net_hosting) {
+            s->world_applied_tick=0;
+            s->projectile_applied_tick=0;
+            s->world_local_bound=false;
+            for (uint32_t i=0;i<s->game.unit_count;i++)
+                if ((int32_t)i!=s->me) s->game.units[i].kind=HTA_UNIT_NONE;
+            for (uint32_t p=0;p<s->game.pool_count;p++)
+                for (uint32_t slot=0;slot<HTA_PROJ_MAX;slot++)
+                    s->game.pools[p].live[slot].alive=false;
+        }
+    }
+    atomic_store(&g_net_status, !s->net.connected ?
+                 s->net.reject_reason==HTA_NET_REJECT_MAP ? 7 :
+                 s->net.reject_reason==HTA_NET_REJECT_FULL ? 8 : 1 :
+                 !s->net_hosting ? (s->net.have_world ? 2 : 6) :
+                 hta_net_server_count(&s->host_server)>1 ? 4 : 3);
     if (s->net.connected && !s->net_spawned && s->spawn_count) {
         hta_spawn_point *sp=&s->spawn[(s->net.id-1u)%s->spawn_count];
         hta_player_spawn(&s->player,sp); s->cam.yaw=sp->facing;
@@ -2472,7 +3163,21 @@ static void net_frame(hta_android *s, double now, float dt)
         s->net_spawned=true;
         hta_log("[net] joined as player %u",s->net.id);
     }
+    if (!s->net_hosting) net_client_world(s);
+    if (!s->net_hosting) net_client_projectiles(s);
     if (s->net.connected && now-s->net_last_send>=0.05) {
+        hta_net_control c={0};
+        c.id=s->net.id; c.weapon_slot=(uint8_t)(s->held_slot&1u);
+        c.forward=in->move_forward; c.right=in->move_right;
+        c.yaw=s->cam.yaw; c.pitch=s->cam.pitch;
+        if (in->jump) c.flags|=HTA_NET_JUMP;
+        if (in->fire) c.flags|=HTA_NET_TRIGGER;
+        if (in->crouch) c.flags|=HTA_NET_DUCK;
+        c.melee_count=s->net_melee_count;
+        c.grenade_count=s->net_grenade_count;
+        c.reload_count=s->net_reload_count;
+        c.pickup_count=s->net_pickup_count;
+        hta_net_client_control(&s->net,&c);
         hta_net_player p={0}; p.id=s->net.id; p.weapon=(uint8_t)s->held_slot;
         for (int k=0;k<3;k++) { p.pos[k]=s->player.pos[k]; p.velocity[k]=s->player.velocity[k]; }
         p.yaw=s->cam.yaw; p.pitch=s->cam.pitch;
@@ -2511,7 +3216,7 @@ static void net_frame(hta_android *s, double now, float dt)
         const hta_net_player *p=&s->remote_to;
         int slot=p->weapon==1 ? 1 : 0;
         hta_actor *a=&s->remote[slot];
-        if (!a->loaded) return;
+        if (!a->loaded) goto net_after_remote;
         const char *clip=(p->flags&HTA_NET_CROUCH) ?
             (slot ? "crouch pistol idle" : "crouch rifle idle") :
             (slot ? "stand pistol idle" : "stand rifle idle");
@@ -2530,6 +3235,8 @@ static void net_frame(hta_android *s, double now, float dt)
             hta_actor_update(a,dt); hta_actor_place(a,visible.pos,visible.yaw);
         }
     }
+net_after_remote:
+    if (s->net_hosting) net_host_world(s);
 }
 
 static void rebuild_gfx_if_size_changed(hta_android *s)
@@ -2606,6 +3313,20 @@ Java_net_hta_halotrial_GameActivity_nativeVehicleMode(JNIEnv *env, jclass cls)
 {
     (void)env; (void)cls;
     return atomic_load(&g_vehicle_mode);
+}
+
+JNIEXPORT jint JNICALL
+Java_net_hta_halotrial_GameActivity_nativeDamageFlash(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    return atomic_load(&g_damage_flash);
+}
+
+JNIEXPORT jint JNICALL
+Java_net_hta_halotrial_GameActivity_nativeNetStatus(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    return atomic_load(&g_net_status);
 }
 
 JNIEXPORT jstring JNICALL
@@ -2708,6 +3429,7 @@ void android_main(struct android_app *app)
 {
     static hta_android state;
     memset(&state, 0, sizeof(state));
+    for (unsigned i=0;i<HTA_NET_MAX_PLAYERS;i++) state.peer_unit[i]=-1;
     state.app = app;
     state.vit = &state.vitals;
     state.move_pointer = state.look_pointer = -1;
@@ -2718,6 +3440,8 @@ void android_main(struct android_app *app)
     /* The setup screen asks for the menu first; a LAN launch goes straight in. */
     state.menu_mode = intent_int(app, "menu", 0) != 0 && !net_host[0];
     atomic_store(&g_paused, 0);
+    atomic_store(&g_damage_flash, 0);
+    atomic_store(&g_net_status, 0);
     atomic_store(&g_menu_mode, state.menu_mode ? 1 : 0);
     /* Three bots at normal unless the setup screen says otherwise. Ours. */
     state.bot_count = intent_int(app, "bots", 3);
@@ -2726,21 +3450,12 @@ void android_main(struct android_app *app)
     if (state.bot_count > 7) state.bot_count = 7;
     if (state.bot_skill < 0) state.bot_skill = 0;
     if (state.bot_skill > 3) state.bot_skill = 3;
-    if (net_host[0]) {
-        if (net_hosting) {
-            state.net_hosting=hta_net_server_open(&state.host_server,32270);
-            if (!state.net_hosting) hta_log("[net] could not bind LAN host UDP 32270");
-        }
-        state.net_enabled=hta_net_client_open(&state.net,net_host,32270);
-        if (!state.net_enabled && state.net_hosting) {
-            hta_net_server_close(&state.host_server);
-            state.net_hosting=false;
-        }
-        if (net_hosting && !state.net_hosting && state.net_enabled) {
-            hta_net_client_close(&state.net); state.net_enabled=false;
-        }
-        hta_log("[net] %s %s:32270",state.net_enabled ? "joining" : "bad address",net_host);
-    }
+    state.score_limit = HTA_SLAYER_SCORE_LIMIT;
+    state.respawn_delay = HTA_RESPAWN_DELAY;
+    atomic_store(&g_shell_screen, 0);
+    atomic_store(&g_match_ready, 0);
+    /* The setup screen's own LAN buttons, for a build with no ui.map. */
+    if (net_host[0]) net_begin(&state, net_host, net_hosting, 32270, NULL);
 
     app->userData     = &state;
     app->onAppCmd     = on_cmd;
@@ -2794,10 +3509,10 @@ void android_main(struct android_app *app)
         hta_player_input in;
         gather_input(&state, &in, dt);
         if (atomic_load(&g_paused)) {
-            /* Everything holds: no input, no time. A LAN session keeps
-             * pumping underneath, so the connection survives the pause. */
+            /* Solo holds the world. A live LAN match keeps simulating while
+             * this player's input is blank, like an online pause menu. */
             memset(&in, 0, sizeof(in));
-            dt = 0.0f;
+            if (!state.net_enabled) dt = 0.0f;
             state.hud_swap = state.hud_zoom = state.hud_melee = false;
             state.hud_reload = state.hud_grenade = false;
             state.hud_debug = 0;
@@ -2853,7 +3568,8 @@ void android_main(struct android_app *app)
         hta_gun_update(&state.gun, dt);
 
         /* What the fall cost, and the shield growing back afterwards. */
-        if (state.player.landed && state.vit->loaded) {
+        if (state.player.landed && state.vit->loaded &&
+            (!state.net_enabled || state.net_hosting)) {
             float cost = hta_vitals_land(state.vit, state.player.land_speed);
             if (cost > 0.0f)
                 hta_log("[player] landed at %.1f wu/s for %.0f damage "
@@ -2863,12 +3579,23 @@ void android_main(struct android_app *app)
         }
         /* The one-shots have to be read BEFORE the update clears them. */
         if (state.vit->loaded && !state.dead) {
+            if (state.vit->took_damage) state.damage_flash_left = HTA_DAMAGE_FLASH_TIME;
             if (state.vit->shield_broke)
                 play_tag(&state, state.shield_empty_snd, 1.0f);
             else if (state.vit->took_damage)
                 play_tag(&state, state.shield_hit_snd, 1.0f);
         }
-        hta_vitals_update(state.vit, dt);
+        if (!state.net_enabled || state.net_hosting || !state.net.have_world)
+            hta_vitals_update(state.vit, dt);
+        else {
+            state.vit->took_damage=false;
+            state.vit->shield_broke=false;
+        }
+        if (state.damage_flash_left > 0.0f) {
+            state.damage_flash_left -= dt;
+            if (state.damage_flash_left < 0.0f) state.damage_flash_left = 0.0f;
+        }
+        atomic_store(&g_damage_flash, (int)(255.0f * state.damage_flash_left / HTA_DAMAGE_FLASH_TIME));
         if (state.vit->loaded) {
             hta_hud_set_shield(&state.hud, hta_vitals_shield_fraction(state.vit));
             hta_hud_set_health(&state.hud, hta_vitals_health_fraction(state.vit));
@@ -2896,7 +3623,7 @@ void android_main(struct android_app *app)
             state.dead = true;
             state.vehicles.driver = -1;
             atomic_store(&g_vehicle_mode, 0);
-            state.dead_timer = HTA_RESPAWN_DELAY;
+            state.dead_timer = state.respawn_delay;
             for (int k = 0; k < 3; k++) state.death_pos[k] = state.player.pos[k];
             fire_loop(&state, false);
             hud_loop(&state, HTA_LOOP_SHIELD_CHARGE, state.shield_charge_snd,
@@ -2938,7 +3665,8 @@ void android_main(struct android_app *app)
                 if (fade > 1.0f) fade = 1.0f;
                 if (fade < 0.0f) fade = 0.0f;
             }
-            if (state.dead_timer <= 0.0f) {
+            if (state.dead_timer <= 0.0f &&
+                (!state.net_enabled || state.net_hosting)) {
                 respawn(&state);
                 state.dead = false;
                 state.dead_timer = -HTA_DEATH_FADE_IN;   /* counts the fade back */
@@ -2955,7 +3683,7 @@ void android_main(struct android_app *app)
             hta_actor_update(&state.corpse, dt);
             hta_actor_place(&state.corpse, state.death_pos, state.corpse.yaw);
 
-            float gone = HTA_RESPAWN_DELAY - state.dead_timer;
+            float gone = state.respawn_delay - state.dead_timer;
             float f = gone / HTA_DEATH_PULLBACK;
             if (f > 1.0f) f = 1.0f;
 
@@ -2994,7 +3722,7 @@ void android_main(struct android_app *app)
             }
         } else if (state.dead) {
             /* No body to watch -- sink and tip forward instead. */
-            float gone = HTA_RESPAWN_DELAY - state.dead_timer;
+            float gone = state.respawn_delay - state.dead_timer;
             float f = gone / HTA_DEATH_PULLBACK;
             if (f > 1.0f) f = 1.0f;
             state.cam.pos[2] -= HTA_DEATH_EYE_DROP * f;
@@ -3017,8 +3745,22 @@ void android_main(struct android_app *app)
          * and makes you ASK for a weapon, which is the difference between
          * topping up and losing the gun you wanted. SWAP is that ask: on an
          * item it picks it up, and off one it cycles as before. */
-        if (state.items.loaded) hta_pickups_update(&state.items, dt);
-        if (state.items.loaded && !state.dead && !driving) {
+        if (state.items.loaded && (!state.net_enabled || state.net_hosting))
+            hta_pickups_update(&state.items, dt);
+        if (state.items.loaded && state.net_enabled && !state.net_hosting &&
+            state.hud_swap && !state.dead) {
+            int32_t slot=hta_pickups_at_kind(&state.items,state.player.pos,HTA_ITEM_WEAPON);
+            const hta_item_choice *item=hta_pickups_item(&state.items,slot);
+            bool carrying=false;
+            for (uint32_t i=0;item && i<state.held_count;i++)
+                if (state.held[i]==item->tag_id) carrying=true;
+            if (item && !carrying) {
+                state.net_pickup_count++;
+                state.hud_swap=false;
+            }
+        }
+        if (state.items.loaded && (!state.net_enabled || state.net_hosting) &&
+            !state.dead && !driving) {
             const float *feet = state.player.pos;
 
             int32_t got = hta_pickups_at(&state.items, feet);
@@ -3101,7 +3843,8 @@ void android_main(struct android_app *app)
         /* A powerup running out. The overshield BLEEDS down rather than
          * vanishing: in Halo you watch the extra bars drain, and a cliff
          * edge at sixty seconds would make it impossible to judge. */
-        if (state.powerup_timer > 0.0f) {
+        if (state.powerup_timer > 0.0f &&
+            (!state.net_enabled || state.net_hosting || !state.net.have_world)) {
             float was = state.powerup_timer;
             state.powerup_timer -= dt;
             if (state.powerup == HTA_ITEM_OVERSHIELD && state.vit->loaded &&
@@ -3184,7 +3927,7 @@ void android_main(struct android_app *app)
                  * damage` tag -- 1000, at a x1.00 multiplier against both
                  * armour and shield, so it kills outright. Halo's front /
                  * back distinction is engine logic, not tag data. */
-                if (state.game_on) {
+                if (state.game_on && (!state.net_enabled || state.net_hosting)) {
                     /* The held weapon's own `player melee damage` -- 56 --
                      * and a kill from behind, for everyone alike. */
                     if (hta_game_melee(&state.game, state.me) >= 0)
@@ -3210,8 +3953,10 @@ void android_main(struct android_app *app)
 
         if (state.hud_reload) {
             state.hud_reload = false;
-            if (!swinging && hta_ammo_reload(&state.ammo))
+            if (!swinging && hta_ammo_reload(&state.ammo)) {
+                state.net_reload_count++;
                 hta_viewmodel_play(&state.vm, HTA_VM_RELOAD);
+            }
         }
         if (in.fire && !swinging && hta_gun_ready(&state.gun)) {
             if (hta_ammo_shoot(&state.ammo)) {
@@ -3249,12 +3994,12 @@ void android_main(struct android_app *app)
                         hta_gun_impact(&state.gun,
                                        state.col.built ? &state.col : NULL,
                                        &state.cam, dir, onbot ? bt : -1.0f);
-                        if (onbot && who >= 0) {
+                        if (onbot && who >= 0 && (!state.net_enabled || state.net_hosting)) {
                             int pellets = state.weap.projectiles_per_shot > 0
                                         ? state.weap.projectiles_per_shot : 1;
                             hta_game_hurt_jpt(&state.game, who, state.me,
                                               state.impact_jpt, pellets, bhit);
-                        } else if (onbot) {
+                        } else if (onbot && !state.game_on) {
                             /* What a round does depends on WHAT it hits:
                              * the same shotgun pellet is 8 into armour and
                              * 4 into a shield, and a plasma bolt is the
@@ -3278,6 +4023,19 @@ void android_main(struct android_app *app)
                     }
                     play_impact_at(&state, state.gun.hit_material,
                                    state.gun.last_hit);
+                    if (state.net_hosting && state.gun.hit_material<33u) {
+                        int32_t weapon=held_roster(&state);
+                        if (weapon>=0) {
+                            hta_net_fx fx={.kind=HTA_NET_FX_IMPACT,
+                                .entity=(uint8_t)state.me,.weapon=(uint8_t)weapon,
+                                .material=state.gun.hit_material};
+                            for (int k=0;k<3;k++) {
+                                fx.pos[k]=state.gun.last_hit[k];
+                                fx.dir[k]=state.gun.last_nrm[k];
+                            }
+                            hta_net_server_fx(&state.host_server,&fx);
+                        }
+                    }
                     /* And the dust the round kicks off that surface. */
                     if (state.gun.hit_material < 33u &&
                         state.impact_recipe[state.gun.hit_material]
@@ -3314,8 +4072,10 @@ void android_main(struct android_app *app)
                 /* Click, then reload by itself, the way Halo does. */
                 play_tag(&state, state.empty_snd, 1.0f);
                 state.dry_cooldown = 0.35f;
-                if (hta_ammo_reload(&state.ammo))
+                if (hta_ammo_reload(&state.ammo)) {
+                    state.net_reload_count++;
                     hta_viewmodel_play(&state.vm, HTA_VM_RELOAD);
+                }
             }
         }
         /* A continuous weapon sounds while the trigger is actually doing
@@ -3411,10 +4171,22 @@ void android_main(struct android_app *app)
                 hta_log("[player] grenade away, %d left", state.nade_count);
             }
         }
-        if (state.nades.loaded) {
+        if (state.nades.loaded &&
+            (!state.net_enabled || state.net_hosting || !state.net.have_world)) {
             hta_projectiles_update(&state.nades,
                                    state.col.built ? &state.col : NULL, dt);
             if (state.nades.detonated) {
+                if (state.net_hosting && state.game.grenade_pool>=0) {
+                    hta_net_fx fx={.kind=HTA_NET_FX_DETONATE,
+                        .entity=(uint8_t)state.me,
+                        .weapon=(uint8_t)state.game.grenade_pool,
+                        .material=state.nades.hit_material};
+                    for (int k=0;k<3;k++) {
+                        fx.pos[k]=state.nades.hit[k];
+                        fx.dir[k]=state.nades.hit_normal[k];
+                    }
+                    hta_net_server_fx(&state.host_server,&fx);
+                }
                 hta_gun_add_mark(&state.gun, state.nades.hit,
                                  state.nades.hit_normal,
                                  state.nades.blast_radius);
@@ -3423,7 +4195,8 @@ void android_main(struct android_app *app)
                 if (state.nade_recipe != HTA_PART_NO_RECIPE)
                     hta_particles_burst(&state.parts, state.nade_recipe,
                                         state.nades.hit, state.nades.hit_normal);
-                if (state.game_on && state.nades.blast_damage > 0.0f) {
+                if (state.game_on && (!state.net_enabled || state.net_hosting) &&
+                    state.nades.blast_damage > 0.0f) {
                     /* Everyone in it, you included, and it is yours. */
                     hta_game_blast(&state.game, state.me, state.nades.hit,
                                    state.nades.blast_damage, state.nades.blast_core,
@@ -3463,7 +4236,8 @@ void android_main(struct android_app *app)
 
         /* Rounds in flight. A detonation leaves the same scorch and plays
          * the same material impact a hitscan round would. */
-        if (state.proj.loaded) {
+        if (state.proj.loaded &&
+            (!state.net_enabled || state.net_hosting || !state.net.have_world)) {
             hta_projectiles_update(&state.proj,
                                    state.col.built ? &state.col : NULL, dt);
             /* A round that reaches the body stops there. The projectile
@@ -3475,8 +4249,9 @@ void android_main(struct android_app *app)
                     if (!pr->alive) continue;
                     int32_t who = hta_game_near(&state.game, pr->pos, 0.02f, state.me);
                     if (who < 0) continue;
-                    hta_game_hurt_jpt(&state.game, who, state.me, state.impact_jpt, 1, pr->pos);
-                    if (state.proj.blast_damage > 0.0f)
+                    if (!state.net_enabled || state.net_hosting)
+                        hta_game_hurt_jpt(&state.game, who, state.me, state.impact_jpt, 1, pr->pos);
+                    if ((!state.net_enabled || state.net_hosting) && state.proj.blast_damage > 0.0f)
                         hta_game_blast(&state.game, state.me, pr->pos, state.proj.blast_damage,
                                        state.proj.blast_core, state.proj.blast_damage_radius);
                     float up[3] = { 0.0f, 0.0f, 1.0f };
@@ -3484,6 +4259,16 @@ void android_main(struct android_app *app)
                         hta_particles_burst(&state.parts, state.det_recipe, pr->pos, up);
                     if (state.proj.detonation_snd)
                         play_tag_at(&state, state.proj.detonation_snd, pr->pos, 1.0f);
+                    if (state.net_hosting)
+                        for (uint32_t pool=0;pool<state.game.pool_count;pool++)
+                            if (state.game.pools[pool].proj_tag_id==state.proj.proj_tag_id) {
+                                hta_net_fx fx={.kind=HTA_NET_FX_DETONATE,
+                                    .entity=(uint8_t)state.me,.weapon=(uint8_t)pool};
+                                for (int k=0;k<3;k++) fx.pos[k]=pr->pos[k];
+                                fx.dir[2]=1.0f;
+                                hta_net_server_fx(&state.host_server,&fx);
+                                break;
+                            }
                     pr->alive = false;
                 }
             } else if (state.bot.loaded && state.bot.state == HTA_BOT_ALIVE) {
@@ -3510,6 +4295,20 @@ void android_main(struct android_app *app)
                 }
             }
             if (state.proj.detonated) {
+                if (state.net_hosting) {
+                    for (uint32_t pool=0;pool<state.game.pool_count;pool++)
+                        if (state.game.pools[pool].proj_tag_id==state.proj.proj_tag_id) {
+                            hta_net_fx fx={.kind=HTA_NET_FX_DETONATE,
+                                .entity=(uint8_t)state.me,.weapon=(uint8_t)pool,
+                                .material=state.proj.hit_material};
+                            for (int k=0;k<3;k++) {
+                                fx.pos[k]=state.proj.hit[k];
+                                fx.dir[k]=state.proj.hit_normal[k];
+                            }
+                            hta_net_server_fx(&state.host_server,&fx);
+                            break;
+                        }
+                }
                 hta_gun_add_mark(&state.gun, state.proj.hit, state.proj.hit_normal,
                                  state.proj.blast_radius);
                 /* An explosion has a bang of its own; a round that does not
@@ -3528,7 +4327,8 @@ void android_main(struct android_app *app)
                  * full inside 0.6 world units and gone by 2.0 -- which is
                  * why firing one at your own feet is a bad idea in Halo
                  * and now here too. */
-                if (state.game_on && state.proj.blast_damage > 0.0f)
+                if (state.game_on && (!state.net_enabled || state.net_hosting) &&
+                    state.proj.blast_damage > 0.0f)
                     hta_game_blast(&state.game, state.me, state.proj.hit,
                                    state.proj.blast_damage, state.proj.blast_core,
                                    state.proj.blast_damage_radius);
@@ -3578,13 +4378,20 @@ void android_main(struct android_app *app)
          * dead come back and the score is kept. Before the particles, so a
          * bot's explosion bursts this frame. */
         if (state.game_on) {
-            hta_game_update(&state.game, dt);
-            game_events(&state);
+            if (!state.net_enabled || state.net_hosting) {
+                hta_game_update(&state.game, dt);
+                game_events(&state);
+            }
             hta_game_view_update(&state.gview, &state.game, state.me, dt);
-            if (state.over_timer > 0.0f) {
+            if (state.net_enabled && !state.net_hosting)
+                for (uint32_t i=0;i<state.game.unit_count;i++)
+                    state.game.units[i].fired=state.game.units[i].meleed=
+                    state.game.units[i].threw=state.game.units[i].hurt=false;
+            if ((!state.net_enabled || state.net_hosting) && state.over_timer > 0.0f) {
                 state.over_timer -= dt;
                 if (state.over_timer <= 0.0f) {
                     hta_game_start(&state.game);
+                    if (state.net_hosting) state.world_round++;
                     if (!state.dead) respawn(&state);
                     hta_log("[game] a new game");
                 }
@@ -3593,7 +4400,7 @@ void android_main(struct android_app *app)
         }
         hta_particles_update(&state.parts, state.col.built ? &state.col : NULL,
                              &state.cam, dt);
-        net_frame(&state,now,dt);
+        net_frame(&state,now,dt,&in);
 
         if (state.gun.dirty && state.gfx) {
             char err[HTA_ERRLEN];
@@ -3688,7 +4495,8 @@ void android_main(struct android_app *app)
                 dyncount++;
             }
             int remote_slot=state.remote_to.weapon==1 ? 1 : 0;
-            if (state.remote_visible && state.gpu_remote[remote_slot] &&
+            if (state.remote_visible && !state.net_hosting && !state.world_applied_tick &&
+                state.gpu_remote[remote_slot] &&
                 dyncount < HTA_GFX_MAX_DYNAMIC) {
                 dynlist[dyncount].mesh = state.gpu_remote[remote_slot];
                 dynlist[dyncount].vertices = state.remote[remote_slot].posed;

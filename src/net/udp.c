@@ -56,3 +56,16 @@ uint16_t hta_udp_port(const hta_udp *s)
     struct sockaddr_in a; socklen_t n=sizeof(a);
     return getsockname(s->fd,(struct sockaddr *)&a,&n)<0 ? 0 : ntohs(a.sin_port);
 }
+bool hta_udp_broadcast(hta_udp *s)
+{
+    int on=1;
+    return s && s->fd>=0 && setsockopt(s->fd,SOL_SOCKET,SO_BROADCAST,&on,sizeof(on))==0;
+}
+bool hta_udp_addr_ip(const hta_udp_addr *a, char out[16], uint16_t *port)
+{
+    if (!a || !out || a->addr.ss_family!=AF_INET) return false;
+    const struct sockaddr_in *v4=(const struct sockaddr_in *)&a->addr;
+    if (!inet_ntop(AF_INET,&v4->sin_addr,out,16)) return false;
+    if (port) *port=ntohs(v4->sin_port);
+    return true;
+}

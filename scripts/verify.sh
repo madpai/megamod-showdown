@@ -113,6 +113,11 @@ if [ -x ./build-host/htaview ]; then
       else
         bad "main menu renders from ui.map"
       fi
+      if echo "$OUT" | grep -q "shell          16/16 art, 48/48 words"; then
+        ok "submenu art and words come from ui.map"
+      else
+        bad "submenu art and words come from ui.map"
+      fi
     fi
     rm -rf "$VM"
   fi

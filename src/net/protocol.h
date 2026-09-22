@@ -6,16 +6,30 @@
 #include <stdint.h>
 
 #define HTA_NET_MAGIC 0x31415448u /* "HTA1" on the wire */
-#define HTA_NET_VERSION 1u
+#define HTA_NET_VERSION 2u
 #define HTA_NET_HEADER 20u
 #define HTA_NET_MAX_PACKET 1200u
 #define HTA_NET_MAX_PLAYERS 8u
 #define HTA_NET_PLAYER_BYTES 35u
+#define HTA_NET_MAX_ENTITIES 16u
+#define HTA_NET_ENTITY_NAME 12u
+#define HTA_NET_ENTITY_BYTES 68u
+#define HTA_NET_WORLD_HEADER 86u
+#define HTA_NET_CONTROL_BYTES 27u
+#define HTA_NET_KILL_BYTES 102u
+#define HTA_NET_FX_BYTES 28u
+#define HTA_NET_PROJECTILE_BYTES 30u
+#define HTA_NET_MAX_PROJECTILES 32u
 
 typedef enum {
     HTA_NET_HELLO = 1, HTA_NET_WELCOME, HTA_NET_DISCONNECT,
     HTA_NET_PING, HTA_NET_PONG, HTA_NET_INPUT, HTA_NET_SNAPSHOT,
-    HTA_NET_EVENT
+    HTA_NET_EVENT,
+    /* Anyone may ask a server what it is; the answer needs no session.
+     * This is how a LAN lobby finds games without typing an address. */
+    HTA_NET_DISCOVER, HTA_NET_INFO, HTA_NET_WORLD, HTA_NET_CONTROL,
+    HTA_NET_KILL, HTA_NET_ACK, HTA_NET_FX, HTA_NET_PROJECTILES,
+    HTA_NET_REJECT
 } hta_net_type;
 
 typedef struct {
@@ -40,6 +54,71 @@ typedef struct {
     uint32_t event_id;
 } hta_net_event;
 
+/* What a server says about itself in answer to DISCOVER. */
+#define HTA_NET_NAME 24u
+#define HTA_NET_INFO_BYTES (8u + HTA_NET_NAME)
+typedef struct {
+    uint32_t nonce;           /* echoes the DISCOVER's */
+    uint8_t players, max_players;
+    uint8_t score_limit;      /* kills to win */
+    uint8_t time_limit;       /* minutes, 0 for none */
+    char name[HTA_NET_NAME];  /* printable ASCII, NUL-terminated */
+} hta_net_info;
+
+/* The host's match state. Slots are stable for a round, including dead
+ * players. Every number that affects combat or the scoreboard comes from
+ * the host; clients never send these fields. */
+enum { HTA_NET_ENTITY_NONE, HTA_NET_ENTITY_PLAYER, HTA_NET_ENTITY_BOT };
+enum { HTA_NET_ENTITY_ALIVE=1, HTA_NET_ENTITY_GROUNDED=2,
+       HTA_NET_ENTITY_CROUCH=4, HTA_NET_ENTITY_FIRE=8,
+       HTA_NET_ENTITY_MELEE=16, HTA_NET_ENTITY_GRENADE=32 };
+typedef struct {
+    uint8_t id, kind, flags, weapon, peer_id; /* peer_id 0 for bots */
+    float pos[3], velocity[2], yaw, pitch, health, shield;
+    int16_t score, kills, deaths;
+    char name[HTA_NET_ENTITY_NAME];
+    uint8_t carry[2], slot, grenades, powerup; /* carry 255 means empty */
+    uint16_t ammo_loaded, ammo_reserve; /* held weapon */
+} hta_net_entity;
+typedef struct {
+    float time;
+    uint16_t round;
+    uint8_t count, bot_count, over, winner; /* winner 255 means none */
+    uint8_t score_limit, time_limit, respawn_time;
+    uint8_t item_count, item_present[8], item_choice[64];
+    hta_net_entity entities[HTA_NET_MAX_ENTITIES];
+} hta_net_world;
+
+/* A player's requested controls, sampled repeatedly. The host applies
+ * movement and fire; counters make one-shot actions survive packet loss. */
+enum { HTA_NET_JUMP=1, HTA_NET_TRIGGER=2, HTA_NET_DUCK=4 };
+enum { HTA_NET_REJECT_FULL=1, HTA_NET_REJECT_MAP=2 };
+typedef struct {
+    uint8_t id, flags, weapon_slot;
+    float forward, right, yaw, pitch;
+    uint16_t melee_count, grenade_count, reload_count, pickup_count;
+} hta_net_control;
+
+typedef struct {
+    uint32_t id;
+    uint8_t victim, killer; /* killer 255 means environment/suicide */
+    char text[96];
+} hta_net_kill;
+
+enum { HTA_NET_FX_FIRE=1, HTA_NET_FX_IMPACT, HTA_NET_FX_DETONATE };
+typedef struct {
+    uint8_t kind, entity, weapon, material; /* weapon: roster or pool index */
+    float pos[3], dir[3];
+} hta_net_fx;
+typedef struct {
+    uint8_t pool, slot;
+    float pos[3], dir[3], speed;
+} hta_net_projectile;
+typedef struct {
+    uint8_t count;
+    hta_net_projectile live[HTA_NET_MAX_PROJECTILES];
+} hta_net_projectiles;
+
 /* All integers and IEEE-754 floats are encoded little-endian; no C struct
  * layout crosses the wire. A decoder rejects nonfinite floats and extra data. */
 bool hta_net_pack(uint8_t *dst, size_t cap, uint8_t type, uint32_t seq,
@@ -50,6 +129,19 @@ bool hta_net_player_pack(uint8_t *dst, size_t cap, const hta_net_player *p);
 bool hta_net_player_unpack(const uint8_t *src, size_t len, hta_net_player *p);
 bool hta_net_event_pack(uint8_t *dst, size_t cap, const hta_net_event *e);
 bool hta_net_event_unpack(const uint8_t *src, size_t len, hta_net_event *e);
+bool hta_net_info_pack(uint8_t *dst, size_t cap, const hta_net_info *i);
+bool hta_net_info_unpack(const uint8_t *src, size_t len, hta_net_info *i);
+bool hta_net_world_pack(uint8_t *dst, size_t cap, const hta_net_world *w, size_t *written);
+bool hta_net_world_unpack(const uint8_t *src, size_t len, hta_net_world *w);
+bool hta_net_control_pack(uint8_t *dst, size_t cap, const hta_net_control *c);
+bool hta_net_control_unpack(const uint8_t *src, size_t len, hta_net_control *c);
+bool hta_net_kill_pack(uint8_t *dst, size_t cap, const hta_net_kill *k);
+bool hta_net_kill_unpack(const uint8_t *src, size_t len, hta_net_kill *k);
+bool hta_net_fx_pack(uint8_t *dst, size_t cap, const hta_net_fx *fx);
+bool hta_net_fx_unpack(const uint8_t *src, size_t len, hta_net_fx *fx);
+bool hta_net_projectiles_pack(uint8_t *dst, size_t cap, const hta_net_projectiles *p,
+                              size_t *written);
+bool hta_net_projectiles_unpack(const uint8_t *src, size_t len, hta_net_projectiles *p);
 void hta_net_u32_write(uint8_t *p, uint32_t v);
 uint32_t hta_net_u32_read(const uint8_t *p);
 

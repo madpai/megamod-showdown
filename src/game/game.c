@@ -288,8 +288,14 @@ static void arm(hta_game *g, hta_unit *u)
 
 int32_t hta_game_add(hta_game *g, hta_unit_kind kind, const char *name, uint8_t team)
 {
-    if (!g || g->unit_count >= HTA_GAME_MAX_UNITS || kind == HTA_UNIT_NONE) return -1;
-    int32_t idx = (int32_t)g->unit_count++;
+    if (!g || kind == HTA_UNIT_NONE) return -1;
+    int32_t idx = -1;
+    for (uint32_t i=0;i<g->unit_count;i++)
+        if (g->units[i].kind==HTA_UNIT_NONE) { idx=(int32_t)i; break; }
+    if (idx<0) {
+        if (g->unit_count >= HTA_GAME_MAX_UNITS) return -1;
+        idx = (int32_t)g->unit_count++;
+    }
     hta_unit *u = &g->units[idx];
     memset(u, 0, sizeof(*u));
     u->kind = kind;
@@ -341,6 +347,20 @@ void hta_game_set_skill(hta_game *g, uint8_t skill)
     if (skill > 3) skill = 3;
     for (uint32_t i = 0; i < g->unit_count; i++)
         if (g->units[i].kind == HTA_UNIT_BOT) g->brains[i].skill = skill;
+}
+
+/* The game ends: `winner` takes it, and everyone hears. */
+static void finish(hta_game *g, int32_t winner)
+{
+    char buf[96];
+    g->over = true;
+    g->winner = winner;
+    hta_game_event o = { .kind = HTA_EV_GAME_OVER, .a = winner, .b = -1,
+                         .line = HTA_LINE_GAME_OVER, .for_local = true };
+    snprintf(o.text, sizeof(o.text), "%s",
+             text(g, winner == g->local ? 59 : 57, buf, sizeof(buf),
+                  winner == g->local ? "You won" : "You lost"));
+    emit(g, &o);
 }
 
 static bool enemies(const hta_game *g, int32_t a, int32_t b)
@@ -414,6 +434,13 @@ static void spawn_unit(hta_game *g, int32_t idx)
     for (int k = 0; k < 3; k++) e.pos[k] = pos[k];
     e.dir[0] = cosf(facing); e.dir[1] = sinf(facing);
     emit(g, &e);
+}
+
+void hta_game_spawn(hta_game *g, int32_t idx)
+{
+    if (!g || idx<0 || idx>=(int32_t)g->unit_count ||
+        g->units[idx].kind==HTA_UNIT_NONE) return;
+    spawn_unit(g,idx);
 }
 
 void hta_game_revive(hta_game *g, int32_t idx)
@@ -713,16 +740,9 @@ static void die(hta_game *g, int32_t idx)
     v->multi = 0;
 
     /* The game is over when somebody reaches the limit. */
-    if (!g->over && killer >= 0 && g->units[killer].score >= g->score_limit) {
-        g->over = true;
-        g->winner = killer;
-        hta_game_event o = { .kind = HTA_EV_GAME_OVER, .a = killer, .b = -1,
-                             .line = HTA_LINE_GAME_OVER, .for_local = true };
-        snprintf(o.text, sizeof(o.text), "%s",
-                 text(g, killer == g->local ? 59 : 57, buf, sizeof(buf),
-                      killer == g->local ? "You won" : "You lost"));
-        emit(g, &o);
-    }
+    if (!g->over && g->score_limit > 0 && killer >= 0 &&
+        g->units[killer].score >= g->score_limit)
+        finish(g, killer);
 }
 
 /* ---------------------------------------------------------------- firing */
@@ -1021,6 +1041,7 @@ static void simulate(hta_game *g, int32_t idx, float dt)
         c->ammo.phase == HTA_AMMO_READY)
         fire(g, idx, dt);
     take_items(g, idx);
+    in->pickup = false;
 }
 
 static void fly(hta_game *g, float dt)
@@ -1072,6 +1093,11 @@ void hta_game_update(hta_game *g, float dt)
     if (!g || !g->loaded || dt <= 0.0f) return;
     if (dt > 0.1f) dt = 0.1f;
     if (!g->over) g->time += dt;
+    /* Out of time: whoever is ahead wins. */
+    if (!g->over && g->time_limit > 0.0f && g->time >= g->time_limit) {
+        int32_t order[HTA_GAME_MAX_UNITS];
+        finish(g, hta_game_standings(g, order, HTA_GAME_MAX_UNITS) ? order[0] : HTA_GAME_NONE);
+    }
 
     for (uint32_t i = 0; i < g->unit_count; i++) {
         hta_unit *u = &g->units[i];

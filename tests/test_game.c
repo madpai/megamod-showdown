@@ -129,9 +129,12 @@ int main(int argc, char **argv)
     float hb = ub->vitals.health;
     hta_game_hurt_jpt(&g, b, a, hp->impact_jpt, 1, NULL);
     CHECK(fabsf((hb - ub->vitals.health) - 37.5f) < 0.5f, "and 37.5 to armour");
+    g.score_limit = 0;  /* NONE: a kill must not end the match. */
     hta_game_hurt(&g, b, a, 1000.0f, NULL);
     hta_game_update(&g, 1.0f / 30.0f);
     CHECK(!ub->alive && ua->kills == 1 && ua->score == 1 && ub->deaths == 1, "a kill is scored to the killer");
+    CHECK(!g.over, "zero kill limit leaves the match running");
+    g.score_limit = HTA_SLAYER_SCORE_LIMIT;
     bool feed = false;
     while (hta_game_pop(&g, &e))
         if (e.kind == HTA_EV_KILL && e.a == b && e.b == a) {
@@ -164,6 +167,24 @@ int main(int argc, char **argv)
     g.units[b].kind = HTA_UNIT_REMOTE;    /* no brain: just the swing */
     hta_game_update(&g, 1.0f / 30.0f);
     CHECK(!ua->alive && ub->kills == kb + 1, "a swing at his back kills him");
+    /* The host runs a remote player's controls through the same weapon
+     * simulation as a bot. A remote shot must hurt the host-owned victim. */
+    ua->kind=HTA_UNIT_LOCAL; ua->alive=true;
+    ua->vitals=g.vitals_template; hta_vitals_reset(&ua->vitals);
+    ub->kind=HTA_UNIT_REMOTE; ub->alive=true;
+    ub->body.pos[0]=ua->body.pos[0]-0.45f;
+    ub->body.pos[1]=ua->body.pos[1]; ub->body.pos[2]=ua->body.pos[2];
+    ub->eye.yaw=0.0f; ub->eye.pitch=0.0f;
+    ub->eye.pos[0]=ub->body.pos[0]; ub->eye.pos[1]=ub->body.pos[1];
+    ub->eye.pos[2]=ub->body.pos[2]+ub->body.eye_height;
+    ub->slot=1; ub->cooldown=ub->swing=ub->throwing=0.0f;
+    memset(&ub->in,0,sizeof(ub->in)); ub->in.move.fire=true;
+    float host_shield=ua->vitals.shield;
+    int remote_ammo=ub->carry[1].ammo.loaded;
+    hta_game_update(&g,1.0f/30.0f);
+    CHECK(ua->vitals.shield<host_shield && ub->carry[1].ammo.loaded<remote_ammo,
+          "remote controls fire on host authority and spend host ammo");
+    ua->kind=HTA_UNIT_BOT;
     g.units[b].kind = HTA_UNIT_BOT;
 
     printf("\n[a match]\n");
@@ -225,6 +246,23 @@ int main(int argc, char **argv)
     }
     CHECK(sum_kills + sum_sui == sum_deaths, "and every death is somebody's kill or their own");
     CHECK(took < sim / 20.0f, "at more than twenty times real time on the host");
+
+    /* A time limit ends it with whoever is ahead, however few kills. */
+    g.score_limit = 1000;
+    g.time_limit = 30.0f;
+    hta_game_start(&g);
+    int timeouts = 0;
+    for (sim = 0.0f; sim < 40.0f && !g.over; sim += dt) {
+        hta_game_update(&g, dt);
+        while (hta_game_pop(&g, &e)) if (e.kind == HTA_EV_GAME_OVER) timeouts++;
+    }
+    nst = hta_game_standings(&g, order, HTA_GAME_MAX_UNITS);
+    CHECK(g.over && timeouts == 1 && fabsf(g.time - 30.0f) < 0.1f && nst &&
+          g.winner == order[0], "a time limit ends the game with the leader winning");
+
+    hta_game_remove(&g,b);
+    CHECK(hta_game_add(&g,HTA_UNIT_REMOTE,"Rejoined",0)==b,
+          "a disconnect frees its game slot for a later player");
 
     hta_game_free(&g);
     hta_pickups_free(&items);

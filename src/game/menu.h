@@ -60,6 +60,9 @@ typedef struct {
     bool         have_scene;
 
     int          selected;      /* which glows */
+    bool         shell;         /* a submenu is up: logo and words hide */
+    int32_t      cam_from, cam_to;  /* camera glide between named points */
+    float        cam_blend;     /* 0 at cam_from .. 1 at cam_to */
     float        time;
     uint32_t     width, height;
 
@@ -81,5 +84,52 @@ void hta_menu_camera(const hta_menu *m, hta_camera *out, float aspect);
 
 /* Which enabled item is under a touch at pixel (x, y), or -1. */
 int hta_menu_hit(const hta_menu *m, float x, float y);
+
+/* Glide the camera to the named ui.map camera point (`multiplayer`,
+ * `new_campaign`, `uicam`...), the way Halo's shell moves between screens.
+ * An unknown name leaves it where it is. */
+void hta_menu_focus(hta_menu *m, const char *cam_name);
+
+/* ---- The submenus' own art and words ------------------------------
+ * The submenus (multiplayer, join, create, the bot match) are laid out by
+ * the platform, which has text; the art and the words are ui.map's. */
+typedef enum {
+    HTA_SHELL_HEADER_MULTIPLAYER = 0,
+    HTA_SHELL_HEADER_LAN,
+    HTA_SHELL_HEADER_INTERNET,
+    HTA_SHELL_HEADER_DIRECT_IP,
+    HTA_SHELL_HEADER_SERVER,
+    HTA_SHELL_HEADER_GAMETYPE,
+    HTA_SHELL_ICON_JOIN,
+    HTA_SHELL_ICON_CREATE,
+    HTA_SHELL_ROW,
+    HTA_SHELL_ROW_LIT,
+    HTA_SHELL_BUTTON,
+    HTA_SHELL_BUTTON_LIT,
+    HTA_SHELL_ARROW_LEFT,
+    HTA_SHELL_ARROW_LEFT_LIT,
+    HTA_SHELL_ARROW_RIGHT,
+    HTA_SHELL_ARROW_RIGHT_LIT,
+    HTA_SHELL_ART_COUNT
+} hta_shell_art;
+
+typedef struct {
+    uint32_t width, height;
+    uint8_t *rgba;      /* NULL where ui.map lacks it */
+} hta_shell_image;
+
+typedef struct {
+    hta_shell_image art[HTA_SHELL_ART_COUNT];
+    /* HTA_SHELL_TEXT_COUNT strings, each ended by 0x1E, in the order of
+     * SHELL_TEXT in menu.c (GameActivity.java's T_* constants mirror
+     * it). An absent string is empty and the platform uses its own. */
+    char    *text;
+    bool     loaded;
+} hta_shell;
+
+#define HTA_SHELL_TEXT_COUNT 48
+
+bool hta_shell_load(hta_shell *sh, const hta_cache *ui, const hta_resource_map *bitmaps);
+void hta_shell_free(hta_shell *sh);
 
 #endif

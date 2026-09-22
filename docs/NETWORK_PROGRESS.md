@@ -1,6 +1,45 @@
 # Network phase checkpoint — 2026-09-22
 
-## Start here next session
+## Current Android match status (2026-09-22 evening)
+
+Android hosting now drives an on-foot Slayer match from the host's portable
+`hta_game` simulation. Remote phones send bounded movement, look, fire and
+one-shot action controls. Host movement and collision determine remote bodies;
+host damage, ammo, pickups, bots, scores, kills and respawns are replicated at
+20 Hz to every joiner. Projectile snapshots and fire/impact/detonation effects
+are sent separately; kill feed is acknowledged and retried. The host rejects
+full sessions and mismatched maps. Android renders all match units rather than
+one provisional remote actor. `tests/test_game.c` exercises remote fire and
+damage against a real Trial map; `tests/test_net.c` exercises the two-client
+protocol, world and projectile delivery, kill acknowledgment, map mismatch and
+full-session rejection. The full verification gate passed 68/68, including the
+asset-free Android APK. No two-device Android combat run has happened yet.
+Protocol version 2 is incompatible with the older visual-only version 1
+build; both phones should install the current QA build. The current APKs and
+test checklist are in `HANDOFF.md`.
+
+Vehicles remain solo only. A headless desktop `htanet` server and the SDL
+`htaplay` clients still exercise the earlier visual transport path; they are
+not an authoritative match. Internet direct IP requires UDP 32270 reachability
+and has no directory or NAT traversal. The material below documents the
+earlier checkpoint and should not be read as the current Android feature set.
+The next engineering objective is online vehicles, including visible seated
+players and all Blood Gulch vehicle types. The staged plan is in
+`HANDOFF.md`; no vehicle implementation has begun in this update.
+
+Important follow-up risks: host-local traveling rounds use wire pool IDs 4/5
+and a client's currently equipped first-person projectile mesh for display.
+That mesh may be absent or show a different weapon's round; damage and
+detonation are still decided by the host. The snapshot caps visible traveling
+rounds at 32, so host-local rounds can be omitted when portable game pools
+fill all 32 slots. Remote movement uses host correction without input
+reconciliation, and real-device latency/loss has not been measured.
+
+> **Archive below:** This is the original visual-only LAN checkpoint. It is
+> retained for the transport experiments and measurements, not as current
+> Android feature or APK information.
+
+## Archived starting point (2026-09-21)
 
 - Published APK code commit: `97d7cea` on `fp-animated-guns`. Pre-network
   known-good tag: `net-baseline-2026-09-21`. This handoff documentation is a

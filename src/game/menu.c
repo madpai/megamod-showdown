@@ -1,6 +1,7 @@
 #include "menu.h"
 #include "../asset/model.h"
 #include "../engine/scene_light.h"
+#include "../asset/strings.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -135,6 +136,7 @@ bool hta_menu_load(hta_menu *m, const hta_cache *c, const hta_resource_map *bm,
     memset(m, 0, sizeof(*m));
     m->selected = HTA_MENU_MULTIPLAYER;
     m->backdrop_quad = -1;
+    m->cam_blend = 1.0f;
     char e2[HTA_ERRLEN];
 
     /* The scene: the sky, and the ring as scenery. The ui BSP itself is
@@ -174,6 +176,8 @@ bool hta_menu_load(hta_menu *m, const hta_cache *c, const hta_resource_map *bm,
         }
     }
 
+    m->cam_from = m->cam_to = m->home_cam;
+
     /* The overlay. */
     m->overlay.textures = (hta_bsp_texture *)calloc(64, sizeof(hta_bsp_texture));
     if (!m->overlay.textures) { if (err) snprintf(err, errlen, "out of memory"); return false; }
@@ -199,8 +203,10 @@ bool hta_menu_load(hta_menu *m, const hta_cache *c, const hta_resource_map *bm,
                                           f ? ITEM_TINT : ITEM_OFF);
         }
     }
-    /* What works yet. Campaign and profiles are there, as in the Trial,
-     * but dimmed until they do something. */
+    /* What works yet. Profiles is there, as in the Trial, but dimmed
+     * until it does something. CAMPAIGN is the solo door: a bot match
+     * now, the campaign itself once b30 plays. */
+    m->item_enabled[HTA_MENU_CAMPAIGN] = true;
     m->item_enabled[HTA_MENU_MULTIPLAYER] = true;
     m->item_enabled[HTA_MENU_SETTINGS] = true;
     m->item_enabled[HTA_MENU_CREDITS] = true;
@@ -240,6 +246,16 @@ void hta_menu_layout(hta_menu *m, uint32_t w, uint32_t h)
     if (cw > (float)w) cw = (float)w;
     float cx = (float)w * 0.5f;
     if (m->backdrop_quad >= 0) place(&m->overlay, m->backdrop_quad, 0, 0, (float)w, fh, w, h);
+    if (m->shell) {
+        /* A submenu owns the screen; only the ring stays. */
+        hide(&m->overlay, (int32_t)m->logo_quad);
+        for (int i = 0; i < HTA_MENU_ITEMS; i++) {
+            hide(&m->overlay, m->item_quad[i][0]);
+            hide(&m->overlay, m->item_quad[i][1]);
+            m->item_rect[i][0] = m->item_rect[i][2] = -1.0f;
+        }
+        return;
+    }
     float left = cx - cw * 0.5f;
     float lx0 = left + cw * LOGO_X0, lh = fh * LOGO_H;
     place(&m->overlay, (int32_t)m->logo_quad, lx0, fh * LOGO_CY - lh * 0.5f,
@@ -262,9 +278,38 @@ void hta_menu_layout(hta_menu *m, uint32_t w, uint32_t h)
     }
 }
 
+/* How long the camera takes between two points. Ours. */
+#define CAM_GLIDE_TIME 1.4f
+
 void hta_menu_update(hta_menu *m, float dt)
 {
-    if (m && dt > 0.0f) m->time += dt;
+    if (!m || dt <= 0.0f) return;
+    m->time += dt;
+    if (m->cam_blend < 1.0f) {
+        m->cam_blend += dt / CAM_GLIDE_TIME;
+        if (m->cam_blend > 1.0f) m->cam_blend = 1.0f;
+    }
+}
+
+void hta_menu_focus(hta_menu *m, const char *name)
+{
+    if (!m || !name) return;
+    for (uint32_t i = 0; i < m->cam_count; i++) {
+        if (strcmp(m->cams[i].name, name)) continue;
+        if ((int32_t)i == m->cam_to) return;
+        /* Leave from wherever the glide has got to, not where it began. */
+        m->cam_from = m->cam_blend >= 0.5f ? m->cam_to : m->cam_from;
+        m->cam_to = (int32_t)i;
+        m->cam_blend = 0.0f;
+        return;
+    }
+}
+
+static float wrap_pi(float a)
+{
+    while (a > 3.14159265f) a -= 6.28318531f;
+    while (a < -3.14159265f) a += 6.28318531f;
+    return a;
 }
 
 void hta_menu_camera(const hta_menu *m, hta_camera *out, float aspect)
@@ -274,12 +319,20 @@ void hta_menu_camera(const hta_menu *m, hta_camera *out, float aspect)
     out->znear = 0.05f;
     out->zfar = 60000.0f;   /* the sky model is 7,000 to 27,000 units out */
     if (!m || !m->cam_count) return;
-    const hta_menu_cam *k = &m->cams[m->home_cam];
-    for (int j = 0; j < 3; j++) out->pos[j] = k->pos[j];
-    /* A slow sway about the home shot, the way the Trial's shell drifts. */
-    out->yaw = k->yaw + sinf(m->time * 0.07f) * 0.06f;
-    out->pitch = k->pitch + sinf(m->time * 0.05f + 1.0f) * 0.03f;
-    if (k->fov > 0.1f) out->fov_y = k->fov / (aspect > 0.1f ? aspect : 1.0f) * 1.2f;
+    int32_t fi = m->cam_from, ti = m->cam_to;
+    if (fi < 0 || fi >= (int32_t)m->cam_count) fi = m->home_cam;
+    if (ti < 0 || ti >= (int32_t)m->cam_count) ti = m->home_cam;
+    const hta_menu_cam *a = &m->cams[fi], *k = &m->cams[ti];
+    float t = m->cam_blend;
+    t = t * t * (3.0f - 2.0f * t);          /* ease in and out */
+    for (int j = 0; j < 3; j++) out->pos[j] = a->pos[j] + (k->pos[j] - a->pos[j]) * t;
+    float yaw = a->yaw + wrap_pi(k->yaw - a->yaw) * t;
+    float pitch = a->pitch + (k->pitch - a->pitch) * t;
+    float fov = a->fov + (k->fov - a->fov) * t;
+    /* A slow sway about the shot, the way the Trial's shell drifts. */
+    out->yaw = yaw + sinf(m->time * 0.07f) * 0.06f;
+    out->pitch = pitch + sinf(m->time * 0.05f + 1.0f) * 0.03f;
+    if (fov > 0.1f) out->fov_y = fov / (aspect > 0.1f ? aspect : 1.0f) * 1.2f;
 }
 
 int hta_menu_hit(const hta_menu *m, float x, float y)
@@ -291,4 +344,125 @@ int hta_menu_hit(const hta_menu *m, float x, float y)
         if (x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3]) return i;
     }
     return -1;
+}
+
+/* ------------------------------------------------------------ the shell */
+
+#define MP "ui\\shell\\main_menu\\multiplayer_type_select\\"
+#define MS "ui\\shell\\main_menu\\settings_select\\multiplayer_setup\\"
+
+static const struct { const char *path; uint32_t frame; } SHELL_ART[HTA_SHELL_ART_COUNT] = {
+    { MP "header_multiplayer", 0 },
+    { MP "join_game\\header_lan", 0 },
+    { MP "join_game\\header_internet", 0 },
+    { MP "direct_ip\\header_direct_ip", 0 },
+    { MP "server_settings\\header_server_settings", 0 },
+    { "ui\\shell\\main_menu\\gametype_select\\header_select_gametype", 0 },
+    { MP "mp_options", 0 },
+    { MP "mp_options", 1 },
+    { "ui\\shell\\bitmaps\\option_bkds", 0 },
+    { "ui\\shell\\bitmaps\\option_bkds", 1 },
+    { "ui\\shell\\bitmaps\\text_button_background", 0 },
+    { "ui\\shell\\bitmaps\\text_button_background", 1 },
+    { "ui\\shell\\bitmaps\\arrow_sm_left", 0 },
+    { "ui\\shell\\bitmaps\\arrow_sm_left", 1 },
+    { "ui\\shell\\bitmaps\\arrow_sm_right", 0 },
+    { "ui\\shell\\bitmaps\\arrow_sm_right", 1 },
+};
+
+/* The words, by position. GameActivity.java's T_* constants are these
+ * indices; change both together. */
+static const struct { const char *path; uint32_t index; } SHELL_TEXT[HTA_SHELL_TEXT_COUNT] = {
+    /*  0 */ { MP "multiplayer_options", 0 },               /* JOIN GAME */
+    /*  1 */ { MP "multiplayer_options", 1 },               /* CREATE GAME */
+    /*  2 */ { MP "multiplayer_options", 2 },               /* INTERNET */
+    /*  3 */ { MP "multiplayer_options", 3 },               /* LAN */
+    /*  4 */ { MP "multiplayer_options", 4 },               /* DIRECT IP */
+    /*  5 */ { MP "multiplayer_option_descriptions", 0 },   /* join, Internet */
+    /*  6 */ { MP "multiplayer_option_descriptions", 1 },   /* join, LAN */
+    /*  7 */ { MP "multiplayer_option_descriptions", 2 },   /* join, address */
+    /*  8 */ { MP "multiplayer_option_descriptions", 3 },   /* create, Internet */
+    /*  9 */ { MP "multiplayer_option_descriptions", 4 },   /* create, LAN */
+    /* 10 */ { MP "server_settings\\server_settings_options", 0 },  /* SERVER NAME */
+    /* 11 */ { MP "server_settings\\server_settings_options", 3 },  /* MAX PLAYERS */
+    /* 12 */ { MP "server_settings\\server_settings_options", 4 },  /* START GAME */
+    /* 13 */ { MP "server_settings\\server_settings_options", 5 },  /* SERVER IP */
+    /* 14 */ { MP "server_settings\\cap_server_settings_options", 0 },
+    /* 15 */ { MP "server_settings\\cap_server_settings_options", 7 },
+    /* 16 */ { MP "direct_ip\\direct_ip_options", 0 },     /* SERVER ADDRESS */
+    /* 17 */ { MP "direct_ip\\cap_direct_ip_options", 0 },
+    /* 18 */ { "ui\\shell\\strings\\common_button_captions", 0 },   /* BACK */
+    /* 19 */ { "ui\\shell\\strings\\common_button_captions", 1 },   /* OK */
+    /* 20 */ { "ui\\shell\\strings\\common_button_captions", 2 },   /* CANCEL */
+    /* 21 */ { MS "playlist_edit\\slayer_edit\\slayer_labels", 3 },   /* KILLS TO WIN: */
+    /* 22 */ { MS "player_options_edit\\player_options_labels", 3 }, /* RESPAWN TIME: */
+    /* 23 */ { MS "playlist_edit\\slayer_edit\\slayer_labels", 4 },   /* TEAM PLAY: */
+    /* 24 */ { "ui\\default_multiplayer_game_setting_names", 26 },  /* Slayer */
+    /* 25 */ { "ui\\shell\\main_menu\\mp_map_list", 9 },          /* Blood Gulch */
+    /* 26 */ { "ui\\shell\\main_menu\\player_profiles_select\\difficulty_names", 0 },
+    /* 27 */ { "ui\\shell\\main_menu\\player_profiles_select\\difficulty_names", 1 },
+    /* 28 */ { "ui\\shell\\main_menu\\player_profiles_select\\difficulty_names", 2 },
+    /* 29 */ { "ui\\shell\\main_menu\\player_profiles_select\\difficulty_names", 3 },
+    /* 30 */ { MP "join_game\\join_game_buttons", 1 },     /* REFRESH */
+    /* 31 */ { MP "join_game\\join_game_buttons", 4 },     /* JOIN GAME */
+    /* 32 */ { MS "player_options_edit\\var_respawn_time", 0 },  /* INSTANT */
+    /* 33 */ { MS "player_options_edit\\var_respawn_time", 1 },  /* 5 SECONDS */
+    /* 34 */ { MS "player_options_edit\\var_respawn_time", 2 },
+    /* 35 */ { MS "player_options_edit\\var_respawn_time", 3 },
+    /* 36 */ { MS "playlist_edit\\ctf_edit\\var_time_limit", 0 },  /* NONE */
+    /* 37 */ { MS "playlist_edit\\ctf_edit\\var_time_limit", 1 },  /* 10 MINUTES */
+    /* 38 */ { MS "playlist_edit\\ctf_edit\\var_time_limit", 2 },
+    /* 39 */ { MS "playlist_edit\\ctf_edit\\var_time_limit", 3 },
+    /* 40 */ { MS "playlist_edit\\ctf_edit\\var_time_limit", 4 },
+    /* 41 */ { MS "playlist_edit\\ctf_edit\\var_time_limit", 5 },
+    /* 42 */ { MS "playlist_edit\\ctf_edit\\var_time_limit", 6 },  /* 45 MINUTES */
+    /* 43 */ { "ui\\shell\\strings\\var_boolean", 0 },     /* NO */
+    /* 44 */ { "ui\\shell\\strings\\var_boolean", 1 },     /* YES */
+    /* 45 */ { "ui\\shell\\strings\\game_variant_descriptions", 36 }, /* Slayer, 25 kills */
+    /* 46 */ { "ui\\shell\\main_menu\\main_menu_options", 2 },  /* MULTIPLAYER */
+    /* 47 */ { MS "vehicle_options_edit\\vehicle_options_labels", 1 },  /* WARTHOG: */
+};
+
+bool hta_shell_load(hta_shell *sh, const hta_cache *c, const hta_resource_map *bm)
+{
+    if (!sh || !c) return false;
+    memset(sh, 0, sizeof(*sh));
+    for (int i = 0; i < HTA_SHELL_ART_COUNT; i++) {
+        hta_bitmap b;
+        if (!bm || !decode(c, bm, SHELL_ART[i].path, SHELL_ART[i].frame, &b)) continue;
+        sh->art[i].width = b.width;
+        sh->art[i].height = b.height;
+        sh->art[i].rgba = b.rgba;       /* ours now */
+        b.rgba = NULL;
+    }
+    size_t cap = 256u * HTA_SHELL_TEXT_COUNT, len = 0;
+    sh->text = (char *)malloc(cap + 1u);
+    if (!sh->text) return false;
+    const char *last_path = NULL;
+    uint32_t last_tag = 0;
+    for (int i = 0; i < HTA_SHELL_TEXT_COUNT; i++) {
+        char w[256] = "";
+        if (SHELL_TEXT[i].path != last_path) {
+            last_path = SHELL_TEXT[i].path;
+            last_tag = hta_ustr_find(c, last_path);
+        }
+        if (last_tag) hta_ustr_get(c, last_tag, SHELL_TEXT[i].index, w, sizeof(w));
+        for (char *p = w; *p; p++) if (*p == 0x1E) *p = ' ';
+        size_t n = strlen(w);
+        if (len + n + 1u > cap) n = cap - len - 1u;
+        memcpy(sh->text + len, w, n);
+        len += n;
+        sh->text[len++] = 0x1E;
+    }
+    sh->text[len] = 0;
+    sh->loaded = true;
+    return true;
+}
+
+void hta_shell_free(hta_shell *sh)
+{
+    if (!sh) return;
+    for (int i = 0; i < HTA_SHELL_ART_COUNT; i++) free(sh->art[i].rgba);
+    free(sh->text);
+    memset(sh, 0, sizeof(*sh));
 }

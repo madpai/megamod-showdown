@@ -96,8 +96,9 @@ typedef struct {
  * items and the corpse -- which left no room for the two things that want
  * one next: weapons dropped on the ground, and powerups spinning where they
  * lie. Both need their own mesh rather than a share of an existing one.
- * LAN remote actors raised the limit to ten; this is a fixed stack array. */
-#define HTA_GFX_MAX_DYNAMIC 24u
+ * A full match can draw fifteen other bodies alongside effects and items.
+ * This is a fixed stack array, not a GPU allocation per frame. */
+#define HTA_GFX_MAX_DYNAMIC 32u
 
 /* A mesh uploaded once and drawn where a transform puts it. Rigid things
  * that move -- a weapon in a hand, a powerup spinning on its spot -- are

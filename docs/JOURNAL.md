@@ -9,6 +9,104 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## Next objective changed to online vehicles (2026-09-22)
+
+The owner chose online vehicles as the next engineering objective and plans a
+later Claude deep dive. This update changed documentation only. The current
+build still has on-foot Android Slayer networking, solo Warthog driving, no
+visible seated driver, and no online vehicle entry. `HANDOFF.md` now lays out
+the seat/occupant, host authority, vehicle type, weapons/damage and two-phone
+verification sequence. The on-foot multiplayer QA checklist remains as a
+reference for the existing build.
+
+## Host-owned Android Slayer combat (2026-09-22 evening)
+
+The blocker behind host-local damage and bots was the network boundary: it
+relayed transforms and cosmetic actions, while Android's game simulation only
+ran on the host. Android clients now send controls and receive one host-owned
+world for players, bots, vitals, inventories, pickups, scores and match time.
+The host simulates remote movement and collisions through `hta_game`, applies
+their weapon and melee damage, and replicates death and respawn. Kill text is
+retried until acknowledged; fire, impact, explosion and traveling projectile
+visuals use separate messages. Joins reject full sessions and different maps.
+Online vehicles are still disabled and the desktop network tools still follow
+the old visual probe path.
+
+The host game test confirms remote controls spend host ammo and hurt a target,
+and a disconnect can reuse its unit slot. The UDP test covers two clients,
+host world delivery including a bot, combat messages, full-session and map
+rejection. The complete lavapipe gate passed 68/68. No Android device was
+attached, so the two-phone runtime test is the next decisive check.
+The 17:07 EDT QA release published a personal map-bundled APK (SHA-256
+`8e4bed8364ed6db6e6e583768019721baf0f728b9a6f6d484d1179d0acc822cd`)
+and an asset-free guest APK (SHA-256
+`8cae5d2b4ed9e10e0b7e22906c1d5090b8006f3b6b65ba17437b383f917e349b`).
+The guest APK initially inherited the personal build's 172 MB file size after
+an incremental Gradle build despite having no map ZIP entries; cleaning the
+Android app build before making the guest reduced it to 732 KB. Both APKs
+contain identical native code, and a GET of the guest APK matched its hash.
+Protocol version 2 requires both phones to update together. The old desktop
+visual-only clients still use the transform/event transport and will not get
+Android combat from the headless server. Host-local projectile snapshots use
+wire pool IDs 4/5, backed by the joiner's currently equipped first-person
+projectile meshes; that may omit or misdraw a host weapon's traveling round.
+The host still decides its hit and detonation. A 32-round snapshot cap can
+omit visuals under saturation. Remote movement has host corrections but no
+input reconciliation, so device QA should record any visible snapping.
+
+## Damage cue and LAN connection feedback (2026-09-22)
+
+The owner confirmed bots and match settings work on device and reported that
+only the health/shield HUD showed incoming damage. Android now turns the
+vitals `took_damage` event into a red edge flash for 0.55 seconds. This uses
+the same one-shot as the tagged shield-hit sound; it also catches falls and
+local bot damage. The duration, edge width and alpha are ours and are listed
+in `HANDOFF.md`.
+
+The LAN lobby now marks a full discovered game and explains why tapping it
+does not join. The in-game overlay says CONNECTING, CONNECTED, HOSTING alone,
+HOSTING with a joined peer, or NETWORK UNAVAILABLE using native session state.
+These labels expose failures that previously looked like a silent `net:0/0`.
+They do not change the provisional client movement protocol or add combat
+replication. Hosted bots and damage remain local to the host.
+
+The lavapipe verification gate passed **68/68**, including the plain APK and
+desktop two-client smoke test. The personal APK with the owner's four Trial
+maps was published at 16:23 ET; its SHA-256 is
+`90732faf54b8da4699a0c396be2b0e536e6149a4a29579c8457a0444af61d553`.
+The server's hash manifest matched the local APK and all four map entries are
+Stored. No Android device was attached here, so the flash and connection
+labels still need a phone check.
+
+## Solo and multiplayer menus, personal APK (2026-09-22)
+
+The prior published APK was still `2c7cd8b` even after the new menu work was
+built locally. The sideload server was running at `100.89.1.14:8731`, serving
+the persistent `scratch/serve/` root. The old APK already had the four Trial
+maps and the adaptive launcher icon. The new personal APK was rebuilt with
+`scripts/publish_apk.sh --with-assets` and published to the same path, with
+release notes and corrected install instructions. The source has uncommitted
+changes, so the script now stamps `-dirty` into the Android version name and
+page instead of implying the old HEAD alone identifies the build.
+
+New flow: SINGLEPLAYER opens bot, skill, kill, time and respawn settings;
+MULTIPLAYER opens CREATE GAME or JOIN GAME. Create sets server name, player
+limit and match options. Join offers LAN DISCOVER/INFO scanning or Internet
+direct IPv4. The menu uses ui.map's shell art and strings where available;
+the Java overlay draws and handles the screens. Score limit 0 now means no
+kill limit. Hosted bots currently run only on the host, and remote combat is
+still cosmetic.
+
+The host's NVIDIA Vulkan ICD still fails `vkCreateInstance`. The saved
+lavapipe ICD at `scratch/lvp/usr/share/vulkan/icd.d/lvp_icd.json` ran the full
+verification gate: **68 passed, 0 failed**, including real-map rendering,
+two desktop players, the plain Android APK and a check that it contains no
+Trial maps. The personal APK's four maps were then checked as Stored entries,
+the icon was confirmed via `aapt`, and the HTTP download SHA-256 matched the
+local file: `814eb8125d403ba8b18324e7c29e999902aa4fa6991bacea344e094572e6f58d`.
+No Android device was connected, so UI layout and LAN discovery still need
+phone testing. See `HANDOFF.md` for the specific test sequence.
+
 ## Bots, Slayer, the menu, one APK, and the sky that was never there (2026-09-22, long session)
 
 Builds published: `31ff130` (Slayer vs bots, one APK), `339c6b4` (menu +

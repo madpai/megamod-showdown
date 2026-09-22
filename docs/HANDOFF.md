@@ -6,6 +6,7 @@ want the *why* behind something, and search it by symptom.
 
 **Date of this revision:** 2026-09-22
 **Repo:** `/home/commander/projects/halo-trial-android`
+**Branch / HEAD:** `fp-animated-guns` / `da5e625`; current work is uncommitted.
 
 ---
 
@@ -46,10 +47,21 @@ cd /home/commander/projects/halo-trial-android
 HTA_MAP=/home/commander/halo-trial-data/extract/maps/bloodgulch.map scripts/verify.sh
 ```
 
-60 checks: host build, every unit test twice (synthetic, then against the real
-map), a synthetic-fixture CLI pass, an offscreen render, two Blood Gulch client
-processes, the APK build, and the
-APK's contents (arm64 only, no bundled audio, right entry points).
+The latest gate has 68 checks: host build and tests, real Trial map tests,
+synthetic-fixture CLI, offscreen rendering, two desktop Blood Gulch clients,
+Android build, and the APK contents and asset boundary.
+
+The host NVIDIA Vulkan driver currently fails `vkCreateInstance`. The saved
+Mesa lavapipe under `scratch/lvp/` runs the render checks and the desktop
+network smoke test. Use:
+
+```
+VK_ICD_FILENAMES=$PWD/scratch/lvp/usr/share/vulkan/icd.d/lvp_icd.json \
+  HTA_MAP=/home/commander/halo-trial-data/extract/maps/bloodgulch.map scripts/verify.sh
+```
+
+The 2026-09-22 multiplayer combat build passed **68/68** with that command.
+The normal shareable build contains no Trial maps; `verify.sh` checks that.
 
 **`verify.sh` must be green before you publish.** If you add a module, add its
 test to `CMakeLists.txt` *and* to both halves of `verify.sh`.
@@ -61,15 +73,21 @@ target. `cmake --build build-host` will not catch a mistake in it — only
 ### 2. Publish to the sideload server
 
 ```
-scripts/publish_apk.sh --title "what changed" --notes-text "a sentence or two"
+scripts/publish_apk.sh --with-assets --title "what changed" --notes-text "a sentence or two"
 ```
 
-Builds the APK, copies it to the serve root, refreshes `SHA256SUMS`, stamps the
-page with the commit and build time, and starts the server if it is not up.
+Builds the owner's map-bundled APK and then cleans the Android app build to
+produce a small asset-free guest APK. It copies both to the serve root,
+refreshes `SHA256SUMS`, stamps the page with the source revision and build
+time, and starts the server if it is not up.
 The owner then installs from **http://100.89.1.14:8731** (Tailscale-bound).
+Use `--with-assets` for the owner's personal test APK. The launcher icon is
+already in `android/app/src/main/res/drawable/` and referenced by the manifest.
+The publish script marks builds from uncommitted source as `-dirty`.
 
 - `--notes` takes an HTML fragment; `--notes-text` takes one paragraph.
-- `--no-build` publishes whatever is already built.
+- `--no-build` publishes the existing build; use a normal build when either
+  APK needs to change.
 - The page is a committed template at `scripts/sideload/index.html.tmpl` —
   edit **that**, not the generated `scratch/serve/index.html`.
 - The serve root is `scratch/serve/` (gitignored, so maps and APKs never enter
@@ -104,29 +122,112 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Build `2c7cd8b` (2026-09-22), published at http://100.89.1.14:8731/.**
-> One personal APK with the owner's data built in. Nothing from this build
-> has been seen on a device yet, so read the first screenshots carefully.
+> **Multiplayer combat QA build:** see the latest build and hash at
+> `http://100.89.1.14:8731/` (Tailscale). This is the owner's personal APK
+> with their own Trial maps. A second tester needs the asset-free debug APK
+> and must supply their own Trial data. No Android device was connected during
+> implementation; the 68-check host/Android build gate is green, but runtime
+> combat still needs a two-device test.
+> Published 2026-09-22 17:07 EDT, source `da5e625-dirty`.
+> Personal APK SHA-256: `8e4bed8364ed6db6e6e583768019721baf0f728b9a6f6d484d1179d0acc822cd`.
+> Guest APK SHA-256: `8cae5d2b4ed9e10e0b7e22906c1d5090b8006f3b6b65ba17437b383f917e349b`.
 >
-> 1. **Launch**: the Trial's main menu (ring, space sky, HALO logo, menu
->    words, title theme). Taps select/activate the word under the finger.
->    Check the layout on the phone's aspect ratio.
-> 2. **MULTIPLAYER**: Slayer vs bots (count/difficulty in SETTINGS, default
->    3 on Normal). First launch builds the nav grid (seconds; cached after).
->    Look at fps with bots in view, bots stuck or clipping, guns in hands,
->    kill feed / banner / announcer, score line, post-game scoreboard.
-> 3. **Hit flinch**: bots shot while running/crouching/holding pistols must
->    jerk, not flip (owner reported flipping on `339c6b4`; fixed in
->    `2c7cd8b`).
-> 4. **Sky**: Blood Gulch now draws its sky (clouds, Threshold, Basis, ring).
-> 5. **Pause**: BACK or the II button; Resume / Quit to main menu.
+> 1. Host a Blood Gulch Slayer match on phone A with 2-3 bots. Join from phone
+>    B over the same Wi-Fi. Both should see all players and bots, match settings,
+>    pickups, scores and the same winner. A third phone may join up to the
+>    configured player cap; a full lobby says FULL.
+> 2. Shoot, melee and grenade each other and bots from both devices. Health,
+>    shields, ammo, deaths, respawns and kill feed should agree. The host owns
+>    combat and bots; clients only request controls. Repeat after a disconnect
+>    and rejoin to exercise slot reuse.
+> 3. Try a mismatched map on phone B: the join should say MAP MISMATCH. Match
+>    files must be identical. Check LAN browsing and direct IPv4 join too.
+> 4. Report both phones' screenshots and exact action on any divergence; ADB
+>    logcat with tag `halo-trial-android` helps if available.
 >
-> LAN (`97d7cea` era) is still untested on Android; LAN runs with no bots.
+> Network vehicles remain disabled; this QA run covers on-foot Slayer. The
+> desktop `htanet` server remains a transport probe and does not simulate a
+> match. Use an Android host for combat QA. Internet direct IP requires a
+> reachable host UDP port 32270; there is no public server directory.
 
-## NEXT OBJECTIVE: the other vehicles
+**Next engineering work: online vehicles.** The on-foot QA checklist above
+remains useful evidence for the combat baseline. The vehicle plan below is
+the development handoff for the next session and the intended deep dive.
 
-Only the Warthog (and, being type 1 too, probably the rocket Warthog) drives.
-The session ended having read everything below from the tags; no code yet.
+**Next session:** run `git status` and inspect new screenshots in
+`scratch/uploads/` and `scratch/serve/uploads/` before changing code. The
+published code is still uncommitted; it includes earlier menu and hit-cue
+work as well as this multiplayer pass. No new screenshots have arrived since
+2026-09-21 19:11 EDT. The guest APK is 731,860 bytes and contains no maps;
+the owner's personal APK is 182,756,513 bytes with four Stored maps. The
+native library hash is identical in both. A GET of the guest APK matched its
+published SHA-256. `/home/commander/android/sdk/platform-tools/adb devices`
+showed no attached device. Do not treat the host test gate as proof of Android
+runtime behavior.
+
+## MULTIPLAYER IMPLEMENTATION HANDOFF
+
+**What changed.** The old network layer sent client transforms and cosmetic
+actions only. Protocol version 2 adds `CONTROL`, `WORLD`, `PROJECTILES`, `FX`,
+reliable `KILL`/`ACK`, and `REJECT`. A host Android phone runs `hta_game` for
+its local player, up to seven other players and up to seven bots (16 unit
+slots). Client controls are bounded; the host applies movement, collision,
+weapon fire, melee, grenades, pickups, damage, scores, death and respawn.
+Clients render the host world and copy host vitals, inventory and match state.
+The old transform snapshot and action path remains for desktop probes but is
+not combat authority. The host owns every damage and scoring decision.
+
+**Code entry points.** `src/net/protocol.h/.c` defines and validates the wire
+format. `src/net/session.h/.c` owns peer authentication, map CRC/full-lobby
+rejection, 20 Hz delivery, and acknowledged kill text. `start_game`,
+`net_host_peers`, `net_host_world`, `net_client_world`,
+`net_client_projectiles`, `game_events`, and `net_frame` in
+`src/platform/platform_android.c` bridge the portable game to Android. The
+host reuses vacated unit slots through `hta_game_add`; its remote control path
+is tested in `tests/test_game.c`. UDP delivery and malformed input cases are
+tested in `tests/test_net.c`. Java maps native network statuses 6/7/8 to
+waiting for match/map mismatch/full in `GameActivity.java`.
+
+**Protocol detail.** `WORLD` carries up to 16 unit records plus 64 pickup
+states and stays below the 1200-byte packet cap even when full. Entities carry
+stable game unit IDs, peer IDs, pose, vitals, score and held inventory. The
+host sends world and up to 32 active projectiles at 20 Hz. Projectile pools
+0–3 are portable-game pools; pools 4/5 are the host's local weapon/grenades.
+Fire/impact/detonation FX use best-effort UDP; kills resend every 0.15 s until
+ACK. A client timeout after 10 s clears stale state and retries joining.
+Map validation compares the cache CRC in HELLO when both sides have one;
+Android sets it after the map loads. A headless desktop server has no map CRC
+and is a transport tool, not a gameplay host.
+
+**Unverified edges for the device run.** No Android host and joiner have run
+together. Watch especially joiner actor visibility, hit flash and sounds when
+its shield drops, host/client ammo agreement after reload or pickup, death
+camera followed by host-controlled respawn, kill-feed delivery, round reset,
+and rejoining after a disconnect. The host's traveling projectile snapshots
+are mapped to separate client slots, but a guest with a different equipped
+weapon may have no matching first-person projectile mesh for that host round;
+impact FX and damage remain host-owned. A full 32-projectile game pool can
+also leave no snapshot room for host-local traveling rounds. These are visual
+limits to inspect, not reasons to trust local client damage. Remote movement
+is corrected from host snapshots and may visibly snap under real latency;
+there is no input reconciliation or measured packet-loss performance yet.
+
+**Scope boundary.** Online vehicles, non-Slayer modes, and Internet NAT
+traversal are not implemented. The desktop `htanet` and `htaplay` test the
+earlier visual path; they cannot host this match. LAN/direct IPv4 needs UDP
+32270 reachable. Preserve the asset boundary: only the owner's personal APK
+contains their maps; guests import their own copies.
+
+## NEXT ENGINEERING OBJECTIVE: ONLINE VEHICLES
+
+The owner wants the next development pass to make vehicles fully playable in
+multiplayer. Currently only Warthogs are drivable in solo play; the driver is not visibly
+seated in the vehicle. Network mode disables vehicle entry. The rocket
+Warthog's behavior has not been separately confirmed. The Scorpion, Ghost,
+Banshee and gun turret still need their movement, seats, cameras and weapons.
+The code's `hta_vehicles.driver` is a single global driver index, so its
+ownership model must change before multiple players can use separate vehicles.
+Treat the tag observations below as leads to verify during the deep dive.
 
 | vehicle | `vehi+756` type | seats (unit+740, 284 each; flags bit2 driver, bit3 gunner) | driving floats (vehi+760, per tick) | phys mass points |
 |---|---|---|---|---|
@@ -143,21 +244,52 @@ markers `primary trigger` / `secondary trigger` (weapon models are none).
 Weapons are excluded from `hta_weapon_list_playable`; the game roster needs
 them with a "vehicle" flag.
 
-Suggested order: (1) generalise `hta_vehicle_read` beyond type 1 and give
-`hta_vehicles_update` a per-type motion model — tank = throttle + turn in
-place on the tread points (turn rate is ours, the tag's is 0), ghost = hover
-on its support points, steered toward the camera yaw like Halo, banshee =
-fly along the camera's forward, land when slow near ground, turret = aim
-only; (2) seat choice by nearest seat marker, gunner seat for the Warthogs;
-(3) vehicle weapons through `hta_game` (fire from the marker, the gunner's
-aim); (4) vehicle damage/destruction; (5) bots entering vehicles. Draw
-moving vehicles with `hta_gfx_set_instances` rather than re-posing the whole
-fleet on the CPU (the 1.5 ms/frame noted below). `htaview --drive` and
-`test_vehicle` are the places to prove each type.
+**Suggested deep-dive and implementation sequence:**
 
-Other outstanding work, roughly by value: multiple remote players in LAN
-(render per-peer actors from `hta_game` units) and server-authoritative
-damage; CTF/Oddball/KOTH (lines, flag and ball weapons are in the map);
+1. Audit `src/engine/vehicle.c/.h`, `src/game/game.c`,
+   `src/platform/platform_android.c`, the actor/view code and the map tags.
+   Confirm the supported placements, seat markers, collision, camera and
+   weapon data for each vehicle. Write down what the Trial supplies and what
+   the engine must choose. Preserve solo Warthog behavior while expanding it.
+2. Replace the single global `driver` with per-vehicle, per-seat occupancy.
+   Make enter/exit a host-validated request: range, free seat, safe exit,
+   death, disconnect, respawn and vehicle destruction must release seats.
+   Attach visible player bodies to seat markers, including the local driver
+   in third-person and every occupant on remote clients. Keep seated bodies,
+   aim and animations synchronized with the hull and turret.
+3. Make the existing Warthog the first complete online vertical slice. The
+   host owns throttle, steering, collision and seat state; clients send
+   controls and render replicated pose, wheel/turret state and occupants.
+   Define correction/prediction for the driver and keep passengers aligned.
+   The current 16-entity `WORLD` packet is close to its 1200-byte limit;
+   design a separate bounded vehicle snapshot or a revised protocol instead
+   of appending unbounded state to it.
+4. Add tag-driven control models for the rocket Warthog, Scorpion, Ghost,
+   Banshee and gun turret. Tank tread steering, Ghost hover, Banshee flight
+   and stationary turret aim need separate host simulation and camera rules.
+   Verify speed, gravity, turning, collision, seat placement and exit behavior
+   against the map and on a phone; avoid assuming a Warthog control model fits
+   them. `htaview --drive` and `test_vehicle` are starting test tools.
+5. Route vehicle weapons and damage through host-owned game rules. Use the
+   vehicle model trigger markers, the correct driver/gunner aim, ammo or heat
+   rules from tags, projectile/impact FX, kill credit, occupant damage, vehicle
+   damage and destruction. Define what happens to occupants and respawning
+   vehicles. Add bots' seat selection and driving/gunning after human vehicle
+   play is coherent.
+6. Verify one vehicle type at a time with map-backed tests and Android builds,
+   then with two phones and bots. Check both screens for the same seats,
+   occupant visibility, hull/turret motion, impacts, deaths, exits and
+   reconnects. Include simultaneous drivers in separate vehicles, a driver
+   disconnect, and a client joining while a vehicle is already occupied.
+
+Rendering should avoid re-posing the entire fleet on the CPU each frame; the
+current fleet update cost is noted below. Consider instances or per-vehicle
+meshes/collision grids after measuring the new path. Keep the asset boundary
+and the existing `verify.sh` gate. Claude's deep dive should turn the numbered
+sequence into a concrete design before changing the protocol or gameplay.
+
+Other outstanding work after vehicles: CTF/Oddball/KOTH (lines, flag and ball
+weapons are in the map);
 dropped weapons carrying their ammo; spinning powerups and camouflage
 rendering (instanced path); motion tracker; player colours (shader change
 colour); campaign (`b30.map` sits unused in the data folder).
@@ -246,14 +378,18 @@ remain a rendering gap; phone confirmation of this fix is pending.
 ### Not started
 
 - **Vehicles beyond the driver's seat.** The Warthog now drives (see below).
-  Passengers, the turret, vehicle damage and flipping, and the Scorpion,
-  Ghost and Banshee are all still untouched.
-- **Authoritative multiplayer combat.** The first LAN transport and visual
-  replication slice exists; server-side movement, damage, death, vehicles and
-  game modes are still absent. See `NETWORK_PROGRESS.md`.
-- **Deeper menus.** The main menu is done from ui.map's bitmaps; the
-  submenus (game setup, profiles, pause) are not a `DeLa` interpreter yet.
-  SETTINGS is the Java setup screen. BACK in-game quits the app.
+  The driver is not visible in it. Passengers, the turret, vehicle damage and
+  flipping, and the Scorpion, Ghost and Banshee are all still untouched.
+  Online vehicle entry is disabled. This is the next engineering objective.
+- **Multiplayer beyond on-foot Slayer.** Android hosts now simulate remote
+  movement, bots, damage, death, pickups, scoring and respawn; clients receive
+  the match state. Vehicles and other game modes remain absent online. See
+  `NETWORK_PROGRESS.md`.
+- **Deeper menus.** The main menu and multiplayer submenu art/words come from
+  ui.map. The Java overlay now offers solo match settings, multiplayer
+  create/join, LAN discovery and Internet direct IPv4 join. These are custom
+  screens, not a `DeLa` interpreter. Profiles remains inactive; SETTINGS is
+  the Java setup screen. The II button pauses the game.
 - **Other game types.** CTF, Oddball, King of the Hill and Race lines and
   the flag/ball weapons are in the map; only Slayer runs.
 - **Music.** There is none in Blood Gulch, and that is correct — Halo CE
@@ -266,14 +402,13 @@ remain a rendering gap; phone confirmation of this fix is pending.
   player, vehicles, projectiles, vitals and other mechanics already have
   portable `src/engine/` modules. Read the live loop before deciding where
   shared session state, simulation timing and network messages belong.
-- Two automated desktop clients now connect through one headless server and
-  receive each other's position, orientation and action events. The desktop
-  window reuses `hta_player_update` and `hta_actor`; Android has a published
-  Host LAN and Join LAN build, still awaiting runtime verification. The host
-  phone joins its own nonblocking UDP server through loopback. Two-human and
-  device runs remain the active verification target before server-side damage
-  or vehicles. LAN mode disables vehicle entry; solo vehicles are unaffected.
-  The server accepts eight peers, but render code uses one remote actor slot.
+- Two automated desktop clients still exercise the visual transport path.
+  Their headless server does not run a match. Android hosts now own on-foot
+  Slayer movement, damage, bots and scoring and send all match units to the
+  clients. The host phone joins its own nonblocking UDP server through loopback.
+  Two-human/device runtime verification of on-foot play remains pending.
+  Online vehicles are the next engineering objective; network vehicle entry
+  remains disabled in the current build, and solo driving is unaffected.
 - Preserve the asset boundary: each client imports its own Trial data. Do not
   send or bundle map assets. Use the existing `scripts/verify.sh` gate before
   publishing an APK for device testing.
@@ -282,7 +417,7 @@ remain a rendering gap; phone confirmation of this fix is pending.
 
 | | |
 |---|---|
-| Dropped weapons | A weapon you swap off vanishes. Drawing one needs a separate dynamic mesh. `HTA_GFX_MAX_DYNAMIC` is currently 10; mesh capacity alone does not implement dropped weapons. |
+| Dropped weapons | A weapon you swap off vanishes. Drawing one needs a separate dynamic mesh; mesh capacity alone does not implement dropped weapons. |
 | Items do not rotate | Halo spins powerups. Doing it means paying the full item upload every frame or splitting powerups into their own dynamic mesh. The latter. |
 | Camouflage does nothing | It runs its timer. Nothing to hide from yet. |
 | Picked-up weapons are full | `hta_ammo_init` runs on equip; a dropped weapon should carry what was left in it. |
@@ -435,6 +570,7 @@ wrong, this list is the first place to look — they are all one constant.
 | `HTA_RESPAWN_DELAY` | 5 s | player respawn (gametype value, not in the map) |
 | `HTA_DEATH_*` | — | death camera pull-back, fade timings |
 | `HTA_VITALS_LOW` | 0.25 | when "low shield"/"low health" sounds start |
+| `HTA_DAMAGE_FLASH_TIME` | 0.55 s | Android red hit cue fade; overlay uses a 3.5% screen edge, up to 190/255 edge and 35/255 centre alpha |
 | `HTA_OVERSHIELD_MULT` | 3.0 | how much overshield gives (tag says how long only) |
 | `HTA_PICKUP_REACH` | 0.5 wu | pickup radius |
 | `HTA_PICKUP_LIFT` | 0.06 wu | how far an item floats off its placement |

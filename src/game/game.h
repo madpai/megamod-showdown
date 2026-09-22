@@ -220,6 +220,7 @@ typedef struct hta_game {
 
     /* Slayer. */
     int             score_limit;
+    float           time_limit;  /* seconds; 0 plays to the score */
     float           respawn_time;
     bool            teams;
     bool            over;
@@ -266,6 +267,8 @@ void hta_game_pick_spawn(hta_game *g, int32_t unit, float out_pos[3], float *out
 
 /* The platform has respawned the local player: count it as alive. */
 void hta_game_revive(hta_game *g, int32_t unit);
+/* Spawn a newly joined player at a safe scenario start. */
+void hta_game_spawn(hta_game *g, int32_t unit);
 
 /* Bot difficulty, 0..3, for bots added from now on and those already in. */
 void hta_game_set_skill(hta_game *g, uint8_t skill);

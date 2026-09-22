@@ -12,8 +12,11 @@ next, how to read Halo's tags, and the traps that have already cost a session.
 ## Where it got to
 
 The app opens on the Trial's own main menu (from `ui.map`): the ring, the
-space sky, the HALO logo and the title theme. MULTIPLAYER plays Slayer on
-Blood Gulch against 0-7 bots that walk a nav grid rebuilt from the map's
+space sky, the HALO logo and the title theme. SINGLEPLAYER opens a configurable
+Slayer match against 0-7 bots. MULTIPLAYER opens CREATE GAME and JOIN GAME:
+CREATE GAME hosts a UDP match with player, bot, score and time settings;
+JOIN GAME finds hosts on the same LAN or accepts a direct IPv4 address for
+Internet play. Bots walk a nav grid rebuilt from the map's
 collision, pick up weapons and powerups, and fight with the tags' own
 damage; the kill feed and announcer use the Trial's own words and voice.
 Blood Gulch renders with lightmaps, detail maps and (new) its real sky. You
@@ -21,9 +24,21 @@ can run, crouch, jump, carry two of the eleven weapons with real models,
 animations, sounds and HUD, throw grenades, drive Warthogs, die and respawn.
 BACK pauses.
 
+The owner's current personal test APK, with all four Trial maps and the
+launcher icon bundled, is on the private Tailscale sideload page at
+`http://100.89.1.14:8731/`. Its SHA-256 and test steps are in
+[`docs/HANDOFF.md`](docs/HANDOFF.md). The normal shareable APK contains no
+Trial maps.
+
+Android network play now sends all players, bots and on-foot Slayer combat from
+the host to every client. This path is host/Android-build verified and awaits a
+two-device playtest. Internet joining uses direct IPv4 and requires a reachable
+host. The private sideload page also offers a map-free guest APK; guests must
+import their own Trial data.
+
 Not yet: the Scorpion, Ghost, Banshee and turret; Warthog gunner seats;
-vehicle damage; more than one remote player in LAN and server-authoritative
-combat; CTF/Oddball/KOTH; the campaign. See [`docs/HANDOFF.md`](docs/HANDOFF.md).
+vehicle damage and online driving; CTF/Oddball/KOTH; the campaign. See
+[`docs/HANDOFF.md`](docs/HANDOFF.md).
 
 ## Legal
 

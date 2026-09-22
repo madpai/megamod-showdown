@@ -23,6 +23,10 @@ export JAVA_HOME=${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk}
 export ANDROID_HOME=${ANDROID_HOME:-$HOME/android/sdk}
 GRADLE=${GRADLE:-$HOME/android/gradle-8.9/bin/gradle}
 APK=android/app/build/outputs/apk/debug/app-debug.apk
+SOURCE=$(git log -1 --format=%h 2>/dev/null || echo unknown)
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  SOURCE="$SOURCE-dirty"
+fi
 
 BUILD=1
 WITH_ASSETS=0
@@ -44,7 +48,7 @@ done
 
 if [ "$BUILD" = 1 ]; then
   echo "building APK…"
-  PROPS="-PhtaVersionCode=$(git rev-list --count HEAD) -PhtaVersionName=$(git log -1 --format=%h)"
+  PROPS="-PhtaVersionCode=$(git rev-list --count HEAD) -PhtaVersionName=$SOURCE"
   if [ "$WITH_ASSETS" = 1 ]; then
     STAGE=$PWD/scratch/apk-assets
     rm -rf "$STAGE"; mkdir -p "$STAGE/maps"
@@ -62,14 +66,26 @@ fi
 mkdir -p "$ROOT/uploads"
 cp "$APK" "$ROOT/halo-trial-poc.apk"
 
+# A guest needs the same code but must import their own Trial data. Build and
+# publish that variant alongside the owner's personal APK for multiplayer QA.
+if [ "$BUILD" = 1 ] && [ "$WITH_ASSETS" = 1 ]; then
+  echo "building asset-free guest APK…"
+  (cd android && $GRADLE --no-daemon -q :app:clean :app:assembleDebug \
+      -PhtaVersionCode="$(git rev-list --count HEAD)" -PhtaVersionName="$SOURCE")
+  if unzip -Z1 "$APK" | grep -q '^assets/maps/'; then
+    echo "guest APK unexpectedly contains Trial maps" >&2; exit 1
+  fi
+  cp "$APK" "$ROOT/halo-trial-guest.apk"
+fi
+
 # Hashes so the phone can confirm it got the build you meant.
 ( cd "$ROOT" && : > SHA256SUMS
-  for f in halo-trial-poc.apk bloodgulch.map bitmaps.map sounds.map; do
+  for f in halo-trial-poc.apk halo-trial-guest.apk bloodgulch.map bitmaps.map sounds.map; do
     [ -f "$f" ] && sha256sum "$f" >> SHA256SUMS
   done )
 
 [ -n "$TITLE" ] || TITLE=$(git log -1 --format=%s 2>/dev/null || echo "current build")
-COMMIT=$(git log -1 --format=%h 2>/dev/null || echo "?")
+COMMIT=$SOURCE
 STAMP=$(date '+%Y-%m-%d %H:%M')
 SIZE=$(du -h "$ROOT/halo-trial-poc.apk" | cut -f1)
 
