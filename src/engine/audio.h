@@ -42,6 +42,7 @@ typedef struct {
     /* 0 for a one-shot. Non-zero names a continuous sound the caller owns;
      * a request whose clip is HTA_AUDIO_NO_CLIP stops that one. */
     uint32_t loop;
+    float    pitch;      /* playback rate, 1 for as recorded */
 } hta_audio_req;
 
 typedef struct {
@@ -95,6 +96,11 @@ void hta_audio_loop(hta_audio *a, uint32_t id, uint32_t clip, float gain);
 
 /* Stops it. Harmless if that id is not playing. */
 void hta_audio_loop_stop(hta_audio *a, uint32_t id);
+/* A continuous sound with a place and a rate: an engine that pans with
+ * where the vehicle is and revs with how fast it goes. Calling again
+ * updates a running loop without restarting it. */
+void hta_audio_loop_ex(hta_audio *a, uint32_t id, uint32_t clip, float gain,
+                       float pan, float pitch);
 
 /* Audio thread. Writes `frames` interleaved frames, overwriting `out`. */
 void hta_audio_mix(hta_audio *a, int16_t *out, uint32_t frames);

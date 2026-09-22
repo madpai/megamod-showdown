@@ -151,6 +151,9 @@ typedef struct {
     hta_net_vehicle vfrom[HTA_VEHICLE_MAX], vto[HTA_VEHICLE_MAX];
     bool          vhave[HTA_VEHICLE_MAX];
     uint32_t      veh_in_snd, veh_out_snd;
+    uint32_t      veh_engine[HTA_VEHICLE_TYPES];   /* each type's engine `snd!` */
+    float         veh_engine_gain[HTA_VEHICLE_TYPES];
+    bool          veh_engine_on[HTA_VEHICLE_MAX];
     uint32_t      vfire_recipe[HTA_GAME_MAX_WEAPONS];
     /* Tracers and trails, from each round's own contrail tag. */
     hta_contrails trails;
@@ -198,6 +201,10 @@ typedef struct {
      * map's starting equipment hands out exactly two collections. `held_slot`
      * is the one in your hands. */
     uint32_t held[HTA_CARRY_MAX];
+    /* What is in the gun NOT in hand. The one in hand is `ammo`; switching
+     * used to re-init it from the tag, which refilled it for free. */
+    hta_ammo held_ammo[HTA_CARRY_MAX];
+    bool     held_ammo_set[HTA_CARRY_MAX];
     uint32_t held_count;
     uint32_t held_slot;
     uint32_t start_weapon[HTA_CARRY_MAX];
@@ -270,6 +277,8 @@ typedef struct {
     float         feed_age[4];
     char          banner[96];
     float         banner_age;
+    char          item_msg[96];      /* "Picked up a rocket launcher" */
+    float         item_msg_age;
     float         over_timer;
 
     /* Health and shield, and what takes them away. `vit` points at these
@@ -905,6 +914,7 @@ static void respawn(hta_android *s)
     /* A fresh magazine and a full reserve, and the weapon comes up unzoomed
      * with its idle pose rather than mid-reload. */
     hta_ammo_init(&s->ammo, &s->weap);
+    for (uint32_t k = 0; k < HTA_CARRY_MAX; k++) s->held_ammo_set[k] = false;
     s->zoom_level = 0;
     apply_zoom(s);
     fire_loop(s, false);
@@ -1711,6 +1721,15 @@ static void start_game(hta_android *s)
         s->veh_out_snd = find_sound(&s->cache, "sound\\sfx\\vehicles\\warthog_7_out");
         if (s->veh_in_snd) bank_get(s, s->veh_in_snd);
         if (s->veh_out_snd) bank_get(s, s->veh_out_snd);
+        for (uint32_t t = 0; t < s->vehicles.type_count && t < HTA_VEHICLE_TYPES; t++) {
+            hta_loop_sound ls;
+            s->veh_engine[t] = 0;
+            if (hta_object_loop_sound(&s->cache, s->vehicles.types[t].tag_id, "", &ls)) {
+                s->veh_engine[t] = ls.loop ? ls.loop : ls.start;
+                s->veh_engine_gain[t] = ls.gain > 0.0f ? ls.gain : 1.0f;
+                if (s->veh_engine[t]) bank_get(s, s->veh_engine[t]);
+            }
+        }
     }
     s->my_car = s->my_seat = -1;
     s->game.simulate_drops = !s->net_enabled || s->net_hosting;
@@ -1846,6 +1865,38 @@ static void tracer(hta_android *s, int32_t weapon, const float from[3], const fl
     if (s->col.built) hta_collision_ray(&s->col, from, dir, 100.0f, &t, NULL, NULL);
     for (int k = 0; k < 3; k++) end[k] = from[k] + dir[k] * t;
     hta_contrails_tracer(&s->trails, type, from, end, 300.0f);
+}
+
+/* The Trial's own words for what you just picked up: `hud_item_messages`
+ * says "Picked up an assault rifle" and "Picked up %d rounds for ...".
+ * Found by the item's own name in the message, since the list is not in
+ * any order a tag points into. */
+static void item_message(hta_android *s, uint32_t tag, int rounds)
+{
+    static uint32_t list;
+    if (!list) list = hta_ustr_find(&s->cache, "ui\\hud\\hud_item_messages");
+    int32_t ti = hta_cache_find_tag_by_id(&s->cache, tag);
+    hta_tag_entry t;
+    char path[256] = "";
+    if (!list || ti < 0 || !hta_cache_tag(&s->cache, (uint32_t)ti, &t) ||
+        !hta_cache_tag_path(&s->cache, &t, path, sizeof(path))) return;
+    const char *name = strrchr(path, '\\');
+    name = name ? name + 1 : path;
+    char want[64];
+    snprintf(want, sizeof(want), "%s", name);
+    if (strstr(want, "frag grenade")) snprintf(want, sizeof(want), "fragmentation grenade");
+    if (!strncmp(want, "mp_", 3)) memmove(want, want + 3, strlen(want + 3) + 1);
+    uint32_t n = hta_ustr_count(&s->cache, list);
+    for (uint32_t i = 0; i < n; i++) {
+        char line[96];
+        if (!hta_ustr_get(&s->cache, list, i, line, sizeof(line))) continue;
+        bool counts = strstr(line, "%d") != NULL;
+        if (counts != (rounds > 0) || !strstr(line, want)) continue;
+        if (counts) snprintf(s->item_msg, sizeof(s->item_msg), line, rounds);
+        else snprintf(s->item_msg, sizeof(s->item_msg), "%s", line);
+        s->item_msg_age = 0.0f;
+        return;
+    }
 }
 
 /* Everything the game did this frame, turned into sound, words and dust. */
@@ -1987,6 +2038,7 @@ static void game_text(hta_android *s, float dt)
             n += (size_t)snprintf(g_game_text + n, sizeof(g_game_text) - n, "%s\n", s->feed[i]);
     if (n < sizeof(g_game_text))
         n += (size_t)snprintf(g_game_text + n, sizeof(g_game_text) - n, "\x1e");
+    size_t board_at = n;
     if (s->game.over && n < sizeof(g_game_text)) {
         int32_t order[HTA_GAME_MAX_UNITS];
         uint32_t k = hta_game_standings(&s->game, order, HTA_GAME_MAX_UNITS);
@@ -1997,6 +2049,11 @@ static void game_text(hta_android *s, float dt)
                                   u->kills, u->assists, u->deaths);
         }
     }
+    (void)board_at;
+    s->item_msg_age += dt;
+    if (n < sizeof(g_game_text))
+        n += (size_t)snprintf(g_game_text + n, sizeof(g_game_text) - n, "\x1e%s",
+                              s->item_msg_age < 2.5f ? s->item_msg : "");
 }
 
 JNIEXPORT jstring JNICALL
@@ -2985,6 +3042,8 @@ static void mirror_local(hta_android *s)
         local->carry[slot].weapon=slot<s->held_count ?
             hta_game_weapon_index(&s->game,s->held[slot]) : -1;
     local->carry[local->slot].ammo=s->ammo;
+    unsigned other=local->slot^1u;
+    if (other<HTA_CARRY_MAX && s->held_ammo_set[other]) local->carry[other].ammo=s->held_ammo[other];
     local->grenades=s->nade_count;
     local->powerup=s->powerup;
 }
@@ -3860,6 +3919,43 @@ static void vehicle_camera(hta_android *s)
                    !(v->kind == HTA_VK_TANK && st && (st->flags & HTA_SEAT_DRIVER));
 }
 
+/* Engines: each running vehicle's own looping sound, from where it is,
+ * faster as it goes faster. Idle below the rate. */
+#define HTA_LOOP_ENGINE 40u
+static void vehicle_sounds(hta_android *s)
+{
+    if (!s->vehicles.loaded || !s->audio_ok) return;
+    for (uint32_t i = 0; i < s->vehicles.count && i < HTA_VEHICLE_MAX; i++) {
+        const hta_vehicle *v = &s->vehicles.cars[i];
+        uint32_t snd = v->type < HTA_VEHICLE_TYPES ? s->veh_engine[v->type] : 0;
+        float d[3] = { v->pos[0]-s->cam.pos[0], v->pos[1]-s->cam.pos[1], v->pos[2]-s->cam.pos[2] };
+        float dist = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+        bool on = snd && v->active && v->ctl.driven && dist < HTA_SOUND_FAR * 0.6f;
+        if (!on) {
+            if (s->veh_engine_on[i]) hta_audio_loop_stop(&s->audio, HTA_LOOP_ENGINE + i);
+            s->veh_engine_on[i] = false;
+            continue;
+        }
+        int b = bank_get(s, snd);
+        if (b < 0) continue;
+        float speed = hta_vehicles_speed(&s->vehicles, i);
+        float frac = v->forward > 0.1f ? speed / v->forward : 0.0f;
+        if (frac > 1.0f) frac = 1.0f;
+        float g = s->veh_engine_gain[v->type] * (0.55f + 0.45f * frac);
+        if (dist > HTA_SOUND_NEAR) g *= (HTA_SOUND_NEAR / dist) * (1.0f - dist / (HTA_SOUND_FAR * 0.6f));
+        float pan = 0.0f;
+        if (dist > 0.01f) {
+            float right[3];
+            hta_camera_right(&s->cam, right);
+            pan = (d[0]*right[0] + d[1]*right[1] + d[2]*right[2]) / dist;
+        }
+        /* Revs: idle as recorded, up to half again at full speed. Ours. */
+        hta_audio_loop_ex(&s->audio, HTA_LOOP_ENGINE + i, s->bank[b].clip[0], g, pan,
+                          0.85f + 0.5f * frac);
+        s->veh_engine_on[i] = true;
+    }
+}
+
 /* In, out, or across: what changes for this device when its seat does. */
 static void vehicle_transition(hta_android *s)
 {
@@ -4335,6 +4431,7 @@ void android_main(struct android_app *app)
                 }
                 if (taken) {
                     play_tag(&state, item->pickup_snd, 1.0f);
+                    item_message(&state, item->tag_id, 0);
                     hta_log("[items] picked up %s", item->path);
                     hta_pickups_take(&state.items, got);
                 }
@@ -4363,19 +4460,46 @@ void android_main(struct android_app *app)
                         hta_game_take_drop(&state.game, dr, &wi, &am);
                         uint32_t tag = state.game.weapons[wi].tag;
                         if (state.held_count < HTA_CARRY_MAX) {
+                            state.held_ammo[state.held_slot] = state.ammo;
+                            state.held_ammo_set[state.held_slot] = true;
                             state.held_slot = state.held_count;
                             state.held[state.held_count++] = tag;
                         } else {
                             drop_held(&state);
                             state.held[state.held_slot] = tag;
                         }
+                        state.held_ammo_set[state.held_slot] = false;
                         equip_weapon(&state, tag);
                         state.ammo.loaded = am.loaded;
                         state.ammo.reserve = am.reserve;
                         play_tag(&state, state.weap.pickup_snd_id, 1.0f);
+                        item_message(&state, tag, 0);
                         hta_log("[items] picked up a dropped %s (%d/%d)", state.weap.path,
                                 am.loaded, am.reserve);
                     }
+                }
+            }
+            /* A map weapon we already carry: its ammunition, as Halo gives
+             * it, for whichever hand has that gun. */
+            {
+                int32_t ws = hta_pickups_at_kind(&state.items, feet, HTA_ITEM_WEAPON);
+                const hta_item_choice *w = hta_pickups_item(&state.items, ws);
+                for (uint32_t k = 0; w && k < state.held_count; k++) {
+                    if (state.held[k] != w->tag_id) continue;
+                    hta_weapon_def fd;
+                    if (!hta_weapon_load_id(&state.cache, NULL, w->tag_id, &fd, NULL, NULL, 0)) break;
+                    hta_ammo fresh;
+                    hta_ammo_init(&fresh, &fd);
+                    hta_ammo *a = k == state.held_slot ? &state.ammo : &state.held_ammo[k];
+                    if (k != state.held_slot && !state.held_ammo_set[k]) break;   /* full already */
+                    if (a->reserve >= a->reserve_max) break;
+                    int before = a->reserve;
+                    a->reserve += fresh.loaded + fresh.reserve;
+                    if (a->reserve > a->reserve_max) a->reserve = a->reserve_max;
+                    hta_pickups_take(&state.items, ws);
+                    play_tag(&state, w->pickup_snd ? w->pickup_snd : state.pickup_snd_ammo, 0.8f);
+                    item_message(&state, w->tag_id, a->reserve - before);
+                    break;
                 }
             }
             /* SWAP on a weapon PICKS IT UP; off one it switches between the
@@ -4392,6 +4516,8 @@ void android_main(struct android_app *app)
                     state.hud_swap = false;
                     if (state.held_count < HTA_CARRY_MAX) {
                         /* A free hand: take it and hold it. */
+                        state.held_ammo[state.held_slot] = state.ammo;
+                        state.held_ammo_set[state.held_slot] = true;
                         state.held_slot = state.held_count;
                         state.held[state.held_count++] = w->tag_id;
                     } else {
@@ -4401,9 +4527,11 @@ void android_main(struct android_app *app)
                         drop_held(&state);
                         state.held[state.held_slot] = w->tag_id;
                     }
+                    state.held_ammo_set[state.held_slot] = false;
                     equip_weapon(&state, w->tag_id);
                     hta_pickups_take(&state.items, wslot);
                     play_tag(&state, w->pickup_snd, 1.0f);
+                    item_message(&state, w->tag_id, 0);
                     hta_log("[items] picked up %s (holding %u)",
                             w->path, state.held_count);
                 }
@@ -4480,8 +4608,14 @@ void android_main(struct android_app *app)
         if (state.hud_swap) {
             state.hud_swap = false;
             if (state.held_count > 1) {
+                state.held_ammo[state.held_slot] = state.ammo;
+                state.held_ammo_set[state.held_slot] = true;
                 state.held_slot = (state.held_slot + 1u) % state.held_count;
                 equip_weapon(&state, state.held[state.held_slot]);
+                if (state.held_ammo_set[state.held_slot]) {
+                    state.ammo = state.held_ammo[state.held_slot];
+                    hta_ammo_cancel_reload(&state.ammo);
+                }
                 net_action(&state,HTA_NET_EVENT_WEAPON);
             }
         }
@@ -4999,6 +5133,7 @@ void android_main(struct android_app *app)
         net_frame(&state,now,dt,&in);
         vehicle_transition(&state);
         vehicle_camera(&state);
+        vehicle_sounds(&state);
         if (state.trails.loaded) {
             for (uint32_t p = 0; p < state.game.pool_count; p++) {
                 if (state.ptrail[p] == HTA_CONT_NONE) continue;

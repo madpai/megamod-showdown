@@ -889,6 +889,12 @@ public class GameActivity extends NativeActivity {
                     y += feed.getTextSize() * 1.3f;
                 }
             }
+            if (part.length > 4 && !part[4].isEmpty()) {
+                float saved = banner.getTextSize();
+                banner.setTextSize(feed.getTextSize() * 1.1f);
+                c.drawText(part[4], w * 0.5f, h * 0.64f, banner);
+                banner.setTextSize(saved);
+            }
             if (part.length > 3 && !part[3].isEmpty()) {
                 String[] rows = part[3].split("\n");
                 float rowH = board.getTextSize() * 1.45f;

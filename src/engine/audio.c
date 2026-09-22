@@ -29,7 +29,14 @@ uint32_t hta_audio_add_clip(hta_audio *a, const int16_t *samples, uint32_t frame
     return i;
 }
 
+static void push_ex(hta_audio *a, uint32_t clip, float gain, float pan, uint32_t loop,
+                    float pitch);
 static void push(hta_audio *a, uint32_t clip, float gain, float pan, uint32_t loop)
+{
+    push_ex(a, clip, gain, pan, loop, 1.0f);
+}
+static void push_ex(hta_audio *a, uint32_t clip, float gain, float pan, uint32_t loop,
+                    float pitch)
 {
     uint32_t w = atomic_load_explicit(&a->wr, memory_order_relaxed);
     uint32_t r = atomic_load_explicit(&a->rd, memory_order_acquire);
@@ -43,6 +50,7 @@ static void push(hta_audio *a, uint32_t clip, float gain, float pan, uint32_t lo
     a->ring[w & (HTA_AUDIO_REQ_RING - 1u)].gain = gain;
     a->ring[w & (HTA_AUDIO_REQ_RING - 1u)].pan = pan;
     a->ring[w & (HTA_AUDIO_REQ_RING - 1u)].loop = loop;
+    a->ring[w & (HTA_AUDIO_REQ_RING - 1u)].pitch = pitch > 0.05f && pitch < 8.0f ? pitch : 1.0f;
     atomic_store_explicit(&a->wr, w + 1u, memory_order_release);
 }
 
@@ -64,6 +72,13 @@ void hta_audio_loop(hta_audio *a, uint32_t id, uint32_t clip, float gain)
 {
     if (!a || !id || clip >= a->clip_count) return;
     push(a, clip, gain, 0.0f, id);
+}
+
+void hta_audio_loop_ex(hta_audio *a, uint32_t id, uint32_t clip, float gain,
+                       float pan, float pitch)
+{
+    if (!a || !id || clip >= a->clip_count) return;
+    push_ex(a, clip, gain, pan, id, pitch);
 }
 
 void hta_audio_loop_stop(hta_audio *a, uint32_t id)
@@ -112,7 +127,16 @@ static void drain_requests(hta_audio *a)
                 continue;
             }
             if (have) {                               /* already running */
-                if (have->clip == req.clip) { have->gain = req.gain; continue; }
+                if (have->clip == req.clip) {
+                    have->gain = req.gain;
+                    float t = (req.pan + 1.0f) * 0.25f * 3.14159265f;
+                    have->gain_l = cosf(t);
+                    have->gain_r = sinf(t);
+                    const hta_audio_clip *hc = &a->clips[have->clip];
+                    have->step = (uint64_t)((double)(((uint64_t)hc->rate << 32) / (uint64_t)a->out_rate) *
+                                            (double)req.pitch);
+                    continue;
+                }
                 have->active = false; have->loop = 0u;
             }
         } else if (req.clip >= a->clip_count) {
@@ -123,7 +147,8 @@ static void drain_requests(hta_audio *a)
         hta_audio_voice *v = &a->voices[vi];
         v->clip = req.clip;
         v->phase = 0;
-        v->step = ((uint64_t)c->rate << 32) / (uint64_t)a->out_rate;
+        v->step = (uint64_t)((double)(((uint64_t)c->rate << 32) / (uint64_t)a->out_rate) *
+                             (double)(req.pitch > 0.0f ? req.pitch : 1.0f));
         v->gain = req.gain;
         /* Constant power: a sound panned hard to one side is as loud as one
          * in the middle, which is what keeps a shot sweeping past from
