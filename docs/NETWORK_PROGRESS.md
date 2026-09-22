@@ -73,14 +73,28 @@ gameplay loop's first-person weapon, pickups, audio or vehicles.
   and part of `scripts/verify.sh` when the map and desktop graphics dependencies
   are available. The latest full gate passed 60/60 and checks that the APK
   actually declares Android's `INTERNET` permission.
+- On 2026-09-22 the owner unlocked the desktop and observed two live Blood
+  Gulch windows side by side. The owner moved one client player in front of
+  the other and reported that the players saw each other. A captured desktop
+  frame (`scratch/net-live/desktop-x11.png`, local only) independently shows a
+  Spartan in each window. The live logs show distinct IDs (`id=1 remote=2`,
+  `id=2 remote=1`) and the second client saw the first player's position change
+  from about `(98.21, -156.49)` to `(96.82, -156.99)`; both remained connected
+  without invalid packets. A subsequent desktop input probe delivered pistol
+  selection and two action events to the other client. This establishes a
+  human-controlled desktop movement and reciprocal rendering check, but only
+  one human operated the session. It does not establish two people playing
+  simultaneously, Android runtime behavior, or LAN latency. The observed
+  loopback ping was 16-17 ms with the graphics clients running.
 
 ## Known limits and risks
 
 - Android ↔ desktop and Android ↔ Android have not been run: no ADB device is
   attached. The APK compiles and has `INTERNET`, but runtime connection and
   remote rendering on the phone remain unverified.
-- Two humans have not operated two desktop windows. The automated clients use
-  scripted movement; the interactive window path needs a human playtest.
+- One human moved a player in a live two-window desktop session and observed
+  reciprocal player rendering. Two humans have not yet controlled both windows
+  simultaneously or checked every action visually in a live session.
 - LAN ping and loss behavior are unmeasured. The loopback number includes the
   clients' 5 ms pump interval. The current protocol uses no event ACK/retry,
   sequence wrap logic, clock sync or client reconciliation.
@@ -115,7 +129,7 @@ own their Trial map files; no assets are transmitted or committed.
 
 ## Next testing objective
 
-Run `scripts/run_two_players.sh` with two human-controlled desktop windows and
+Run `scripts/run_two_players.sh` with two people controlling desktop windows and
 observe both directions while walking, turning, jumping, crouching, switching
 between AR/pistol, and pressing fire/melee/grenade. Check for correct third-
 person clips and no sudden origin flash at join. Then run the desktop server

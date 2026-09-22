@@ -11,6 +11,16 @@ and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 
 ## First LAN slice (2026-09-21)
 
+On 2026-09-22 the owner unlocked the desktop for a live X11 two-window
+Blood Gulch test. Both windows showed the other's Spartan. The owner moved
+one player in front of the other and confirmed reciprocal visibility; the
+peer log recorded the moved player's changing position. A local input probe
+then delivered pistol selection and two action events across the session.
+This is the first human-controlled desktop observation, with one human and
+two game instances. Two-person simultaneous play and Android runtime tests
+are still outstanding. The local frame and logs are in ignored
+`scratch/net-live/` and no Halo assets entered Git.
+
 The live engine already had player physics, actors, weapon logic, vitals and
 vehicles; its gameplay coordinator was Android's `android_main`, and desktop
 had only an offscreen inspector. The 57-check baseline was preserved as

@@ -103,9 +103,12 @@ the section below, and update it every time.
 > [`NETWORK_ARCHITECTURE.md`](NETWORK_ARCHITECTURE.md). The old 57-check
 > baseline is tagged `net-baseline-2026-09-21`; the current gate is 60/60.
 > An automated two-process desktop run on the real Blood Gulch map received
-> remote movement in both directions, with one captured image showing the
-> other Spartan. No two-human or Android device test has happened. Next,
-> use `HTA_MAP=... scripts/run_two_players.sh` and check movement, jump,
+> remote movement and actions in both directions. A subsequent live two-window
+> desktop playtest showed a Spartan in each view; the owner moved one player
+> in front of the other and reported reciprocal visibility. The peer log
+> recorded that player's position changing. One human operated the session;
+> no two-human or Android device test has happened. Next, use
+> `HTA_MAP=... scripts/run_two_players.sh` and check movement, jump,
 > crouch, AR/pistol selection and fire/melee/grenade animations in both
 > windows. Then test Android ↔ desktop LAN. Movement is provisional client
 > submitted transform relay; no authoritative damage or player combat yet.
