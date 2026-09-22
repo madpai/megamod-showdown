@@ -74,6 +74,16 @@ static void sessions(void)
     assert(a.connected && b.connected && a.id!=b.id);
     assert(hta_net_server_count(&s)==2);
     assert(a.stats.ping_ms>=0 && b.stats.ping_ms>=0);
+    /* A stale WELCOME with another nonce cannot replace this session. */
+    uint8_t stale_payload[9]={a.id}, stale_wire[HTA_NET_MAX_PACKET];
+    size_t stale_n=0;
+    hta_net_u32_write(stale_payload+1,0x12345678u);
+    hta_net_u32_write(stale_payload+5,a.nonce^1u);
+    assert(hta_net_pack(stale_wire,sizeof(stale_wire),HTA_NET_WELCOME,999,0,
+                        stale_payload,sizeof(stale_payload),&stale_n));
+    assert(hta_udp_send(&s.udp,&s.peers[a.id-1].addr,stale_wire,stale_n));
+    hta_net_client_pump(&a,1.3);
+    assert(a.token==s.peers[a.id-1].token);
     /* A valid endpoint without the assigned token cannot submit state. */
     uint8_t bad_payload[4+HTA_NET_PLAYER_BYTES]={0}, bad_wire[HTA_NET_MAX_PACKET];
     size_t bad_n=0;

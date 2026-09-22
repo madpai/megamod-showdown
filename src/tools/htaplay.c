@@ -149,7 +149,8 @@ int main(int argc,char **argv)
     double snapshot_time=0,action_until=0;
     float mouse_yaw=0,mouse_pitch=0;
     while (running) {
-        double now=(double)SDL_GetTicks64()/1000.0;
+        uint64_t frame_start_ms=SDL_GetTicks64();
+        double now=(double)frame_start_ms/1000.0;
         float dt=(float)(now-last); last=now; if (dt>0.05f) dt=0.05f;
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -282,6 +283,8 @@ int main(int argc,char **argv)
             fflush(stdout); last_log=now;
         }
         if (auto_seconds && now-start>=auto_seconds) running=false;
+        uint64_t frame_ms=SDL_GetTicks64()-frame_start_ms;
+        if (frame_ms<16) SDL_Delay((uint32_t)(16-frame_ms));
     }
     if (shot) ppm(shot,rgba);
     bool ok=net.connected && (!auto_seconds || saw_remote);

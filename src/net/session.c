@@ -68,8 +68,10 @@ static void server_packet(hta_net_server *s, const hta_udp_addr *from,
         if (!peer) return; /* full; never allocate from packets */
         if (peer->nonce!=nonce) { s->stats.invalid++; return; }
         peer->last_seen=now;
-        uint8_t payload[5]={peer->player.id}; hta_net_u32_write(payload+1,peer->token);
-        send_packet(&s->udp,from,&s->stats,HTA_NET_WELCOME,&s->sequence,s->tick,payload,5);
+        uint8_t payload[9]={peer->player.id};
+        hta_net_u32_write(payload+1,peer->token);
+        hta_net_u32_write(payload+5,peer->nonce);
+        send_packet(&s->udp,from,&s->stats,HTA_NET_WELCOME,&s->sequence,s->tick,payload,9);
         return;
     }
     if (!peer || p->length<4 || hta_net_u32_read(p->payload)!=peer->token) {
@@ -165,7 +167,8 @@ void hta_net_client_close(hta_net_client *c)
 
 static void client_packet(hta_net_client *c, const hta_net_packet *p, double now)
 {
-    if (p->type==HTA_NET_WELCOME && p->length==5) {
+    if (p->type==HTA_NET_WELCOME && p->length==9 &&
+        hta_net_u32_read(p->payload+5)==c->nonce) {
         uint8_t id=p->payload[0];
         if (id>=1 && id<=HTA_NET_MAX_PLAYERS) {
             c->id=id; c->token=hta_net_u32_read(p->payload+1); c->connected=true;
