@@ -21,6 +21,12 @@ two game instances. Two-person simultaneous play and Android runtime tests
 are still outstanding. The local frame and logs are in ignored
 `scratch/net-live/` and no Halo assets entered Git.
 
+For the requested phone-to-phone test build, the existing Host LAN game and
+Join LAN server flow was retained. Setup now displays the host phone's Wi-Fi
+IPv4 address with UDP port 32270 and labels the join field for any host device.
+The full 60-check gate passed after this UI change. Runtime Android networking
+remains unverified until a device is available.
+
 The live engine already had player physics, actors, weapon logic, vitals and
 vehicles; its gameplay coordinator was Android's `android_main`, and desktop
 had only an offscreen inspector. The 57-check baseline was preserved as

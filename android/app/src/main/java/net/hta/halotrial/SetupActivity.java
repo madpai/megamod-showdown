@@ -21,6 +21,10 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.util.Enumeration;
 
 /**
  * First-run helper: the user picks their own Trial map via the system document
@@ -36,6 +40,7 @@ public class SetupActivity extends Activity {
     private static final int REQ_PICK_SND = 3;
 
     private TextView status;
+    private TextView lanAddress;
     private Button play;
     private EditText serverAddress;
 
@@ -64,13 +69,14 @@ public class SetupActivity extends Activity {
         host.setOnClickListener(v -> launchGame(false, true));
         serverAddress = new EditText(this);
         serverAddress.setSingleLine(true);
-        serverAddress.setHint("Desktop server IPv4 (example: 192.168.1.10)");
+        serverAddress.setHint("Host device IPv4 (example: 192.168.1.10)");
         serverAddress.setTextColor(Color.WHITE);
         serverAddress.setHintTextColor(0xFF94A0B4);
         Button join = btn("Join LAN server", 0xFF2A7A3A);
         join.setOnClickListener(v -> launchGame(true, false));
 
         status = tv("", 14, 0xFF8FB6FF, false);
+        lanAddress = tv("", 14, 0xFF8FB6FF, false);
 
         root.addView(tv("Halo Trial PoC", 22, 0xFFE6E9EF, true));
         root.addView(space(12));
@@ -91,6 +97,7 @@ public class SetupActivity extends Activity {
         root.addView(play);
         root.addView(space(8));
         root.addView(host);
+        root.addView(lanAddress);
         root.addView(space(8));
         root.addView(serverAddress);
         root.addView(join);
@@ -110,6 +117,10 @@ public class SetupActivity extends Activity {
     }
 
     private void refresh() {
+        String ip = localLanAddress();
+        lanAddress.setText(ip == null
+                ? "Connect to Wi-Fi, then use this phone's IPv4 address to join."
+                : "Hosting address: " + ip + ":32270  (same Wi-Fi on both devices)");
         File map = existingMap();
         File bitm = existingBitmaps();
         File snd = existingSounds();
@@ -131,6 +142,28 @@ public class SetupActivity extends Activity {
             play.setAlpha(0.4f);
             status.setText("No map in app storage yet.");
         }
+    }
+
+    private String localLanAddress() {
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            if (interfaces == null) return null;
+            while (interfaces.hasMoreElements()) {
+                NetworkInterface iface = interfaces.nextElement();
+                if (!iface.isUp() || iface.isLoopback()) continue;
+                String name = iface.getName();
+                if (name == null || (!name.startsWith("wlan") && !name.startsWith("ap"))) continue;
+                Enumeration<InetAddress> addresses = iface.getInetAddresses();
+                while (addresses.hasMoreElements()) {
+                    InetAddress address = addresses.nextElement();
+                    if (address instanceof Inet4Address && address.isSiteLocalAddress())
+                        return address.getHostAddress();
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not read Wi-Fi IPv4 address", e);
+        }
+        return null;
     }
 
     private File destDir() {

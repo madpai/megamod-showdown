@@ -31,6 +31,10 @@ Vehicle entry is disabled in network mode until vehicle state can be owned by
 the server; the SWAP control remains weapon selection near parked Warthogs.
 The Android log prints ping, packet/byte rates, snapshot rate and invalid or
 dropped packet totals every two seconds; the touch HUD shows ping and IDs.
+The setup screen exposes the host phone's Wi-Fi IPv4 address and UDP port
+32270, so another phone can enter it in Join LAN server. Each device must
+pick its own map and external resource files. This host-and-local-join path
+is still awaiting a device runtime test.
 
 **Authority limit:** the server owns IDs, peer presence and relay, but the
 client currently simulates movement and submits a bounded transform. This is
