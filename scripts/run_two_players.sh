@@ -14,7 +14,7 @@ cleanup() {
     [ -z "$b" ] || kill "$b" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
-./build-host/htaplay "$map" 127.0.0.1 "$port" & a=$!
-./build-host/htaplay "$map" 127.0.0.1 "$port" & b=$!
+./build-host/htaplay "$map" 127.0.0.1 "$port" --position 40 90 & a=$!
+./build-host/htaplay "$map" 127.0.0.1 "$port" --position 900 90 & b=$!
 wait "$a"
 wait "$b"

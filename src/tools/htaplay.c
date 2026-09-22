@@ -56,13 +56,17 @@ static void action(hta_net_client *net,uint8_t kind,uint8_t weapon,uint32_t *eve
 int main(int argc,char **argv)
 {
     if (argc<3) {
-        fprintf(stderr,"usage: htaplay <bloodgulch.map> <server IPv4> [port] [--auto seconds] [--shot path]\n");
+        fprintf(stderr,"usage: htaplay <bloodgulch.map> <server IPv4> [port] [--auto seconds] [--shot path] [--position x y]\n");
         return 2;
     }
     unsigned port=32270; double auto_seconds=0; const char *shot=NULL;
+    int window_x=SDL_WINDOWPOS_CENTERED, window_y=SDL_WINDOWPOS_CENTERED;
     for (int i=3;i<argc;i++) {
         if (!strcmp(argv[i],"--auto") && i+1<argc) auto_seconds=atof(argv[++i]);
         else if (!strcmp(argv[i],"--shot") && i+1<argc) shot=argv[++i];
+        else if (!strcmp(argv[i],"--position") && i+2<argc) {
+            window_x=atoi(argv[++i]); window_y=atoi(argv[++i]);
+        }
         else port=(unsigned)atoi(argv[i]);
     }
     if (port<1 || port>65535 || auto_seconds<0 || auto_seconds>3600) return 2;
@@ -125,8 +129,8 @@ int main(int argc,char **argv)
         fprintf(stderr,"bad server address\n"); return 1;
     }
     if (SDL_Init(SDL_INIT_VIDEO|SDL_INIT_EVENTS)) { fprintf(stderr,"SDL: %s\n",SDL_GetError()); return 1; }
-    SDL_Window *window=SDL_CreateWindow("Blood Gulch LAN - connecting",SDL_WINDOWPOS_CENTERED,
-                        SDL_WINDOWPOS_CENTERED,WIDTH,HEIGHT,0);
+    SDL_Window *window=SDL_CreateWindow("Blood Gulch LAN - connecting",
+                        window_x,window_y,WIDTH,HEIGHT,0);
     SDL_Renderer *renderer=window ? SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE) : NULL;
     SDL_Texture *texture=renderer ? SDL_CreateTexture(renderer,SDL_PIXELFORMAT_RGBA32,
                                                       SDL_TEXTUREACCESS_STREAMING,WIDTH,HEIGHT) : NULL;
