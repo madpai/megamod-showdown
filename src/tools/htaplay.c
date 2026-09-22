@@ -11,6 +11,7 @@
 #include "engine/scene_light.h"
 #include "gfx/gfx.h"
 #include "net/session.h"
+#include "net/replication.h"
 #include <SDL.h>
 #include <math.h>
 #include <stdio.h>
@@ -140,6 +141,8 @@ int main(int argc,char **argv)
     uint8_t *rgba=malloc((size_t)WIDTH*HEIGHT*4u);
     if (!rgba) return 1;
     bool running=true, spawned=false, remote_visible=false, saw_remote=false;
+    bool saw_crouch=false, saw_air=false, saw_pistol=false;
+    unsigned played_events=0;
     hta_net_player from={0},to={0}; uint8_t remote_id=0,weapon=0;
     uint64_t last_snapshots=0; uint32_t event_id=0; unsigned auto_actions=0;
     double start=(double)SDL_GetTicks64()/1000.0,last=start,last_send=0,last_log=start;
@@ -222,6 +225,11 @@ int main(int argc,char **argv)
                 to=next; remote_id=next.id; snapshot_time=now;
                 remote_visible=saw_remote=true; break;
             }
+            if (remote_visible) {
+                saw_crouch|=(to.flags&HTA_NET_CROUCH)!=0;
+                saw_air|=(to.flags&HTA_NET_GROUNDED)==0;
+                saw_pistol|=to.weapon==1;
+            }
         }
         hta_net_event e;
         while (hta_net_client_pop_event(&net,&e)) {
@@ -232,7 +240,9 @@ int main(int argc,char **argv)
                              e.kind==HTA_NET_EVENT_MELEE ?
                                 (slot ? "stand pistol hp melee" : "stand rifle ar melee") :
                              e.kind==HTA_NET_EVENT_GRENADE ? "stand rifle throw-grenade" : NULL;
-            if (clip && hta_actor_play(&remote[slot],clip,false)) action_until=now+0.35;
+            if (clip && hta_actor_play(&remote[slot],clip,false)) {
+                action_until=now+0.35; played_events++;
+            }
         }
         hta_gfx_dynamic dyn={0}; unsigned dyn_count=0;
         if (remote_visible) {
@@ -249,10 +259,10 @@ int main(int argc,char **argv)
                     (slot ? "stand pistol move-front" : "stand rifle move-front");
             if (now>=action_until && (a->clip<0 || strcmp(a->graph.anims[a->clip].name,clip)))
                 hta_actor_play(a,clip,false);
-            float t=(float)((now-snapshot_time)/0.05); if (t<0) t=0; if (t>1) t=1;
-            float pos[3]; for (int k=0;k<3;k++) pos[k]=from.pos[k]+(to.pos[k]-from.pos[k])*t;
-            float yaw=from.yaw+remainderf(to.yaw-from.yaw,6.2831853f)*t;
-            hta_actor_update(a,dt); hta_actor_place(a,pos,yaw);
+            hta_net_player visible;
+            if (hta_net_interpolate(&from,&to,(float)((now-snapshot_time)/0.05),&visible)) {
+                hta_actor_update(a,dt); hta_actor_place(a,visible.pos,visible.yaw);
+            }
             dyn.mesh=actor_gpu[slot]; dyn.vertices=a->posed; dyn.vertex_count=a->mesh.vertex_count;
             dyn.lit=true; dyn_count=1;
         }
@@ -263,16 +273,21 @@ int main(int argc,char **argv)
         SDL_UpdateTexture(texture,NULL,rgba,WIDTH*4);
         SDL_RenderCopy(renderer,texture,NULL,NULL); SDL_RenderPresent(renderer);
         if (now-last_log>=2) {
-            printf("id=%u remote=%u pos=%.2f %.2f %.2f ping=%.1fms bytes=%llu/%llu\n",
+            printf("id=%u remote=%u pos=%.2f %.2f %.2f ping=%.1fms bytes=%llu/%llu events=%llu clips=%u crouch=%d air=%d pistol=%d\n",
                    net.id,remote_visible?remote_id:0,player.pos[0],player.pos[1],player.pos[2],
                    net.stats.ping_ms,(unsigned long long)net.stats.bytes_in,
-                   (unsigned long long)net.stats.bytes_out);
+                   (unsigned long long)net.stats.bytes_out,
+                   (unsigned long long)net.stats.events_in,played_events,
+                   saw_crouch,saw_air,saw_pistol);
             fflush(stdout); last_log=now;
         }
         if (auto_seconds && now-start>=auto_seconds) running=false;
     }
     if (shot) ppm(shot,rgba);
     bool ok=net.connected && (!auto_seconds || saw_remote);
+    if (auto_seconds>=5)
+        ok=ok && saw_crouch && saw_air && saw_pistol &&
+           net.stats.events_in>=4 && played_events>=3;
     hta_net_client_close(&net);
     free(rgba);
     for (int slot=0;slot<2;slot++) hta_gfx_mesh_free(gfx,actor_gpu[slot]);

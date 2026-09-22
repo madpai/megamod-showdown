@@ -1,5 +1,6 @@
 #include "net/protocol.h"
 #include "net/session.h"
+#include "net/replication.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -34,6 +35,23 @@ static void codec(void)
     assert(hta_net_event_pack(wire,sizeof(wire),&e));
     assert(hta_net_event_unpack(wire,7,&e2) && e2.event_id==123);
     wire[1]=255; assert(!hta_net_event_unpack(wire,7,&e2));
+}
+
+static void interpolation(void)
+{
+    hta_net_player a={.id=1,.weapon=0,.flags=HTA_NET_GROUNDED,
+                      .pos={0,0,0},.yaw=3.0f};
+    hta_net_player b={.id=1,.weapon=1,.flags=HTA_NET_CROUCH,
+                      .pos={10,2,4},.yaw=-3.0f};
+    hta_net_player out;
+    assert(hta_net_interpolate(&a,&b,0.5f,&out));
+    assert(out.pos[0]==5 && out.pos[1]==1 && out.pos[2]==2);
+    assert(fabsf(fabsf(out.yaw)-3.14159265f)<0.001f);
+    assert(out.weapon==1 && out.flags==HTA_NET_CROUCH);
+    assert(hta_net_interpolate(&a,&b,-1,&out) && out.pos[0]==0);
+    assert(hta_net_interpolate(&a,&b,2,&out) && out.pos[0]==10);
+    b.id=2; assert(!hta_net_interpolate(&a,&b,0.5f,&out));
+    assert(!hta_net_interpolate(&a,&a,NAN,&out));
 }
 
 static void pump(hta_net_server *s, hta_net_client *a, hta_net_client *b, double now)
@@ -96,4 +114,4 @@ static void sessions(void)
     hta_net_server_close(&s);
 }
 
-int main(void) { codec(); sessions(); puts("net: codec, malformed input, two UDP clients, snapshots, events, ping, disconnect OK"); }
+int main(void) { codec(); interpolation(); sessions(); puts("net: codec, interpolation, malformed input, two UDP clients, snapshots, events, ping, disconnect OK"); }

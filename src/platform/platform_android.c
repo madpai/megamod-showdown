@@ -40,6 +40,7 @@
 #include "../engine/scene_light.h"
 #include "audio_android.h"
 #include "../net/session.h"
+#include "../net/replication.h"
 
 #include <android/log.h>
 #include <android/input.h>
@@ -259,6 +260,7 @@ typedef struct {
     double        remote_snapshot_time, net_last_send;
     uint64_t      net_last_snapshots;
     uint32_t      net_event_id;
+    hta_net_stats net_stats_prev;
     double        remote_action_until;
     bool          net_spawned;
     uint32_t      impact_jpt;    /* the held weapon's own damage tag */
@@ -1825,13 +1827,11 @@ static void net_frame(hta_android *s, double now, float dt)
         if (now>=s->remote_action_until &&
             (a->clip<0 || strcmp(a->graph.anims[a->clip].name,clip)))
             hta_actor_play(a,clip,false);
-        float t=(float)((now-s->remote_snapshot_time)/0.05);
-        if (t<0) t=0; if (t>1) t=1;
-        float pos[3]; for (int k=0;k<3;k++)
-            pos[k]=s->remote_from.pos[k]+(p->pos[k]-s->remote_from.pos[k])*t;
-        float dy=remainderf(p->yaw-s->remote_from.yaw,6.28318530718f);
-        float yaw=s->remote_from.yaw+dy*t;
-        hta_actor_update(a,dt); hta_actor_place(a,pos,yaw);
+        hta_net_player visible;
+        if (hta_net_interpolate(&s->remote_from,p,
+                (float)((now-s->remote_snapshot_time)/0.05),&visible)) {
+            hta_actor_update(a,dt); hta_actor_place(a,visible.pos,visible.yaw);
+        }
     }
 }
 
@@ -2938,6 +2938,22 @@ void android_main(struct android_app *app)
                 hta_log("[weapon] ammo %d / %d%s", state.ammo.loaded,
                         state.ammo.reserve,
                         state.ammo.phase == HTA_AMMO_RELOADING ? " (reloading)" : "");
+                if (state.net_enabled) {
+                    const hta_net_stats *n=&state.net.stats, *old=&state.net_stats_prev;
+                    double seconds=state.fps_accum;
+                    hta_log("[net] id %u remote %u ping %.1f ms | %.1f/%.1f pkt/s "
+                            "%.0f/%.0f B/s in/out | %.1f snapshots/s | invalid %llu dropped %llu",
+                            state.net.id,state.remote_visible ? state.remote_id : 0,
+                            n->ping_ms,
+                            (n->packets_in-old->packets_in)/seconds,
+                            (n->packets_out-old->packets_out)/seconds,
+                            (n->bytes_in-old->bytes_in)/seconds,
+                            (n->bytes_out-old->bytes_out)/seconds,
+                            (n->snapshots_in-old->snapshots_in)/seconds,
+                            (unsigned long long)n->invalid,
+                            (unsigned long long)n->dropped);
+                    state.net_stats_prev=*n;
+                }
                 state.fps_accum = 0.0;
                 state.fps_frames = 0;
             }

@@ -7,6 +7,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 if(ANDROID)
     add_library(hta_native SHARED
         src/net/protocol.c
+        src/net/replication.c
         src/net/udp.c
         src/net/session.c
         src/engine/engine.c
@@ -51,7 +52,7 @@ if(ANDROID)
     # native_app_glue registers android_main via a constructor; keep it.
     target_link_options(hta_native PRIVATE -u ANativeActivity_onCreate)
 else()
-    add_library(hta_net STATIC src/net/protocol.c src/net/udp.c src/net/session.c)
+    add_library(hta_net STATIC src/net/protocol.c src/net/replication.c src/net/udp.c src/net/session.c)
     target_include_directories(hta_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(hta_net PRIVATE -Wall -Wextra)
     # Host build: the portable engine only, plus its tests.
