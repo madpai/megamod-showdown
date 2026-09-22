@@ -15,7 +15,7 @@ static void codec(void)
     assert(p.type==HTA_NET_HELLO && p.sequence==7 && p.tick==9 && p.length==4);
     assert(memcmp(p.payload,payload,4)==0);
     assert(!hta_net_unpack(wire,n-1,&p));
-    wire[4]=3; assert(!hta_net_unpack(wire,n,&p)); wire[4]=HTA_NET_VERSION;
+    wire[4]=HTA_NET_VERSION+1; assert(!hta_net_unpack(wire,n,&p)); wire[4]=HTA_NET_VERSION;
     wire[6]=250; assert(!hta_net_unpack(wire,n,&p)); wire[6]=HTA_NET_HELLO;
     wire[7]=1; assert(!hta_net_unpack(wire,n,&p)); wire[7]=0;
     wire[16]=255; assert(!hta_net_unpack(wire,n,&p)); wire[16]=4;
@@ -70,6 +70,40 @@ static void world_codec(void)
     assert(ctl2.id==2 && ctl2.forward==0.5f && ctl2.melee_count==3);
     control_wire[1]=0x80;
     assert(!hta_net_control_unpack(control_wire,sizeof(control_wire),&ctl2));
+    ctl.flags|=HTA_NET_ALT; ctl.action_count=41;
+    assert(hta_net_control_pack(control_wire,sizeof(control_wire),&ctl));
+    assert(hta_net_control_unpack(control_wire,sizeof(control_wire),&ctl2));
+    assert((ctl2.flags&HTA_NET_ALT) && ctl2.action_count==41);
+    /* Vehicles: 32 of them, full, under the packet cap; values survive
+     * their fixed point; bad values and trailing bytes are refused. */
+    static hta_net_vehicles veh, veh2;
+    memset(&veh,0,sizeof(veh));
+    veh.count=HTA_NET_MAX_VEHICLES;
+    for (uint8_t i=0;i<veh.count;i++) {
+        hta_net_vehicle *c=&veh.cars[i];
+        c->index=i; c->flags=HTA_NET_VEHICLE_ACTIVE|HTA_NET_VEHICLE_DRIVEN;
+        c->pos[0]=100.25f; c->pos[1]=-144.63f; c->pos[2]=0.58f+i;
+        c->yaw=3.1f; c->pitch=-0.12f; c->roll=0.05f; c->aim_yaw=-2.9f; c->aim_pitch=0.4f;
+        c->steering=0.5f; c->wheel_spin=7.0f; c->barrel_spin=-1.0f; c->speed=-3.6f;
+        for (int k=0;k<HTA_NET_VEHICLE_SEATS;k++) c->occupant[k]=k==2 ? 5 : 255;
+        c->travel[0]=0.1f; c->travel[3]=-0.2f;
+    }
+    uint8_t veh_wire[1+HTA_NET_MAX_VEHICLES*HTA_NET_VEHICLE_BYTES];
+    size_t veh_n=0;
+    assert(hta_net_vehicles_pack(veh_wire,sizeof(veh_wire),&veh,&veh_n));
+    assert(veh_n+HTA_NET_HEADER<=HTA_NET_MAX_PACKET);
+    assert(hta_net_vehicles_unpack(veh_wire,veh_n,&veh2));
+    assert(veh2.count==32 && fabsf(veh2.cars[5].pos[0]-100.25f)<0.006f &&
+           fabsf(veh2.cars[5].pos[2]-5.58f)<0.006f && veh2.cars[5].occupant[2]==5 &&
+           veh2.cars[5].occupant[0]==255 && fabsf(veh2.cars[5].speed+3.6f)<0.006f &&
+           fabsf(veh2.cars[5].yaw-3.1f)<0.0002f && fabsf(veh2.cars[5].travel[3]+0.2f)<0.003f);
+    /* wheel spin wraps into -pi..pi rather than failing */
+    assert(fabsf(veh2.cars[0].wheel_spin-(7.0f-6.2831853f))<0.001f);
+    assert(!hta_net_vehicles_unpack(veh_wire,veh_n-1,&veh2));
+    veh_wire[1+26]=200;   /* an occupant no match could have */
+    assert(!hta_net_vehicles_unpack(veh_wire,veh_n,&veh2));
+    veh.cars[0].pos[0]=500.0f;   /* past the fixed-point range */
+    assert(!hta_net_vehicles_pack(veh_wire,sizeof(veh_wire),&veh,&veh_n));
     hta_net_world a={0},b;
     a.time=12.5f; a.round=3; a.count=2; a.bot_count=1;
     a.winner=255; a.score_limit=25; a.time_limit=10; a.respawn_time=5;
@@ -206,6 +240,17 @@ static void sessions(void)
     hta_net_client_pump(&b,2.305);
     assert(b.have_projectiles && b.projectiles.live[0].pool==4 &&
            b.projectiles.live[0].pos[2]==3);
+    static hta_net_vehicles cars;
+    memset(&cars,0,sizeof(cars)); cars.count=2;
+    cars.cars[1].index=7; cars.cars[1].flags=HTA_NET_VEHICLE_ACTIVE;
+    cars.cars[1].pos[0]=42.5f; cars.cars[1].yaw=1.0f;
+    for (int k=0;k<HTA_NET_VEHICLE_SEATS;k++) cars.cars[0].occupant[k]=cars.cars[1].occupant[k]=255;
+    cars.cars[1].occupant[0]=2;
+    assert(hta_net_server_vehicles(&s,&cars));
+    assert(!hta_net_server_vehicles(&s,&cars)); /* once per server tick */
+    hta_net_client_pump(&b,2.3055);
+    assert(b.have_vehicles && b.vehicles.count==2 && b.vehicles.cars[1].index==7 &&
+           fabsf(b.vehicles.cars[1].pos[0]-42.5f)<0.01f && b.vehicles.cars[1].occupant[0]==2);
     hta_net_fx fx={.kind=HTA_NET_FX_FIRE,.entity=0,.weapon=1};
     assert(hta_net_server_fx(&s,&fx));
     hta_net_client_pump(&b,2.306);

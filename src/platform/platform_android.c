@@ -135,7 +135,22 @@ typedef struct {
     hta_viewmodel vm;
     hta_collision col;
     hta_vehicles vehicles;
-    hta_gfx_mesh *gpu_vehicles;
+    /* One static mesh per vehicle type, drawn as rigid parts. */
+    hta_gfx_mesh *gpu_vtypes[HTA_VEHICLE_TYPES];
+    int           vehicle_roster;     /* HTA_VROSTER_*, from the match setup */
+    int32_t       my_car, my_seat;    /* where this player sits, -1 on foot */
+    float         seat_look[2];       /* a Warthog driver's look, relative to the hull */
+    bool          hud_alt;            /* the vehicle's second trigger, held */
+    bool          veh_fire;           /* the vehicle gun's trigger, for the host */
+    bool          show_self;          /* our own body is on screen: third person */
+    uint16_t      net_action_count;
+    uint16_t      peer_action_seen[8];
+    uint32_t      vehicles_applied_tick;
+    double        vsnap_time;
+    hta_net_vehicle vfrom[HTA_VEHICLE_MAX], vto[HTA_VEHICLE_MAX];
+    bool          vhave[HTA_VEHICLE_MAX];
+    uint32_t      veh_in_snd, veh_out_snd;
+    uint32_t      vfire_recipe[HTA_GAME_MAX_WEAPONS];
 
     /* Sound. One bank entry per snd! tag actually asked for, decoded once and
      * kept; Halo tags carry several permutations of the same sound and pick
@@ -387,7 +402,10 @@ typedef struct {
 } hta_android;
 
 static hta_android *g_android;
-static _Atomic int g_vehicle_mode; /* 0 walk, 1 nearby driver seat, 2 driving */
+/* 0 walk, 1 near a free seat, 2 driving, 3 gunning, 4 riding armed,
+ * 5 riding; +16 when the seat has a second trigger. */
+static _Atomic int g_vehicle_mode;
+static char g_vehicle_text[96];
 /* 0..255 edge flash, read by the Java overlay on its own thread. */
 static _Atomic int g_damage_flash;
 #define HTA_DAMAGE_FLASH_TIME 0.55f
@@ -866,8 +884,12 @@ static void respawn(hta_android *s)
     hta_vitals_reset(s->vit);
     /* You come back with what the map arms you with, not with whatever you
      * had scavenged. */
-    bool rearm = s->start_count &&
-                 (s->held_count != s->start_count || s->held[0] != s->start_weapon[0]);
+    /* Every slot, not just the first: a weapon picked up (or handed over by
+     * the debug pad) into the second hand used to survive a death. */
+    bool rearm = s->start_count && s->held_count != s->start_count;
+    for (uint32_t k = 0; s->start_count && !rearm && k < s->start_count; k++)
+        if (s->held[k] != s->start_weapon[k]) rearm = true;
+    if (s->start_count && s->held_slot != 0) rearm = true;
     if (rearm) {
         s->held_count = s->start_count;
         for (uint32_t i = 0; i < s->start_count; i++) s->held[i] = s->start_weapon[i];
@@ -1046,6 +1068,14 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
             s->nade_recipe = hta_particles_add(&s->parts, &s->cache, pbm,
                                                s->nades.det_effect);
         if (s->nade_snd) bank_get(s, s->nade_snd);
+        /* The vehicle guns' own muzzle flashes and brass. */
+        for (uint32_t w = 0; w < HTA_GAME_MAX_WEAPONS; w++) {
+            s->vfire_recipe[w] = HTA_PART_NO_RECIPE;
+            if (s->game_on && w < s->game.weapon_count && s->game.weapons[w].vehicle &&
+                s->game.weapons[w].def.firing_fx_id)
+                s->vfire_recipe[w] = hta_particles_add(&s->parts, &s->cache, pbm,
+                                                       s->game.weapons[w].def.firing_fx_id);
+        }
         /* And whatever the bots' rounds throw when they go off. */
         for (uint32_t p = 0; p < HTA_GAME_MAX_POOLS; p++) {
             s->pool_recipe[p] = HTA_PART_NO_RECIPE;
@@ -1309,7 +1339,13 @@ static bool load_map(hta_android *s)
     if (!s->have_coll)
         hta_collision_rebind(&s->col, s->mesh.vertices, s->mesh.indices);
 
-    if (s->vehicles.loaded) s->col.extra = &s->vehicles.collision;
+    /* Vehicles are placed rigid grids: everything that asks the world a
+     * question -- feet, bullets, grenades, cameras -- sees them where they
+     * are now, and moving one costs a matrix. */
+    if (s->vehicles.loaded) {
+        s->col.instances = s->vehicles.inst;
+        s->col.instance_count = s->vehicles.count;
+    }
 
     s->bitmaps_ok = (s->bitmaps_rm.data != NULL);
     s->weapon_count = hta_weapon_list_playable(&s->cache, s->weapons,
@@ -1653,12 +1689,35 @@ static void start_game(hta_android *s)
         return;
     }
     hta_log("[game] %s", err);
+    if (s->vehicles.loaded) {
+        uint32_t before = s->game.weapon_count;
+        hta_game_attach_vehicles(&s->game, &s->vehicles, bm);
+        /* A client draws the host's vehicles and runs none of its own. */
+        s->game.simulate_vehicles = !s->net_enabled || s->net_hosting;
+        hta_vehicles_roster(&s->vehicles, s->game.simulate_vehicles ? s->vehicle_roster
+                                                                    : HTA_VROSTER_NONE);
+        uint32_t active = 0;
+        for (uint32_t i = 0; i < s->vehicles.count; i++) active += s->vehicles.cars[i].active;
+        hta_log("[vehicles] %u of %u placed (roster %d); %u vehicle trigger(s), %u pools",
+                active, s->vehicles.count, s->vehicle_roster, s->game.weapon_count - before,
+                s->game.pool_count);
+        s->veh_in_snd = find_sound(&s->cache, "sound\\sfx\\vehicles\\warthog_7_in");
+        s->veh_out_snd = find_sound(&s->cache, "sound\\sfx\\vehicles\\warthog_7_out");
+        if (s->veh_in_snd) bank_get(s, s->veh_in_snd);
+        if (s->veh_out_snd) bank_get(s, s->veh_out_snd);
+    }
+    s->my_car = s->my_seat = -1;
     s->game.score_limit = s->score_limit;
     s->game.time_limit = (float)s->time_limit_min * 60.0f;
     s->game.respawn_time = s->respawn_delay;
     int bots = s->net_enabled && !s->net_hosting ? 0 : s->bot_count;
     if (bots > 0) {
         double t0 = hta_time_seconds();
+        /* The walkable grid is the ground, not the vehicles parked on it:
+         * they move, and bots walk round them as they find them. */
+        hta_collision nav_col = s->col;
+        nav_col.instances = NULL;
+        nav_col.instance_count = 0;
         hta_nav_params prm = { s->game.phys.radius, s->game.phys.coll_stand,
                                s->game.phys.max_slope, 1.0f };
         /* Built once per map and physics, then read back from app storage. */
@@ -1671,7 +1730,7 @@ static void start_game(hta_android *s)
             s->game.nav = &s->nav;
             hta_log("[game] nav: %u nodes from %s in %.0f ms", s->nav.node_count, navpath,
                     (hta_time_seconds() - t0) * 1000.0);
-        } else if (hta_nav_build(&s->nav, &s->col, s->mesh.bounds_min, s->mesh.bounds_max,
+        } else if (hta_nav_build(&s->nav, &nav_col, s->mesh.bounds_min, s->mesh.bounds_max,
                           &prm, err, sizeof(err))) {
             if (navpath[0] && !hta_nav_save(&s->nav, navpath, key))
                 hta_log("[game] could not keep the nav grid at %s", navpath);
@@ -1690,12 +1749,12 @@ static void start_game(hta_android *s)
      * what the tags already gave them. */
     s->game.units[s->me].vitals = *s->vit;
     s->vit = &s->game.units[s->me].vitals;
-    if ((s->game.unit_count > 1 || s->net_enabled) &&
-        !hta_game_view_load(&s->gview, &s->game, bm,
+    /* Bodies for everyone -- ours too, for the seats watched from outside. */
+    if (!hta_game_view_load(&s->gview, &s->game, bm,
                             s->net_enabled ? HTA_GAME_MAX_UNITS : s->game.unit_count,
                             err, sizeof(err)))
         hta_log("[game] bodies: %s", err);
-    else if (s->game.unit_count > 1 || s->net_enabled)
+    else
         hta_log("[game] %s", err);
     static const char *const LINES[HTA_LINE_COUNT] = {
         NULL,
@@ -1731,7 +1790,7 @@ static void game_gpu_upload(hta_android *s)
     if (!s->game_on || !s->gfx) return;
     char err[HTA_ERRLEN];
     for (uint32_t i = 0; i < s->game.unit_count; i++)
-        if ((int32_t)i != s->me && s->gview.actor[i].loaded && !s->gpu_units[i])
+        if (s->gview.actor[i].loaded && !s->gpu_units[i])
             s->gpu_units[i] = hta_gfx_mesh_upload_dynamic_world(s->gfx,
                 &s->gview.actor[i].mesh, err, sizeof(err));
     for (uint32_t w = 0; w < s->game.weapon_count; w++)
@@ -1773,7 +1832,12 @@ static void game_events(hta_android *s)
         }
         switch (e.kind) {
         case HTA_EV_FIRE:
-            if (e.a == s->me || e.weapon < 0 || e.weapon >= HTA_GAME_MAX_WEAPONS) break;
+            if (e.weapon < 0 || e.weapon >= HTA_GAME_MAX_WEAPONS) break;
+            /* Our own rifle speaks for itself; a vehicle gun is the game's. */
+            if (e.a == s->me && !s->game.weapons[e.weapon].vehicle) break;
+            if (s->game.weapons[e.weapon].vehicle &&
+                s->vfire_recipe[e.weapon] != HTA_PART_NO_RECIPE)
+                hta_particles_burst(&s->parts, s->vfire_recipe[e.weapon], e.pos, e.dir);
             if (!s->unit_fire_known[e.weapon]) {
                 s->unit_fire_known[e.weapon] = 1;
                 s->unit_fire_snd[e.weapon] = hta_effect_first_sound(&s->cache,
@@ -1782,7 +1846,14 @@ static void game_events(hta_android *s)
             if (s->unit_fire_snd[e.weapon]) play_tag_at(s, s->unit_fire_snd[e.weapon], e.pos, 1.0f);
             break;
         case HTA_EV_HIT_WORLD:
-            if (e.weapon >= 0 && e.weapon == held_roster(s)) {
+            if (e.weapon >= 0 && e.weapon < (int32_t)s->game.weapon_count &&
+                s->game.weapons[e.weapon].vehicle) {
+                uint32_t sound = hta_projectile_impact_sound(&s->cache,
+                    s->game.weapons[e.weapon].def.projectile_id, e.material);
+                if (sound) play_tag_at(s, sound, e.pos, 0.8f);
+                if (e.material < 33u && s->impact_recipe[e.material] != HTA_PART_NO_RECIPE)
+                    hta_particles_burst(&s->parts, s->impact_recipe[e.material], e.pos, e.dir);
+            } else if (e.weapon >= 0 && e.weapon == held_roster(s)) {
                 play_impact_at(s, e.material, e.pos);
                 if (e.material < 33u && s->impact_recipe[e.material] != HTA_PART_NO_RECIPE)
                     hta_particles_burst(&s->parts, s->impact_recipe[e.material], e.pos, e.dir);
@@ -1844,6 +1915,12 @@ static void game_events(hta_android *s)
             if (e.line > HTA_LINE_NONE && e.line < HTA_LINE_COUNT && s->line_snd[e.line])
                 play_tag(s, s->line_snd[e.line], 1.0f);
             break;
+        case HTA_EV_ENTER:
+            if (s->veh_in_snd) play_tag_at(s, s->veh_in_snd, e.pos, 1.0f);
+            break;
+        case HTA_EV_EXIT:
+            if (s->veh_out_snd) play_tag_at(s, s->veh_out_snd, e.pos, 1.0f);
+            break;
         case HTA_EV_GAME_OVER:
             snprintf(s->banner, sizeof(s->banner), "%s", e.text);
             s->banner_age = 0.0f;
@@ -1892,12 +1969,18 @@ Java_net_hta_halotrial_GameActivity_nativeGameText(JNIEnv *env, jclass cls)
     return (*env)->NewStringUTF(env, g_game_text);
 }
 
+/* Rigid things drawn with a matrix each this frame: guns in hands and
+ * vehicle parts. Handed to the renderer once, just before the draw. */
+static hta_gfx_instance g_inst[HTA_GFX_MAX_INSTANCES];
+static uint32_t g_inst_count;
+
 /* The bodies, their guns and their rounds, onto the draw list. */
 static uint32_t game_draw(hta_android *s, hta_gfx_dynamic *dyn, uint32_t n)
 {
     if (!s->game_on || !s->gfx) return n;
     for (uint32_t i = 0; i < s->game.unit_count && n < HTA_GFX_MAX_DYNAMIC; i++) {
-        if ((int32_t)i == s->me || !s->gview.shown[i] || !s->gpu_units[i]) continue;
+        if (((int32_t)i == s->me && !s->show_self) || !s->gview.shown[i] || !s->gpu_units[i])
+            continue;
         dyn[n].mesh = s->gpu_units[i];
         dyn[n].vertices = s->gview.actor[i].posed;
         dyn[n].vertex_count = s->gview.actor[i].mesh.vertex_count;
@@ -1913,19 +1996,34 @@ static uint32_t game_draw(hta_android *s, hta_gfx_dynamic *dyn, uint32_t n)
         n++;
     }
     hta_game_held_weapon held[HTA_GAME_MAX_UNITS];
-    uint32_t nh = hta_game_view_weapons(&s->gview, &s->game, s->me, held, HTA_GAME_MAX_UNITS);
-    hta_gfx_instance inst[HTA_GAME_MAX_UNITS];
-    uint32_t ni = 0;
-    for (uint32_t k = 0; k < nh; k++) {
+    uint32_t nh = hta_game_view_weapons(&s->gview, &s->game, s->show_self ? -1 : s->me,
+                                        held, HTA_GAME_MAX_UNITS);
+    for (uint32_t k = 0; k < nh && g_inst_count < HTA_GFX_MAX_INSTANCES; k++) {
         if (!s->gpu_held[held[k].weapon]) continue;
-        inst[ni].mesh = s->gpu_held[held[k].weapon];
-        memcpy(inst[ni].model, held[k].model, sizeof(inst[ni].model));
-        inst[ni].first_submesh = inst[ni].submesh_count = 0;
-        inst[ni].lit = true;
-        ni++;
+        hta_gfx_instance *in = &g_inst[g_inst_count++];
+        in->mesh = s->gpu_held[held[k].weapon];
+        memcpy(in->model, held[k].model, sizeof(in->model));
+        in->first_submesh = in->submesh_count = 0;
+        in->lit = true;
     }
-    hta_gfx_set_instances(s->gfx, inst, ni);
     return n;
+}
+
+/* Every vehicle, as rigid parts of its type's one mesh. */
+static void vehicles_draw(hta_android *s)
+{
+    if (!s->vehicles.loaded || !s->gfx) return;
+    static hta_vehicle_part parts[HTA_GFX_MAX_INSTANCES];
+    uint32_t np = hta_vehicles_parts(&s->vehicles, parts, HTA_GFX_MAX_INSTANCES - g_inst_count);
+    for (uint32_t i = 0; i < np && g_inst_count < HTA_GFX_MAX_INSTANCES; i++) {
+        if (parts[i].type >= HTA_VEHICLE_TYPES || !s->gpu_vtypes[parts[i].type]) continue;
+        hta_gfx_instance *in = &g_inst[g_inst_count++];
+        in->mesh = s->gpu_vtypes[parts[i].type];
+        memcpy(in->model, parts[i].model, sizeof(in->model));
+        in->first_submesh = parts[i].first_submesh;
+        in->submesh_count = parts[i].submesh_count;
+        in->lit = true;
+    }
 }
 
 /* ------------------------------- main menu ------------------------------ */
@@ -2152,7 +2250,7 @@ Java_net_hta_halotrial_GameActivity_nativeShellSound(JNIEnv *env, jclass cls, ji
 /* A match set up in the submenus, handed over once. */
 typedef struct {
     int  mode;               /* 0 solo, 1 host, 2 join */
-    int  bots, skill, kills, minutes, respawn, max_players, port;
+    int  bots, skill, kills, minutes, respawn, max_players, port, vehicles;
     char host[64];
     char name[HTA_NET_NAME];
 } match_setup;
@@ -2167,12 +2265,13 @@ Java_net_hta_halotrial_GameActivity_nativeStartMatch(JNIEnv *env, jclass cls, ji
     if (atomic_load(&g_match_ready)) return;     /* one is already on its way */
     match_setup m;
     memset(&m, 0, sizeof(m));
-    jint v[8] = { 0, 3, 1, 25, 0, 5, 8, 32270 };
+    jint v[9] = { 0, 3, 1, 25, 0, 5, 8, 32270, HTA_VROSTER_ALL };
     jsize n = cfg ? (*env)->GetArrayLength(env, cfg) : 0;
-    if (n > 8) n = 8;
+    if (n > 9) n = 9;
     if (n > 0) (*env)->GetIntArrayRegion(env, cfg, 0, n, v);
     m.mode = v[0]; m.bots = v[1]; m.skill = v[2]; m.kills = v[3];
     m.minutes = v[4]; m.respawn = v[5]; m.max_players = v[6]; m.port = v[7];
+    m.vehicles = v[8];
     const char *u;
     if (host && (u = (*env)->GetStringUTFChars(env, host, NULL))) {
         snprintf(m.host, sizeof(m.host), "%s", u);
@@ -2277,6 +2376,8 @@ static void match_take(hta_android *s)
     s->time_limit_min = m.minutes > 0 ? m.minutes : 0;
     /* Halo's INSTANT still has to show you your body go down. Ours. */
     s->respawn_delay = m.respawn < HTA_RESPAWN_MIN ? HTA_RESPAWN_MIN : (float)m.respawn;
+    s->vehicle_roster = m.vehicles >= 0 && m.vehicles < HTA_VROSTER_COUNT ? m.vehicles
+                                                                           : HTA_VROSTER_ALL;
     uint16_t port = (uint16_t)(m.port > 0 && m.port < 65536 ? m.port : 32270);
     if (m.mode == 1) {
         hta_net_info info;
@@ -2617,11 +2718,11 @@ static void start_gfx(hta_android *s)
             if (!s->gpu_items) hta_log("[gfx] item upload FAILED: %s", err);
             s->items_upload = HTA_ITEMS_UPLOAD_FRAMES;
         }
-        if (s->vehicles.loaded) {
-            s->gpu_vehicles = hta_gfx_mesh_upload_dynamic_world(s->gfx,
-                &s->vehicles.mesh, err, sizeof(err));
-            s->vehicles.upload_frames = HTA_ITEMS_UPLOAD_FRAMES;
-            if (!s->gpu_vehicles) hta_log("[gfx] vehicle upload FAILED: %s", err);
+        for (uint32_t t = 0; s->vehicles.loaded && t < s->vehicles.type_count; t++) {
+            s->gpu_vtypes[t] = hta_gfx_mesh_upload(s->gfx, &s->vehicles.types[t].mesh,
+                                                   err, sizeof(err));
+            if (!s->gpu_vtypes[t]) hta_log("[gfx] vehicle %s upload FAILED: %s",
+                                           s->vehicles.types[t].name, err);
         }
         game_gpu_upload(s);
         if (s->have_fp) {
@@ -2645,7 +2746,8 @@ static void stop_gfx(hta_android *s)
     menu_gpu_free(s);
     for (int slot=0;slot<2;slot++)
         if (s->gpu_remote[slot]) { hta_gfx_mesh_free(s->gfx,s->gpu_remote[slot]); s->gpu_remote[slot]=NULL; }
-    if (s->gpu_vehicles) { hta_gfx_mesh_free(s->gfx, s->gpu_vehicles); s->gpu_vehicles = NULL; }
+    for (uint32_t t = 0; t < HTA_VEHICLE_TYPES; t++)
+        if (s->gpu_vtypes[t]) { hta_gfx_mesh_free(s->gfx, s->gpu_vtypes[t]); s->gpu_vtypes[t] = NULL; }
     if (s->gpu_bot) { hta_gfx_mesh_free(s->gfx, s->gpu_bot); s->gpu_bot = NULL; }
     if (s->gpu_items) { hta_gfx_mesh_free(s->gfx, s->gpu_items); s->gpu_items = NULL; }
     if (s->gpu_corpse) { hta_gfx_mesh_free(s->gfx, s->gpu_corpse); s->gpu_corpse = NULL; }
@@ -2767,6 +2869,7 @@ static void net_host_peers(hta_android *s, double now)
             s->peer_unit[i]=-1;
             s->peer_melee_seen[i]=s->peer_grenade_seen[i]=0;
             s->peer_reload_seen[i]=s->peer_pickup_seen[i]=0;
+            s->peer_action_seen[i]=0;
             continue;
         }
         if (p->player.id==s->net.id) {
@@ -2788,6 +2891,7 @@ static void net_host_peers(hta_android *s, double now)
         if (!p->has_control || now-p->last_control_at>0.3) {
             in->move.move_forward=in->move.move_right=0.0f;
             in->move.fire=in->move.jump=in->move.crouch=false;
+            in->fire2=false;
             continue;
         }
         const hta_net_control *c=&p->control;
@@ -2796,7 +2900,11 @@ static void net_host_peers(hta_android *s, double now)
         in->move.jump=(c->flags&HTA_NET_JUMP)!=0;
         in->move.fire=(c->flags&HTA_NET_TRIGGER)!=0;
         in->move.crouch=(c->flags&HTA_NET_DUCK)!=0;
+        in->fire2=(c->flags&HTA_NET_ALT)!=0;
         in->move.look_yaw=in->move.look_pitch=0.0f;
+        if (s->peer_action_seen[i]!=c->action_count) {
+            s->peer_action_seen[i]=c->action_count; in->action=true;
+        }
         u->eye.yaw=c->yaw; u->eye.pitch=c->pitch;
         if (u->slot!=c->weapon_slot) in->swap=true;
         if (s->peer_melee_seen[i]!=c->melee_count) {
@@ -2901,12 +3009,104 @@ static void net_host_world(hta_android *s)
             const hta_projectile *q=&pool->live[slot];
             if (!q->alive || projectiles.count>=HTA_NET_MAX_PROJECTILES) continue;
             hta_net_projectile *out=&projectiles.live[projectiles.count++];
-            out->pool=(uint8_t)(4+p); out->slot=slot;
+            out->pool=(uint8_t)(p ? HTA_NET_POOL_HOST_GRENADES : HTA_NET_POOL_HOST_WEAPON);
+            out->slot=slot;
             for (int k=0;k<3;k++) { out->pos[k]=q->pos[k]; out->dir[k]=q->dir[k]; }
             out->speed=q->speed;
         }
     }
     hta_net_server_projectiles(&s->host_server,&projectiles);
+    if (s->vehicles.loaded) {
+        static hta_net_vehicles cars;
+        memset(&cars,0,sizeof(cars));
+        for (uint32_t i=0;i<s->vehicles.count && cars.count<HTA_NET_MAX_VEHICLES;i++) {
+            const hta_vehicle *v=&s->vehicles.cars[i];
+            hta_net_vehicle *o=&cars.cars[cars.count++];
+            o->index=(uint8_t)i;
+            o->flags=(uint8_t)((v->active ? HTA_NET_VEHICLE_ACTIVE : 0) |
+                               (v->grounded ? HTA_NET_VEHICLE_GROUNDED : 0) |
+                               (v->ctl.driven ? HTA_NET_VEHICLE_DRIVEN : 0));
+            for (int k=0;k<3;k++) o->pos[k]=v->pos[k];
+            o->yaw=v->yaw; o->pitch=v->pitch; o->roll=v->roll+v->bank;
+            o->aim_yaw=v->aim_yaw; o->aim_pitch=v->aim_pitch;
+            o->steering=v->steering; o->wheel_spin=v->wheel_spin;
+            o->barrel_spin=v->barrel_spin; o->speed=v->speed;
+            if (o->speed>300.0f) o->speed=300.0f;
+            if (o->speed<-300.0f) o->speed=-300.0f;
+            for (unsigned k=0;k<HTA_NET_VEHICLE_SEATS;k++)
+                o->occupant[k]=k<HTA_VEHICLE_SEATS && v->occupant[k]>=0 &&
+                    v->occupant[k]<(int8_t)HTA_NET_MAX_ENTITIES ? (uint8_t)v->occupant[k] : 255;
+            unsigned w=0;
+            for (uint32_t k=0;k<v->point_count && w<4;k++) {
+                if (!v->points[k].wheel) continue;
+                float t=v->points[k].travel;
+                o->travel[w++]=t>0.25f ? 0.25f : t<-0.25f ? -0.25f : t;
+            }
+            for (int k=0;k<3;k++) {
+                if (o->pos[k]>327.0f) o->pos[k]=327.0f;
+                if (o->pos[k]<-327.0f) o->pos[k]=-327.0f;
+            }
+        }
+        hta_net_server_vehicles(&s->host_server,&cars);
+    }
+}
+
+/* The host's vehicles, as of its last snapshot and eased between them,
+ * and who is sitting where. A client runs no vehicle physics. */
+static void net_client_vehicles(hta_android *s, double now)
+{
+    if (!s->game_on || !s->vehicles.loaded) return;
+    if (s->net.have_vehicles && s->net.last_vehicle_tick!=s->vehicles_applied_tick) {
+        s->vehicles_applied_tick=s->net.last_vehicle_tick;
+        for (uint32_t i=0;i<s->vehicles.count;i++)
+            for (uint32_t k=0;k<HTA_VEHICLE_SEATS;k++) s->vehicles.cars[i].occupant[k]=-1;
+        for (uint32_t u=0;u<s->game.unit_count;u++) {
+            s->game.units[u].vehicle=-1; s->game.units[u].seat=-1;
+        }
+        for (uint8_t n=0;n<s->net.vehicles.count;n++) {
+            const hta_net_vehicle *in=&s->net.vehicles.cars[n];
+            if (in->index>=s->vehicles.count) continue;
+            uint32_t i=in->index;
+            hta_vehicle *v=&s->vehicles.cars[i];
+            bool was=v->active;
+            v->active=(in->flags&HTA_NET_VEHICLE_ACTIVE)!=0;
+            v->grounded=(in->flags&HTA_NET_VEHICLE_GROUNDED)!=0;
+            v->ctl.driven=(in->flags&HTA_NET_VEHICLE_DRIVEN)!=0;
+            s->vfrom[i]=s->vhave[i] && was ? s->vto[i] : *in;
+            s->vto[i]=*in; s->vhave[i]=true;
+            uint32_t seats=hta_vehicles_seat_count(&s->vehicles,i);
+            for (uint32_t k=0;k<seats && k<HTA_NET_VEHICLE_SEATS;k++) {
+                uint8_t u=in->occupant[k];
+                if (u==255 || u>=s->game.unit_count) continue;
+                v->occupant[k]=(int8_t)u;
+                s->game.units[u].vehicle=(int16_t)i;
+                s->game.units[u].seat=(int8_t)k;
+            }
+        }
+        s->vsnap_time=now;
+    }
+    /* Between snapshots, a straight line: 20 a second on a LAN. */
+    float t=(float)((now-s->vsnap_time)/0.05);
+    if (t<0.0f) t=0.0f;
+    if (t>1.5f) t=1.5f;
+    for (uint32_t i=0;i<s->vehicles.count;i++) {
+        if (!s->vhave[i]) continue;
+        hta_vehicle *v=&s->vehicles.cars[i];
+        const hta_net_vehicle *a=&s->vfrom[i], *b=&s->vto[i];
+        for (int k=0;k<3;k++) v->pos[k]=a->pos[k]+(b->pos[k]-a->pos[k])*t;
+        #define LERP_ANGLE(x) (a->x+hta_angle_wrap(b->x-a->x)*t)
+        v->yaw=LERP_ANGLE(yaw); v->pitch=LERP_ANGLE(pitch); v->roll=LERP_ANGLE(roll);
+        v->bank=0.0f;
+        v->aim_yaw=LERP_ANGLE(aim_yaw); v->aim_pitch=LERP_ANGLE(aim_pitch);
+        v->steering=LERP_ANGLE(steering); v->wheel_spin=LERP_ANGLE(wheel_spin);
+        v->barrel_spin=LERP_ANGLE(barrel_spin);
+        #undef LERP_ANGLE
+        v->speed=b->speed;
+        unsigned w=0;
+        for (uint32_t k=0;k<v->point_count && w<4;k++)
+            if (v->points[k].wheel) { v->points[k].travel=a->travel[w]+(b->travel[w]-a->travel[w])*t; w++; }
+    }
+    hta_vehicles_sync(&s->vehicles);
 }
 
 static void net_client_projectiles(hta_android *s)
@@ -2924,8 +3124,8 @@ static void net_client_projectiles(hta_android *s)
     for (uint8_t i=0;i<s->net.projectiles.count;i++) {
         const hta_net_projectile *in=&s->net.projectiles.live[i];
         if (in->slot>=HTA_PROJ_MAX) continue;
-        hta_projectiles *pool=in->pool==4 ? &s->proj :
-                              in->pool==5 ? &s->nades :
+        hta_projectiles *pool=in->pool==HTA_NET_POOL_HOST_WEAPON ? &s->proj :
+                              in->pool==HTA_NET_POOL_HOST_GRENADES ? &s->nades :
                               in->pool<s->game.pool_count ? &s->game.pools[in->pool] : NULL;
         if (!pool || !pool->loaded) continue;
         hta_projectile *q=&pool->live[in->slot];
@@ -3099,7 +3299,11 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
     hta_net_client_pump(&s->net,now);
     hta_net_fx fx;
     while (hta_net_client_pop_fx(&s->net,&fx)) {
-        if (s->net_hosting || !s->game_on || fx.entity==(uint8_t)s->me) continue;
+        if (s->net_hosting || !s->game_on) continue;
+        /* Our own on-foot shots we heard already; a vehicle gun we did not. */
+        if (fx.entity==(uint8_t)s->me &&
+            !(fx.kind==HTA_NET_FX_FIRE && fx.weapon<s->game.weapon_count &&
+              s->game.weapons[fx.weapon].vehicle)) continue;
         if (fx.kind==HTA_NET_FX_FIRE && fx.weapon<s->game.weapon_count) {
             if (!s->unit_fire_known[fx.weapon]) {
                 s->unit_fire_known[fx.weapon]=1;
@@ -3108,6 +3312,9 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
             }
             if (s->unit_fire_snd[fx.weapon])
                 play_tag_at(s,s->unit_fire_snd[fx.weapon],fx.pos,1.0f);
+            if (s->game.weapons[fx.weapon].vehicle &&
+                s->vfire_recipe[fx.weapon]!=HTA_PART_NO_RECIPE)
+                hta_particles_burst(&s->parts,s->vfire_recipe[fx.weapon],fx.pos,fx.dir);
         } else if (fx.kind==HTA_NET_FX_IMPACT && fx.weapon<s->game.weapon_count) {
             uint32_t proj=s->game.weapons[fx.weapon].def.projectile_id;
             uint32_t sound=hta_projectile_impact_sound(&s->cache,proj,fx.material);
@@ -3165,14 +3372,17 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
     }
     if (!s->net_hosting) net_client_world(s);
     if (!s->net_hosting) net_client_projectiles(s);
+    if (!s->net_hosting) net_client_vehicles(s,now);
     if (s->net.connected && now-s->net_last_send>=0.05) {
         hta_net_control c={0};
         c.id=s->net.id; c.weapon_slot=(uint8_t)(s->held_slot&1u);
         c.forward=in->move_forward; c.right=in->move_right;
         c.yaw=s->cam.yaw; c.pitch=s->cam.pitch;
         if (in->jump) c.flags|=HTA_NET_JUMP;
-        if (in->fire) c.flags|=HTA_NET_TRIGGER;
+        if (in->fire || s->veh_fire) c.flags|=HTA_NET_TRIGGER;
         if (in->crouch) c.flags|=HTA_NET_DUCK;
+        if (s->hud_alt) c.flags|=HTA_NET_ALT;
+        c.action_count=s->net_action_count;
         c.melee_count=s->net_melee_count;
         c.grenade_count=s->net_grenade_count;
         c.reload_count=s->net_reload_count;
@@ -3315,6 +3525,20 @@ Java_net_hta_halotrial_GameActivity_nativeVehicleMode(JNIEnv *env, jclass cls)
     return atomic_load(&g_vehicle_mode);
 }
 
+JNIEXPORT jstring JNICALL
+Java_net_hta_halotrial_GameActivity_nativeVehicleText(JNIEnv *env, jclass cls)
+{
+    (void)cls;
+    return (*env)->NewStringUTF(env, g_vehicle_text);
+}
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudAlt(JNIEnv *env, jclass cls, jboolean down)
+{
+    (void)env; (void)cls;
+    if (g_android) g_android->hud_alt = down ? true : false;
+}
+
 JNIEXPORT jint JNICALL
 Java_net_hta_halotrial_GameActivity_nativeDamageFlash(JNIEnv *env, jclass cls)
 {
@@ -3425,6 +3649,204 @@ Java_net_hta_halotrial_GameActivity_nativeHudDebug(JNIEnv *env, jclass cls,
     if (g_android) g_android->hud_debug = (int)action + 1;   /* 0 = nothing pending */
 }
 
+/* ------------------------------ vehicles ------------------------------ */
+
+/* The HUD that goes with where you sit: a gunner sees the vehicle gun's own
+ * crosshair; everyone else the weapon they carry. */
+static bool g_hud_vehicle;
+static void seat_hud(hta_android *s, const hta_weapon_def *vdef)
+{
+    char err[HTA_ERRLEN];
+    if (!vdef && !g_hud_vehicle) return;
+    hta_resource_map *bm = s->bitmaps_ok ? &s->bitmaps_rm : NULL;
+    if (s->gpu_hud) { hta_gfx_mesh_free(s->gfx, s->gpu_hud); s->gpu_hud = NULL; }
+    hta_hud_free(&s->hud);
+    hta_hud_load(&s->hud, &s->cache, bm, vdef ? vdef : &s->weap, err, sizeof(err));
+    hta_hud_set_shield(&s->hud, s->vit ? hta_vitals_shield_fraction(s->vit) : 1.0f);
+    hta_hud_set_health(&s->hud, s->vit ? hta_vitals_health_fraction(s->vit) : 1.0f);
+    if (s->gfx && s->hud.elem_count)
+        s->gpu_hud = hta_gfx_mesh_upload_dynamic(s->gfx, &s->hud.mesh, err, sizeof(err));
+    g_hud_vehicle = vdef != NULL;
+}
+
+/* The Trial's own words for a vehicle and a seat: `hud_icon_messages`
+ * says "Warthog", "Ghost", "driver", "gunner", "side". */
+static void vehicle_words(hta_android *s, uint32_t car, uint32_t seat, char *out, size_t n)
+{
+    static uint32_t icons;
+    if (!icons) icons = hta_ustr_find(&s->cache, "ui\\hud\\hud_icon_messages");
+    const hta_vehicle *v = &s->vehicles.cars[car];
+    const hta_vehicle_type *t = &s->vehicles.types[v->type];
+    const hta_vehicle_seat *st = hta_vehicles_seat(&s->vehicles, car, seat);
+    char name[32] = "", place[32] = "";
+    if (!icons || t->hud_name < 0 || !hta_ustr_get(&s->cache, icons, (uint32_t)t->hud_name,
+                                                    name, sizeof(name)))
+        snprintf(name, sizeof(name), "%s", t->name);
+    if (!st || !icons || st->hud_text < 0 ||
+        !hta_ustr_get(&s->cache, icons, (uint32_t)st->hud_text, place, sizeof(place)))
+        snprintf(place, sizeof(place), "%s", st ? st->label : "");
+    /* The rocket Warthog is a Warthog to the HUD; say which. */
+    bool rocket = v->kind == HTA_VK_JEEP && t->name[0] == 'r';
+    snprintf(out, n, "%s%s %s", rocket ? "Rocket " : "", name, place);
+}
+
+/* Where you sit, and what the stick and the look ask of the vehicle.
+ * Returns whether this seat lets you shoot what you carry. */
+static bool vehicle_controls(hta_android *s, hta_player_input *in)
+{
+    hta_unit *u = &s->game.units[s->me];
+    uint32_t car = (uint32_t)u->vehicle, seat = (uint32_t)u->seat;
+    const hta_vehicle_seat *st = hta_vehicles_seat(&s->vehicles, car, seat);
+    const hta_vehicle *v = &s->vehicles.cars[car];
+    if (!st) return false;
+    bool driver = (st->flags & HTA_SEAT_DRIVER) != 0;
+    bool gunner = (st->flags & HTA_SEAT_GUNNER) != 0;
+    bool armed = (st->flags & HTA_SEAT_ALLOWS_WEAPONS) != 0;
+    /* A Warthog steers with the stick, so its driver's look swings with
+     * the hull; everything else aims where you look, in the world. */
+    if (driver && v->kind == HTA_VK_JEEP) {
+        s->seat_look[0] += in->look_yaw;
+        s->seat_look[1] += in->look_pitch;
+        if (s->seat_look[0] > 2.6f) s->seat_look[0] = 2.6f;
+        if (s->seat_look[0] < -2.6f) s->seat_look[0] = -2.6f;
+        if (s->seat_look[1] > 0.5f) s->seat_look[1] = 0.5f;
+        if (s->seat_look[1] < -0.8f) s->seat_look[1] = -0.8f;
+        s->cam.yaw = v->yaw + s->seat_look[0];
+        s->cam.pitch = s->seat_look[1];
+    } else {
+        hta_camera_look(&s->cam, in->look_yaw, in->look_pitch);
+        if (s->cam.pitch > 1.2f) s->cam.pitch = 1.2f;
+        if (s->cam.pitch < -1.2f) s->cam.pitch = -1.2f;
+    }
+    hta_vehicles_camera(&s->vehicles, &s->col, car, seat, s->cam.yaw, s->cam.pitch, &s->cam);
+    hta_transform root;
+    if (hta_game_seat_root(&s->game, s->me, &root))
+        for (int k = 0; k < 3; k++) s->player.pos[k] = root.t[k];
+    s->player.velocity[0] = cosf(v->yaw) * v->speed + v->lateral_vel[0];
+    s->player.velocity[1] = sinf(v->yaw) * v->speed + v->lateral_vel[1];
+    s->player.velocity[2] = 0.0f;
+    s->player.footstep = s->player.landed = false;
+    s->player.on_ground = true;
+    if (!s->net_enabled || s->net_hosting) {
+        u->in.move.move_forward = driver ? in->move_forward : 0.0f;
+        u->in.move.move_right = driver ? in->move_right : 0.0f;
+        u->in.move.jump = driver && in->jump;
+        u->in.move.fire = gunner && in->fire;
+        u->in.fire2 = gunner && s->hud_alt;
+        u->in.move.look_yaw = u->in.move.look_pitch = 0.0f;
+    }
+    s->veh_fire = gunner && in->fire;
+    if (!driver) { in->move_forward = in->move_right = 0.0f; }
+    if (!armed) in->fire = false;
+    in->jump = driver && in->jump;
+    in->crouch = false;
+    return armed;
+}
+
+/* After everything has moved this frame: the camera onto the seat again,
+ * and whether our own body is in the picture. */
+static void vehicle_camera(hta_android *s)
+{
+    s->show_self = false;
+    if (!s->game_on || s->me < 0 || s->dead) return;
+    hta_unit *u = &s->game.units[s->me];
+    if (u->vehicle < 0 || !s->vehicles.loaded) return;
+    uint32_t car = (uint32_t)u->vehicle, seat = (uint32_t)u->seat;
+    const hta_vehicle *v = &s->vehicles.cars[car];
+    const hta_vehicle_seat *st = hta_vehicles_seat(&s->vehicles, car, seat);
+    if (st && (st->flags & HTA_SEAT_DRIVER) && v->kind == HTA_VK_JEEP)
+        s->cam.yaw = v->yaw + s->seat_look[0];
+    hta_vehicles_camera(&s->vehicles, &s->col, car, seat, s->cam.yaw, s->cam.pitch, &s->cam);
+    hta_transform root;
+    if (hta_game_seat_root(&s->game, s->me, &root))
+        for (int k = 0; k < 3; k++) s->player.pos[k] = root.t[k];
+    s->show_self = hta_vehicles_third_person(&s->vehicles, car, seat) &&
+                   !(v->kind == HTA_VK_TANK && st && (st->flags & HTA_SEAT_DRIVER));
+}
+
+/* In, out, or across: what changes for this device when its seat does. */
+static void vehicle_transition(hta_android *s)
+{
+    if (!s->game_on || s->me < 0 || s->me >= (int32_t)s->game.unit_count) return;
+    hta_unit *u = &s->game.units[s->me];
+    int32_t car = u->alive && !s->dead ? u->vehicle : -1;
+    int32_t seat = car >= 0 ? u->seat : -1;
+    if (car == s->my_car && seat == s->my_seat) return;
+    bool was = s->my_car >= 0;
+    s->my_car = car;
+    s->my_seat = seat;
+    if (car >= 0) {
+        s->zoom_level = 0;
+        apply_zoom(s);
+        s->hud_fire = false;
+        s->throwing = false;
+        fire_loop(s, false);
+        if (s->vm.loaded) hta_viewmodel_play(&s->vm, HTA_VM_IDLE);
+        const hta_vehicle *v = &s->vehicles.cars[car];
+        if (!was) {
+            s->seat_look[0] = 0.0f;
+            s->seat_look[1] = -0.15f;
+            s->cam.yaw = v->yaw;
+            s->cam.pitch = -0.1f;
+        }
+        const hta_vehicle_seat *st = hta_vehicles_seat(&s->vehicles, (uint32_t)car, (uint32_t)seat);
+        int32_t wi = st && (st->flags & HTA_SEAT_GUNNER) && v->type < HTA_VEHICLE_TYPES
+                   ? s->game.vweapon[v->type][0] : -1;
+        seat_hud(s, wi >= 0 ? &s->game.weapons[wi].def : NULL);
+        char words[64];
+        vehicle_words(s, (uint32_t)car, (uint32_t)seat, words, sizeof(words));
+        hta_log("[vehicles] in %s (car %d seat %d)", words, car, seat);
+    } else {
+        /* Out: stand where the host put us, facing the way we looked. */
+        if (!s->net_enabled || s->net_hosting) {
+            for (int k = 0; k < 3; k++) s->player.pos[k] = u->body.pos[k];
+            for (int k = 0; k < 3; k++) s->player.velocity[k] = u->body.velocity[k];
+            s->player.on_ground = u->body.on_ground;
+        }
+        s->player.landed = false;
+        s->player.crouch_t = 0.0f;
+        s->player.eye_height = s->player.phys.cam_stand;
+        for (int k = 0; k < 3; k++) s->cam.pos[k] = s->player.pos[k];
+        s->cam.pos[2] += s->player.eye_height;
+        if (s->cam.pitch > 1.2f || s->cam.pitch < -1.2f) s->cam.pitch = 0.0f;
+        /* A held BRAKE is not a jump on the way out. */
+        s->hud_jump = s->jump_held = false;
+        s->hud_alt = false;
+        seat_hud(s, NULL);
+        hta_log("[vehicles] out at (%.2f %.2f %.2f)", s->player.pos[0], s->player.pos[1],
+                s->player.pos[2]);
+    }
+}
+
+/* What the HUD tells you about vehicles: a free seat in reach, or the
+ * seat you are in. */
+static void vehicle_status(hta_android *s, bool seated, int32_t near_car, int32_t near_seat)
+{
+    int mode = 0;
+    char text[96] = "";
+    if (seated) {
+        const hta_unit *u = &s->game.units[s->me];
+        const hta_vehicle *v = &s->vehicles.cars[u->vehicle];
+        const hta_vehicle_seat *st = hta_vehicles_seat(&s->vehicles, (uint32_t)u->vehicle,
+                                                       (uint32_t)u->seat);
+        uint32_t f = st ? st->flags : 0;
+        mode = (f & HTA_SEAT_DRIVER) ? 2 : (f & HTA_SEAT_GUNNER) ? 3 :
+               (f & HTA_SEAT_ALLOWS_WEAPONS) ? 4 : 5;
+        if ((f & HTA_SEAT_GUNNER) && v->type < HTA_VEHICLE_TYPES &&
+            s->game.vweapon[v->type][1] >= 0) mode |= 16;
+        char words[64];
+        vehicle_words(s, (uint32_t)u->vehicle, (uint32_t)u->seat, words, sizeof(words));
+        snprintf(text, sizeof(text), "%s", words);
+    } else if (near_car >= 0 && near_seat >= 0) {
+        mode = 1;
+        char words[64];
+        vehicle_words(s, (uint32_t)near_car, (uint32_t)near_seat, words, sizeof(words));
+        snprintf(text, sizeof(text), "GET IN: %s", words);
+    }
+    snprintf(g_vehicle_text, sizeof(g_vehicle_text), "%s", text);
+    atomic_store(&g_vehicle_mode, mode);
+}
+
 void android_main(struct android_app *app)
 {
     static hta_android state;
@@ -3476,7 +3898,8 @@ void android_main(struct android_app *app)
     } else {
         hta_log("[audio] no output stream; running silent");
     }
-    if (!state.vehicles.loaded) state.vehicles.driver = -1;
+    state.my_car = state.my_seat = -1;
+    state.vehicle_roster = intent_int(app, "vehicles", HTA_VROSTER_ALL);
     state.last_time = hta_time_seconds();
 
     hta_log("[app] android_main; pointer size %zu bytes", sizeof(void *));
@@ -3522,39 +3945,34 @@ void android_main(struct android_app *app)
          * hta_player_update with a blank input keeps gravity and the ground
          * query -- so dying on a slope still slides you down it. */
         if (state.dead) memset(&in, 0, sizeof(in));
-        int32_t near_vehicle = (state.dead || state.net_enabled) ? -1 :
-            hta_vehicles_near(&state.vehicles, &state.col, state.player.pos);
-        bool was_driving = state.vehicles.loaded && state.vehicles.driver >= 0;
-        if (!state.dead && state.hud_swap && (was_driving || near_vehicle >= 0)) {
+        /* Vehicles: get in when a free seat is in reach, out when seated.
+         * The game decides -- on a client, the host does. */
+        hta_unit *mine = state.game_on && state.me >= 0 &&
+                         state.me < (int32_t)state.game.unit_count
+                       ? &state.game.units[state.me] : NULL;
+        bool seated = mine && mine->vehicle >= 0 && mine->alive && !state.dead &&
+                      state.vehicles.loaded;
+        int32_t near_seat = -1;
+        int32_t near_car = mine && !seated && !state.dead && state.vehicles.loaded
+                         ? hta_game_seat_near(&state.game, state.me, &near_seat) : -1;
+        if (!state.dead && state.hud_swap && (seated || near_car >= 0)) {
             state.hud_swap = false;
-            if (was_driving) {
-                if (!hta_vehicles_exit(&state.vehicles, &state.col, &state.player, &state.cam))
-                    hta_log("[vehicles] stop on clear ground before exiting");
-            } else if (hta_vehicles_enter(&state.vehicles, near_vehicle)) {
-                state.zoom_level = 0; apply_zoom(&state);
-                state.hud_fire = false;
-                state.throwing = false;
-                hta_viewmodel_play(&state.vm, HTA_VM_IDLE);
-            }
+            if (state.net_enabled && !state.net_hosting) state.net_action_count++;
+            else mine->in.action = true;
         }
-        bool driving = state.vehicles.loaded && state.vehicles.driver >= 0;
-        hta_vehicles_update(&state.vehicles, &state.col,
-            driving && !state.dead ? in.move_forward : 0,
-            driving && !state.dead ? in.move_right : 0,
-            in.jump || state.dead, state.player.gravity, dt);
-        if (driving) {
-            hta_vehicles_camera(&state.vehicles, &state.col, &state.player,
-                &state.cam, in.look_yaw, in.look_pitch);
-            in.fire = false;
-            state.hud_swap = state.hud_zoom = state.hud_melee = false;
-            state.hud_reload = state.hud_grenade = false; state.hud_debug = 0;
+        bool armed_seat = true;
+        state.veh_fire = false;
+        if (seated) {
+            armed_seat = vehicle_controls(&state, &in);
+            state.hud_swap = state.hud_melee = state.hud_grenade = false;
+            state.hud_debug = 0;
+            if (!armed_seat) state.hud_zoom = state.hud_reload = false;
         } else {
-            /* Do not turn the brake button into a jump on the exit frame. */
-            if (was_driving) { memset(&in, 0, sizeof(in)); state.hud_fire = false; }
             hta_player_update(&state.player, &state.cam,
                 state.col.built ? &state.col : NULL, &in, dt);
         }
-        atomic_store(&g_vehicle_mode, state.dead ? 0 : driving ? 2 : near_vehicle >= 0 ? 1 : 0);
+        vehicle_status(&state, seated, near_car, near_seat);
+        bool driving = seated;
         /* Everyone else sees, aims at and is hit by where you are now. */
         if (state.game_on)
             hta_game_sync_local(&state.game, &state.player, &state.cam, held_roster(&state));
@@ -3621,7 +4039,6 @@ void android_main(struct android_app *app)
         /* Dying, and coming back. */
         if (state.vit->loaded && state.vit->died && !state.dead) {
             state.dead = true;
-            state.vehicles.driver = -1;
             atomic_store(&g_vehicle_mode, 0);
             state.dead_timer = state.respawn_delay;
             for (int k = 0; k < 3; k++) state.death_pos[k] = state.player.pos[k];
@@ -4382,7 +4799,7 @@ void android_main(struct android_app *app)
                 hta_game_update(&state.game, dt);
                 game_events(&state);
             }
-            hta_game_view_update(&state.gview, &state.game, state.me, dt);
+            hta_game_view_update(&state.gview, &state.game, state.show_self ? -1 : state.me, dt);
             if (state.net_enabled && !state.net_hosting)
                 for (uint32_t i=0;i<state.game.unit_count;i++)
                     state.game.units[i].fired=state.game.units[i].meleed=
@@ -4401,6 +4818,8 @@ void android_main(struct android_app *app)
         hta_particles_update(&state.parts, state.col.built ? &state.col : NULL,
                              &state.cam, dt);
         net_frame(&state,now,dt,&in);
+        vehicle_transition(&state);
+        vehicle_camera(&state);
 
         if (state.gun.dirty && state.gfx) {
             char err[HTA_ERRLEN];
@@ -4431,7 +4850,8 @@ void android_main(struct android_app *app)
              * off the screen entirely while zoomed. Without this the sniper
              * reads as a magnified view with a rifle in front of it. */
             /* And a corpse is not holding it either. */
-            if (state.gpu_fp && state.zoom_level == 0 && !state.dead && !driving) {
+            bool fp_weapon = !driving || (armed_seat && !state.show_self);
+            if (state.gpu_fp && state.zoom_level == 0 && !state.dead && fp_weapon) {
                 vmdraw.mesh = state.gpu_fp;
                 vmdraw.vertices = state.vm.posed;
                 vmdraw.vertex_count = state.vm.mesh.vertex_count;
@@ -4487,13 +4907,6 @@ void android_main(struct android_app *app)
                 dynlist[dyncount].lit = true;
                 dyncount++;
             }
-            if (state.gpu_vehicles && dyncount < HTA_GFX_MAX_DYNAMIC) {
-                dynlist[dyncount].mesh = state.gpu_vehicles;
-                dynlist[dyncount].vertices = state.vehicles.upload_frames ? state.vehicles.mesh.vertices : NULL;
-                dynlist[dyncount].vertex_count = state.vehicles.mesh.vertex_count;
-                if (state.vehicles.upload_frames) state.vehicles.upload_frames--;
-                dyncount++;
-            }
             int remote_slot=state.remote_to.weapon==1 ? 1 : 0;
             if (state.remote_visible && !state.net_hosting && !state.world_applied_tick &&
                 state.gpu_remote[remote_slot] &&
@@ -4504,7 +4917,10 @@ void android_main(struct android_app *app)
                 dynlist[dyncount].lit = true;
                 dyncount++;
             }
+            g_inst_count = 0;
             dyncount = game_draw(&state, dynlist, dyncount);
+            vehicles_draw(&state);
+            hta_gfx_set_instances(state.gfx, g_inst, g_inst_count);
             if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh,
                               state.gpu_sky, state.gpu_fx,
                               dynlist, dyncount,
@@ -4517,12 +4933,16 @@ void android_main(struct android_app *app)
             state.frames++;
             state.fps_accum += dt;
             state.fps_frames++;
-            if (driving && state.vehicles.driver >= 0)
-                snprintf(g_ammo_text, sizeof(g_ammo_text), "%.0f km/h",
-                    hypotf(state.vehicles.cars[state.vehicles.driver].speed,
-                           hypotf(state.vehicles.cars[state.vehicles.driver].lateral_vel[0],
-                                  state.vehicles.cars[state.vehicles.driver].lateral_vel[1]))
-                    * 3.048f * 3.6f);
+            if (driving && state.my_car >= 0) {
+                /* World units are ten feet: wu/s x 3.048 x 3.6 is km/h. */
+                float kmh = hta_vehicles_speed(&state.vehicles, (uint32_t)state.my_car)
+                          * 3.048f * 3.6f;
+                const hta_game_vgun *gun = &state.game.vgun[state.my_car];
+                bool loading = (!state.net_enabled || state.net_hosting) &&
+                               (gun->chamber[0] > 0.0f || gun->chamber[1] > 0.0f);
+                snprintf(g_ammo_text, sizeof(g_ammo_text), "%.0f km/h%s", kmh,
+                         loading ? "  LOADING" : "");
+            }
             else if (state.ammo.phase == HTA_AMMO_RELOADING)
                 snprintf(g_ammo_text, sizeof(g_ammo_text), "-- / %d", state.ammo.reserve);
             else

@@ -10,7 +10,7 @@ void hta_net_u32_write(uint8_t *p, uint32_t v)
 uint32_t hta_net_u32_read(const uint8_t *p)
 { return (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24); }
 
-static bool known(uint8_t t) { return t >= HTA_NET_HELLO && t <= HTA_NET_REJECT; }
+static bool known(uint8_t t) { return t >= HTA_NET_HELLO && t <= HTA_NET_VEHICLES; }
 
 bool hta_net_pack(uint8_t *dst, size_t cap, uint8_t type, uint32_t seq,
                   uint32_t tick, const uint8_t *payload, uint16_t len,
@@ -203,7 +203,7 @@ bool hta_net_world_unpack(const uint8_t *src, size_t len, hta_net_world *w)
 bool hta_net_control_pack(uint8_t *dst, size_t cap, const hta_net_control *c)
 {
     if (!dst || !c || cap<HTA_NET_CONTROL_BYTES || !c->id ||
-        c->id>HTA_NET_MAX_PLAYERS || c->flags & ~7u || c->weapon_slot>1 ||
+        c->id>HTA_NET_MAX_PLAYERS || c->flags & ~15u || c->weapon_slot>1 ||
         !isfinite(c->forward) || fabsf(c->forward)>1.0f ||
         !isfinite(c->right) || fabsf(c->right)>1.0f ||
         !isfinite(c->yaw) || fabsf(c->yaw)>1000.0f ||
@@ -213,6 +213,7 @@ bool hta_net_control_pack(uint8_t *dst, size_t cap, const hta_net_control *c)
     fw(dst+11,c->yaw); fw(dst+15,c->pitch);
     u16w(dst+19,c->melee_count); u16w(dst+21,c->grenade_count);
     u16w(dst+23,c->reload_count); u16w(dst+25,c->pickup_count);
+    u16w(dst+27,c->action_count);
     return true;
 }
 
@@ -220,7 +221,8 @@ bool hta_net_control_unpack(const uint8_t *src, size_t len, hta_net_control *c)
 {
     if (!src || !c || len!=HTA_NET_CONTROL_BYTES) return false;
     hta_net_control tmp={src[0],src[1],src[2],fr(src+3),fr(src+7),
-        fr(src+11),fr(src+15),u16r(src+19),u16r(src+21),u16r(src+23),u16r(src+25)};
+        fr(src+11),fr(src+15),u16r(src+19),u16r(src+21),u16r(src+23),u16r(src+25),
+        u16r(src+27)};
     uint8_t check[HTA_NET_CONTROL_BYTES];
     if (!hta_net_control_pack(check,sizeof(check),&tmp)) return false;
     *c=tmp; return true;
@@ -257,7 +259,8 @@ bool hta_net_fx_pack(uint8_t *dst, size_t cap, const hta_net_fx *fx)
 {
     if (!dst || !fx || cap<HTA_NET_FX_BYTES ||
         fx->kind<HTA_NET_FX_FIRE || fx->kind>HTA_NET_FX_DETONATE ||
-        (fx->entity!=255 && fx->entity>=HTA_NET_MAX_ENTITIES) || fx->weapon>23) return false;
+        (fx->entity!=255 && fx->entity>=HTA_NET_MAX_ENTITIES) ||
+        fx->weapon>=HTA_NET_MAX_WEAPONS) return false;
     dst[0]=fx->kind; dst[1]=fx->entity;
     dst[2]=fx->weapon; dst[3]=fx->material;
     for (unsigned i=0;i<3;i++) {
@@ -288,9 +291,9 @@ bool hta_net_projectiles_pack(uint8_t *dst, size_t cap, const hta_net_projectile
     dst[0]=p->count;
     for (uint8_t i=0;i<p->count;i++) {
         const hta_net_projectile *q=&p->live[i];
-        /* 0..3 are match pools; 4 and 5 carry the host's first-person
-         * weapon projectiles and grenades without colliding with them. */
-        if (q->pool>5 || q->slot>7 || !isfinite(q->speed) ||
+        /* Match pools first; HTA_NET_POOL_HOST_* carry the host's
+         * first-person weapon projectiles and grenades. */
+        if (q->pool>=HTA_NET_MAX_POOLS || q->slot>7 || !isfinite(q->speed) ||
             q->speed<0.0f || q->speed>100000.0f) return false;
         uint8_t *out=dst+1u+(size_t)i*HTA_NET_PROJECTILE_BYTES;
         out[0]=q->pool; out[1]=q->slot;
@@ -323,4 +326,93 @@ bool hta_net_projectiles_unpack(const uint8_t *src, size_t len, hta_net_projecti
     if (!hta_net_projectiles_pack(check,sizeof(check),&tmp,&written) ||
         written!=len || memcmp(check,src,len)) return false;
     *p=tmp; return true;
+}
+
+/* ---- vehicles -------------------------------------------------------- */
+
+static bool q16(float v, float scale, int16_t *out)
+{
+    if (!isfinite(v)) return false;
+    float q = roundf(v * scale);
+    if (q < -32767.0f || q > 32767.0f) return false;
+    *out = (int16_t)q;
+    return true;
+}
+static float wrapf(float a)
+{
+    const float PI = 3.14159265f;
+    if (!isfinite(a)) return a;
+    a = fmodf(a + PI, 2.0f * PI);
+    if (a < 0.0f) a += 2.0f * PI;
+    return a - PI;
+}
+#define VQ_POS 100.0f
+#define VQ_ANGLE 10000.0f
+#define VQ_SPEED 100.0f
+#define VQ_TRAVEL 500.0f
+
+bool hta_net_vehicles_pack(uint8_t *dst, size_t cap, const hta_net_vehicles *v,
+                           size_t *written)
+{
+    if (!dst || !v || v->count>HTA_NET_MAX_VEHICLES ||
+        cap<1u+(size_t)v->count*HTA_NET_VEHICLE_BYTES) return false;
+    dst[0]=v->count;
+    for (uint8_t i=0;i<v->count;i++) {
+        const hta_net_vehicle *c=&v->cars[i];
+        uint8_t *o=dst+1u+(size_t)i*HTA_NET_VEHICLE_BYTES;
+        if (c->index>=HTA_NET_MAX_VEHICLES || c->flags & ~7u) return false;
+        o[0]=c->index; o[1]=c->flags;
+        int16_t q;
+        for (unsigned k=0;k<3;k++) {
+            if (!q16(c->pos[k],VQ_POS,&q)) return false;
+            u16w(o+2+k*2,(uint16_t)q);
+        }
+        const float angles[8]={c->yaw,c->pitch,c->roll,c->aim_yaw,c->aim_pitch,
+                               c->steering,c->wheel_spin,c->barrel_spin};
+        for (unsigned k=0;k<8;k++) {
+            if (!q16(wrapf(angles[k]),VQ_ANGLE,&q)) return false;
+            u16w(o+8+k*2,(uint16_t)q);
+        }
+        if (!q16(c->speed,VQ_SPEED,&q)) return false;
+        u16w(o+24,(uint16_t)q);
+        for (unsigned k=0;k<HTA_NET_VEHICLE_SEATS;k++) {
+            if (c->occupant[k]!=255 && c->occupant[k]>=HTA_NET_MAX_ENTITIES) return false;
+            o[26+k]=c->occupant[k];
+        }
+        for (unsigned k=0;k<4;k++) {
+            float t=roundf(c->travel[k]*VQ_TRAVEL);
+            if (!isfinite(t) || t<-127.0f || t>127.0f) return false;
+            o[32+k]=(uint8_t)(int8_t)t;
+        }
+    }
+    if (written) *written=1u+(size_t)v->count*HTA_NET_VEHICLE_BYTES;
+    return true;
+}
+
+bool hta_net_vehicles_unpack(const uint8_t *src, size_t len, hta_net_vehicles *v)
+{
+    if (!src || !v || len<1 || src[0]>HTA_NET_MAX_VEHICLES ||
+        len!=1u+(size_t)src[0]*HTA_NET_VEHICLE_BYTES) return false;
+    hta_net_vehicles tmp;
+    memset(&tmp,0,sizeof(tmp));
+    tmp.count=src[0];
+    for (uint8_t i=0;i<tmp.count;i++) {
+        const uint8_t *in=src+1u+(size_t)i*HTA_NET_VEHICLE_BYTES;
+        hta_net_vehicle *c=&tmp.cars[i];
+        c->index=in[0]; c->flags=in[1];
+        for (unsigned k=0;k<3;k++) c->pos[k]=(float)(int16_t)u16r(in+2+k*2)/VQ_POS;
+        float angles[8];
+        for (unsigned k=0;k<8;k++) angles[k]=(float)(int16_t)u16r(in+8+k*2)/VQ_ANGLE;
+        c->yaw=angles[0]; c->pitch=angles[1]; c->roll=angles[2];
+        c->aim_yaw=angles[3]; c->aim_pitch=angles[4]; c->steering=angles[5];
+        c->wheel_spin=angles[6]; c->barrel_spin=angles[7];
+        c->speed=(float)(int16_t)u16r(in+24)/VQ_SPEED;
+        for (unsigned k=0;k<HTA_NET_VEHICLE_SEATS;k++) c->occupant[k]=in[26+k];
+        for (unsigned k=0;k<4;k++) c->travel[k]=(float)(int8_t)in[32+k]/VQ_TRAVEL;
+    }
+    uint8_t check[1+HTA_NET_MAX_VEHICLES*HTA_NET_VEHICLE_BYTES];
+    size_t written=0;
+    if (!hta_net_vehicles_pack(check,sizeof(check),&tmp,&written) ||
+        written!=len || memcmp(check,src,len)) return false;
+    *v=tmp; return true;
 }

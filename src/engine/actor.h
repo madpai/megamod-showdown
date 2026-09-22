@@ -98,6 +98,9 @@ void hta_actor_update(hta_actor *a, float dt);
 /* Put it at `pos` facing `yaw` and write world-space vertices into
  * `a->posed`. Call after update, before uploading. */
 void hta_actor_place(hta_actor *a, const float pos[3], float yaw);
+/* The same, for a full root transform: a body sitting in a vehicle that
+ * pitches and rolls with the hull. */
+void hta_actor_place_root(hta_actor *a, const hta_transform *root);
 
 /* A marker on the body -- its node and the offset within it -- looked up
  * once, so a held weapon can ride it every frame without the cache. */

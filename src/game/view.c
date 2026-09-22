@@ -115,6 +115,37 @@ void hta_game_view_update(hta_game_view *v, const hta_game *g, int32_t skip, flo
             continue;
         }
         v->dying[i] = false;
+        if (u->vehicle >= 0 && g->vehicles) {
+            /* Sitting: the seat's own clip, on the seat's own marker. The
+             * Scorpion's driver is inside the hull and not drawn. */
+            hta_transform root;
+            const hta_vehicle *car = &g->vehicles->cars[u->vehicle];
+            const hta_vehicle_seat *st = hta_vehicles_seat(g->vehicles, (uint32_t)u->vehicle,
+                                                           (uint32_t)u->seat);
+            if (!st || !hta_game_seat_root(g, (int32_t)i, &root)) continue;
+            if (car->kind == HTA_VK_TANK && (st->flags & HTA_SEAT_DRIVER)) continue;
+            const hta_game_weapon *w = hta_game_held(g, (int32_t)i);
+            char want[4][64];
+            const char *z = w && w->z_prefix ? "z" : "";
+            snprintf(want[0], 64, "%s%s %s idle", z, st->label,
+                     (st->flags & HTA_SEAT_ALLOWS_WEAPONS) && w ? w->anim_class : "fixed");
+            snprintf(want[1], 64, "%s unarmed idle", st->label);
+            snprintf(want[2], 64, "%s rifle idle", st->label);
+            /* The Scorpion's riders on the right and at the back share the
+             * left front's clips. */
+            snprintf(want[3], 64, "scorpionLF rifle idle");
+            if (strcmp(v->base_clip[i], want[0])) {
+                bool ok = false;
+                for (int k = 0; k < 4 && !ok; k++)
+                    if (hta_anim_find(&a->graph, want[k]) >= 0 && hta_actor_play(a, want[k], false))
+                        ok = true;
+                snprintf(v->base_clip[i], sizeof(v->base_clip[i]), "%.47s", want[0]);
+            }
+            hta_actor_update(a, dt);
+            hta_actor_place_root(a, &root);
+            v->shown[i] = true;
+            continue;
+        }
         char base[48], action[64];
         hta_game_anim(g, (int32_t)i, base, sizeof(base), action, sizeof(action));
         int32_t act = action[0] ? hta_anim_find(&a->graph, action) : -1;
@@ -160,6 +191,11 @@ uint32_t hta_game_view_weapons(const hta_game_view *v, const hta_game *g, int32_
         if (!v->shown[i] || (int32_t)i == skip || !u->alive) continue;
         int32_t w = u->carry[u->slot & 1u].weapon;
         if (w < 0 || !v->have_weapon[w]) continue;
+        if (u->vehicle >= 0 && g->vehicles) {
+            const hta_vehicle_seat *st = hta_vehicles_seat(g->vehicles, (uint32_t)u->vehicle,
+                                                           (uint32_t)u->seat);
+            if (!st || !(st->flags & HTA_SEAT_ALLOWS_WEAPONS)) continue;
+        }
         out[n].weapon = w;
         hta_actor_marker_matrix(&v->actor[i], v->hand_node, v->hand_offset, out[n].model);
         n++;

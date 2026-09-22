@@ -165,11 +165,26 @@ void hta_actor_update(hta_actor *a, float dt)
     }
 }
 
+static void place_with(hta_actor *a, const hta_transform *given);
 void hta_actor_place(hta_actor *a, const float pos[3], float yaw)
 {
     if (!a || !a->loaded || !a->posed) return;
     if (pos) for (int k = 0; k < 3; k++) a->pos[k] = pos[k];
     a->yaw = yaw;
+    place_with(a, NULL);
+}
+void hta_actor_place_root(hta_actor *a, const hta_transform *root)
+{
+    if (!a || !a->loaded || !a->posed || !root) return;
+    for (int k = 0; k < 3; k++) a->pos[k] = root->t[k];
+    /* Its heading, for anything that asks which way the body faces. */
+    float fx = 1.0f - 2.0f * (root->q[1]*root->q[1] + root->q[2]*root->q[2]);
+    float fy = 2.0f * (root->q[0]*root->q[1] + root->q[3]*root->q[2]);
+    a->yaw = atan2f(fy, fx);
+    place_with(a, root);
+}
+static void place_with(hta_actor *a, const hta_transform *given)
+{
 
     hta_transform local[HTA_ANIM_MAX_NODES];
     hta_transform world[HTA_ANIM_MAX_NODES];
@@ -220,6 +235,7 @@ void hta_actor_place(hta_actor *a, const float pos[3], float yaw)
     root.q[2] = sinf(h); root.q[3] = cosf(h);
     root.t[0] = a->pos[0]; root.t[1] = a->pos[1]; root.t[2] = a->pos[2];
     root.s = 1.0f;
+    if (given) root = *given;
 
     hta_transform d[HTA_ANIM_MAX_NODES];
     for (uint32_t i = 0; i < a->graph.node_count; i++)

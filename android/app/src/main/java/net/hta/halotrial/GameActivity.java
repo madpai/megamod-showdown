@@ -164,6 +164,8 @@ public class GameActivity extends NativeActivity {
     static native String nativeDebugText();
     static native String nativeAmmoText();
     static native int nativeVehicleMode();
+    static native String nativeVehicleText();
+    static native void nativeHudAlt(boolean down);
     static native int nativeDamageFlash();
     static native int nativeNetStatus();
     /* Banner, place, kill feed and scoreboard, separated by 0x1E. */
@@ -223,6 +225,10 @@ public class GameActivity extends NativeActivity {
         private String[] words;
         private int screen;
         private int bots = 3, skill = 1, kills = 25, minutes = 0, respawn = 5;
+        /* HTA_VROSTER_*: none, the map's defaults, all, or one kind. */
+        private int vehicles = 2;
+        private static final String[] VEHICLE_SETS = { "NONE", "DEFAULT", "ALL",
+                "WARTHOGS", "GHOSTS", "SCORPIONS", "ROCKET WARTHOGS", "BANSHEES" };
         private int maxPlayers = 8, port = 32270;
         private String serverName = "Halo", address = "";
         private String[] lanGames = new String[0];
@@ -283,6 +289,7 @@ public class GameActivity extends NativeActivity {
                     word(21, "KILLS TO WIN") + " " + (kills == 0 ? "NONE" : kills),
                     "TIME LIMIT: " + (minutes == 0 ? "NONE" : minutes + " MIN"),
                     word(22, "RESPAWN TIME") + " " + respawn + " SEC",
+                    "VEHICLES: " + VEHICLE_SETS[vehicles],
                     word(12, "START GAME"), word(18, "BACK") };
             case 3: return new String[] { word(10, "SERVER NAME") + ": " + serverName,
                     word(11, "MAX PLAYERS") + ": " + maxPlayers,
@@ -290,6 +297,7 @@ public class GameActivity extends NativeActivity {
                     word(21, "KILLS TO WIN") + " " + (kills == 0 ? "NONE" : kills),
                     "TIME LIMIT: " + (minutes == 0 ? "NONE" : minutes + " MIN"),
                     word(22, "RESPAWN TIME") + " " + respawn + " SEC",
+                    "VEHICLES: " + VEHICLE_SETS[vehicles],
                     word(12, "START GAME"), word(18, "BACK") };
             case 4: return new String[] { word(3, "LAN"), word(2, "INTERNET") + " / DIRECT IP", word(18, "BACK") };
             case 5: {
@@ -377,7 +385,8 @@ public class GameActivity extends NativeActivity {
                 else if (i == 2) kills = next(kills, new int[] { 0, 10, 25, 50, 100 });
                 else if (i == 3) minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 });
                 else if (i == 4) respawn = next(respawn, new int[] { 2, 5, 10, 15 });
-                else if (i == 5) start(0, ""); else back();
+                else if (i == 5) vehicles = (vehicles + 1) % VEHICLE_SETS.length;
+                else if (i == 6) start(0, ""); else back();
                 break;
             case 3:
                 if (i == 0) edit(false);
@@ -387,7 +396,8 @@ public class GameActivity extends NativeActivity {
                 else if (i == 4) kills = next(kills, new int[] { 0, 10, 25, 50, 100 });
                 else if (i == 5) minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 });
                 else if (i == 6) respawn = next(respawn, new int[] { 2, 5, 10, 15 });
-                else if (i == 7) start(1, "127.0.0.1"); else back();
+                else if (i == 7) vehicles = (vehicles + 1) % VEHICLE_SETS.length;
+                else if (i == 8) start(1, "127.0.0.1"); else back();
                 break;
             case 4:
                 if (i == 0) open(5); else if (i == 1) open(6); else back();
@@ -445,7 +455,7 @@ public class GameActivity extends NativeActivity {
         }
 
         private void start(int mode, String host) {
-            nativeStartMatch(new int[] { mode, bots, skill, kills, minutes, respawn, maxPlayers, port },
+            nativeStartMatch(new int[] { mode, bots, skill, kills, minutes, respawn, maxPlayers, port, vehicles },
                     host, serverName);
             screen = 0;
         }
@@ -715,7 +725,12 @@ public class GameActivity extends NativeActivity {
                     GameActivity.nativeHudDebug(0);
                 } else if (in(x, y, nadeCx, nadeCy, nadeR * 1.15f) && nadePtr < 0) {
                     nadePtr = id;
-                    GameActivity.nativeHudGrenade();
+                    /* In a vehicle with a second gun, NADE is that trigger,
+                     * held like FIRE: the Scorpion's machine gun, the
+                     * Banshee's fuel rod. */
+                    nadeAlt = (GameActivity.nativeVehicleMode() & 16) != 0;
+                    if (nadeAlt) GameActivity.nativeHudAlt(true);
+                    else GameActivity.nativeHudGrenade();
                 } else if ((in(x, y, stickCx, stickCy, stickR * 1.4f) || x < getWidth() * 0.38f)
                         && stickPtr < 0) {
                     stickPtr = id;
@@ -750,7 +765,7 @@ public class GameActivity extends NativeActivity {
                     meleePtr = -1;
                     swapPtr = -1;
                     zoomPtr = -1;
-                    nadePtr = -1;
+                    releaseNade();
                     dbgPtr = -1;
                 } else {
                     if (id == stickPtr) releaseStick();
@@ -761,7 +776,7 @@ public class GameActivity extends NativeActivity {
                     if (id == meleePtr) meleePtr = -1;
                     if (id == swapPtr) swapPtr = -1;
                     if (id == zoomPtr) zoomPtr = -1;
-                    if (id == nadePtr) nadePtr = -1;
+                    if (id == nadePtr) releaseNade();
                     if (id == dbgPtr) dbgPtr = -1;
                 }
                 break;
@@ -817,6 +832,13 @@ public class GameActivity extends NativeActivity {
         private void releaseCrouch() {
             crouchPtr = -1;
             GameActivity.nativeHudCrouch(false);
+        }
+
+        private boolean nadeAlt;
+        private void releaseNade() {
+            nadePtr = -1;
+            if (nadeAlt) GameActivity.nativeHudAlt(false);
+            nadeAlt = false;
         }
 
         private void drawCredits(Canvas c) {
@@ -933,13 +955,16 @@ public class GameActivity extends NativeActivity {
                         w - edge * 0.5f, h - edge * 0.5f, damage);
                 damage.setStyle(Paint.Style.FILL);
             }
+            int seatMode = vehicleMode & 15;
             if (vehicleMode != 0) {
-                float savedSize = label.getTextSize();
-                label.setTextSize(Math.min(getWidth(), getHeight()) * 0.026f);
-                c.drawText(vehicleMode == 2
-                        ? "Stick: drive / steer    BRAKE to stop    EXIT when stopped"
-                        : "DRIVE: enter Warthog", getWidth() * 0.5f, getHeight() * 0.18f, label);
-                label.setTextSize(savedSize);
+                String vt = null;
+                try { vt = nativeVehicleText(); } catch (Throwable ignored) { }
+                if (vt != null && !vt.isEmpty()) {
+                    float savedSize = label.getTextSize();
+                    label.setTextSize(Math.min(getWidth(), getHeight()) * 0.030f);
+                    c.drawText(vt, getWidth() * 0.5f, getHeight() * 0.18f, label);
+                    label.setTextSize(savedSize);
+                }
             }
             c.drawCircle(stickCx, stickCy, stickR, fill);
             c.drawCircle(stickCx, stickCy, stickR, ring);
@@ -958,7 +983,7 @@ public class GameActivity extends NativeActivity {
 
             c.drawCircle(jumpCx, jumpCy, jumpR, jumpP);
             c.drawCircle(jumpCx, jumpCy, jumpR, ring);
-            c.drawText(vehicleMode == 2 ? "BRAKE" : "JUMP", jumpCx, jumpCy + label.getTextSize() * 0.35f, label);
+            c.drawText(seatMode == 2 ? "BRAKE" : "JUMP", jumpCx, jumpCy + label.getTextSize() * 0.35f, label);
 
             c.drawCircle(crouchCx, crouchCy, crouchR, crouchP);
             c.drawCircle(crouchCx, crouchCy, crouchR, ring);
@@ -974,15 +999,15 @@ public class GameActivity extends NativeActivity {
 
             c.drawCircle(swapCx, swapCy, swapR, swapP);
             c.drawCircle(swapCx, swapCy, swapR, ring);
-            c.drawText(vehicleMode == 2 ? "EXIT" :
-                    vehicleMode == 1 ? "DRIVE" : "SWAP", swapCx, swapCy + label.getTextSize() * 0.35f, label);
+            c.drawText(seatMode >= 2 ? "EXIT" :
+                    seatMode == 1 ? "GET IN" : "SWAP", swapCx, swapCy + label.getTextSize() * 0.35f, label);
 
             c.drawCircle(zoomCx, zoomCy, zoomR, zoomP);
             c.drawCircle(zoomCx, zoomCy, zoomR, ring);
             c.drawText("ZOOM", zoomCx, zoomCy + label.getTextSize() * 0.35f, label);
             c.drawCircle(nadeCx, nadeCy, nadeR, zoomP);
             c.drawCircle(nadeCx, nadeCy, nadeR, ring);
-            c.drawText("NADE", nadeCx, nadeCy + label.getTextSize() * 0.35f, label);
+            c.drawText((vehicleMode & 16) != 0 ? "ALT" : "NADE", nadeCx, nadeCy + label.getTextSize() * 0.35f, label);
 
             /* Ammo, big and bottom-right: loaded / reserve, "--" while the
              * magazine is out. */

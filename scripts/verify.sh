@@ -96,7 +96,7 @@ if [ -x ./build-host/htaview ]; then
     OUT=$(cd "$VM" && "$OLDPWD/build-host/htaview" "$HTA_MAP" --fp idle --out vm --width 320 --height 240 --shots 1 2>&1) || true
     if echo "$OUT" | grep -q "verts.*hands.*gun"; then ok "first-person viewmodel renders"; else bad "first-person viewmodel renders"; fi
     OUT=$(cd "$VM" && "$OLDPWD/build-host/htaview" "$HTA_MAP" --drive 2 --out drive --width 320 --height 240 --shots 1 2>&1) || true
-    if echo "$OUT" | grep -q "drive .*jeeps" && echo "$OUT" | grep -q "coverage"; then
+    if echo "$OUT" | grep -q "drive .*vehicles)" && echo "$OUT" | grep -q "coverage"; then
       ok "moving Warthog and chase camera render"
     else
       bad "moving Warthog and chase camera render"

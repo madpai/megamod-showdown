@@ -422,7 +422,7 @@ uint32_t hta_nav_random(const hta_nav *n, uint32_t *rng)
 }
 
 #define NAV_MAGIC   0x4E415648u   /* "HVAN" */
-#define NAV_VERSION 1u
+#define NAV_VERSION 2u  /* 2: built without the vehicles */
 
 typedef struct {
     uint32_t magic, version, key, node_size;

@@ -50,7 +50,7 @@ int main(int argc, char **argv)
                         "[--out prefix] [--width W] [--height H]\n");
         return 2;
     }
-    int bots = 4, skill = 2, shots = 3, follow = 0;
+    int bots = 4, skill = 2, shots = 3, follow = 0, ride = -1;
     float seconds = 20.0f, every = 0.5f, back = 1.6f;
     uint32_t W = 800, H = 450;
     const char *prefix = "match";
@@ -63,6 +63,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--follow") && i + 1 < argc) follow = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--out") && i + 1 < argc) prefix = argv[++i];
         else if (!strcmp(argv[i], "--back") && i + 1 < argc) back = strtof(argv[++i], NULL);
+        else if (!strcmp(argv[i], "--ride") && i + 1 < argc) ride = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--width") && i + 1 < argc) W = (uint32_t)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--height") && i + 1 < argc) H = (uint32_t)atoi(argv[++i]);
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
@@ -71,6 +72,7 @@ int main(int argc, char **argv)
         W < 16 || H < 16 || W > 4096 || H > 4096) return 2;
 
     char err[HTA_ERRLEN] = {0};
+    static hta_vehicles veh;
     size_t map_size = 0, bm_size = 0;
     uint8_t *map_data = slurp(argv[1], &map_size);
     if (!map_data) { fprintf(stderr, "cannot read map\n"); return 1; }
@@ -95,11 +97,16 @@ int main(int argc, char **argv)
     float bmin[3], bmax[3];
     memcpy(bmin, mesh.bounds_min, sizeof(bmin));
     memcpy(bmax, mesh.bounds_max, sizeof(bmax));
-    hta_scenario_add_objects(&mesh, &cache, bmp, err, sizeof(err));
+    /* With --ride the vehicles are live: drawn as parts, solid as placed
+     * grids, and seated. */
+    if (ride >= 0 && !hta_vehicles_load(&veh, &cache, bmp, err, sizeof(err))) {
+        fprintf(stderr, "vehicles: %s\n", err); return 1;
+    }
+    hta_scenario_add_objects_excluding(&mesh, &cache, bmp, veh.skip, sizeof(veh.skip), err, sizeof(err));
     hta_sky_load(&sky, &cache, bmp, err, sizeof(err));
     hta_collision col = {0};
     if (!hta_bsp_load_collision(&cache, &cm, err, sizeof(err)) ||
-        !hta_scenario_add_collision(&cm, &cache, err, sizeof(err)) ||
+        !hta_scenario_add_collision_excluding(&cm, &cache, veh.skip, sizeof(veh.skip), err, sizeof(err)) ||
         !hta_collision_build(&col, &cm)) {
         fprintf(stderr, "collision: %s\n", err); return 1;
     }
@@ -119,19 +126,36 @@ int main(int argc, char **argv)
         fprintf(stderr, "nav: %s\n", err); return 1;
     }
     printf("nav            %s (%.0f ms)\n", err, (hta_time_seconds() - t0) * 1000.0);
+    if (veh.loaded) {
+        col.instances = veh.inst; col.instance_count = veh.count;
+        hta_game_attach_vehicles(&game, &veh, bmp);
+    }
     game.nav = &nav;
     if (hta_pickups_load(&items, &cache)) {
         hta_pickups_build(&items, &cache, bmp, err, sizeof(err));
         game.items = &items;
     }
-    for (int i = 0; i < bots; i++) hta_game_add(&game, HTA_UNIT_BOT, NULL, 0);
+    for (int i = 0; i < bots; i++)
+        hta_game_add(&game, ride >= 0 && i < 2 ? HTA_UNIT_REMOTE : HTA_UNIT_BOT, NULL, 0);
     hta_game_set_skill(&game, (uint8_t)skill);
     if (!hta_game_view_load(&view, &game, bmp, (uint32_t)bots, err, sizeof(err))) {
         fprintf(stderr, "view: %s\n", err); return 1;
     }
     printf("view           %s\n", err);
     hta_game_start(&game);
-
+    int32_t ride_car = -1;
+    for (uint32_t i = 0; veh.loaded && i < veh.count; i++)
+        if (veh.cars[i].placement == (uint32_t)ride) ride_car = (int32_t)i;
+    if (ride_car >= 0) {
+        uint32_t seats = hta_vehicles_seat_count(&veh, (uint32_t)ride_car);
+        int32_t d = hta_vehicles_driver_seat(&veh, (uint32_t)ride_car);
+        printf("ride           %s, %u seats: driver %s, second %s\n",
+               veh.types[veh.cars[ride_car].type].name, seats,
+               hta_game_seat(&game, 0, ride_car, d) ? "in" : "REFUSED",
+               seats > 1 && bots > 1 && hta_game_seat(&game, 1, ride_car, (int32_t)seats - 1) ? "in" : "-");
+        game.units[0].eye.yaw = veh.cars[ride_car].yaw;
+    }
+    hta_gfx_mesh *vgpu[HTA_VEHICLE_TYPES] = {0};
     hta_gfx *gfx = hta_gfx_create_offscreen(W, H, err, sizeof(err));
     if (!gfx) { fprintf(stderr, "Vulkan: %s\n", err); return 1; }
     hta_gfx_mesh *world = hta_gfx_mesh_upload(gfx, &mesh, err, sizeof(err));
@@ -148,6 +172,8 @@ int main(int argc, char **argv)
     for (uint32_t p = 0; p < game.pool_count; p++)
         poolgpu[p] = hta_gfx_mesh_upload_dynamic_world(gfx, &game.pools[p].mesh, err, sizeof(err));
     if (!world) { fprintf(stderr, "GPU: %s\n", err); return 1; }
+    for (uint32_t t2 = 0; veh.loaded && t2 < veh.type_count; t2++)
+        vgpu[t2] = hta_gfx_mesh_upload(gfx, &veh.types[t2].mesh, err, sizeof(err));
 
     hta_camera cam;
     hta_camera_init(&cam);
@@ -167,6 +193,11 @@ int main(int argc, char **argv)
     while (taken < shots || (shots == 0 && t < seconds)) {
         double s0 = hta_time_seconds();
         hta_pickups_update(&items, dt);
+        if (ride_car >= 0) {
+            game.units[0].in.move.move_forward = 1.0f;
+            game.units[0].in.move.move_right = 0.3f;
+            game.units[1].eye.yaw = veh.cars[ride_car].yaw + 0.8f;
+        }
         hta_game_update(&game, dt);
         hta_game_view_update(&view, &game, -1, dt);
         sim_time += hta_time_seconds() - s0;
@@ -182,6 +213,15 @@ int main(int argc, char **argv)
 
         /* Behind and above the followed unit, looking where it looks. */
         const hta_unit *u = &game.units[follow % bots];
+        if (ride_car >= 0) {
+            /* Film the car from off its left rear quarter. */
+            const hta_vehicle *c = &veh.cars[ride_car];
+            float a = c->yaw + 2.4f, dist = 0.9f + c->body_radius;
+            cam.pos[0] = c->pos[0] + cosf(a) * dist; cam.pos[1] = c->pos[1] + sinf(a) * dist;
+            cam.pos[2] = c->pos[2] + 1.0f;
+            float to[3] = { c->pos[0]-cam.pos[0], c->pos[1]-cam.pos[1], c->pos[2]+0.4f-cam.pos[2] };
+            cam.yaw = atan2f(to[1], to[0]); cam.pitch = atan2f(to[2], hypotf(to[0], to[1]));
+        } else {
         /* A negative --back stands in front, looking at its face. */
         float up = back < 0.0f ? 0.25f : 0.7f;
         float fx = cosf(u->eye.yaw), fy = sinf(u->eye.yaw);
@@ -199,6 +239,7 @@ int main(int argc, char **argv)
                         look[2]-cam.pos[2] };
         cam.yaw = atan2f(to[1], to[0]);
         cam.pitch = atan2f(to[2], hypotf(to[0], to[1]));
+        }
 
         hta_gfx_dynamic dyn[HTA_GFX_MAX_DYNAMIC];
         memset(dyn, 0, sizeof(dyn));
@@ -227,8 +268,19 @@ int main(int argc, char **argv)
         }
         hta_game_held_weapon held[HTA_GAME_MAX_UNITS];
         uint32_t nh = hta_game_view_weapons(&view, &game, -1, held, HTA_GAME_MAX_UNITS);
-        hta_gfx_instance inst[HTA_GAME_MAX_UNITS];
+        static hta_gfx_instance inst[HTA_GFX_MAX_INSTANCES];
         uint32_t ni = 0;
+        static hta_vehicle_part vp[HTA_GFX_MAX_INSTANCES];
+        uint32_t nv = hta_vehicles_parts(&veh, vp, HTA_GFX_MAX_INSTANCES - HTA_GAME_MAX_UNITS);
+        for (uint32_t k = 0; k < nv; k++) {
+            if (!vgpu[vp[k].type]) continue;
+            inst[ni].mesh = vgpu[vp[k].type];
+            memcpy(inst[ni].model, vp[k].model, sizeof(inst[ni].model));
+            inst[ni].first_submesh = vp[k].first_submesh;
+            inst[ni].submesh_count = vp[k].submesh_count;
+            inst[ni].lit = true;
+            ni++;
+        }
         for (uint32_t k = 0; k < nh; k++) {
             if (!wgpu[held[k].weapon]) continue;
             inst[ni].mesh = wgpu[held[k].weapon];

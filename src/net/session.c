@@ -277,6 +277,20 @@ bool hta_net_server_projectiles(hta_net_server *s, const hta_net_projectiles *pr
     return sent;
 }
 
+bool hta_net_server_vehicles(hta_net_server *s, const hta_net_vehicles *vehicles)
+{
+    if (!s || !vehicles || s->udp.fd<0 || s->last_vehicle_tick==s->tick) return false;
+    uint8_t payload[1+HTA_NET_MAX_VEHICLES*HTA_NET_VEHICLE_BYTES];
+    size_t len=0;
+    if (!hta_net_vehicles_pack(payload,sizeof(payload),vehicles,&len)) return false;
+    s->last_vehicle_tick=s->tick;
+    bool sent=false;
+    for (unsigned i=0;i<HTA_NET_MAX_PLAYERS;i++) if (s->peers[i].active)
+        if (send_packet(&s->udp,&s->peers[i].addr,&s->stats,HTA_NET_VEHICLES,
+                        &s->sequence,s->tick,payload,(uint16_t)len)) sent=true;
+    return sent;
+}
+
 bool hta_net_scan_open(hta_net_scan *s)
 {
     if (!s) return false;
@@ -434,6 +448,16 @@ static void client_packet(hta_net_client *c, const hta_net_packet *p, double now
         c->last_projectile_tick=p->tick;
         break;
     }
+    case HTA_NET_VEHICLES: {
+        if (p->tick<=c->last_vehicle_tick) { c->stats.dropped++; break; }
+        hta_net_vehicles veh;
+        if (!hta_net_vehicles_unpack(p->payload,p->length,&veh)) {
+            c->stats.invalid++; break;
+        }
+        c->vehicles=veh; c->have_vehicles=true;
+        c->last_vehicle_tick=p->tick;
+        break;
+    }
     default: c->stats.invalid++; break;
     }
 }
@@ -447,6 +471,7 @@ void hta_net_client_pump(hta_net_client *c, double now)
         c->last_world_tick=0; c->have_world=false;
         c->kill_count=0; c->seen_kill_cursor=0;
         c->fx_count=0; c->have_projectiles=false; c->last_projectile_tick=0;
+        c->have_vehicles=false; c->last_vehicle_tick=0;
         memset(c->seen_kills,0,sizeof(c->seen_kills));
         memset(c->present,0,sizeof(c->present));
         uint32_t old_nonce=c->nonce;

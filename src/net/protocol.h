@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define HTA_NET_MAGIC 0x31415448u /* "HTA1" on the wire */
-#define HTA_NET_VERSION 2u
+#define HTA_NET_VERSION 3u
 #define HTA_NET_HEADER 20u
 #define HTA_NET_MAX_PACKET 1200u
 #define HTA_NET_MAX_PLAYERS 8u
@@ -15,11 +15,21 @@
 #define HTA_NET_ENTITY_NAME 12u
 #define HTA_NET_ENTITY_BYTES 68u
 #define HTA_NET_WORLD_HEADER 86u
-#define HTA_NET_CONTROL_BYTES 27u
+#define HTA_NET_CONTROL_BYTES 29u
 #define HTA_NET_KILL_BYTES 102u
 #define HTA_NET_FX_BYTES 28u
 #define HTA_NET_PROJECTILE_BYTES 30u
 #define HTA_NET_MAX_PROJECTILES 32u
+/* Projectile pools: the match's own first, then the host's first-person
+ * weapon and its grenades. */
+#define HTA_NET_MAX_POOLS 16u
+#define HTA_NET_POOL_HOST_WEAPON 12u
+#define HTA_NET_POOL_HOST_GRENADES 13u
+/* Roster entries an FX may name: carried weapons and vehicle triggers. */
+#define HTA_NET_MAX_WEAPONS 32u
+#define HTA_NET_MAX_VEHICLES 32u
+#define HTA_NET_VEHICLE_SEATS 6u
+#define HTA_NET_VEHICLE_BYTES 36u
 
 typedef enum {
     HTA_NET_HELLO = 1, HTA_NET_WELCOME, HTA_NET_DISCONNECT,
@@ -29,7 +39,7 @@ typedef enum {
      * This is how a LAN lobby finds games without typing an address. */
     HTA_NET_DISCOVER, HTA_NET_INFO, HTA_NET_WORLD, HTA_NET_CONTROL,
     HTA_NET_KILL, HTA_NET_ACK, HTA_NET_FX, HTA_NET_PROJECTILES,
-    HTA_NET_REJECT
+    HTA_NET_REJECT, HTA_NET_VEHICLES
 } hta_net_type;
 
 typedef struct {
@@ -91,13 +101,33 @@ typedef struct {
 
 /* A player's requested controls, sampled repeatedly. The host applies
  * movement and fire; counters make one-shot actions survive packet loss. */
-enum { HTA_NET_JUMP=1, HTA_NET_TRIGGER=2, HTA_NET_DUCK=4 };
+enum { HTA_NET_JUMP=1, HTA_NET_TRIGGER=2, HTA_NET_DUCK=4, HTA_NET_ALT=8 };
 enum { HTA_NET_REJECT_FULL=1, HTA_NET_REJECT_MAP=2 };
 typedef struct {
     uint8_t id, flags, weapon_slot;
     float forward, right, yaw, pitch;
     uint16_t melee_count, grenade_count, reload_count, pickup_count;
+    uint16_t action_count;    /* get in or out of a vehicle */
 } hta_net_control;
+
+/* Every vehicle the host runs, whole, at snapshot rate. Positions are
+ * hundredths of a world unit and angles ten-thousandths of a radian on the
+ * wire, which keeps 32 of them under the packet cap. */
+enum { HTA_NET_VEHICLE_ACTIVE=1, HTA_NET_VEHICLE_GROUNDED=2, HTA_NET_VEHICLE_DRIVEN=4 };
+typedef struct {
+    uint8_t index, flags;
+    float pos[3];
+    float yaw, pitch, roll;
+    float aim_yaw, aim_pitch;
+    float steering, wheel_spin, barrel_spin;
+    float speed;                          /* signed, along the hull */
+    uint8_t occupant[HTA_NET_VEHICLE_SEATS]; /* unit id, 255 empty */
+    float travel[4];                      /* the first four wheels' travel */
+} hta_net_vehicle;
+typedef struct {
+    uint8_t count;
+    hta_net_vehicle cars[HTA_NET_MAX_VEHICLES];
+} hta_net_vehicles;
 
 typedef struct {
     uint32_t id;
@@ -142,6 +172,9 @@ bool hta_net_fx_unpack(const uint8_t *src, size_t len, hta_net_fx *fx);
 bool hta_net_projectiles_pack(uint8_t *dst, size_t cap, const hta_net_projectiles *p,
                               size_t *written);
 bool hta_net_projectiles_unpack(const uint8_t *src, size_t len, hta_net_projectiles *p);
+bool hta_net_vehicles_pack(uint8_t *dst, size_t cap, const hta_net_vehicles *v,
+                           size_t *written);
+bool hta_net_vehicles_unpack(const uint8_t *src, size_t len, hta_net_vehicles *v);
 void hta_net_u32_write(uint8_t *p, uint32_t v);
 uint32_t hta_net_u32_read(const uint8_t *p);
 
