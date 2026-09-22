@@ -4,9 +4,9 @@
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-22
+**Date of this revision:** 2026-09-22 (evening: vehicles, contrails, drops, tracker)
 **Repo:** `/home/commander/projects/halo-trial-android`
-**Branch / HEAD:** `fp-animated-guns` / `da5e625`; current work is uncommitted.
+**Branch / HEAD:** `fp-animated-guns`; all work committed.
 
 ---
 
@@ -122,179 +122,81 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Multiplayer combat QA build:** see the latest build and hash at
-> `http://100.89.1.14:8731/` (Tailscale). This is the owner's personal APK
-> with their own Trial maps. A second tester needs the asset-free debug APK
-> and must supply their own Trial data. No Android device was connected during
-> implementation; the 68-check host/Android build gate is green, but runtime
-> combat still needs a two-device test.
-> Published 2026-09-22 17:07 EDT, source `da5e625-dirty`.
-> Personal APK SHA-256: `8e4bed8364ed6db6e6e583768019721baf0f728b9a6f6d484d1179d0acc822cd`.
-> Guest APK SHA-256: `8cae5d2b4ed9e10e0b7e22906c1d5090b8006f3b6b65ba17437b383f917e349b`.
+> **Vehicles + polish build:** latest at `http://100.89.1.14:8731/`
+> (Tailscale), build `42b1468` or later. Owner's personal APK with their own
+> maps; guests use the asset-free APK. Network protocol is **v3**: every
+> phone in a LAN game needs this build. No device was attached while this was
+> written; everything below is host-verified (verify.sh 72/72, offscreen
+> renders), not yet seen on a phone.
 >
-> 1. Host a Blood Gulch Slayer match on phone A with 2-3 bots. Join from phone
->    B over the same Wi-Fi. Both should see all players and bots, match settings,
->    pickups, scores and the same winner. A third phone may join up to the
->    configured player cap; a full lobby says FULL.
-> 2. Shoot, melee and grenade each other and bots from both devices. Health,
->    shields, ammo, deaths, respawns and kill feed should agree. The host owns
->    combat and bots; clients only request controls. Repeat after a disconnect
->    and rejoin to exercise slot reuse.
-> 3. Try a mismatched map on phone B: the join should say MAP MISMATCH. Match
->    files must be identical. Check LAN browsing and direct IPv4 join too.
-> 4. Report both phones' screenshots and exact action on any divergence; ADB
->    logcat with tag `halo-trial-android` helps if available.
+> 1. **Solo, VEHICLES: ALL.** Walk to each vehicle; the top line should read
+>    e.g. `GET IN: Warthog driver` and SWAP should say GET IN. Drive a Warthog,
+>    get in its gun from behind (chaingun spins up), ride as passenger (your
+>    own rifle, first person). Scorpion: stick drives/pivots, turret follows
+>    look, FIRE cannon (4 s reload, "LOADING" beside the km/h), ALT (the NADE
+>    button) machine gun. Ghost: turns to where you look, strafes. Banshee:
+>    look up and push to climb; let go to hover; ALT fuel rod; EXIT in the air
+>    drops you. Run someone over. Report: seat camera placement, whether the
+>    body in the seat looks right, turret following, frame rate with all 28.
+> 2. **Tracers/trails:** AR and chaingun yellow tracers, sniper vapour, plasma
+>    glows, shell smoke. Report anything drawn as squares or wrong colour.
+> 3. **Drops / tracker / sounds:** kill a bot, its gun lies there; swap onto
+>    it and your old gun drops. Tracker bottom-left: runners red, crouchers
+>    hidden. Engines rev with speed. Pickup messages show mid-screen.
+> 4. **LAN (two phones):** host with vehicles; the joiner should see the
+>    same vehicles, get in (host decides), drive with the host watching, gun
+>    for the host's Warthog, see drops and tracers. Latency shows as a small
+>    lag between stick and vehicle on the joiner (no prediction yet).
 >
-> Network vehicles remain disabled; this QA run covers on-foot Slayer. The
-> desktop `htanet` server remains a transport probe and does not simulate a
-> match. Use an Android host for combat QA. Internet direct IP requires a
-> reachable host UDP port 32270; there is no public server directory.
+> Not done: CTF/Oddball/KOTH, bots driving, powerups spinning, active camo
+> rendering, player colours, vehicle damage/flipping (Halo CE vehicles are
+> indestructible, so only flipping is really missing).
 
-**Next engineering work: online vehicles.** The on-foot QA checklist above
-remains useful evidence for the combat baseline. The vehicle plan below is
-the development handoff for the next session and the intended deep dive.
+## VEHICLES (done 2026-09-22) — how they work
 
-**Next session:** run `git status` and inspect new screenshots in
-`scratch/uploads/` and `scratch/serve/uploads/` before changing code. The
-published code is still uncommitted; it includes earlier menu and hit-cue
-work as well as this multiplayer pass. No new screenshots have arrived since
-2026-09-21 19:11 EDT. The guest APK is 731,860 bytes and contains no maps;
-the owner's personal APK is 182,756,513 bytes with four Stored maps. The
-native library hash is identical in both. A GET of the guest APK matched its
-published SHA-256. `/home/commander/android/sdk/platform-tools/adb devices`
-showed no attached device. Do not treat the host test gate as proof of Android
-runtime behavior.
+- **Engine** `src/engine/vehicle.c/.h`: a TYPE per palette entry (seats,
+  markers, turret yaw/pitch nodes, trigger markers, model split into rigid
+  PARTS by node, collision built once in model space) and a CAR per
+  placement. Kinds from `vehi+756`: jeep (the old Warthog physics,
+  unchanged), tank (treads pivot at the driver seat's yaw rate), scout
+  (Ghost: yaws toward the look, strafes), fighter (Banshee: flies along the
+  look; empty it falls and lands), turret (aims only). Rosters from the
+  scenario's slayer spawn flags (`HTA_VROSTER_*`, menu option VEHICLES).
+- **Collision instances**: `hta_collision.instances` — each car's type grid
+  queried through its pose (ground/ray/depenetrate). Replaced the old
+  every-frame rebuild of a shared grid (1.5 ms → 0.03 ms per update).
+  `extra` still exists. Vehicle physics strips instances (walks the static
+  world only; car-car contact is mass-point spheres).
+- **Drawing**: `hta_vehicles_parts` → instanced parts of one static mesh per
+  type (`HTA_GFX_MAX_INSTANCES` is 512).
+- **Game** `src/game/game.c`: units have `vehicle`/`seat`; `in.action` gets
+  in/out (host-validated); driver input → `car.ctl`; gunner aims the turret
+  and fires the vehicle gun. Vehicle guns are roster entries (`vehicle`,
+  `trigger`), one per trigger, loaded by `hta_weapon_load_trigger`, with
+  spin-up, magazines, chamber times; rounds converge on the crosshair.
+  Rounds slower than 150 wu/s fly as projectiles even without a model
+  (`hta_projectiles_equip_any`). Splatter uses `globals\vehicle_collision`.
+  Scorpion driver and Banshee pilot are enclosed (no ray hits, blast × the
+  vehicle's `rider damage fraction`).
+- **Android**: `vehicle_controls` / `vehicle_camera` / `vehicle_transition` /
+  `vehicle_status` / `vehicle_sounds` in `platform_android.c`. A Warthog
+  driver's look is relative to the hull; everyone else looks in world space.
+- **Network v3**: `VEHICLES` snapshot (32 cars, 36 bytes each), `DROPS`,
+  CONTROL gains `HTA_NET_ALT` and `action_count`. Clients interpolate the
+  host's cars; no client-side prediction yet.
+- Tests: `test_vehicle` (94), `test_ride` (59: seats, guns, splatter,
+  drops, tracker), `test_contrail`, `test_net`. Tools: `htaview --drive N
+  --car C`, `htamatch --ride <placement>`, `HTA_LOOK_DROP=1 htamatch`.
 
-## MULTIPLAYER IMPLEMENTATION HANDOFF
+## NEXT ENGINEERING OBJECTIVES
 
-**What changed.** The old network layer sent client transforms and cosmetic
-actions only. Protocol version 2 adds `CONTROL`, `WORLD`, `PROJECTILES`, `FX`,
-reliable `KILL`/`ACK`, and `REJECT`. A host Android phone runs `hta_game` for
-its local player, up to seven other players and up to seven bots (16 unit
-slots). Client controls are bounded; the host applies movement, collision,
-weapon fire, melee, grenades, pickups, damage, scores, death and respawn.
-Clients render the host world and copy host vitals, inventory and match state.
-The old transform snapshot and action path remains for desktop probes but is
-not combat authority. The host owns every damage and scoring decision.
-
-**Code entry points.** `src/net/protocol.h/.c` defines and validates the wire
-format. `src/net/session.h/.c` owns peer authentication, map CRC/full-lobby
-rejection, 20 Hz delivery, and acknowledged kill text. `start_game`,
-`net_host_peers`, `net_host_world`, `net_client_world`,
-`net_client_projectiles`, `game_events`, and `net_frame` in
-`src/platform/platform_android.c` bridge the portable game to Android. The
-host reuses vacated unit slots through `hta_game_add`; its remote control path
-is tested in `tests/test_game.c`. UDP delivery and malformed input cases are
-tested in `tests/test_net.c`. Java maps native network statuses 6/7/8 to
-waiting for match/map mismatch/full in `GameActivity.java`.
-
-**Protocol detail.** `WORLD` carries up to 16 unit records plus 64 pickup
-states and stays below the 1200-byte packet cap even when full. Entities carry
-stable game unit IDs, peer IDs, pose, vitals, score and held inventory. The
-host sends world and up to 32 active projectiles at 20 Hz. Projectile pools
-0–3 are portable-game pools; pools 4/5 are the host's local weapon/grenades.
-Fire/impact/detonation FX use best-effort UDP; kills resend every 0.15 s until
-ACK. A client timeout after 10 s clears stale state and retries joining.
-Map validation compares the cache CRC in HELLO when both sides have one;
-Android sets it after the map loads. A headless desktop server has no map CRC
-and is a transport tool, not a gameplay host.
-
-**Unverified edges for the device run.** No Android host and joiner have run
-together. Watch especially joiner actor visibility, hit flash and sounds when
-its shield drops, host/client ammo agreement after reload or pickup, death
-camera followed by host-controlled respawn, kill-feed delivery, round reset,
-and rejoining after a disconnect. The host's traveling projectile snapshots
-are mapped to separate client slots, but a guest with a different equipped
-weapon may have no matching first-person projectile mesh for that host round;
-impact FX and damage remain host-owned. A full 32-projectile game pool can
-also leave no snapshot room for host-local traveling rounds. These are visual
-limits to inspect, not reasons to trust local client damage. Remote movement
-is corrected from host snapshots and may visibly snap under real latency;
-there is no input reconciliation or measured packet-loss performance yet.
-
-**Scope boundary.** Online vehicles, non-Slayer modes, and Internet NAT
-traversal are not implemented. The desktop `htanet` and `htaplay` test the
-earlier visual path; they cannot host this match. LAN/direct IPv4 needs UDP
-32270 reachable. Preserve the asset boundary: only the owner's personal APK
-contains their maps; guests import their own copies.
-
-## NEXT ENGINEERING OBJECTIVE: ONLINE VEHICLES
-
-The owner wants the next development pass to make vehicles fully playable in
-multiplayer. Currently only Warthogs are drivable in solo play; the driver is not visibly
-seated in the vehicle. Network mode disables vehicle entry. The rocket
-Warthog's behavior has not been separately confirmed. The Scorpion, Ghost,
-Banshee and gun turret still need their movement, seats, cameras and weapons.
-The code's `hta_vehicles.driver` is a single global driver index, so its
-ownership model must change before multiple players can use separate vehicles.
-Treat the tag observations below as leads to verify during the deep dive.
-
-| vehicle | `vehi+756` type | seats (unit+740, 284 each; flags bit2 driver, bit3 gunner) | driving floats (vehi+760, per tick) | phys mass points |
-|---|---|---|---|---|
-| `scorpion_mp` | 0 tank | driver (0x1c: drives AND fires), 4 riders `passenger lf/rf/lb/rb` | fwd .14 rev .12 accel .002 decel .006; turn fields 0 | 8 `tread` points powered 0/1, hull, turret |
-| `ghost_mp` | 4 alien scout | driver 0x1c | fwd .225 accel .005; no reverse, no slide | 5: seat, hull, two powered wings |
-| `banshee_mp` | 5 alien fighter | driver 0x1c | fwd .22 rev .03 accel .008 decel .016, turn L 1.571, rate .13; fixed gun pitch .26 | 22 hull/wing/canopy points |
-| `c gun turret_mp` | 6 turret | gunner 0x1c | all 0 | 4 (feet + body) |
-| `mp_warthog` / `rwarthog` | 1 jeep | driver 0x14, passenger 0x60, gunner 0x198 (`camera gunner`) | as now | 4 tires + hull |
-
-Weapons (unit+728, 36 each): `warthog gun`, `rwarthog_gun`, `scorpion cannon`
-(plus a secondary trigger), `mp_ghost gun`, `mp_banshee gun` (primary bolts,
-secondary fuel rod), `mp gun turret gun`. They fire from the vehicle MODEL's
-markers `primary trigger` / `secondary trigger` (weapon models are none).
-Weapons are excluded from `hta_weapon_list_playable`; the game roster needs
-them with a "vehicle" flag.
-
-**Suggested deep-dive and implementation sequence:**
-
-1. Audit `src/engine/vehicle.c/.h`, `src/game/game.c`,
-   `src/platform/platform_android.c`, the actor/view code and the map tags.
-   Confirm the supported placements, seat markers, collision, camera and
-   weapon data for each vehicle. Write down what the Trial supplies and what
-   the engine must choose. Preserve solo Warthog behavior while expanding it.
-2. Replace the single global `driver` with per-vehicle, per-seat occupancy.
-   Make enter/exit a host-validated request: range, free seat, safe exit,
-   death, disconnect, respawn and vehicle destruction must release seats.
-   Attach visible player bodies to seat markers, including the local driver
-   in third-person and every occupant on remote clients. Keep seated bodies,
-   aim and animations synchronized with the hull and turret.
-3. Make the existing Warthog the first complete online vertical slice. The
-   host owns throttle, steering, collision and seat state; clients send
-   controls and render replicated pose, wheel/turret state and occupants.
-   Define correction/prediction for the driver and keep passengers aligned.
-   The current 16-entity `WORLD` packet is close to its 1200-byte limit;
-   design a separate bounded vehicle snapshot or a revised protocol instead
-   of appending unbounded state to it.
-4. Add tag-driven control models for the rocket Warthog, Scorpion, Ghost,
-   Banshee and gun turret. Tank tread steering, Ghost hover, Banshee flight
-   and stationary turret aim need separate host simulation and camera rules.
-   Verify speed, gravity, turning, collision, seat placement and exit behavior
-   against the map and on a phone; avoid assuming a Warthog control model fits
-   them. `htaview --drive` and `test_vehicle` are starting test tools.
-5. Route vehicle weapons and damage through host-owned game rules. Use the
-   vehicle model trigger markers, the correct driver/gunner aim, ammo or heat
-   rules from tags, projectile/impact FX, kill credit, occupant damage, vehicle
-   damage and destruction. Define what happens to occupants and respawning
-   vehicles. Add bots' seat selection and driving/gunning after human vehicle
-   play is coherent.
-6. Verify one vehicle type at a time with map-backed tests and Android builds,
-   then with two phones and bots. Check both screens for the same seats,
-   occupant visibility, hull/turret motion, impacts, deaths, exits and
-   reconnects. Include simultaneous drivers in separate vehicles, a driver
-   disconnect, and a client joining while a vehicle is already occupied.
-
-Rendering should avoid re-posing the entire fleet on the CPU each frame; the
-current fleet update cost is noted below. Consider instances or per-vehicle
-meshes/collision grids after measuring the new path. Keep the asset boundary
-and the existing `verify.sh` gate. Claude's deep dive should turn the numbered
-sequence into a concrete design before changing the protocol or gameplay.
-
-Other outstanding work after vehicles: CTF/Oddball/KOTH (lines, flag and ball
-weapons are in the map);
-dropped weapons carrying their ammo; spinning powerups and camouflage
-rendering (instanced path); motion tracker; player colours (shader change
-colour); campaign (`b30.map` sits unused in the data folder).
-
----
+1. Device feedback on the vehicles build (above).
+2. Game types: CTF, Oddball, King of the Hill, Race — the flag and ball
+   weapons and the scenario's netgame flags are in the map.
+3. Bots in vehicles (gunner seat with a human driver first, then driving).
+4. Client-side prediction for the local driver on a joining phone.
+5. Powerups spinning, active camouflage rendering, player colours (the
+   shader's change-colour channel), Warthog flipping.
 
 ## Where things stand
 
@@ -417,16 +319,14 @@ remain a rendering gap; phone confirmation of this fix is pending.
 
 | | |
 |---|---|
-| Dropped weapons | A weapon you swap off vanishes. Drawing one needs a separate dynamic mesh; mesh capacity alone does not implement dropped weapons. |
 | Items do not rotate | Halo spins powerups. Doing it means paying the full item upload every frame or splitting powerups into their own dynamic mesh. The latter. |
 | Camouflage does nothing | It runs its timer. Nothing to hide from yet. |
-| Picked-up weapons are full | `hta_ammo_init` runs on equip; a dropped weapon should carry what was left in it. |
-| Motion tracker | Art and behaviour readable (`unhi` 620/724, `hud_globals` range and scale) but placement is not in the tag, and nothing moves to track. Deferred three times. |
 | No hit sound on the body | `weapons\*\effects\impact cyborg shield` is in the cache and is the right thing to reach for. |
 | The bot's rifle is hardcoded | Should be whatever it is carrying, once it carries anything. |
 | Vehicle collision remains planar | Wall and jeep contacts rebound, deflect and apply yaw torque, but there is no full 3-D rigid body or flip. A truly too-narrow passage can still trap the Warthog; reverse or exit if safe. |
-| Driving re-poses the whole fleet | About 1.5 ms/frame on the host, mostly rebuilding all 12 jeeps' shared collision grid. Eleven are parked. Per-vehicle grids is the fix if the phone shows a repeatable fps drop. |
-| Vehicles take no damage | You cannot destroy or flip a Warthog, and it does not hurt what it hits. |
+| Vehicles do not flip | Halo CE vehicles are indestructible, so damage is right; flipping over (and being flipped back) is not simulated. |
+| Motion tracker sweep | The sweep ring art has an opaque edge; it is not drawn, so the tracker does not animate its sweep. |
+| Joiner driving lag | A joining phone sees its own vehicle respond one snapshot late; no prediction. |
 
 ---
 
@@ -602,6 +502,22 @@ wrong, this list is the first place to look — they are all one constant.
 | `HTA_FEED_TIME` / `HTA_BANNER_TIME` / `HTA_POSTGAME` | 6 / 3 / 10 s | kill feed, announcer banner, scoreboard |
 | menu layout (`src/game/menu.c`) | fractions | measured from a PC Trial screenshot; menu light and camera sway ours |
 | sky depth range | 10 .. 200000 | the sky pass's own near/far planes |
+| `HTA_SCOUT_REVERSE_FRACTION` / `_STRAFE_` | 0.5 / 0.75 | Ghost reverse and strafe speed, of forward (tag has none) |
+| `HTA_FIGHTER_STRAFE_FRACTION` | 0.5 | Banshee strafe |
+| `HTA_FIGHTER_MAX_PITCH` / `_BANK` | 1.0 rad / 0.35 | Banshee nose follows the look this far; visual bank per rad/s of turn |
+| `HTA_VEHICLE_RESPAWN` | 60 s | an empty vehicle away from home goes back (gametype value) |
+| `HTA_VEHICLE_BARREL_SPIN` | 30 rad/s | chaingun barrels while firing |
+| `HTA_SPLATTER_MIN_SPEED` / `_FULL_` | 1 / 3 wu/s | closing speed at which a vehicle starts to hurt / deals all of `vehicle_collision` |
+| `HTA_VEHICLE_AIM_RANGE` | 200 wu | crosshair ray for vehicle-gun convergence |
+| `VEHICLE_TRAVEL_SPEED` (game.c) | 150 wu/s | slower vehicle rounds fly, faster are hitscan |
+| tank/scout/fighter hull turn | the driver seat's `yaw rate` | a tag value used for something the tag does not say it is for |
+| `HTA_CONT_MIN_LIFE` | 0.06 s | shortest contrail point life (the AR tracer's is 0.01) |
+| tracer speed | 300 wu/s | hitscan tracers' head speed |
+| `HTA_DROP_LIFE` / `_REACH` | 30 s / 0.5 wu | dropped weapons |
+| `HTA_MOTION_RANGE` | 25 m (8.2 wu) | tracker radius; the tag's 20 has no unit and the art says 15m |
+| `HTA_MOTION_SPEED` / `_FIRE` | 0.5 wu/s / 1 s | shown when moving faster / after firing |
+| `HTA_HUD_SENSOR_X/Y` | 4, 4 canvas px | tracker in the bottom-left corner |
+| engine pitch | 0.85 .. 1.35 | engine loop rate from idle to full speed |
 
 ---
 
@@ -667,7 +583,8 @@ Put them in the session scratchpad, not the repo. Relink after every rebuild.
 | Biped physics | `src/asset/biped.c` |
 | HUD font digits | `src/asset/font.c` |
 | Player movement, collision grid, **ray query** | `src/engine/player.c` |
-| Drivable vehicles, chassis, chase camera | `src/engine/vehicle.c` |
+| Vehicles: types, seats, physics per kind, parts, cameras | `src/engine/vehicle.c` |
+| Contrails (tracers, trails) | `src/engine/contrail.c` |
 | First-person weapon | `src/engine/viewmodel.c` |
 | World-space skinned character | `src/engine/actor.c` |
 | A body that can be shot | `src/engine/bot.c` |
