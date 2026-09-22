@@ -193,18 +193,18 @@ bool hta_projectiles_equip_projectile(hta_projectiles *p, const hta_cache *c,
     return true;
 }
 
-void hta_projectiles_fire(hta_projectiles *p, const float origin[3],
-                          const float dir[3])
+int hta_projectiles_fire(hta_projectiles *p, const float origin[3],
+                         const float dir[3])
 {
-    hta_projectiles_throw(p, origin, dir, 0.0f);
+    return hta_projectiles_throw(p, origin, dir, 0.0f);
 }
 
-void hta_projectiles_throw(hta_projectiles *p, const float origin[3],
-                           const float dir[3], float speed)
+int hta_projectiles_throw(hta_projectiles *p, const float origin[3],
+                          const float dir[3], float speed)
 {
-    if (!p || !p->loaded || !origin || !dir) return;
+    if (!p || !p->loaded || !origin || !dir) return -1;
     float len = sqrtf(dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
-    if (!(len > 1e-6f)) return;
+    if (!(len > 1e-6f)) return -1;
 
     /* Oldest slot when they are all busy: a rocket that has been in the air
      * longest is the one whose loss shows least. */
@@ -235,6 +235,19 @@ void hta_projectiles_throw(hta_projectiles *p, const float origin[3],
                (!p->bounces || p->timer_starts == HTA_PROJ_TIMER_IMMEDIATELY))
             ? p->timer : -1.0f;
     q->alive = true;
+    return (int)slot;
+}
+
+static void record_blast(hta_projectiles *p, uint32_t slot)
+{
+    if (p->blast_count >= HTA_PROJ_MAX) return;
+    uint32_t b = p->blast_count++;
+    for (int k = 0; k < 3; k++) {
+        p->blasts[b].pos[k] = p->hit[k];
+        p->blasts[b].normal[k] = p->hit_normal[k];
+    }
+    p->blasts[b].material = p->hit_material;
+    p->blasts[b].slot = (uint8_t)slot;
 }
 
 /* Speed at a distance flown: Halo ramps the initial velocity to the final
@@ -308,6 +321,7 @@ void hta_projectiles_update(hta_projectiles *p, const hta_collision *col, float 
 {
     if (!p || !p->loaded) return;
     p->detonated = false;
+    p->blast_count = 0;
     if (dt <= 0.0f) dt = 0.0f;
 
     for (uint32_t i = 0; i < HTA_PROJ_MAX; i++) {
@@ -366,6 +380,7 @@ void hta_projectiles_update(hta_projectiles *p, const hta_collision *col, float 
                     p->hit_normal[k] = nrm[k];
                 }
                 p->hit_material = material;
+                record_blast(p, i);
                 q->alive = false;
                 hide_one(p, i);
                 continue;
@@ -394,6 +409,7 @@ void hta_projectiles_update(hta_projectiles *p, const hta_collision *col, float 
                     p->hit_normal[k] = (k == 2) ? 1.0f : 0.0f;
                 }
                 p->hit_material = HTA_MATERIAL_NONE;
+                record_blast(p, i);
                 q->alive = false;
                 hide_one(p, i);
                 continue;

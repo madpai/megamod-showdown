@@ -33,6 +33,8 @@ if ./build-host/test_vitals     >/dev/null 2>&1; then ok "health/shield tests"; 
 if ./build-host/test_actor      >/dev/null 2>&1; then ok "world-space actor tests"; else bad "world-space actor tests"; fi
 if ./build-host/test_pickup     >/dev/null 2>&1; then ok "pickup tests"; else bad "pickup tests"; fi
 if ./build-host/test_bot        >/dev/null 2>&1; then ok "bot tests"; else bad "bot tests"; fi
+if ./build-host/test_nav        >/dev/null 2>&1; then ok "nav grid tests"; else bad "nav grid tests"; fi
+if ./build-host/test_game       >/dev/null 2>&1; then ok "game rules tests"; else bad "game rules tests"; fi
 if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_biped "$HTA_MAP" >/dev/null 2>&1; then ok "biped/globals physics from Trial map"; else bad "biped/globals physics from Trial map"; fi
   if ./build-host/test_anim "$HTA_MAP" >/dev/null 2>&1; then ok "FP animation graph + skinned viewmodel"; else bad "FP animation graph + skinned viewmodel"; fi
@@ -48,6 +50,8 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_actor  "$HTA_MAP" >/dev/null 2>&1; then ok "the cyborg poses and dies"; else bad "the cyborg poses and dies"; fi
   if ./build-host/test_pickup "$HTA_MAP" >/dev/null 2>&1; then ok "what the map leaves on the ground"; else bad "what the map leaves on the ground"; fi
   if ./build-host/test_bot    "$HTA_MAP" >/dev/null 2>&1; then ok "a body to shoot at, and what hurts it"; else bad "a body to shoot at, and what hurts it"; fi
+  if ./build-host/test_nav    "$HTA_MAP" >/dev/null 2>&1; then ok "a biped walks a planned path base to base"; else bad "a biped walks a planned path base to base"; fi
+  if ./build-host/test_game   "$HTA_MAP" >/dev/null 2>&1; then ok "bots play Slayer to the score limit"; else bad "bots play Slayer to the score limit"; fi
 fi
 
 # Optional: validate against the user's own Trial data if HTA_MAP points at it.
@@ -94,6 +98,12 @@ if [ -x ./build-host/htaview ]; then
       ok "moving Warthog and chase camera render"
     else
       bad "moving Warthog and chase camera render"
+    fi
+    OUT=$(cd "$VM" && "$OLDPWD/build-host/htamatch" "$HTA_MAP" --bots 3 --seconds 4 --shots 1 --out bots --width 320 --height 240 2>&1) || true
+    if echo "$OUT" | grep -q "bodies" && echo "$OUT" | grep -qE "holding [a-z]+, [1-9]"; then
+      ok "bots render with their weapons in hand"
+    else
+      bad "bots render with their weapons in hand"
     fi
     rm -rf "$VM"
   fi

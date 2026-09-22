@@ -86,6 +86,14 @@ typedef struct {
     bool     detonated;
     float    hit[3], hit_normal[3];
     uint8_t  hit_material;
+    /* Every one that went off this update, in case it was more than one,
+     * and which slot it flew in -- so a caller that knows who fired each
+     * slot can say whose blast it was. */
+    struct {
+        float   pos[3], normal[3];
+        uint8_t material, slot;
+    } blasts[HTA_PROJ_MAX];
+    uint32_t blast_count;
 } hta_projectiles;
 
 void hta_projectiles_init(hta_projectiles *p);
@@ -99,14 +107,15 @@ bool hta_projectiles_equip(hta_projectiles *p, const hta_cache *c,
                            const hta_weapon_def *weap, char *err, size_t errlen);
 
 /* Launch one. Ignored when the weapon has no drawable projectile. */
-void hta_projectiles_fire(hta_projectiles *p, const float origin[3],
-                          const float dir[3]);
+int hta_projectiles_fire(hta_projectiles *p, const float origin[3],
+                         const float dir[3]);
 
 /* Launch one at a speed of the caller's choosing rather than the tag's.
  * A thrown grenade needs this: its projectile's own initial velocity is
  * 0.00, because in Halo the throw comes from the player, not the tag. */
-void hta_projectiles_throw(hta_projectiles *p, const float origin[3],
-                           const float dir[3], float speed);
+int hta_projectiles_throw(hta_projectiles *p, const float origin[3],
+                          const float dir[3], float speed);
+/* Both return the slot the round flies in, or -1 if none was launched. */
 
 /* Load a projectile straight, rather than through a weapon -- the grenades
  * come from the globals table, not from anything you are holding. */

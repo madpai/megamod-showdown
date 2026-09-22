@@ -149,6 +149,8 @@ public class GameActivity extends NativeActivity {
     static native String nativeDebugText();
     static native String nativeAmmoText();
     static native int nativeVehicleMode();
+    /* Banner, place, kill feed and scoreboard, separated by 0x1E. */
+    static native String nativeGameText();
 
     private static final class HudOverlay extends View {
         private final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -165,6 +167,10 @@ public class GameActivity extends NativeActivity {
         private final Paint debug = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint ammo = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint dbgP = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint banner = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint feed = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint board = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint boardBg = new Paint(Paint.ANTI_ALIAS_FLAG);
 
         private float stickCx, stickCy, stickR, stickTx, stickTy;
         private float fireCx, fireCy, fireR;
@@ -208,6 +214,16 @@ public class GameActivity extends NativeActivity {
             debug.setColor(0xCC00FF88);
             label.setTextAlign(Paint.Align.CENTER);
             label.setTypeface(Typeface.DEFAULT_BOLD);
+            /* Halo's HUD messages are its pale blue. */
+            banner.setColor(0xFFB8D8FF);
+            banner.setTextAlign(Paint.Align.CENTER);
+            banner.setTypeface(Typeface.DEFAULT_BOLD);
+            banner.setShadowLayer(4f, 0f, 2f, 0xFF000000);
+            feed.setColor(0xFFDDE8F5);
+            feed.setShadowLayer(3f, 0f, 1f, 0xFF000000);
+            board.setColor(0xFFE6E9EF);
+            board.setTypeface(Typeface.MONOSPACE);
+            boardBg.setColor(0xB0101820);
         }
 
         @Override
@@ -246,6 +262,9 @@ public class GameActivity extends NativeActivity {
             dbgCx = w * 0.035f;
             dbgCy = h * 0.42f;
             label.setTextSize(m * 0.032f);
+            banner.setTextSize(m * 0.062f);
+            feed.setTextSize(m * 0.034f);
+            board.setTextSize(m * 0.038f);
             ammo.setTextSize(m * 0.085f);
             excludeFromSystemGestures();
         }
@@ -411,6 +430,50 @@ public class GameActivity extends NativeActivity {
             GameActivity.nativeHudCrouch(false);
         }
 
+        /* The game's words: the announcer's banner across the middle, where
+         * you stand along the top, who killed whom down the left, and at the
+         * end of a game the scoreboard. */
+        private void drawGame(Canvas c) {
+            String g = null;
+            try { g = nativeGameText(); } catch (Throwable ignored) { }
+            if (g == null || g.isEmpty()) return;
+            String[] part = g.split("\u001e", -1);
+            int w = getWidth(), h = getHeight();
+            if (part.length > 0 && !part[0].isEmpty())
+                c.drawText(part[0], w * 0.5f, h * 0.30f, banner);
+            if (part.length > 1 && !part[1].isEmpty()) {
+                float saved = banner.getTextSize();
+                banner.setTextSize(feed.getTextSize());
+                c.drawText(part[1], w * 0.5f, h * 0.075f, banner);
+                banner.setTextSize(saved);
+            }
+            if (part.length > 2 && !part[2].isEmpty()) {
+                String[] lines = part[2].split("\n");
+                float y = h * 0.20f;
+                for (String l : lines) {
+                    if (l.isEmpty()) continue;
+                    c.drawText(l, w * 0.09f, y, feed);
+                    y += feed.getTextSize() * 1.3f;
+                }
+            }
+            if (part.length > 3 && !part[3].isEmpty()) {
+                String[] rows = part[3].split("\n");
+                float rowH = board.getTextSize() * 1.45f;
+                float top = h * 0.38f, left = w * 0.22f, right = w * 0.78f;
+                c.drawRect(left, top - rowH, right, top + rowH * (rows.length + 0.4f), boardBg);
+                float[] col = { left + w * 0.015f, left + w * 0.07f, left + w * 0.30f,
+                                left + w * 0.38f, left + w * 0.46f, left + w * 0.54f };
+                String[] head = { "Place", "Name", "Score", "Kills", "Assists", "Deaths" };
+                for (int k = 0; k < head.length; k++) c.drawText(head[k], col[k], top, board);
+                float y = top + rowH;
+                for (String r : rows) {
+                    String[] f = r.split("\t");
+                    for (int k = 0; k < f.length && k < col.length; k++) c.drawText(f[k], col[k], y, board);
+                    y += rowH;
+                }
+            }
+        }
+
         @Override
         protected void onDraw(Canvas c) {
             int vehicleMode = GameActivity.nativeVehicleMode();
@@ -469,6 +532,8 @@ public class GameActivity extends NativeActivity {
             if (a != null && a.length() > 0)
                 c.drawText(a, getWidth() - 28f, getHeight() * 0.30f, ammo);
 
+            drawGame(c);
+
             /* Position readout, so a bug report screenshot carries coordinates.
              * Keep it clear of the camera cutout: the status bar no longer
              * covers these digits, but the punch-hole still would, and an
@@ -488,7 +553,7 @@ public class GameActivity extends NativeActivity {
                 }
                 c.drawText(t, left, top + debug.getTextSize() * 2.2f, debug);
             }
-            postInvalidateDelayed(200);
+            postInvalidateDelayed(100);
         }
     }
 }

@@ -134,6 +134,8 @@ struct hta_gfx {
 
     void *window;
     bool  ready;
+    hta_gfx_instance inst[HTA_GFX_MAX_INSTANCES];
+    uint32_t         inst_count;
 };
 
 static void gfail(char *err, size_t n, const char *fmt, ...)
@@ -1272,6 +1274,14 @@ static void fill_push(uint8_t *p, const hta_camera *cam, const hta_scene *s)
     memcpy(p + 96, am, 16);
 }
 
+void hta_gfx_set_instances(hta_gfx *g, const hta_gfx_instance *inst, uint32_t count)
+{
+    if (!g) return;
+    if (count > HTA_GFX_MAX_INSTANCES) count = HTA_GFX_MAX_INSTANCES;
+    if (inst && count) memcpy(g->inst, inst, (size_t)count * sizeof(*inst));
+    g->inst_count = inst ? count : 0;
+}
+
 bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                   hta_gfx_mesh *mesh, hta_gfx_mesh *sky, hta_gfx_mesh *fx,
                   const hta_gfx_dynamic *dyn, uint32_t dyn_count,
@@ -1583,6 +1593,74 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                     }
                 }
             }
+        }
+
+        /* Rigid instances: a static mesh and a transform each. The light
+         * has to arrive in the mesh's own space, since its normals never
+         * leave it -- the viewmodel's trick, with the rotation's transpose
+         * standing in for its inverse. */
+        if (g->inst_count) {
+            const uint8_t ipasses[3] = { HTA_DRAW_OPAQUE, HTA_DRAW_ALPHA, HTA_DRAW_ADD };
+            VkPipeline ipipes[3] = { g->pipeline, g->pipeline_alpha, g->pipeline_add };
+            hta_mat4 vp = hta_camera_view_proj(cam);
+            for (int pz = 0; pz < 3; pz++) {
+                int bound = 0;
+                for (uint32_t q = 0; q < g->inst_count; q++) {
+                    const hta_gfx_instance *in = &g->inst[q];
+                    hta_gfx_mesh *im = in->mesh;
+                    if (!im || !im->index_count) continue;
+                    uint32_t s0 = in->submesh_count ? in->first_submesh : 0u;
+                    uint32_t s1 = in->submesh_count ? in->first_submesh + in->submesh_count
+                                                    : im->submesh_count;
+                    if (s1 > im->submesh_count) s1 = im->submesh_count;
+                    int ready_push = 0;
+                    for (uint32_t i = s0; i < s1; i++) {
+                        if (!im->submeshes[i].index_count) continue;
+                        if (im->submeshes[i].draw_mode != ipasses[pz]) continue;
+                        if (!ready_push) {
+                            hta_mat4 model;
+                            memcpy(model.m, in->model, sizeof(model.m));
+                            hta_mat4 mvp = hta_mat4_mul(&vp, &model);
+                            memset(push, 0, sizeof(push));
+                            memcpy(push, mvp.m, 64);
+                            const float *L = scene->light_dir;
+                            const float *M = in->model;
+                            float ld[4] = {
+                                L[0]*M[0] + L[1]*M[1] + L[2]*M[2],
+                                L[0]*M[4] + L[1]*M[5] + L[2]*M[6],
+                                L[0]*M[8] + L[1]*M[9] + L[2]*M[10], 0.0f };
+                            float lc[4] = { scene->light_color[0], scene->light_color[1],
+                                            scene->light_color[2], 1.0f };
+                            float am[4] = { scene->ambient[0], scene->ambient[1],
+                                            scene->ambient[2], 0.0f };
+                            memcpy(push + 64, ld, 16);
+                            memcpy(push + 80, lc, 16);
+                            memcpy(push + 96, am, 16);
+                            vkCmdBindVertexBuffers(cb, 0, 1, &im->vbuf, &zero);
+                            vkCmdBindIndexBuffer(cb, im->ibuf, 0, VK_INDEX_TYPE_UINT32);
+                            ready_push = 1;
+                        }
+                        float lw = (ipasses[pz] != HTA_DRAW_ADD &&
+                                    (in->lit || im->submeshes[i].scene_lit)) ? 1.0f : 0.0f;
+                        float det[4] = { im->submeshes[i].detail_scale,
+                            im->submeshes[i].detail2_scale, im->submeshes[i].detail_mask, 0.0f };
+                        memcpy(push + 80 + 12, &lw, sizeof(lw));
+                        memcpy(push + 112, det, sizeof(det));
+                        vkCmdPushConstants(cb, g->layout,
+                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                            0, PUSH_SIZE, push);
+                        if (!bound) {
+                            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, ipipes[pz]);
+                            bound = 1;
+                        }
+                        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                                g->layout, 0, 1, &im->submeshes[i].set, 0, NULL);
+                        vkCmdDrawIndexed(cb, im->submeshes[i].index_count, 1,
+                                         im->submeshes[i].first_index, 0, 0);
+                    }
+                }
+            }
+            g->inst_count = 0;
         }
 
         /* The HUD goes on last: no depth, its own tint per element. */

@@ -25,6 +25,10 @@ if(ANDROID)
         src/engine/audio.c
         src/engine/ammo.c
         src/engine/hud.c
+        src/game/nav.c
+        src/game/game.c
+        src/game/brain.c
+        src/game/view.c
         src/asset/cache.c
         src/asset/bsp.c
         src/asset/bitmap.c
@@ -32,6 +36,7 @@ if(ANDROID)
         src/asset/font.c
         src/asset/effect.c
         src/asset/dialogue.c
+        src/asset/strings.c
         src/asset/items.c
         src/asset/biped.c
         src/asset/weapon.c
@@ -63,7 +68,11 @@ else()
         src/engine/actor.c
         src/engine/pickup.c
         src/engine/bot.c src/engine/viewmodel.c src/engine/audio.c src/engine/ammo.c src/engine/hud.c
-        src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c src/asset/sound.c src/asset/effect.c src/asset/dialogue.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
+        src/game/nav.c
+        src/game/game.c
+        src/game/brain.c
+        src/game/view.c
+        src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c src/asset/sound.c src/asset/effect.c src/asset/dialogue.c src/asset/strings.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
         src/asset/anim.c src/asset/model.c src/asset/font.c)
     target_include_directories(hta_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(hta_engine PRIVATE -Wall -Wextra)
@@ -96,6 +105,10 @@ else()
         target_include_directories(hta_gfx_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${Vulkan_INCLUDE_DIRS})
         target_link_libraries(hta_gfx_host PUBLIC ${Vulkan_LIBRARIES} m)
         target_compile_options(hta_gfx_host PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+
+        add_executable(htamatch src/tools/htamatch.c)
+        target_link_libraries(htamatch PRIVATE hta_engine hta_gfx_host m)
+        target_compile_options(htamatch PRIVATE -Wall -Wextra)
 
         add_executable(htaview src/tools/htaview.c)
         target_link_libraries(htaview PRIVATE hta_engine hta_gfx_host m)
@@ -164,6 +177,14 @@ else()
     add_executable(test_pickup tests/test_pickup.c)
     target_link_libraries(test_pickup PRIVATE hta_engine m)
     add_test(NAME pickup COMMAND test_pickup)
+
+    add_executable(test_nav tests/test_nav.c)
+    target_link_libraries(test_nav PRIVATE hta_engine m)
+    add_test(NAME nav COMMAND test_nav)
+
+    add_executable(test_game tests/test_game.c)
+    target_link_libraries(test_game PRIVATE hta_engine m)
+    add_test(NAME game COMMAND test_game)
 
     add_executable(test_bot tests/test_bot.c)
     target_link_libraries(test_bot PRIVATE hta_engine m)

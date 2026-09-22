@@ -24,8 +24,8 @@
  * after swapping through the roster. The whole Trial weapon set decodes to
  * 55 clips and 2.8 MB; 256 leaves room for footsteps, detonations and the
  * grenade on top of it. */
-#define HTA_AUDIO_MAX_CLIPS  256
-#define HTA_AUDIO_MAX_VOICES  12
+#define HTA_AUDIO_MAX_CLIPS  512
+#define HTA_AUDIO_MAX_VOICES  24
 #define HTA_AUDIO_REQ_RING    32   /* power of two */
 
 typedef struct {

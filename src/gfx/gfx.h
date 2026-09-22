@@ -97,7 +97,27 @@ typedef struct {
  * one next: weapons dropped on the ground, and powerups spinning where they
  * lie. Both need their own mesh rather than a share of an existing one.
  * LAN remote actors raised the limit to ten; this is a fixed stack array. */
-#define HTA_GFX_MAX_DYNAMIC 10u
+#define HTA_GFX_MAX_DYNAMIC 24u
+
+/* A mesh uploaded once and drawn where a transform puts it. Rigid things
+ * that move -- a weapon in a hand, a powerup spinning on its spot -- are
+ * one static upload and a matrix a frame, rather than every vertex
+ * re-posed on the CPU and copied up again. `model` is column-major and
+ * rigid (rotation and translation only), mapping the mesh's own space into
+ * the world. `first_submesh`/`submesh_count` pick part of the mesh, or
+ * 0/0 for all of it. */
+typedef struct {
+    hta_gfx_mesh *mesh;
+    float         model[16];
+    uint32_t      first_submesh, submesh_count;
+    bool          lit;
+} hta_gfx_instance;
+
+#define HTA_GFX_MAX_INSTANCES 256u
+
+/* The instances the NEXT hta_gfx_draw should add to the world. Copied;
+ * the list is consumed by that draw. */
+void hta_gfx_set_instances(hta_gfx *g, const hta_gfx_instance *inst, uint32_t count);
 
 bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                   hta_gfx_mesh *mesh, hta_gfx_mesh *sky, hta_gfx_mesh *fx,

@@ -41,6 +41,11 @@
 #include "audio_android.h"
 #include "../net/session.h"
 #include "../net/replication.h"
+#include "../game/game.h"
+#include "../game/view.h"
+#include "../game/nav.h"
+#include "../asset/items.h"
+#include "../asset/strings.h"
 
 #include <android/log.h>
 #include <android/input.h>
@@ -97,7 +102,7 @@ bool hta_probe_fixed_map(uint64_t addr, size_t len)
  * in and out, one impact per material the map contains, the projectile's
  * detonation, the grenade's, and a footstep per material: Blood Gulch asks
  * for around thirty of these, and 24 was not enough to hold them. */
-#define HTA_SND_MAX_BANK   64u
+#define HTA_SND_MAX_BANK  128u
 #define HTA_SND_MAX_PERMS   8u
 
 typedef struct {
@@ -196,8 +201,33 @@ typedef struct {
     uint8_t         map_material[33];      /* the ones this map contains */
     uint32_t        map_material_count;
 
-    /* Health and shield, and what takes them away. */
+    /* The game: Slayer against bots, everyone's damage attributed. The
+     * local player is unit `me`, mirrored in every frame; the bots live
+     * entirely inside it and are drawn from `gview`. */
+    hta_game      game;
+    hta_game_view gview;
+    hta_nav       nav;
+    bool          game_on;
+    int32_t       me;
+    int           bot_count, bot_skill;
+    hta_gfx_mesh *gpu_units[HTA_GAME_MAX_UNITS];
+    hta_gfx_mesh *gpu_held[HTA_GAME_MAX_WEAPONS];
+    hta_gfx_mesh *gpu_pools[HTA_GAME_MAX_POOLS];
+    uint32_t      pool_recipe[HTA_GAME_MAX_POOLS];
+    uint32_t      unit_fire_snd[HTA_GAME_MAX_WEAPONS];
+    uint8_t       unit_fire_known[HTA_GAME_MAX_WEAPONS];
+    uint32_t      line_snd[HTA_LINE_COUNT];
+    char          feed[4][96];
+    float         feed_age[4];
+    char          banner[96];
+    float         banner_age;
+    float         over_timer;
+
+    /* Health and shield, and what takes them away. `vit` points at these
+     * until the game starts, then at the game's own copy for this player,
+     * so a bot's round and the local HUD read the same numbers. */
     hta_vitals vitals;
+    hta_vitals *vit;
 
     /* Dying. Halo's multiplayer respawn is five seconds; that number is the
      * gametype's, and no gametype ships in the map, so it is ours. The rest
@@ -694,13 +724,18 @@ static float blast_falloff(const float centre[3], const float at[3],
 #define HTA_DEATH_PULLBACK  1.2f    /* seconds for the camera to get there */
 
 static void equip_weapon(hta_android *s, uint32_t weap_tag_id);
+static int32_t held_roster(hta_android *s);
 
 static void respawn(hta_android *s)
 {
     if (!s->spawn_count) return;
     uint32_t i = hta_scenario_spawn_pick(s->spawn, s->spawn_count,
                                          s->death_pos, &s->spawn_rng);
-    hta_player_spawn(&s->player, &s->spawn[i]);
+    hta_spawn_point chosen = s->spawn[i];
+    /* In a game, away from the people trying to kill you. */
+    if (s->game_on)
+        hta_game_pick_spawn(&s->game, s->me, chosen.position, &chosen.facing);
+    hta_player_spawn(&s->player, &chosen);
     float gz;
     if (s->col.built &&
         hta_collision_ground(&s->col, s->player.pos[0], s->player.pos[1],
@@ -708,10 +743,10 @@ static void respawn(hta_android *s)
         s->player.pos[2] = gz;
         s->player.on_ground = true;
     }
-    s->cam.yaw = s->spawn[i].facing;
+    s->cam.yaw = chosen.facing;
     s->cam.pitch = 0.0f;
 
-    hta_vitals_reset(&s->vitals);
+    hta_vitals_reset(s->vit);
     /* You come back with what the map arms you with, not with whatever you
      * had scavenged. */
     bool rearm = s->start_count &&
@@ -732,6 +767,10 @@ static void respawn(hta_android *s)
     s->nade_count = s->nade_max;
 
     s->corpse_up = false;
+    if (s->game_on) {
+        hta_game_revive(&s->game, s->me);
+        hta_game_sync_local(&s->game, &s->player, &s->cam, held_roster(s));
+    }
     hta_log("[player] respawned at spawn %u (%.2f %.2f %.2f)",
             i, s->player.pos[0], s->player.pos[1], s->player.pos[2]);
 }
@@ -890,6 +929,13 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
             s->nade_recipe = hta_particles_add(&s->parts, &s->cache, pbm,
                                                s->nades.det_effect);
         if (s->nade_snd) bank_get(s, s->nade_snd);
+        /* And whatever the bots' rounds throw when they go off. */
+        for (uint32_t p = 0; p < HTA_GAME_MAX_POOLS; p++) {
+            s->pool_recipe[p] = HTA_PART_NO_RECIPE;
+            if (s->game_on && p < s->game.pool_count && s->game.pools[p].det_effect)
+                s->pool_recipe[p] = hta_particles_add(&s->parts, &s->cache, pbm,
+                                                      s->game.pools[p].det_effect);
+        }
         if (hta_particles_build(&s->parts, perr, sizeof(perr))) {
             hta_log("[weapon] particles: %u type(s), %u recipe(s)",
                     s->parts.type_count, s->parts.recipe_count);
@@ -998,6 +1044,10 @@ static bool find_named(hta_android *s, const char *name, char *out, size_t outle
     }
     return false;
 }
+
+static void start_game(hta_android *s);
+static void game_gpu_upload(hta_android *s);
+static void game_gpu_free(hta_android *s);
 
 static bool load_map(hta_android *s)
 {
@@ -1231,12 +1281,12 @@ static bool load_map(hta_android *s)
                     }
                 }
             }
-            if (hta_vitals_load(&s->vitals, &s->cache))
+            if (hta_vitals_load(s->vit, &s->cache))
                 hta_log("[player] %.0f health, %.0f shield, back in %.1fs at %.0f%%/s"
                         "; a fall hurts past %.1f wu/s and kills at %.1f",
-                        s->vitals.max_health, s->vitals.max_shield,
-                        s->vitals.recharge_delay, s->vitals.recharge_rate * 100.0f,
-                        s->vitals.fall_harmful_min, s->vitals.fall_fatal);
+                        s->vit->max_health, s->vit->max_shield,
+                        s->vit->recharge_delay, s->vit->recharge_rate * 100.0f,
+                        s->vit->fall_harmful_min, s->vit->fall_fatal);
             /* Somebody to shoot at, out in front of the spawn. */
             {
                 char berr[HTA_ERRLEN];
@@ -1434,7 +1484,304 @@ static bool load_map(hta_android *s)
     s->have_mesh = true;
     s->map_loaded = true;
     snprintf(s->status, sizeof(s->status), "loaded %s", s->cache.name);
+    start_game(s);
+    /* Again, now the game's rounds exist: their detonations need particle
+     * recipes built alongside the held weapon's. */
+    if (s->game_on && s->held_count) equip_weapon(s, s->held[s->held_slot]);
     return true;
+}
+
+/* ------------------------------- the game ------------------------------ */
+
+/* What the Java HUD draws over the game: the announcer's banner, where you
+ * stand, the kill feed and, at the end, the scoreboard. Sections are
+ * separated by 0x1E, lines by '\n'. Written on the game thread, read by the
+ * HUD's own redraw; a torn read shows one odd frame of text, nothing worse. */
+static char g_game_text[1536];
+
+/* How long a feed line and a banner stay up. Ours: Halo fades its kill
+ * messages after a few seconds and the tag does not say how many. */
+#define HTA_FEED_TIME    6.0f
+#define HTA_BANNER_TIME  3.0f
+/* Seconds the scoreboard shows after a game before the next begins. Ours. */
+#define HTA_POSTGAME     10.0f
+
+static uint32_t find_sound(const hta_cache *c, const char *path)
+{
+    for (uint32_t i = 0; i < c->tag_count; i++) {
+        hta_tag_entry t;
+        char p[256];
+        if (!hta_cache_tag(c, i, &t) || t.primary_class != HTA_TAG_SND) continue;
+        if (hta_cache_tag_path(c, &t, p, sizeof(p)) && !strcasecmp(p, path)) return t.tag_id;
+    }
+    return 0;
+}
+
+static int32_t held_roster(hta_android *s)
+{
+    if (!s->game_on || !s->held_count) return -1;
+    return hta_game_weapon_index(&s->game, s->held[s->held_slot]);
+}
+
+static void feed_push(hta_android *s, const char *text)
+{
+    for (int i = 3; i > 0; i--) {
+        memcpy(s->feed[i], s->feed[i - 1], sizeof(s->feed[i]));
+        s->feed_age[i] = s->feed_age[i - 1];
+    }
+    snprintf(s->feed[0], sizeof(s->feed[0]), "%s", text);
+    s->feed_age[0] = 0.0f;
+    hta_log("[game] %s", text);
+}
+
+static void start_game(hta_android *s)
+{
+    char err[HTA_ERRLEN];
+    const hta_resource_map *bm = s->bitmaps_ok ? &s->bitmaps_rm : NULL;
+    if (!hta_game_load(&s->game, &s->cache, bm, &s->col, err, sizeof(err))) {
+        hta_log("[game] not playable: %s", err);
+        return;
+    }
+    hta_log("[game] %s", err);
+    int bots = s->net_enabled ? 0 : s->bot_count;
+    if (bots > 0) {
+        double t0 = hta_time_seconds();
+        hta_nav_params prm = { s->game.phys.radius, s->game.phys.coll_stand,
+                               s->game.phys.max_slope, 1.0f };
+        /* Built once per map and physics, then read back from app storage. */
+        char navpath[600] = "";
+        const char *ext = s->app->activity->externalDataPath;
+        uint32_t key = s->cache.crc32 ^ (uint32_t)(prm.radius * 1e4f) ^
+                       ((uint32_t)(prm.height * 1e4f) << 8) ^ ((uint32_t)(prm.max_slope * 1e4f) << 16);
+        if (ext) snprintf(navpath, sizeof(navpath), "%s/nav-%08x.bin", ext, key);
+        if (navpath[0] && hta_nav_load(&s->nav, navpath, key)) {
+            s->game.nav = &s->nav;
+            hta_log("[game] nav: %u nodes from %s in %.0f ms", s->nav.node_count, navpath,
+                    (hta_time_seconds() - t0) * 1000.0);
+        } else if (hta_nav_build(&s->nav, &s->col, s->mesh.bounds_min, s->mesh.bounds_max,
+                          &prm, err, sizeof(err))) {
+            if (navpath[0] && !hta_nav_save(&s->nav, navpath, key))
+                hta_log("[game] could not keep the nav grid at %s", navpath);
+            s->game.nav = &s->nav;
+            hta_log("[game] nav: %s in %.0f ms", err, (hta_time_seconds() - t0) * 1000.0);
+        } else {
+            hta_log("[game] nav failed (%s): bots will stand still", err);
+        }
+    }
+    if (s->items.loaded) s->game.items = &s->items;
+    s->me = hta_game_add(&s->game, HTA_UNIT_LOCAL, "Player", 0);
+    for (int i = 0; i < bots && i < HTA_GAME_MAX_UNITS - 1; i++)
+        hta_game_add(&s->game, HTA_UNIT_BOT, NULL, 0);
+    hta_game_set_skill(&s->game, (uint8_t)s->bot_skill);
+    /* The local player's health and shield move into the game, carrying
+     * what the tags already gave them. */
+    s->game.units[s->me].vitals = *s->vit;
+    s->vit = &s->game.units[s->me].vitals;
+    if (s->game.unit_count > 1 &&
+        !hta_game_view_load(&s->gview, &s->game, bm, s->game.unit_count, err, sizeof(err)))
+        hta_log("[game] bodies: %s", err);
+    else if (s->game.unit_count > 1)
+        hta_log("[game] %s", err);
+    static const char *const LINES[HTA_LINE_COUNT] = {
+        NULL,
+        "sound\\dialog\\multiplayer1\\slayer",
+        "sound\\dialog\\multiplayer1\\double_kill",
+        "sound\\dialog\\multiplayer1\\triple_kill",
+        "sound\\dialog\\multiplayer1\\killtacular",
+        "sound\\dialog\\multiplayer1\\killing_spree",
+        "sound\\dialog\\multiplayer1\\running_riot",
+        "sound\\dialog\\multiplayer1\\game_over",
+    };
+    for (int l = 1; l < HTA_LINE_COUNT; l++) {
+        s->line_snd[l] = find_sound(&s->cache, LINES[l]);
+        if (s->line_snd[l]) bank_get(s, s->line_snd[l]);
+    }
+    for (uint32_t p = 0; p < s->game.pool_count; p++)
+        if (s->game.pools[p].detonation_snd) bank_get(s, s->game.pools[p].detonation_snd);
+    s->game_on = true;
+    hta_game_start(&s->game);
+    /* The practice target is gone: there are real people to shoot now. */
+    if (bots > 0) hta_bot_free(&s->bot);
+    hta_log("[game] Slayer: you and %d bot(s) at skill %d, first to %d",
+            bots, s->bot_skill, s->game.score_limit);
+}
+
+static void game_gpu_upload(hta_android *s)
+{
+    if (!s->game_on || !s->gfx) return;
+    char err[HTA_ERRLEN];
+    for (uint32_t i = 0; i < s->game.unit_count; i++)
+        if ((int32_t)i != s->me && s->gview.actor[i].loaded && !s->gpu_units[i])
+            s->gpu_units[i] = hta_gfx_mesh_upload_dynamic_world(s->gfx,
+                &s->gview.actor[i].mesh, err, sizeof(err));
+    for (uint32_t w = 0; w < s->game.weapon_count; w++)
+        if (s->gview.have_weapon[w] && !s->gpu_held[w])
+            s->gpu_held[w] = hta_gfx_mesh_upload(s->gfx, &s->gview.weapon_mesh[w], err, sizeof(err));
+    for (uint32_t p = 0; p < s->game.pool_count; p++)
+        if (s->game.pools[p].mesh.index_count && !s->gpu_pools[p])
+            s->gpu_pools[p] = hta_gfx_mesh_upload_dynamic_world(s->gfx,
+                &s->game.pools[p].mesh, err, sizeof(err));
+}
+
+static void game_gpu_free(hta_android *s)
+{
+    for (uint32_t i = 0; i < HTA_GAME_MAX_UNITS; i++)
+        if (s->gpu_units[i]) { hta_gfx_mesh_free(s->gfx, s->gpu_units[i]); s->gpu_units[i] = NULL; }
+    for (uint32_t w = 0; w < HTA_GAME_MAX_WEAPONS; w++)
+        if (s->gpu_held[w]) { hta_gfx_mesh_free(s->gfx, s->gpu_held[w]); s->gpu_held[w] = NULL; }
+    for (uint32_t p = 0; p < HTA_GAME_MAX_POOLS; p++)
+        if (s->gpu_pools[p]) { hta_gfx_mesh_free(s->gfx, s->gpu_pools[p]); s->gpu_pools[p] = NULL; }
+}
+
+/* Everything the game did this frame, turned into sound, words and dust. */
+static void game_events(hta_android *s)
+{
+    hta_game_event e;
+    char buf[96];
+    while (hta_game_pop(&s->game, &e)) {
+        switch (e.kind) {
+        case HTA_EV_FIRE:
+            if (e.a == s->me || e.weapon < 0 || e.weapon >= HTA_GAME_MAX_WEAPONS) break;
+            if (!s->unit_fire_known[e.weapon]) {
+                s->unit_fire_known[e.weapon] = 1;
+                s->unit_fire_snd[e.weapon] = hta_effect_first_sound(&s->cache,
+                    s->game.weapons[e.weapon].def.firing_fx_id);
+            }
+            if (s->unit_fire_snd[e.weapon]) play_tag_at(s, s->unit_fire_snd[e.weapon], e.pos, 1.0f);
+            break;
+        case HTA_EV_HIT_WORLD:
+            if (e.weapon >= 0 && e.weapon == held_roster(s)) {
+                play_impact_at(s, e.material, e.pos);
+                if (e.material < 33u && s->impact_recipe[e.material] != HTA_PART_NO_RECIPE)
+                    hta_particles_burst(&s->parts, s->impact_recipe[e.material], e.pos, e.dir);
+            }
+            hta_gun_add_mark(&s->gun, e.pos, e.dir, HTA_MARK_SIZE);
+            break;
+        case HTA_EV_DETONATE:
+            if (e.pool >= 0 && (uint32_t)e.pool < s->game.pool_count) {
+                const hta_projectiles *pl = &s->game.pools[e.pool];
+                if (pl->detonation_snd) play_tag_at(s, pl->detonation_snd, e.pos, 1.0f);
+                if (s->pool_recipe[e.pool] != HTA_PART_NO_RECIPE)
+                    hta_particles_burst(&s->parts, s->pool_recipe[e.pool], e.pos, e.dir);
+                if (pl->blast_radius > 0.0f)
+                    hta_gun_add_mark(&s->gun, e.pos, e.dir, pl->blast_radius);
+            }
+            break;
+        case HTA_EV_PICKUP:
+            if (e.a != s->me) {
+                hta_item_choice ch;
+                char path[96];
+                memset(&ch, 0, sizeof(ch));
+                hta_item_describe(&s->cache, e.tag, path, sizeof(path), &ch);
+                uint32_t snd = ch.pickup_snd;
+                if (!snd) {
+                    hta_weapon_def wd;
+                    if (hta_weapon_load_id(&s->cache, NULL, e.tag, &wd, NULL, NULL, 0))
+                        snd = wd.pickup_snd_id;
+                }
+                if (snd) play_tag_at(s, snd, e.pos, 0.8f);
+            }
+            break;
+        case HTA_EV_KILL:
+            if (e.b == s->me && e.a != s->me) {
+                char fmt[64];
+                if (!hta_ustr_get(&s->cache, s->game.text_tag, 88, fmt, sizeof(fmt)))
+                    snprintf(fmt, sizeof(fmt), "You killed %%s");
+                snprintf(buf, sizeof(buf), fmt, s->game.units[e.a].name);
+                feed_push(s, buf);
+            } else {
+                feed_push(s, e.text);
+            }
+            break;
+        case HTA_EV_ANNOUNCE:
+            if (!e.for_local) break;
+            snprintf(s->banner, sizeof(s->banner), "%s", e.text);
+            s->banner_age = 0.0f;
+            if (e.line > HTA_LINE_NONE && e.line < HTA_LINE_COUNT && s->line_snd[e.line])
+                play_tag(s, s->line_snd[e.line], 1.0f);
+            break;
+        case HTA_EV_GAME_OVER:
+            snprintf(s->banner, sizeof(s->banner), "%s", e.text);
+            s->banner_age = 0.0f;
+            s->over_timer = HTA_POSTGAME;
+            if (s->line_snd[HTA_LINE_GAME_OVER]) play_tag(s, s->line_snd[HTA_LINE_GAME_OVER], 1.0f);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+/* The text the HUD draws, rebuilt a few times a second. */
+static void game_text(hta_android *s, float dt)
+{
+    if (!s->game_on) { g_game_text[0] = 0; return; }
+    s->banner_age += dt;
+    for (int i = 0; i < 4; i++) s->feed_age[i] += dt;
+    char place[96] = "";
+    if (s->me >= 0 && s->game.unit_count > 1)
+        hta_game_place_text(&s->game, s->me, place, sizeof(place));
+    size_t n = 0;
+    n += (size_t)snprintf(g_game_text + n, sizeof(g_game_text) - n, "%s\x1e%s\x1e",
+                          s->banner_age < HTA_BANNER_TIME ? s->banner : "", place);
+    for (int i = 3; i >= 0 && n < sizeof(g_game_text); i--)
+        if (s->feed[i][0] && s->feed_age[i] < HTA_FEED_TIME)
+            n += (size_t)snprintf(g_game_text + n, sizeof(g_game_text) - n, "%s\n", s->feed[i]);
+    if (n < sizeof(g_game_text))
+        n += (size_t)snprintf(g_game_text + n, sizeof(g_game_text) - n, "\x1e");
+    if (s->game.over && n < sizeof(g_game_text)) {
+        int32_t order[HTA_GAME_MAX_UNITS];
+        uint32_t k = hta_game_standings(&s->game, order, HTA_GAME_MAX_UNITS);
+        for (uint32_t i = 0; i < k && n < sizeof(g_game_text); i++) {
+            const hta_unit *u = &s->game.units[order[i]];
+            n += (size_t)snprintf(g_game_text + n, sizeof(g_game_text) - n,
+                                  "%u\t%s\t%d\t%d\t%d\t%d\n", i + 1, u->name, u->score,
+                                  u->kills, u->assists, u->deaths);
+        }
+    }
+}
+
+JNIEXPORT jstring JNICALL
+Java_net_hta_halotrial_GameActivity_nativeGameText(JNIEnv *env, jclass cls)
+{
+    (void)cls;
+    return (*env)->NewStringUTF(env, g_game_text);
+}
+
+/* The bodies, their guns and their rounds, onto the draw list. */
+static uint32_t game_draw(hta_android *s, hta_gfx_dynamic *dyn, uint32_t n)
+{
+    if (!s->game_on || !s->gfx) return n;
+    for (uint32_t i = 0; i < s->game.unit_count && n < HTA_GFX_MAX_DYNAMIC; i++) {
+        if ((int32_t)i == s->me || !s->gview.shown[i] || !s->gpu_units[i]) continue;
+        dyn[n].mesh = s->gpu_units[i];
+        dyn[n].vertices = s->gview.actor[i].posed;
+        dyn[n].vertex_count = s->gview.actor[i].mesh.vertex_count;
+        dyn[n].lit = true;
+        n++;
+    }
+    for (uint32_t p = 0; p < s->game.pool_count && n < HTA_GFX_MAX_DYNAMIC; p++) {
+        if (!s->gpu_pools[p]) continue;
+        dyn[n].mesh = s->gpu_pools[p];
+        dyn[n].vertices = s->game.pools[p].mesh.vertices;
+        dyn[n].vertex_count = s->game.pools[p].mesh.vertex_count;
+        dyn[n].lit = false;
+        n++;
+    }
+    hta_game_held_weapon held[HTA_GAME_MAX_UNITS];
+    uint32_t nh = hta_game_view_weapons(&s->gview, &s->game, s->me, held, HTA_GAME_MAX_UNITS);
+    hta_gfx_instance inst[HTA_GAME_MAX_UNITS];
+    uint32_t ni = 0;
+    for (uint32_t k = 0; k < nh; k++) {
+        if (!s->gpu_held[held[k].weapon]) continue;
+        inst[ni].mesh = s->gpu_held[held[k].weapon];
+        memcpy(inst[ni].model, held[k].model, sizeof(inst[ni].model));
+        inst[ni].first_submesh = inst[ni].submesh_count = 0;
+        inst[ni].lit = true;
+        ni++;
+    }
+    hta_gfx_set_instances(s->gfx, inst, ni);
+    return n;
 }
 
 /* ------------------------------- input ------------------------------- */
@@ -1669,6 +2016,7 @@ static void start_gfx(hta_android *s)
             s->vehicles.upload_frames = HTA_ITEMS_UPLOAD_FRAMES;
             if (!s->gpu_vehicles) hta_log("[gfx] vehicle upload FAILED: %s", err);
         }
+        game_gpu_upload(s);
         if (s->have_fp) {
             s->gpu_fp = hta_gfx_mesh_upload_dynamic(s->gfx, &s->vm.mesh, err, sizeof(err));
             if (!s->gpu_fp) hta_log("[gfx] fp weapon upload FAILED: %s", err);
@@ -1686,6 +2034,7 @@ static void start_gfx(hta_android *s)
 
 static void stop_gfx(hta_android *s)
 {
+    game_gpu_free(s);
     for (int slot=0;slot<2;slot++)
         if (s->gpu_remote[slot]) { hta_gfx_mesh_free(s->gfx,s->gpu_remote[slot]); s->gpu_remote[slot]=NULL; }
     if (s->gpu_vehicles) { hta_gfx_mesh_free(s->gfx, s->gpu_vehicles); s->gpu_vehicles = NULL; }
@@ -1754,6 +2103,30 @@ static void read_net_host(struct android_app *app, char host[64], bool *hosting)
         (*env)->DeleteLocalRef(env,intent);
     }
     (*env)->DeleteLocalRef(env,activity_class);
+}
+
+/* An int extra on the launch intent, or `def`. The setup screen puts the
+ * bot count and their skill there. */
+static int intent_int(struct android_app *app, const char *key, int def)
+{
+    JavaVM *vm=app->activity->vm; JNIEnv *env=NULL;
+    if ((*vm)->AttachCurrentThread(vm,&env,NULL)!=JNI_OK || !env) return def;
+    int out=def;
+    jobject activity=app->activity->clazz;
+    jclass ac=(*env)->GetObjectClass(env,activity);
+    jmethodID gi=(*env)->GetMethodID(env,ac,"getIntent","()Landroid/content/Intent;");
+    jobject intent=gi ? (*env)->CallObjectMethod(env,activity,gi) : NULL;
+    if (intent) {
+        jclass ic=(*env)->GetObjectClass(env,intent);
+        jmethodID get=(*env)->GetMethodID(env,ic,"getIntExtra","(Ljava/lang/String;I)I");
+        jstring k=(*env)->NewStringUTF(env,key);
+        if (get) out=(*env)->CallIntMethod(env,intent,get,k,(jint)def);
+        (*env)->DeleteLocalRef(env,k);
+        (*env)->DeleteLocalRef(env,ic);
+        (*env)->DeleteLocalRef(env,intent);
+    }
+    (*env)->DeleteLocalRef(env,ac);
+    return out;
 }
 
 static void net_action(hta_android *s, uint8_t kind)
@@ -2013,11 +2386,19 @@ void android_main(struct android_app *app)
     static hta_android state;
     memset(&state, 0, sizeof(state));
     state.app = app;
+    state.vit = &state.vitals;
     state.move_pointer = state.look_pointer = -1;
     g_android = &state;
     state.hud_ready = g_hud_wanted;
     char net_host[64]; bool net_hosting=false;
     read_net_host(app,net_host,&net_hosting);
+    /* Three bots at normal unless the setup screen says otherwise. Ours. */
+    state.bot_count = intent_int(app, "bots", 3);
+    state.bot_skill = intent_int(app, "skill", 1);
+    if (state.bot_count < 0) state.bot_count = 0;
+    if (state.bot_count > 7) state.bot_count = 7;
+    if (state.bot_skill < 0) state.bot_skill = 0;
+    if (state.bot_skill > 3) state.bot_skill = 3;
     if (net_host[0]) {
         if (net_hosting) {
             state.net_hosting=hta_net_server_open(&state.host_server,32270);
@@ -2114,6 +2495,9 @@ void android_main(struct android_app *app)
                 state.col.built ? &state.col : NULL, &in, dt);
         }
         atomic_store(&g_vehicle_mode, state.dead ? 0 : driving ? 2 : near_vehicle >= 0 ? 1 : 0);
+        /* Everyone else sees, aims at and is hit by where you are now. */
+        if (state.game_on)
+            hta_game_sync_local(&state.game, &state.player, &state.cam, held_roster(&state));
         if (state.player.footstep && state.col.built) {
             uint8_t mat = hta_collision_ground_material(&state.col,
                                                         state.player.pos[0],
@@ -2124,34 +2508,34 @@ void android_main(struct android_app *app)
         hta_gun_update(&state.gun, dt);
 
         /* What the fall cost, and the shield growing back afterwards. */
-        if (state.player.landed && state.vitals.loaded) {
-            float cost = hta_vitals_land(&state.vitals, state.player.land_speed);
+        if (state.player.landed && state.vit->loaded) {
+            float cost = hta_vitals_land(state.vit, state.player.land_speed);
             if (cost > 0.0f)
                 hta_log("[player] landed at %.1f wu/s for %.0f damage "
                         "(%.0f shield, %.0f health left)",
                         state.player.land_speed, cost,
-                        state.vitals.shield, state.vitals.health);
+                        state.vit->shield, state.vit->health);
         }
         /* The one-shots have to be read BEFORE the update clears them. */
-        if (state.vitals.loaded && !state.dead) {
-            if (state.vitals.shield_broke)
+        if (state.vit->loaded && !state.dead) {
+            if (state.vit->shield_broke)
                 play_tag(&state, state.shield_empty_snd, 1.0f);
-            else if (state.vitals.took_damage)
+            else if (state.vit->took_damage)
                 play_tag(&state, state.shield_hit_snd, 1.0f);
         }
-        hta_vitals_update(&state.vitals, dt);
-        if (state.vitals.loaded) {
-            hta_hud_set_shield(&state.hud, hta_vitals_shield_fraction(&state.vitals));
-            hta_hud_set_health(&state.hud, hta_vitals_health_fraction(&state.vitals));
+        hta_vitals_update(state.vit, dt);
+        if (state.vit->loaded) {
+            hta_hud_set_shield(&state.hud, hta_vitals_shield_fraction(state.vit));
+            hta_hud_set_health(&state.hud, hta_vitals_health_fraction(state.vit));
 
             /* The recharge hum. Its condition is the tag's own and nothing
              * of ours: the shield is growing back exactly when the delay
              * since the last hit has elapsed and it is not yet full. */
-            float sf = hta_vitals_shield_fraction(&state.vitals);
-            float hf = hta_vitals_health_fraction(&state.vitals);
+            float sf = hta_vitals_shield_fraction(state.vit);
+            float hf = hta_vitals_health_fraction(state.vit);
             bool charging = !state.dead &&
-                            state.vitals.since_damage >= state.vitals.recharge_delay &&
-                            state.vitals.shield < state.vitals.max_shield;
+                            state.vit->since_damage >= state.vit->recharge_delay &&
+                            state.vit->shield < state.vit->max_shield;
             hud_loop(&state, HTA_LOOP_SHIELD_CHARGE, state.shield_charge_snd,
                      charging, &state.shield_charge_on);
             hud_loop(&state, HTA_LOOP_SHIELD_LOW, state.shield_low_snd,
@@ -2163,7 +2547,7 @@ void android_main(struct android_app *app)
         }
 
         /* Dying, and coming back. */
-        if (state.vitals.loaded && state.vitals.died && !state.dead) {
+        if (state.vit->loaded && state.vit->died && !state.dead) {
             state.dead = true;
             state.vehicles.driver = -1;
             atomic_store(&g_vehicle_mode, 0);
@@ -2181,10 +2565,10 @@ void android_main(struct android_app *app)
             /* A fall is its own kind of death and the tag has a line for
              * it; a blast is violent; anything else is the quiet one. */
             uint32_t snd = state.death_quiet_snd;
-            if (state.player.landed && state.player.land_speed >= state.vitals.fall_fatal)
+            if (state.player.landed && state.player.land_speed >= state.vit->fall_fatal)
                 snd = state.death_falling_snd ? state.death_falling_snd
                                               : state.death_violent_snd;
-            else if (state.vitals.shield <= 0.0f && state.vitals.health <= 0.0f)
+            else if (state.vit->shield <= 0.0f && state.vit->health <= 0.0f)
                 snd = state.death_violent_snd ? state.death_violent_snd : snd;
             play_tag(&state, snd, 1.0f);
             /* The body stays where it fell and the camera goes to look at
@@ -2304,15 +2688,15 @@ void android_main(struct android_app *app)
                     }
                     break;
                 case HTA_ITEM_HEALTH:
-                    if (state.vitals.loaded &&
-                        state.vitals.health < state.vitals.max_health) {
-                        state.vitals.health = state.vitals.max_health;
+                    if (state.vit->loaded &&
+                        state.vit->health < state.vit->max_health) {
+                        state.vit->health = state.vit->max_health;
                         taken = true;
                     }
                     break;
                 case HTA_ITEM_OVERSHIELD:
-                    if (state.vitals.loaded) {
-                        state.vitals.shield = state.vitals.max_shield *
+                    if (state.vit->loaded) {
+                        state.vit->shield = state.vit->max_shield *
                                               HTA_OVERSHIELD_MULT;
                         state.powerup = HTA_ITEM_OVERSHIELD;
                         state.powerup_timer = item->powerup_time;
@@ -2375,20 +2759,20 @@ void android_main(struct android_app *app)
         if (state.powerup_timer > 0.0f) {
             float was = state.powerup_timer;
             state.powerup_timer -= dt;
-            if (state.powerup == HTA_ITEM_OVERSHIELD && state.vitals.loaded &&
-                state.vitals.shield > state.vitals.max_shield && was > 0.0f) {
-                float extra = state.vitals.max_shield *
+            if (state.powerup == HTA_ITEM_OVERSHIELD && state.vit->loaded &&
+                state.vit->shield > state.vit->max_shield && was > 0.0f) {
+                float extra = state.vit->max_shield *
                               (HTA_OVERSHIELD_MULT - 1.0f);
-                state.vitals.shield -= extra * (dt / was);
-                if (state.vitals.shield < state.vitals.max_shield)
-                    state.vitals.shield = state.vitals.max_shield;
+                state.vit->shield -= extra * (dt / was);
+                if (state.vit->shield < state.vit->max_shield)
+                    state.vit->shield = state.vit->max_shield;
             }
             if (state.powerup_timer <= 0.0f) {
                 state.powerup_timer = 0.0f;
                 if (state.powerup == HTA_ITEM_OVERSHIELD &&
-                    state.vitals.loaded &&
-                    state.vitals.shield > state.vitals.max_shield)
-                    state.vitals.shield = state.vitals.max_shield;
+                    state.vit->loaded &&
+                    state.vit->shield > state.vit->max_shield)
+                    state.vit->shield = state.vit->max_shield;
                 hta_log("[items] powerup over");
                 state.powerup = HTA_ITEM_NONE;
             }
@@ -2455,7 +2839,12 @@ void android_main(struct android_app *app)
                  * damage` tag -- 1000, at a x1.00 multiplier against both
                  * armour and shield, so it kills outright. Halo's front /
                  * back distinction is engine logic, not tag data. */
-                if (state.bot.loaded && state.melee_damage > 0.0f) {
+                if (state.game_on) {
+                    /* The held weapon's own `player melee damage` -- 56 --
+                     * and a kill from behind, for everyone alike. */
+                    if (hta_game_melee(&state.game, state.me) >= 0)
+                        hta_log("[game] melee connected");
+                } else if (state.bot.loaded && state.melee_damage > 0.0f) {
                     float fwd[3];
                     hta_camera_forward(&state.cam, fwd);
                     float reach[3];
@@ -2498,12 +2887,29 @@ void android_main(struct android_app *app)
                     float dir[3];
                     if (hta_gun_aim(&state.gun, &state.cam, dir)) {
                         float bt = -1.0f, bhit[3];
-                        bool onbot = hta_bot_ray(&state.bot, state.cam.pos, dir,
-                                                 HTA_GUN_RANGE, &bt, bhit);
+                        int32_t who = -1;
+                        bool onbot;
+                        if (state.game_on) {
+                            float wt = HTA_GUN_RANGE, wh[3], wn[3];
+                            bool wall = state.col.built &&
+                                hta_collision_ray(&state.col, state.cam.pos, dir,
+                                                  HTA_GUN_RANGE, &wt, wh, wn);
+                            who = hta_game_ray(&state.game, state.cam.pos, dir,
+                                               wall ? wt : HTA_GUN_RANGE, state.me, &bt, bhit);
+                            onbot = who >= 0;
+                        } else {
+                            onbot = hta_bot_ray(&state.bot, state.cam.pos, dir,
+                                                HTA_GUN_RANGE, &bt, bhit);
+                        }
                         hta_gun_impact(&state.gun,
                                        state.col.built ? &state.col : NULL,
                                        &state.cam, dir, onbot ? bt : -1.0f);
-                        if (onbot) {
+                        if (onbot && who >= 0) {
+                            int pellets = state.weap.projectiles_per_shot > 0
+                                        ? state.weap.projectiles_per_shot : 1;
+                            hta_game_hurt_jpt(&state.game, who, state.me,
+                                              state.impact_jpt, pellets, bhit);
+                        } else if (onbot) {
                             /* What a round does depends on WHAT it hits:
                              * the same shotgun pellet is 8 into armour and
                              * 4 into a shield, and a plasma bolt is the
@@ -2672,7 +3078,13 @@ void android_main(struct android_app *app)
                 if (state.nade_recipe != HTA_PART_NO_RECIPE)
                     hta_particles_burst(&state.parts, state.nade_recipe,
                                         state.nades.hit, state.nades.hit_normal);
-                if (state.bot.loaded && state.nades.blast_damage > 0.0f) {
+                if (state.game_on && state.nades.blast_damage > 0.0f) {
+                    /* Everyone in it, you included, and it is yours. */
+                    hta_game_blast(&state.game, state.me, state.nades.hit,
+                                   state.nades.blast_damage, state.nades.blast_core,
+                                   state.nades.blast_damage_radius);
+                }
+                if (!state.game_on && state.bot.loaded && state.nades.blast_damage > 0.0f) {
                     float ctr[3];
                     hta_bot_centre(&state.bot, ctr);
                     float f = blast_falloff(state.nades.hit, ctr,
@@ -2682,7 +3094,7 @@ void android_main(struct android_app *app)
                         hta_bot_damage(&state.bot,
                                        state.nades.blast_damage * f, ctr);
                 }
-                if (state.vitals.loaded && state.nades.blast_damage > 0.0f) {
+                if (!state.game_on && state.vit->loaded && state.nades.blast_damage > 0.0f) {
                     float dx = state.cam.pos[0] - state.nades.hit[0];
                     float dy = state.cam.pos[1] - state.nades.hit[1];
                     float dz = state.cam.pos[2] - state.nades.hit[2];
@@ -2694,7 +3106,7 @@ void android_main(struct android_app *app)
                         if (dist > core && r > core)
                             f = 1.0f - (dist - core) / (r - core);
                         if (f > 0.0f)
-                            hta_vitals_damage(&state.vitals,
+                            hta_vitals_damage(state.vit,
                                               state.nades.blast_damage * f);
                     }
                 }
@@ -2712,7 +3124,24 @@ void android_main(struct android_app *app)
             /* A round that reaches the body stops there. The projectile
              * layer only knows about the world, so this is the one place a
              * flying round is asked whether it has hit somebody. */
-            if (state.bot.loaded && state.bot.state == HTA_BOT_ALIVE) {
+            if (state.game_on) {
+                for (uint32_t q = 0; q < HTA_PROJ_MAX; q++) {
+                    hta_projectile *pr = &state.proj.live[q];
+                    if (!pr->alive) continue;
+                    int32_t who = hta_game_near(&state.game, pr->pos, 0.02f, state.me);
+                    if (who < 0) continue;
+                    hta_game_hurt_jpt(&state.game, who, state.me, state.impact_jpt, 1, pr->pos);
+                    if (state.proj.blast_damage > 0.0f)
+                        hta_game_blast(&state.game, state.me, pr->pos, state.proj.blast_damage,
+                                       state.proj.blast_core, state.proj.blast_damage_radius);
+                    float up[3] = { 0.0f, 0.0f, 1.0f };
+                    if (state.det_recipe != HTA_PART_NO_RECIPE)
+                        hta_particles_burst(&state.parts, state.det_recipe, pr->pos, up);
+                    if (state.proj.detonation_snd)
+                        play_tag_at(&state, state.proj.detonation_snd, pr->pos, 1.0f);
+                    pr->alive = false;
+                }
+            } else if (state.bot.loaded && state.bot.state == HTA_BOT_ALIVE) {
                 for (uint32_t q = 0; q < HTA_PROJ_MAX; q++) {
                     hta_projectile *pr = &state.proj.live[q];
                     if (!pr->alive) continue;
@@ -2754,7 +3183,11 @@ void android_main(struct android_app *app)
                  * full inside 0.6 world units and gone by 2.0 -- which is
                  * why firing one at your own feet is a bad idea in Halo
                  * and now here too. */
-                if (state.bot.loaded && state.proj.blast_damage > 0.0f) {
+                if (state.game_on && state.proj.blast_damage > 0.0f)
+                    hta_game_blast(&state.game, state.me, state.proj.hit,
+                                   state.proj.blast_damage, state.proj.blast_core,
+                                   state.proj.blast_damage_radius);
+                if (!state.game_on && state.bot.loaded && state.proj.blast_damage > 0.0f) {
                     float ctr[3];
                     hta_bot_centre(&state.bot, ctr);
                     float f = blast_falloff(state.proj.hit, ctr,
@@ -2764,7 +3197,7 @@ void android_main(struct android_app *app)
                         hta_bot_damage(&state.bot,
                                        state.proj.blast_damage * f, ctr);
                 }
-                if (state.vitals.loaded && state.proj.blast_damage > 0.0f) {
+                if (!state.game_on && state.vit->loaded && state.proj.blast_damage > 0.0f) {
                     float dx = state.cam.pos[0] - state.proj.hit[0];
                     float dy = state.cam.pos[1] - state.proj.hit[1];
                     float dz = state.cam.pos[2] - state.proj.hit[2];
@@ -2776,7 +3209,7 @@ void android_main(struct android_app *app)
                         if (dist > core && r > core)
                             f = 1.0f - (dist - core) / (r - core);
                         if (f > 0.0f) {
-                            hta_vitals_damage(&state.vitals,
+                            hta_vitals_damage(state.vit,
                                               state.proj.blast_damage * f);
                             hta_log("[player] caught the blast at %.1f wu for %.0f",
                                     dist, state.proj.blast_damage * f);
@@ -2796,6 +3229,23 @@ void android_main(struct android_app *app)
             hta_viewmodel_set_move(&state.vm, speed / run);
         }
 
+        /* Everybody else: the bots think and fight, their rounds fly, the
+         * dead come back and the score is kept. Before the particles, so a
+         * bot's explosion bursts this frame. */
+        if (state.game_on) {
+            hta_game_update(&state.game, dt);
+            game_events(&state);
+            hta_game_view_update(&state.gview, &state.game, state.me, dt);
+            if (state.over_timer > 0.0f) {
+                state.over_timer -= dt;
+                if (state.over_timer <= 0.0f) {
+                    hta_game_start(&state.game);
+                    if (!state.dead) respawn(&state);
+                    hta_log("[game] a new game");
+                }
+            }
+            game_text(&state, dt);
+        }
         hta_particles_update(&state.parts, state.col.built ? &state.col : NULL,
                              &state.cam, dt);
         net_frame(&state,now,dt);
@@ -2901,6 +3351,7 @@ void android_main(struct android_app *app)
                 dynlist[dyncount].lit = true;
                 dyncount++;
             }
+            dyncount = game_draw(&state, dynlist, dyncount);
             if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh,
                               state.gpu_sky, state.gpu_fx,
                               dynlist, dyncount,
@@ -2981,6 +3432,9 @@ done:
             free(state.bank[i].pcm[k]);
     state.bank_count = 0;
     stop_gfx(&state);
+    hta_game_view_free(&state.gview);
+    hta_game_free(&state.game);
+    hta_nav_free(&state.nav);
     hta_collision_free(&state.col);
     hta_vehicles_free(&state.vehicles);
     hta_gun_free(&state.gun);

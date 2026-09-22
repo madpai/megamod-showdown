@@ -45,6 +45,8 @@ typedef struct {
 
     float    pos[3];
     float    yaw;                  /* radians about +Z */
+    /* Every node in the world as of the last place: root . graph pose. */
+    hta_transform node_world[HTA_ANIM_MAX_NODES];
     uint32_t model_id;             /* the body's own, for finding markers */
 
     bool     loaded;
@@ -96,5 +98,15 @@ void hta_actor_update(hta_actor *a, float dt);
 /* Put it at `pos` facing `yaw` and write world-space vertices into
  * `a->posed`. Call after update, before uploading. */
 void hta_actor_place(hta_actor *a, const float pos[3], float yaw);
+
+/* A marker on the body -- its node and the offset within it -- looked up
+ * once, so a held weapon can ride it every frame without the cache. */
+bool hta_actor_find_marker(const hta_actor *a, const hta_cache *c,
+                           const char *marker, int32_t *out_node, float out_offset[3]);
+
+/* Where that marker is after the last place, as a column-major rigid
+ * matrix: the frame a weapon held there is drawn in. */
+void hta_actor_marker_matrix(const hta_actor *a, int32_t node,
+                             const float offset[3], float out[16]);
 
 #endif

@@ -204,6 +204,8 @@ void hta_actor_place(hta_actor *a, const float pos[3], float yaw)
     root.s = 1.0f;
 
     hta_transform d[HTA_ANIM_MAX_NODES];
+    for (uint32_t i = 0; i < a->graph.node_count; i++)
+        hta_xf_mul(&a->node_world[i], &root, &world[i]);
     for (uint32_t i = 0; i < a->graph.node_count; i++) {
         if (a->have_rest[i]) {
             hta_transform bone;
@@ -319,4 +321,41 @@ bool hta_actor_hold(hta_actor *a, const hta_cache *c,
     if (err && errlen)
         snprintf(err, errlen, "%u verts on '%s'", added, node_name);
     return true;
+}
+
+bool hta_actor_find_marker(const hta_actor *a, const hta_cache *c,
+                           const char *marker, int32_t *out_node, float out_offset[3])
+{
+    if (!a || !a->loaded || !c || !marker) return false;
+    char node_name[32];
+    float offset[3];
+    if (!hta_model_marker(c, a->model_id, marker, node_name, offset)) return false;
+    int32_t node = hta_anim_node_index(&a->graph, node_name);
+    if (node < 0) return false;
+    if (out_node) *out_node = node;
+    if (out_offset) for (int k = 0; k < 3; k++) out_offset[k] = offset[k];
+    return true;
+}
+
+void hta_actor_marker_matrix(const hta_actor *a, int32_t node,
+                             const float offset[3], float out[16])
+{
+    hta_transform x;
+    if (!a || node < 0 || (uint32_t)node >= a->graph.node_count) hta_xf_identity(&x);
+    else x = a->node_world[node];
+    if (offset) {
+        hta_transform shift;
+        hta_xf_identity(&shift);
+        for (int k = 0; k < 3; k++) shift.t[k] = offset[k];
+        hta_transform r;
+        hta_xf_mul(&r, &x, &shift);
+        x = r;
+    }
+    /* Rotation columns from the quaternion, then the translation. */
+    float qx = x.q[0], qy = x.q[1], qz = x.q[2], qw = x.q[3];
+    float s = x.s != 0.0f ? x.s : 1.0f;
+    out[0] = (1 - 2*(qy*qy + qz*qz)) * s; out[1] = 2*(qx*qy + qz*qw) * s;     out[2] = 2*(qx*qz - qy*qw) * s;     out[3] = 0;
+    out[4] = 2*(qx*qy - qz*qw) * s;     out[5] = (1 - 2*(qx*qx + qz*qz)) * s; out[6] = 2*(qy*qz + qx*qw) * s;     out[7] = 0;
+    out[8] = 2*(qx*qz + qy*qw) * s;     out[9] = 2*(qy*qz - qx*qw) * s;     out[10] = (1 - 2*(qx*qx + qy*qy)) * s; out[11] = 0;
+    out[12] = x.t[0]; out[13] = x.t[1]; out[14] = x.t[2]; out[15] = 1;
 }

@@ -43,6 +43,10 @@ public class SetupActivity extends Activity {
     private TextView lanAddress;
     private Button play;
     private EditText serverAddress;
+    private Button botsButton, skillButton;
+    private int bots = 3, skill = 1;
+    /* Halo's own four difficulty names. */
+    private static final String[] SKILLS = { "Easy", "Normal", "Heroic", "Legendary" };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -63,7 +67,16 @@ public class SetupActivity extends Activity {
         Button pickSnd = btn("Pick sounds.map (audio)", 0xFF2B6CF6);
         pickSnd.setOnClickListener(v -> pickFile(REQ_PICK_SND));
 
-        play = btn("Play", 0xFF2A7A3A);
+        android.content.SharedPreferences prefs = getSharedPreferences("hta", MODE_PRIVATE);
+        bots = Math.max(0, Math.min(7, prefs.getInt("bots", 3)));
+        skill = Math.max(0, Math.min(3, prefs.getInt("skill", 1)));
+        botsButton = btn("", 0xFF3C4656);
+        botsButton.setOnClickListener(v -> { bots = (bots + 1) % 8; showBotSettings(); });
+        skillButton = btn("", 0xFF3C4656);
+        skillButton.setOnClickListener(v -> { skill = (skill + 1) % 4; showBotSettings(); });
+        showBotSettings();
+
+        play = btn("Play Slayer", 0xFF2A7A3A);
         play.setOnClickListener(v -> launchGame());
         Button host = btn("Host LAN game", 0xFF2A7A3A);
         host.setOnClickListener(v -> launchGame(false, true));
@@ -93,6 +106,10 @@ public class SetupActivity extends Activity {
         root.addView(pickBm);
         root.addView(space(10));
         root.addView(pickSnd);
+        root.addView(space(10));
+        root.addView(botsButton);
+        root.addView(space(6));
+        root.addView(skillButton);
         root.addView(space(10));
         root.addView(play);
         root.addView(space(8));
@@ -274,6 +291,8 @@ public class SetupActivity extends Activity {
             return;
         }
         Intent i = new Intent(this, GameActivity.class);
+        i.putExtra("bots", bots);
+        i.putExtra("skill", skill);
         if (join) {
             String ip = serverAddress.getText().toString().trim();
             if (!ip.matches("[0-9.]{7,15}")) {
@@ -288,6 +307,13 @@ public class SetupActivity extends Activity {
         }
         startActivity(i);
         finish();
+    }
+
+    private void showBotSettings() {
+        botsButton.setText(bots == 0 ? "Bots: none (practice alone)" : "Bots: " + bots);
+        skillButton.setText("Bot difficulty: " + SKILLS[skill]);
+        getSharedPreferences("hta", MODE_PRIVATE).edit()
+                .putInt("bots", bots).putInt("skill", skill).apply();
     }
 
     private TextView tv(String text, float sp, int color, boolean bold) {

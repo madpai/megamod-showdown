@@ -1,0 +1,334 @@
+/* A multiplayer game: who is in it, what they carry, who killed whom, and
+ * when it is over.
+ *
+ * Everything that has to be the same for every player lives here, so that
+ * the same code can run inside a phone, inside a headless server, and inside
+ * a host test with no renderer. A unit is anybody with a body in the game:
+ * the player holding this phone, a bot, or a player on another device. The
+ * local player keeps its rich first-person path in the platform layer and
+ * is mirrored in here every frame; bots and remote players are driven
+ * entirely from here, by an input record the brain or the network fills.
+ *
+ * Damage is attributed. Every hurt names who did it, so a death can be a
+ * kill, a suicide or a fall, and Slayer can score it the way Halo does --
+ * with the Trial's own kill-feed phrasing and announcer lines.
+ *
+ * Portable: no renderer, no audio, no platform. The caller drains the event
+ * queue for the sounds, words and effects.
+ */
+#ifndef HTA_GAME_H
+#define HTA_GAME_H
+
+#include <stdbool.h>
+#include <stdint.h>
+#include "../engine/player.h"
+#include "../engine/vitals.h"
+#include "../engine/ammo.h"
+#include "../engine/projectile.h"
+#include "../engine/pickup.h"
+#include "../engine/gun.h"
+#include "../asset/weapon.h"
+#include "nav.h"
+#include "brain.h"
+
+#define HTA_GAME_MAX_UNITS    16
+#define HTA_GAME_MAX_WEAPONS  24
+#define HTA_GAME_MAX_EVENTS   96
+#define HTA_GAME_MAX_POOLS     4
+#define HTA_GAME_NAME         24
+#define HTA_GAME_NONE         (-1)
+
+/* ---- Slayer's numbers ------------------------------------------------ */
+/* INVENTED: a gametype is a saved file of the player's, not part of any map,
+ * so nothing in the Trial says these. Halo CE's stock Slayer is 25 kills,
+ * no time limit, five seconds to respawn; its multikill window is four
+ * seconds; the Trial's announcer has lines for a spree of five and a riot
+ * of ten. All ledgered in HANDOFF.md. */
+#define HTA_SLAYER_SCORE_LIMIT   25
+#define HTA_SLAYER_RESPAWN        5.0f
+#define HTA_MULTIKILL_WINDOW      4.0f
+#define HTA_SPREE_KILLS           5
+#define HTA_RIOT_KILLS           10
+/* How long after a hit it still counts as the kill, for a victim who then
+ * falls or blows himself up. Ours. */
+#define HTA_CREDIT_WINDOW         5.0f
+/* A swing at someone's back. Halo CE's melee from behind kills outright;
+ * the `jpt!` says 56 and the rest is engine logic. */
+#define HTA_BACKSMACK_MULT        10.0f
+/* How far a swing reaches -- the platform's own HTA_MELEE_REACH. */
+#define HTA_GAME_MELEE_REACH      0.5f
+/* Throw speed, the platform's HTA_GRENADE_THROW. Invented there. */
+#define HTA_GAME_GRENADE_THROW    9.0f
+
+/* ---- The weapon roster, read once ----------------------------------- */
+typedef struct {
+    uint32_t tag;
+    hta_weapon_def def;
+    uint32_t impact_jpt;      /* per projectile, 0 for none */
+    uint32_t melee_jpt;       /* Weapon +916 `player melee damage` */
+    float    melee_damage;    /* what that does to armour */
+    bool     travels;         /* its round is an object with a model */
+    int32_t  pool;            /* which projectile pool flies it, or -1 */
+    float    speed;           /* wu/s of that round, 0 for hitscan */
+    float    blast_damage, blast_radius, blast_core;
+    uint32_t model;           /* third-person `mod2`, 0 if none */
+    char     label[8];        /* Weapon +780, "ar" */
+    char     anim_class[12];  /* the cyborg's stance word for it: "rifle" */
+    bool     z_prefix;        /* the flamethrower and cannon's "zstand" */
+    float    autoaim_angle, autoaim_range;   /* +996, +1000 */
+    float    magnet_angle, magnet_range;     /* +1004, +1008 */
+} hta_game_weapon;
+
+/* ---- A body in the game --------------------------------------------- */
+typedef enum {
+    HTA_UNIT_NONE = 0,
+    HTA_UNIT_LOCAL,     /* this device's player: mirrored, not simulated */
+    HTA_UNIT_BOT,
+    HTA_UNIT_REMOTE     /* another device's player */
+} hta_unit_kind;
+
+/* What drives a unit this update. Look deltas are radians, like the
+ * player's own input. One-shot buttons are consumed by the update. */
+typedef struct {
+    hta_player_input move;
+    bool melee, grenade, reload, swap, pickup;
+} hta_unit_input;
+
+typedef struct {
+    int32_t  weapon;          /* roster index, -1 for an empty hand */
+    hta_ammo ammo;
+} hta_carried;
+
+typedef struct {
+    hta_unit_kind kind;
+    char     name[HTA_GAME_NAME];
+    uint8_t  team;            /* 0 red, 1 blue; free-for-all ignores it */
+
+    hta_player  body;
+    hta_camera  eye;          /* position and look; fov unused */
+    hta_vitals  vitals;
+    hta_unit_input in;
+
+    bool     alive;
+    float    respawn;         /* seconds until back, while dead */
+    float    dead_for;        /* seconds since death, for the corpse */
+    float    death_yaw;
+
+    hta_carried carry[2];
+    uint32_t slot;            /* which of the two is in hand */
+    int      grenades;
+    float    cooldown;        /* seconds until the trigger can fire again */
+    float    error;           /* 0 settled .. 1 bloomed, per the trigger */
+    float    since_shot;
+    float    swing;           /* seconds left of a melee swing */
+    float    throwing;        /* seconds left of a grenade throw */
+
+    /* Score. */
+    int      kills, deaths, suicides, betrayals, assists;
+    int      score;
+    int      spree;           /* kills since the last death */
+    int      multi;           /* kills inside the multikill window */
+    float    multi_timer;
+    int32_t  last_attacker;
+    float    since_attacked;
+    int32_t  attackers[HTA_GAME_MAX_UNITS]; /* for assists: a hit this life */
+
+    /* Cosmetic state for the renderer and the network. */
+    bool     fired;           /* one-shot: a round left this update */
+    bool     meleed, threw, hurt, reloading;
+    float    powerup_timer;
+    uint8_t  powerup;         /* hta_item_kind */
+
+    uint32_t rng;
+} hta_unit;
+
+/* ---- Things the caller turns into sound, words and effects ---------- */
+typedef enum {
+    HTA_EV_NONE = 0,
+    HTA_EV_KILL,          /* a: victim, b: killer (-1 none), weapon */
+    HTA_EV_SPAWN,         /* a */
+    HTA_EV_FIRE,          /* a, weapon, pos (muzzle), dir */
+    HTA_EV_HIT_WORLD,     /* a (shooter), weapon, pos, dir (normal), material */
+    HTA_EV_HIT_UNIT,      /* a: victim, b: attacker, pos, amount */
+    HTA_EV_MELEE,         /* a, b (-1 miss) */
+    HTA_EV_GRENADE,       /* a */
+    HTA_EV_DETONATE,      /* a (owner), pool, pos, dir (normal), material */
+    HTA_EV_PICKUP,        /* a, item tag in `tag` */
+    HTA_EV_ANNOUNCE,      /* text + announcer line id in `line` */
+    HTA_EV_GAME_OVER,     /* a: winner */
+    HTA_EV_RELOAD,        /* a */
+    HTA_EV_SWAP           /* a, weapon */
+} hta_event_kind;
+
+/* The announcer, by line. The Trial's `sound\dialog\multiplayer1\...`. */
+typedef enum {
+    HTA_LINE_NONE = 0,
+    HTA_LINE_SLAYER,
+    HTA_LINE_DOUBLE_KILL,
+    HTA_LINE_TRIPLE_KILL,
+    HTA_LINE_KILLTACULAR,
+    HTA_LINE_KILLING_SPREE,
+    HTA_LINE_RUNNING_RIOT,
+    HTA_LINE_GAME_OVER,
+    HTA_LINE_COUNT
+} hta_line;
+
+typedef struct {
+    hta_event_kind kind;
+    int32_t  a, b;
+    int32_t  weapon;
+    int32_t  pool;
+    float    pos[3], dir[3];
+    float    amount;
+    uint8_t  material;
+    uint32_t tag;
+    hta_line line;
+    bool     for_local;       /* an announcement meant for this device's player */
+    char     text[96];
+} hta_game_event;
+
+/* ---- The game ------------------------------------------------------- */
+typedef struct hta_game {
+    const hta_cache     *cache;
+    const hta_collision *col;    /* static world plus whatever `extra` holds */
+    hta_nav             *nav;    /* borrowed; bots cannot move without it */
+    hta_pickups         *items;  /* borrowed; the platform draws them */
+
+    hta_game_weapon weapons[HTA_GAME_MAX_WEAPONS];
+    uint32_t        weapon_count;
+    int32_t         start_weapon[2];
+    int             start_grenades, max_grenades;
+
+    /* Rounds that fly, for units the game simulates: one pool per
+     * projectile that has a model, plus the frag grenade. The platform
+     * draws their meshes. */
+    hta_projectiles pools[HTA_GAME_MAX_POOLS];
+    int8_t          pool_owner[HTA_GAME_MAX_POOLS][HTA_PROJ_MAX];
+    int32_t         pool_weapon[HTA_GAME_MAX_POOLS];  /* roster index, -1 grenade */
+    uint32_t        pool_count;
+    int32_t         grenade_pool;
+
+    hta_player_physics phys;
+    hta_vitals      vitals_template;
+    hta_spawn_point spawns[64];
+    uint32_t        spawn_count;
+
+    hta_unit        units[HTA_GAME_MAX_UNITS];
+    hta_brain       brains[HTA_GAME_MAX_UNITS];
+    uint32_t        unit_count;
+    int32_t         local;       /* the unit this device plays, or -1 */
+
+    /* Slayer. */
+    int             score_limit;
+    float           respawn_time;
+    bool            teams;
+    bool            over;
+    int32_t         winner;
+    float           time;        /* seconds played */
+    int32_t         leader;      /* who is ahead, for "taken the lead" */
+
+    hta_game_event  events[HTA_GAME_MAX_EVENTS];
+    uint32_t        event_count;
+
+    /* The Trial's words. */
+    uint32_t        text_tag;    /* ui\multiplayer_game_text */
+    uint32_t        names_tag;   /* ui\random_player_names */
+    uint32_t        rng;
+    bool            loaded;
+} hta_game;
+
+/* Reads the roster, the grenade, the biped's physics and vitals, the
+ * spawn points and the Trial's strings. `col` must outlive the game. The
+ * projectile pools load their meshes from `bitmaps` (may be NULL). */
+bool hta_game_load(hta_game *g, const hta_cache *c, const hta_resource_map *bitmaps,
+                   const hta_collision *col, char *err, size_t errlen);
+void hta_game_free(hta_game *g);
+
+/* Start a Slayer game: scores cleared, everyone respawned. */
+void hta_game_start(hta_game *g);
+
+/* Add a unit. Returns its index, or -1. A bot with no name takes one from
+ * the Trial's `random_player_names`. */
+int32_t hta_game_add(hta_game *g, hta_unit_kind kind, const char *name, uint8_t team);
+void    hta_game_remove(hta_game *g, int32_t unit);
+
+/* Roster lookups. */
+int32_t hta_game_weapon_index(const hta_game *g, uint32_t weap_tag);
+const hta_game_weapon *hta_game_held(const hta_game *g, int32_t unit);
+
+/* Give a unit a weapon: into a free hand, or in place of the one held.
+ * Its magazine comes full unless `ammo` says otherwise. */
+void hta_game_give(hta_game *g, int32_t unit, int32_t weapon, const hta_ammo *ammo);
+
+/* Where a unit should come back: away from its enemies. The platform
+ * uses this for the local player's own respawn. */
+void hta_game_pick_spawn(hta_game *g, int32_t unit, float out_pos[3], float *out_facing);
+
+/* The platform has respawned the local player: count it as alive. */
+void hta_game_revive(hta_game *g, int32_t unit);
+
+/* Bot difficulty, 0..3, for bots added from now on and those already in. */
+void hta_game_set_skill(hta_game *g, uint8_t skill);
+
+/* The local player, mirrored in: where it is and where it looks. The
+ * platform keeps simulating it; this is so everyone else can see it, aim at
+ * it and be hit by it. Its vitals are the game's -- the platform reads and
+ * writes g->units[local].vitals directly. */
+void hta_game_sync_local(hta_game *g, const hta_player *body, const hta_camera *eye,
+                         int32_t weapon);
+
+/* One step: bots and remote players move and fight, rounds fly, the dead
+ * come back, and the score is kept. */
+void hta_game_update(hta_game *g, float dt);
+
+/* ---- Damage, from anyone ------------------------------------------- */
+/* A ray against every living unit but `ignore`. The nearest hit's unit, or
+ * -1; `out_t` is the distance along the unit `dir`. */
+int32_t hta_game_ray(const hta_game *g, const float orig[3], const float dir[3],
+                     float max_t, int32_t ignore, float *out_t, float out_hit[3]);
+
+/* Is anyone alive within `reach` of `pos`? For a projectile passing
+ * through, or a swing. */
+int32_t hta_game_near(const hta_game *g, const float pos[3], float reach, int32_t ignore);
+
+/* Hurt a unit by a `jpt!` -- against its shield while it has one, else its
+ * armour -- `count` times (a shotgun's pellets). Attributed to `attacker`. */
+void hta_game_hurt_jpt(hta_game *g, int32_t victim, int32_t attacker,
+                       uint32_t jpt, int count, const float at[3]);
+
+/* Hurt a unit by a plain amount. */
+void hta_game_hurt(hta_game *g, int32_t victim, int32_t attacker, float amount,
+                   const float at[3]);
+
+/* An explosion: everyone inside `radius` takes `damage`, full inside `core`
+ * and tapering to nothing at the edge. */
+void hta_game_blast(hta_game *g, int32_t attacker, const float centre[3],
+                    float damage, float core, float radius);
+
+/* A swing from `unit`'s eye along its look, with its held weapon's own
+ * melee damage -- or everything, from behind. Returns who it hit, or -1.
+ * The platform calls this for the local player; the game does for the rest. */
+int32_t hta_game_melee(hta_game *g, int32_t unit);
+
+/* Centre of a unit's chest. */
+void hta_game_centre(const hta_game *g, int32_t unit, float out[3]);
+
+/* ---- Events --------------------------------------------------------- */
+/* Pop the oldest event. False when there are none. */
+bool hta_game_pop(hta_game *g, hta_game_event *out);
+
+/* ---- Scoreboard ----------------------------------------------------- */
+/* Units ordered by score, best first. Returns how many. */
+uint32_t hta_game_standings(const hta_game *g, int32_t *out, uint32_t max);
+
+/* The line Halo's own HUD shows for the local player: "In first place with
+ * 12 kills" and so on, in the Trial's words. */
+void hta_game_place_text(const hta_game *g, int32_t unit, char *out, size_t outlen);
+
+/* The cyborg's animation for what a unit is doing, e.g. "stand rifle
+ * move-front". The renderer plays it; `action` is set to an overlay name
+ * (fire, melee, reload, throw) for the update in which one starts. */
+void hta_game_anim(const hta_game *g, int32_t unit, char *base, size_t baselen,
+                   char *action, size_t actlen);
+
+#endif
