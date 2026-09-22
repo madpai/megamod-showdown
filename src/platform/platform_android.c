@@ -2024,6 +2024,10 @@ void android_main(struct android_app *app)
             if (!state.net_hosting) hta_log("[net] could not bind LAN host UDP 32270");
         }
         state.net_enabled=hta_net_client_open(&state.net,net_host,32270);
+        if (!state.net_enabled && state.net_hosting) {
+            hta_net_server_close(&state.host_server);
+            state.net_hosting=false;
+        }
         if (net_hosting && !state.net_hosting && state.net_enabled) {
             hta_net_client_close(&state.net); state.net_enabled=false;
         }
