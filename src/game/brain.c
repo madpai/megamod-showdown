@@ -352,7 +352,12 @@ void hta_brain_think(struct hta_game *g, int32_t me, hta_brain *b, float dt)
             want_pitch = 0.0f;
         }
     }
-    /* Standing on a weapon it wants more than what it holds: take it. */
+    /* Standing on a weapon it wants more than what it holds: take it --
+     * the map's, or one somebody dropped. */
+    {
+        int32_t dr = hta_game_drop_near(g, u->body.pos, HTA_DROP_REACH);
+        if (dr >= 0 && want(&g->weapons[g->drops[dr].weapon]) > want(w)) in->pickup = true;
+    }
     if (g->items) {
         int32_t ws = hta_pickups_at_kind(g->items, u->body.pos, HTA_ITEM_WEAPON);
         const hta_item_choice *c = hta_pickups_item(g->items, ws);

@@ -239,7 +239,16 @@ int main(int argc, char **argv)
 
         /* Behind and above the followed unit, looking where it looks. */
         const hta_unit *u = &game.units[follow % bots];
-        if (ride_car >= 0) {
+        int look_drop = -1;
+        if (getenv("HTA_LOOK_DROP"))
+            for (int i = 0; i < HTA_GAME_MAX_DROPS && look_drop < 0; i++)
+                if (game.drops[i].live && game.drops[i].rest) look_drop = i;
+        if (look_drop >= 0) {
+            const hta_game_drop *dr = &game.drops[look_drop];
+            cam.pos[0] = dr->pos[0] - 0.9f; cam.pos[1] = dr->pos[1] - 0.5f; cam.pos[2] = dr->pos[2] + 0.6f;
+            float to[3] = { dr->pos[0]-cam.pos[0], dr->pos[1]-cam.pos[1], dr->pos[2]-cam.pos[2] };
+            cam.yaw = atan2f(to[1], to[0]); cam.pitch = atan2f(to[2], hypotf(to[0], to[1]));
+        } else if (ride_car >= 0) {
             /* Film the car from off its left rear quarter. */
             const hta_vehicle *c = &veh.cars[ride_car];
             float a = c->yaw + 2.4f, dist = 0.9f + c->body_radius;
@@ -318,6 +327,18 @@ int main(int argc, char **argv)
             if (!wgpu[held[k].weapon]) continue;
             inst[ni].mesh = wgpu[held[k].weapon];
             memcpy(inst[ni].model, held[k].model, sizeof(inst[ni].model));
+            inst[ni].first_submesh = inst[ni].submesh_count = 0;
+            inst[ni].lit = true;
+            ni++;
+        }
+        for (int i = 0; i < HTA_GAME_MAX_DROPS && ni < HTA_GFX_MAX_INSTANCES; i++) {
+            const hta_game_drop *dr = &game.drops[i];
+            if (!dr->live || !wgpu[dr->weapon]) continue;
+            float cy = cosf(dr->yaw), sy = sinf(dr->yaw);
+            float m[16] = { cy, sy, 0, 0,   0, 0, 1, 0,   sy, -cy, 0, 0,
+                            dr->pos[0], dr->pos[1], dr->pos[2] + 0.05f, 1 };
+            inst[ni].mesh = wgpu[dr->weapon];
+            memcpy(inst[ni].model, m, sizeof(m));
             inst[ni].first_submesh = inst[ni].submesh_count = 0;
             inst[ni].lit = true;
             ni++;

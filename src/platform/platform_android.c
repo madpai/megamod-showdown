@@ -1713,6 +1713,7 @@ static void start_game(hta_android *s)
         if (s->veh_out_snd) bank_get(s, s->veh_out_snd);
     }
     s->my_car = s->my_seat = -1;
+    s->game.simulate_drops = !s->net_enabled || s->net_hosting;
     s->game.score_limit = s->score_limit;
     s->game.time_limit = (float)s->time_limit_min * 60.0f;
     s->game.respawn_time = s->respawn_delay;
@@ -2039,6 +2040,21 @@ static uint32_t game_draw(hta_android *s, hta_gfx_dynamic *dyn, uint32_t n)
         hta_gfx_instance *in = &g_inst[g_inst_count++];
         in->mesh = s->gpu_held[held[k].weapon];
         memcpy(in->model, held[k].model, sizeof(in->model));
+        in->first_submesh = in->submesh_count = 0;
+        in->lit = true;
+    }
+    /* Weapons on the ground, lying on their side. */
+    for (int i = 0; i < HTA_GAME_MAX_DROPS && g_inst_count < HTA_GFX_MAX_INSTANCES; i++) {
+        const hta_game_drop *d = &s->game.drops[i];
+        if (!d->live || d->weapon < 0 || d->weapon >= HTA_GAME_MAX_WEAPONS ||
+            !s->gpu_held[d->weapon]) continue;
+        float cy = cosf(d->yaw), sy = sinf(d->yaw);
+        hta_gfx_instance *in = &g_inst[g_inst_count++];
+        in->mesh = s->gpu_held[d->weapon];
+        /* Model +X along the yaw, +Y up (on its side), +Z to the side. */
+        float m[16] = { cy, sy, 0, 0,   0, 0, 1, 0,   sy, -cy, 0, 0,
+                        d->pos[0], d->pos[1], d->pos[2] + 0.05f, 1 };
+        memcpy(in->model, m, sizeof(m));
         in->first_submesh = in->submesh_count = 0;
         in->lit = true;
     }
@@ -2958,19 +2974,36 @@ static void net_host_peers(hta_android *s, double now)
     }
 }
 
+/* What this player carries, into the game's copy of them: the game drops
+ * it when they die and tells everybody else what they hold. */
+static void mirror_local(hta_android *s)
+{
+    if (!s->game_on || s->me<0 || s->me>=(int32_t)s->game.unit_count) return;
+    hta_unit *local=&s->game.units[s->me];
+    local->slot=s->held_slot&1u;
+    for (unsigned slot=0;slot<2;slot++)
+        local->carry[slot].weapon=slot<s->held_count ?
+            hta_game_weapon_index(&s->game,s->held[slot]) : -1;
+    local->carry[local->slot].ammo=s->ammo;
+    local->grenades=s->nade_count;
+    local->powerup=s->powerup;
+}
+
+/* Put the gun in hand on the ground: swapped for another, it stays. */
+static void drop_held(hta_android *s)
+{
+    if (!s->game_on || (s->net_enabled && !s->net_hosting)) return;
+    int32_t w=held_roster(s);
+    if (w<0) return;
+    float at[3]={s->player.pos[0],s->player.pos[1],s->player.pos[2]+0.3f};
+    float vel[3]={cosf(s->cam.yaw)*0.6f,sinf(s->cam.yaw)*0.6f,0.8f};
+    hta_game_drop_weapon(&s->game,w,&s->ammo,at,s->cam.yaw,vel);
+}
+
 static void net_host_world(hta_android *s)
 {
     if (!s->game_on || !s->net.connected) return;
-    if (s->me>=0 && s->me<(int32_t)s->game.unit_count) {
-        hta_unit *local=&s->game.units[s->me];
-        local->slot=s->held_slot&1u;
-        for (unsigned slot=0;slot<2;slot++)
-            local->carry[slot].weapon=slot<s->held_count ?
-                hta_game_weapon_index(&s->game,s->held[slot]) : -1;
-        local->carry[local->slot].ammo=s->ammo;
-        local->grenades=s->nade_count;
-        local->powerup=s->powerup;
-    }
+    mirror_local(s);
     hta_net_world w={0};
     w.time=s->game.time; w.round=s->world_round;
     w.bot_count=(uint8_t)s->bot_count; w.over=s->game.over;
@@ -3085,6 +3118,20 @@ static void net_host_world(hta_android *s)
         }
         hta_net_server_vehicles(&s->host_server,&cars);
     }
+    static hta_net_drops drops;
+    memset(&drops,0,sizeof(drops));
+    for (int i=0;i<HTA_GAME_MAX_DROPS && drops.count<HTA_NET_MAX_DROPS;i++) {
+        const hta_game_drop *d=&s->game.drops[i];
+        if (!d->live || d->weapon<0 || d->weapon>=(int32_t)HTA_NET_MAX_WEAPONS) continue;
+        drops.drop[drops.count].weapon=(uint8_t)d->weapon;
+        for (int k=0;k<3;k++) {
+            float v=d->pos[k];
+            drops.drop[drops.count].pos[k]=v>327.0f ? 327.0f : v<-327.0f ? -327.0f : v;
+        }
+        drops.drop[drops.count].yaw=d->yaw;
+        drops.count++;
+    }
+    hta_net_server_drops(&s->host_server,&drops);
 }
 
 /* The host's vehicles, as of its last snapshot and eased between them,
@@ -3410,6 +3457,16 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
     if (!s->net_hosting) net_client_world(s);
     if (!s->net_hosting) net_client_projectiles(s);
     if (!s->net_hosting) net_client_vehicles(s,now);
+    if (!s->net_hosting && s->game_on && s->net.have_drops) {
+        memset(s->game.drops,0,sizeof(s->game.drops));
+        for (uint8_t i=0;i<s->net.drops.count && i<HTA_GAME_MAX_DROPS;i++) {
+            hta_game_drop *d=&s->game.drops[i];
+            d->live=s->net.drops.drop[i].weapon<s->game.weapon_count;
+            d->weapon=s->net.drops.drop[i].weapon;
+            for (int k=0;k<3;k++) d->pos[k]=s->net.drops.drop[i].pos[k];
+            d->yaw=s->net.drops.drop[i].yaw; d->rest=true;
+        }
+    }
     if (s->net.connected && now-s->net_last_send>=0.05) {
         hta_net_control c={0};
         c.id=s->net.id; c.weapon_slot=(uint8_t)(s->held_slot&1u);
@@ -4011,8 +4068,10 @@ void android_main(struct android_app *app)
         vehicle_status(&state, seated, near_car, near_seat);
         bool driving = seated;
         /* Everyone else sees, aims at and is hit by where you are now. */
-        if (state.game_on)
+        if (state.game_on) {
             hta_game_sync_local(&state.game, &state.player, &state.cam, held_roster(&state));
+            if (!state.net_enabled || state.net_hosting) mirror_local(&state);
+        }
         if (state.player.footstep && state.col.built) {
             uint8_t mat = hta_collision_ground_material(&state.col,
                                                         state.player.pos[0],
@@ -4208,7 +4267,16 @@ void android_main(struct android_app *app)
             bool carrying=false;
             for (uint32_t i=0;item && i<state.held_count;i++)
                 if (state.held[i]==item->tag_id) carrying=true;
-            if (item && !carrying) {
+            /* Or one somebody dropped: the host decides. */
+            int32_t dr=state.game_on ? hta_game_drop_near(&state.game,state.player.pos,HTA_DROP_REACH) : -1;
+            bool drop_new=false;
+            if (dr>=0) {
+                drop_new=true;
+                for (uint32_t i=0;i<state.held_count;i++)
+                    if (hta_game_weapon_index(&state.game,state.held[i])==state.game.drops[dr].weapon)
+                        drop_new=false;
+            }
+            if ((item && !carrying) || drop_new) {
                 state.net_pickup_count++;
                 state.hud_swap=false;
             }
@@ -4259,6 +4327,44 @@ void android_main(struct android_app *app)
                 }
             }
 
+            /* A dropped weapon: its ammunition if we carry one like it,
+             * and the gun itself -- with what was left in it -- on SWAP. */
+            if (state.game_on) {
+                int32_t dr = hta_game_drop_near(&state.game, feet, HTA_DROP_REACH);
+                if (dr >= 0) {
+                    hta_game_drop *d = &state.game.drops[dr];
+                    int32_t in_hand = held_roster(&state);
+                    bool carried = false;
+                    for (uint32_t i = 0; i < state.held_count; i++)
+                        if (hta_game_weapon_index(&state.game, state.held[i]) == d->weapon) carried = true;
+                    if (carried && d->weapon == in_hand && state.ammo.reserve < state.ammo.reserve_max) {
+                        state.ammo.reserve += d->ammo.loaded + d->ammo.reserve;
+                        if (state.ammo.reserve > state.ammo.reserve_max)
+                            state.ammo.reserve = state.ammo.reserve_max;
+                        d->live = false;
+                        play_tag(&state, state.weap.pickup_snd_id, 0.8f);
+                    } else if (!carried && state.hud_swap) {
+                        state.hud_swap = false;
+                        int32_t wi;
+                        hta_ammo am;
+                        hta_game_take_drop(&state.game, dr, &wi, &am);
+                        uint32_t tag = state.game.weapons[wi].tag;
+                        if (state.held_count < HTA_CARRY_MAX) {
+                            state.held_slot = state.held_count;
+                            state.held[state.held_count++] = tag;
+                        } else {
+                            drop_held(&state);
+                            state.held[state.held_slot] = tag;
+                        }
+                        equip_weapon(&state, tag);
+                        state.ammo.loaded = am.loaded;
+                        state.ammo.reserve = am.reserve;
+                        play_tag(&state, state.weap.pickup_snd_id, 1.0f);
+                        hta_log("[items] picked up a dropped %s (%d/%d)", state.weap.path,
+                                am.loaded, am.reserve);
+                    }
+                }
+            }
             /* SWAP on a weapon PICKS IT UP; off one it switches between the
              * two you are carrying. Halo splits these across two actions and
              * we have one button, so standing on a gun means you want it. */
@@ -4277,7 +4383,9 @@ void android_main(struct android_app *app)
                         state.held[state.held_count++] = w->tag_id;
                     } else {
                         /* Full: it replaces the one you are holding, which
-                         * is the one you were looking at when you chose. */
+                         * is the one you were looking at when you chose --
+                         * and that one goes on the ground. */
+                        drop_held(&state);
                         state.held[state.held_slot] = w->tag_id;
                     }
                     equip_weapon(&state, w->tag_id);

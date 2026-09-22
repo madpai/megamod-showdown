@@ -251,6 +251,15 @@ static void sessions(void)
     hta_net_client_pump(&b,2.3055);
     assert(b.have_vehicles && b.vehicles.count==2 && b.vehicles.cars[1].index==7 &&
            fabsf(b.vehicles.cars[1].pos[0]-42.5f)<0.01f && b.vehicles.cars[1].occupant[0]==2);
+    static hta_net_drops drops;
+    memset(&drops,0,sizeof(drops)); drops.count=HTA_NET_MAX_DROPS;
+    for (unsigned i=0;i<drops.count;i++) { drops.drop[i].weapon=(uint8_t)(i%9); drops.drop[i].pos[0]=i; drops.drop[i].yaw=3.0f; }
+    assert(hta_net_server_drops(&s,&drops));
+    hta_net_client_pump(&b,2.3057);
+    assert(b.have_drops && b.drops.count==HTA_NET_MAX_DROPS && b.drops.drop[31].weapon==31%9 &&
+           fabsf(b.drops.drop[31].pos[0]-31)<0.01f && fabsf(b.drops.drop[5].yaw-3.0f)<0.001f);
+    drops.drop[0].weapon=HTA_NET_MAX_WEAPONS;
+    assert(!hta_net_server_drops(&s,&drops));
     hta_net_fx fx={.kind=HTA_NET_FX_FIRE,.entity=0,.weapon=1};
     assert(hta_net_server_fx(&s,&fx));
     hta_net_client_pump(&b,2.306);

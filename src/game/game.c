@@ -128,6 +128,7 @@ bool hta_game_load(hta_game *g, const hta_cache *c, const hta_resource_map *bitm
     g->leader = HTA_GAME_NONE;
     g->grenade_pool = -1;
     g->simulate_vehicles = true;
+    g->simulate_drops = true;
     for (uint32_t t = 0; t < HTA_VEHICLE_TYPES; t++) g->vweapon[t][0] = g->vweapon[t][1] = -1;
     g->score_limit = HTA_SLAYER_SCORE_LIMIT;
     g->respawn_time = HTA_SLAYER_RESPAWN;
@@ -490,6 +491,7 @@ void hta_game_start(hta_game *g)
         hta_vehicles_sync(g->vehicles);
     }
     memset(g->vgun, 0, sizeof(g->vgun));
+    memset(g->drops, 0, sizeof(g->drops));
     for (uint32_t i = 0; i < HTA_VEHICLE_MAX; i++) g->vgun[i].last_driver = -1;
     char buf[96];
     hta_game_event e = { .kind = HTA_EV_ANNOUNCE, .a = -1, .b = -1,
@@ -518,6 +520,12 @@ void hta_game_give(hta_game *g, int32_t idx, int32_t weapon, const hta_ammo *amm
     hta_unit *u = &g->units[idx];
     uint32_t s = u->slot & 1u;
     if (u->carry[s].weapon >= 0 && u->carry[s ^ 1u].weapon < 0) s ^= 1u;
+    /* Both hands full: the one in hand goes on the ground. */
+    if (u->carry[s].weapon >= 0 && g->simulate_drops && idx != g->local) {
+        float at[3] = { u->body.pos[0], u->body.pos[1], u->body.pos[2] + 0.3f };
+        float vel[3] = { cosf(u->eye.yaw) * 0.6f, sinf(u->eye.yaw) * 0.6f, 0.8f };
+        hta_game_drop_weapon(g, u->carry[s].weapon, &u->carry[s].ammo, at, u->eye.yaw, vel);
+    }
     u->carry[s].weapon = weapon;
     if (ammo) u->carry[s].ammo = *ammo;
     else hta_ammo_init(&u->carry[s].ammo, &g->weapons[weapon].def);
@@ -709,6 +717,15 @@ static void die(hta_game *g, int32_t idx)
     bool by_vehicle = v->splattered;
     v->splattered = false;
     hta_game_unseat(g, idx);
+    /* The dead drop what they held, as it was. */
+    if (g->simulate_drops) {
+        hta_carried *c = &v->carry[v->slot & 1u];
+        if (c->weapon >= 0) {
+            float at[3] = { v->body.pos[0], v->body.pos[1], v->body.pos[2] + 0.4f };
+            float vel[3] = { v->body.velocity[0] * 0.5f, v->body.velocity[1] * 0.5f, 0.5f };
+            hta_game_drop_weapon(g, c->weapon, &c->ammo, at, v->eye.yaw, vel);
+        }
+    }
     v->alive = false;
     v->deaths++;
     v->respawn = g->respawn_time;
@@ -943,9 +960,46 @@ static void throw_grenade(hta_game *g, int32_t idx)
 
 /* ---------------------------------------------------------------- items */
 
+static bool take_drops(hta_game *g, int32_t idx)
+{
+    hta_unit *u = &g->units[idx];
+    /* A dropped weapon: its ammo if you carry one, the gun if you ask. */
+    int32_t dr = hta_game_drop_near(g, u->body.pos, HTA_DROP_REACH);
+    if (dr >= 0) {
+        hta_game_drop *d = &g->drops[dr];
+        for (int s = 0; s < 2; s++) {
+            if (u->carry[s].weapon != d->weapon) continue;
+            hta_ammo *a = &u->carry[s].ammo;
+            if (a->reserve >= a->reserve_max) break;
+            a->reserve += d->ammo.loaded + d->ammo.reserve;
+            if (a->reserve > a->reserve_max) a->reserve = a->reserve_max;
+            hta_game_event e = { .kind = HTA_EV_PICKUP, .a = idx, .b = -1,
+                                 .tag = g->weapons[d->weapon].tag };
+            for (int k = 0; k < 3; k++) e.pos[k] = u->body.pos[k];
+            emit(g, &e);
+            d->live = false;
+            return true;
+        }
+        if (d->live && u->in.pickup && u->carry[0].weapon != d->weapon &&
+            u->carry[1].weapon != d->weapon) {
+            int32_t wi;
+            hta_ammo am;
+            hta_game_take_drop(g, dr, &wi, &am);
+            hta_game_give(g, idx, wi, &am);
+            hta_game_event e = { .kind = HTA_EV_PICKUP, .a = idx, .b = -1,
+                                 .tag = g->weapons[wi].tag };
+            for (int k = 0; k < 3; k++) e.pos[k] = u->body.pos[k];
+            emit(g, &e);
+            return true;
+        }
+    }
+    return false;
+}
+
 static void take_items(hta_game *g, int32_t idx)
 {
     hta_unit *u = &g->units[idx];
+    if (take_drops(g, idx)) return;
     hta_pickups *it = g->items;
     if (!it || !it->loaded) return;
     int32_t got = hta_pickups_at(it, u->body.pos);
@@ -1008,6 +1062,95 @@ static void take_items(hta_game *g, int32_t idx)
     for (int k = 0; k < 3; k++) e.pos[k] = u->body.pos[k];
     emit(g, &e);
     hta_pickups_take(it, ws);
+}
+
+/* ---------------------------------------------------------------- drops */
+
+int32_t hta_game_drop_weapon(hta_game *g, int32_t weapon, const hta_ammo *ammo,
+                             const float pos[3], float yaw, const float vel[3])
+{
+    if (!g || weapon < 0 || (uint32_t)weapon >= g->weapon_count || !pos ||
+        g->weapons[weapon].vehicle) return -1;
+    int32_t slot = -1;
+    float oldest = -1.0f;
+    for (int32_t i = 0; i < HTA_GAME_MAX_DROPS; i++) {
+        if (!g->drops[i].live) { slot = i; break; }
+        if (g->drops[i].age > oldest) { oldest = g->drops[i].age; slot = i; }
+    }
+    hta_game_drop *d = &g->drops[slot];
+    memset(d, 0, sizeof(*d));
+    d->live = true;
+    d->weapon = weapon;
+    if (ammo) d->ammo = *ammo;
+    else hta_ammo_init(&d->ammo, &g->weapons[weapon].def);
+    /* A weapon put down is not mid-reload. */
+    hta_ammo_cancel_reload(&d->ammo);
+    for (int k = 0; k < 3; k++) { d->pos[k] = pos[k]; d->vel[k] = vel ? vel[k] : 0.0f; }
+    d->yaw = yaw;
+    return slot;
+}
+
+int32_t hta_game_drop_near(const hta_game *g, const float feet[3], float reach)
+{
+    if (!g || !feet) return -1;
+    int32_t best = -1;
+    float bd = reach;
+    for (int32_t i = 0; i < HTA_GAME_MAX_DROPS; i++) {
+        const hta_game_drop *d = &g->drops[i];
+        if (!d->live) continue;
+        float dz = fabsf(d->pos[2] - feet[2]);
+        if (dz > 0.8f) continue;
+        float dist = hypotf(d->pos[0] - feet[0], d->pos[1] - feet[1]);
+        if (dist < bd) { bd = dist; best = i; }
+    }
+    return best;
+}
+
+bool hta_game_take_drop(hta_game *g, int32_t drop, int32_t *weapon, hta_ammo *ammo)
+{
+    if (!g || drop < 0 || drop >= HTA_GAME_MAX_DROPS || !g->drops[drop].live) return false;
+    if (weapon) *weapon = g->drops[drop].weapon;
+    if (ammo) *ammo = g->drops[drop].ammo;
+    g->drops[drop].live = false;
+    return true;
+}
+
+/* Weapons fall where they are put and lie still once they land. */
+static void drops_update(hta_game *g, float dt)
+{
+    for (int32_t i = 0; i < HTA_GAME_MAX_DROPS; i++) {
+        hta_game_drop *d = &g->drops[i];
+        if (!d->live) continue;
+        d->age += dt;
+        if (d->age >= HTA_DROP_LIFE) { d->live = false; continue; }
+        if (d->rest || !g->col) continue;
+        d->vel[2] -= g->gravity * dt;
+        float step[3] = { d->vel[0] * dt, d->vel[1] * dt, d->vel[2] * dt };
+        float len = sqrtf(step[0]*step[0] + step[1]*step[1] + step[2]*step[2]);
+        float t;
+        if (len > 1e-5f) {
+            float dir[3] = { step[0]/len, step[1]/len, step[2]/len };
+            float nrm[3];
+            if (hta_collision_ray(g->col, d->pos, dir, len + 0.03f, &t, NULL, nrm)) {
+                for (int k = 0; k < 3; k++) d->pos[k] += dir[k] * fmaxf(0.0f, t - 0.03f);
+                if (nrm[2] > 0.6f) { d->rest = true; memset(d->vel, 0, sizeof(d->vel)); }
+                else {
+                    float vn = d->vel[0]*nrm[0] + d->vel[1]*nrm[1] + d->vel[2]*nrm[2];
+                    for (int k = 0; k < 3; k++) d->vel[k] = (d->vel[k] - 2.0f * vn * nrm[k]) * 0.3f;
+                }
+                continue;
+            }
+            for (int k = 0; k < 3; k++) d->pos[k] += step[k];
+        }
+        float gz;
+        if (hta_collision_ground(g->col, d->pos[0], d->pos[1], d->pos[2] + 0.05f, &gz) &&
+            d->pos[2] <= gz + 0.02f) {
+            d->pos[2] = gz + 0.02f;
+            d->rest = true;
+            memset(d->vel, 0, sizeof(d->vel));
+        }
+        if (d->pos[2] < -200.0f) d->live = false;
+    }
 }
 
 /* ---------------------------------------------------------------- vehicles */
@@ -1702,6 +1845,7 @@ void hta_game_update(hta_game *g, float dt)
         if (g->simulate_vehicles && !g->over) splatter(g);
     }
     fly(g, dt);
+    if (g->simulate_drops) drops_update(g, dt);
 
     /* Deaths are noticed here, whatever caused them. */
     for (uint32_t i = 0; i < g->unit_count; i++) {

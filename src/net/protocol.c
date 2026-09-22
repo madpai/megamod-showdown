@@ -10,7 +10,7 @@ void hta_net_u32_write(uint8_t *p, uint32_t v)
 uint32_t hta_net_u32_read(const uint8_t *p)
 { return (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24); }
 
-static bool known(uint8_t t) { return t >= HTA_NET_HELLO && t <= HTA_NET_VEHICLES; }
+static bool known(uint8_t t) { return t >= HTA_NET_HELLO && t <= HTA_NET_DROPS; }
 
 bool hta_net_pack(uint8_t *dst, size_t cap, uint8_t type, uint32_t seq,
                   uint32_t tick, const uint8_t *payload, uint16_t len,
@@ -415,4 +415,47 @@ bool hta_net_vehicles_unpack(const uint8_t *src, size_t len, hta_net_vehicles *v
     if (!hta_net_vehicles_pack(check,sizeof(check),&tmp,&written) ||
         written!=len || memcmp(check,src,len)) return false;
     *v=tmp; return true;
+}
+
+/* ---- drops ------------------------------------------------------------ */
+
+bool hta_net_drops_pack(uint8_t *dst, size_t cap, const hta_net_drops *d, size_t *written)
+{
+    if (!dst || !d || d->count>HTA_NET_MAX_DROPS ||
+        cap<1u+(size_t)d->count*HTA_NET_DROP_BYTES) return false;
+    dst[0]=d->count;
+    for (uint8_t i=0;i<d->count;i++) {
+        uint8_t *o=dst+1u+(size_t)i*HTA_NET_DROP_BYTES;
+        if (d->drop[i].weapon>=HTA_NET_MAX_WEAPONS) return false;
+        o[0]=d->drop[i].weapon;
+        int16_t q;
+        for (unsigned k=0;k<3;k++) {
+            if (!q16(d->drop[i].pos[k],VQ_POS,&q)) return false;
+            u16w(o+1+k*2,(uint16_t)q);
+        }
+        if (!q16(wrapf(d->drop[i].yaw),VQ_ANGLE,&q)) return false;
+        u16w(o+7,(uint16_t)q);
+    }
+    if (written) *written=1u+(size_t)d->count*HTA_NET_DROP_BYTES;
+    return true;
+}
+
+bool hta_net_drops_unpack(const uint8_t *src, size_t len, hta_net_drops *d)
+{
+    if (!src || !d || len<1 || src[0]>HTA_NET_MAX_DROPS ||
+        len!=1u+(size_t)src[0]*HTA_NET_DROP_BYTES) return false;
+    hta_net_drops tmp;
+    memset(&tmp,0,sizeof(tmp));
+    tmp.count=src[0];
+    for (uint8_t i=0;i<tmp.count;i++) {
+        const uint8_t *in=src+1u+(size_t)i*HTA_NET_DROP_BYTES;
+        tmp.drop[i].weapon=in[0];
+        for (unsigned k=0;k<3;k++) tmp.drop[i].pos[k]=(float)(int16_t)u16r(in+1+k*2)/VQ_POS;
+        tmp.drop[i].yaw=(float)(int16_t)u16r(in+7)/VQ_ANGLE;
+    }
+    uint8_t check[1+HTA_NET_MAX_DROPS*HTA_NET_DROP_BYTES];
+    size_t written=0;
+    if (!hta_net_drops_pack(check,sizeof(check),&tmp,&written) ||
+        written!=len || memcmp(check,src,len)) return false;
+    *d=tmp; return true;
 }

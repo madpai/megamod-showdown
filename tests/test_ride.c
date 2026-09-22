@@ -321,6 +321,40 @@ int main(int argc, char **argv)
         CHECK(hta_game_seat_near(&g, a, NULL) != ghost, "red cannot climb onto blue's Ghost");
     }
 
+    printf("\n[weapons on the ground]\n");
+    g.teams = false;
+    memset(g.drops, 0, sizeof(g.drops));
+    put(b, 70.0f, -120.0f, 1.0f, 0);
+    int32_t sniper = -1;
+    for (uint32_t w = 0; w < g.weapon_count; w++) if (!strcmp(g.weapons[w].label, "sr")) sniper = (int32_t)w;
+    CHECK(sniper >= 0, "the sniper rifle is in the roster");
+    g.units[b].carry[0].weapon = sniper;
+    hta_ammo_init(&g.units[b].carry[0].ammo, &g.weapons[sniper].def);
+    g.units[b].carry[0].ammo.loaded = 2;
+    g.units[b].carry[0].ammo.reserve = 5;
+    g.units[b].slot = 0;
+    float at[3] = { g.units[b].body.pos[0], g.units[b].body.pos[1], g.units[b].body.pos[2] };
+    hta_game_hurt(&g, b, a, 1000, NULL);
+    step(1.0f);
+    int32_t dr = hta_game_drop_near(&g, at, 1.0f);
+    CHECK(dr >= 0 && g.drops[dr].weapon == sniper, "the dead drop the gun they held");
+    CHECK(dr >= 0 && g.drops[dr].rest && g.drops[dr].ammo.loaded == 2 && g.drops[dr].ammo.reserve == 5,
+          "it lands, with what was left in it");
+    put(t, at[0], at[1], at[2], 0);
+    g.units[t].carry[0].weapon = g.start_weapon[0];
+    g.units[t].carry[1].weapon = g.start_weapon[1];
+    g.units[t].slot = 0;
+    g.units[t].in.pickup = true;
+    step(0.05f);
+    CHECK(g.units[t].carry[g.units[t].slot].weapon == sniper &&
+          g.units[t].carry[g.units[t].slot].ammo.loaded == 2 &&
+          g.units[t].carry[g.units[t].slot].ammo.reserve == 5, "picked up, it keeps its two and five");
+    int32_t swapped = hta_game_drop_near(&g, g.units[t].body.pos, 1.5f);
+    CHECK(swapped >= 0 && g.drops[swapped].weapon == g.start_weapon[0],
+          "and the rifle it replaced is on the ground");
+    step(HTA_DROP_LIFE + 1.0f);
+    CHECK(hta_game_drop_near(&g, g.units[t].body.pos, 5.0f) < 0, "dropped weapons are cleared away in time");
+
     printf("\n[leaving]\n");
     hta_game_seat(&g, a, car, 0);
     hta_game_remove(&g, a);

@@ -65,6 +65,13 @@
  * (1000, a splatter). The tag has the damage, not the speeds. Ours. */
 #define HTA_SPLATTER_MIN_SPEED    1.0f
 #define HTA_SPLATTER_FULL_SPEED   3.0f
+/* Weapons on the ground: dropped from a swap or by the dead. How many can
+ * lie about, and how long one stays before it is cleared away -- Halo
+ * garbage-collects them; the gametype says when, the map does not. Ours. */
+#define HTA_GAME_MAX_DROPS       32
+#define HTA_DROP_LIFE            30.0f
+/* How close you must stand to take one: the map's own pickup reach. */
+#define HTA_DROP_REACH            0.5f
 /* How far ahead a vehicle gun looks for what the crosshair is on. Ours. */
 #define HTA_VEHICLE_AIM_RANGE   200.0f
 
@@ -89,6 +96,16 @@ typedef struct {
     bool     vehicle;
     int8_t   trigger;
 } hta_game_weapon;
+
+/* A weapon lying where it fell, with what was left in it. */
+typedef struct {
+    bool     live;
+    int32_t  weapon;          /* roster index */
+    hta_ammo ammo;
+    float    pos[3], vel[3], yaw;
+    float    age;
+    bool     rest;
+} hta_game_drop;
 
 /* The state of one vehicle's gun, per trigger. */
 typedef struct {
@@ -269,6 +286,10 @@ typedef struct hta_game {
     float           time;        /* seconds played */
     int32_t         leader;      /* who is ahead, for "taken the lead" */
 
+    hta_game_drop   drops[HTA_GAME_MAX_DROPS];
+    /* True where this device runs the drops (solo, a host). */
+    bool            simulate_drops;
+
     hta_game_event  events[HTA_GAME_MAX_EVENTS];
     uint32_t        event_count;
 
@@ -343,6 +364,16 @@ void hta_game_unseat(hta_game *g, int32_t unit);
 bool hta_game_enclosed(const hta_game *g, int32_t unit);
 /* Where a seated unit's body is: its root in the world. */
 bool hta_game_seat_root(const hta_game *g, int32_t unit, hta_transform *out);
+
+/* ---- Weapons on the ground ----------------------------------------- */
+/* Put a weapon down: falls from `pos` with `vel`. Returns its slot. The
+ * oldest one goes when the ground is full. */
+int32_t hta_game_drop_weapon(hta_game *g, int32_t weapon, const hta_ammo *ammo,
+                             const float pos[3], float yaw, const float vel[3]);
+/* The nearest dropped weapon within reach of `feet`, or -1. */
+int32_t hta_game_drop_near(const hta_game *g, const float feet[3], float reach);
+/* Pick one up: its weapon and ammo out, the slot freed. */
+bool hta_game_take_drop(hta_game *g, int32_t drop, int32_t *weapon, hta_ammo *ammo);
 
 /* ---- Damage, from anyone ------------------------------------------- */
 /* A ray against every living unit but `ignore`. The nearest hit's unit, or

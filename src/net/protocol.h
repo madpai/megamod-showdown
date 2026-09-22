@@ -39,7 +39,7 @@ typedef enum {
      * This is how a LAN lobby finds games without typing an address. */
     HTA_NET_DISCOVER, HTA_NET_INFO, HTA_NET_WORLD, HTA_NET_CONTROL,
     HTA_NET_KILL, HTA_NET_ACK, HTA_NET_FX, HTA_NET_PROJECTILES,
-    HTA_NET_REJECT, HTA_NET_VEHICLES
+    HTA_NET_REJECT, HTA_NET_VEHICLES, HTA_NET_DROPS
 } hta_net_type;
 
 typedef struct {
@@ -172,6 +172,16 @@ bool hta_net_fx_unpack(const uint8_t *src, size_t len, hta_net_fx *fx);
 bool hta_net_projectiles_pack(uint8_t *dst, size_t cap, const hta_net_projectiles *p,
                               size_t *written);
 bool hta_net_projectiles_unpack(const uint8_t *src, size_t len, hta_net_projectiles *p);
+/* Weapons lying on the ground: which, where, which way. */
+#define HTA_NET_MAX_DROPS 32u
+#define HTA_NET_DROP_BYTES 9u
+typedef struct {
+    uint8_t count;
+    struct { uint8_t weapon; float pos[3], yaw; } drop[HTA_NET_MAX_DROPS];
+} hta_net_drops;
+bool hta_net_drops_pack(uint8_t *dst, size_t cap, const hta_net_drops *d, size_t *written);
+bool hta_net_drops_unpack(const uint8_t *src, size_t len, hta_net_drops *d);
+
 bool hta_net_vehicles_pack(uint8_t *dst, size_t cap, const hta_net_vehicles *v,
                            size_t *written);
 bool hta_net_vehicles_unpack(const uint8_t *src, size_t len, hta_net_vehicles *v);
