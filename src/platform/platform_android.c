@@ -372,6 +372,8 @@ typedef struct {
 
 static hta_android *g_android;
 static _Atomic int g_vehicle_mode; /* 0 walk, 1 nearby driver seat, 2 driving */
+/* The pause screen is up: the world holds still and the HUD shows it. */
+static _Atomic int g_paused;
 static bool         g_hud_wanted;
 
 /* ---------------------------- asset loading ---------------------------- */
@@ -1997,6 +1999,27 @@ Java_net_hta_halotrial_GameActivity_nativeMenuTouch(JNIEnv *env, jclass cls, jin
 static _Atomic int g_menu_mode;
 
 JNIEXPORT jint JNICALL
+Java_net_hta_halotrial_GameActivity_nativePaused(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    return atomic_load(&g_paused);
+}
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativePause(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    atomic_store(&g_paused, 1);
+}
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeResume(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    atomic_store(&g_paused, 0);
+}
+
+JNIEXPORT jint JNICALL
 Java_net_hta_halotrial_GameActivity_nativeMenuMode(JNIEnv *env, jclass cls)
 {
     (void)env; (void)cls;
@@ -2164,7 +2187,17 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
         int32_t code = AKeyEvent_getKeyCode(event);
         bool down = (AKeyEvent_getAction(event) == AKEY_EVENT_ACTION_DOWN);
         if (code == AKEYCODE_BACK) {
-            if (down) { hta_log("[input] BACK -> exit"); ANativeActivity_finish(app->activity); }
+            /* In the menu, BACK leaves the app. In a game it pauses, the
+             * way Halo's does; the pause screen offers the way out. */
+            if (down) {
+                if (s->menu_mode || !s->map_loaded) {
+                    hta_log("[input] BACK -> exit");
+                    ANativeActivity_finish(app->activity);
+                } else {
+                    atomic_store(&g_paused, !atomic_load(&g_paused));
+                    hta_log("[input] BACK -> %s", atomic_load(&g_paused) ? "paused" : "resumed");
+                }
+            }
             return 1;
         }
         if (code == AKEYCODE_BUTTON_A || code == AKEYCODE_SPACE) { s->jump_held = down; return 1; }
@@ -2684,6 +2717,7 @@ void android_main(struct android_app *app)
     read_net_host(app,net_host,&net_hosting);
     /* The setup screen asks for the menu first; a LAN launch goes straight in. */
     state.menu_mode = intent_int(app, "menu", 0) != 0 && !net_host[0];
+    atomic_store(&g_paused, 0);
     atomic_store(&g_menu_mode, state.menu_mode ? 1 : 0);
     /* Three bots at normal unless the setup screen says otherwise. Ours. */
     state.bot_count = intent_int(app, "bots", 3);
@@ -2759,6 +2793,16 @@ void android_main(struct android_app *app)
 
         hta_player_input in;
         gather_input(&state, &in, dt);
+        if (atomic_load(&g_paused)) {
+            /* Everything holds: no input, no time. A LAN session keeps
+             * pumping underneath, so the connection survives the pause. */
+            memset(&in, 0, sizeof(in));
+            dt = 0.0f;
+            state.hud_swap = state.hud_zoom = state.hud_melee = false;
+            state.hud_reload = state.hud_grenade = false;
+            state.hud_debug = 0;
+            fire_loop(&state, false);
+        }
         /* A corpse does not steer, shoot or jump. The body still falls --
          * hta_player_update with a blank input keeps gravity and the ground
          * query -- so dying on a slope still slides you down it. */

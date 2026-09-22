@@ -93,6 +93,11 @@ public class GameActivity extends NativeActivity {
     protected void onDestroy() {
         detachHud();
         super.onDestroy();
+        if (returnToMenu) {
+            Intent i = new Intent(getApplicationContext(), SetupActivity.class);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getApplicationContext().startActivity(i);
+        }
     }
 
     private void attachHud() {
@@ -155,6 +160,19 @@ public class GameActivity extends NativeActivity {
     /* 1 while the main menu is up: the overlay draws no controls and hands
      * touches to the menu instead. */
     static native int nativeMenuMode();
+    static native int nativePaused();
+    static native void nativeResume();
+    static native void nativePause();
+
+    private boolean returnToMenu;
+
+    /** Pause screen: leave this game for the main menu. The new activity
+     *  starts only after this one's native thread has exited, so two game
+     *  threads never share the native state. */
+    void backToMenu() {
+        returnToMenu = true;
+        finish();
+    }
     static native void nativeMenuTouch(int action, float x, float y);
 
     static volatile boolean creditsUp;
@@ -207,14 +225,20 @@ public class GameActivity extends NativeActivity {
          * readout above it. Deliberately small and dull -- it is not part of
          * the game. */
         private float dbgCx, dbgCy, dbgR;
+        private float pauseCx, pauseCy, pauseR;
         private int stickPtr = -1, firePtr = -1, jumpPtr = -1, crouchPtr = -1;
         private int reloadPtr = -1, meleePtr = -1, swapPtr = -1, zoomPtr = -1;
         private int nadePtr = -1, dbgPtr = -1;
         private final float[] lastX = new float[16];
         private final float[] lastY = new float[16];
 
+        private final GameActivity owner;
+        private final Paint pauseBtn = new Paint(Paint.ANTI_ALIAS_FLAG);
+
         HudOverlay(GameActivity a) {
             super(a);
+            owner = a;
+            pauseBtn.setColor(0xCC1C3A66);
             setClickable(true);
             ring.setStyle(Paint.Style.STROKE);
             ring.setStrokeWidth(4f);
@@ -280,6 +304,9 @@ public class GameActivity extends NativeActivity {
             nadeR = m * 0.058f;
             nadeCx = w * 0.725f;
             nadeCy = h * 0.90f;
+            pauseR = m * 0.04f;
+            pauseCx = w * 0.955f;
+            pauseCy = h * 0.09f;
             dbgR = m * 0.045f;
             dbgCx = w * 0.035f;
             dbgCy = h * 0.42f;
@@ -327,6 +354,17 @@ public class GameActivity extends NativeActivity {
                     GameActivity.nativeMenuTouch(code, e.getX() / getWidth(), e.getY() / getHeight());
                 return true;
             }
+            if (GameActivity.nativePaused() != 0) {
+                if (e.getActionMasked() == MotionEvent.ACTION_UP) {
+                    float x = e.getX(), y = e.getY(), w = getWidth(), h = getHeight();
+                    if (x > w * 0.35f && x < w * 0.65f) {
+                        if (y > h * 0.44f && y < h * 0.56f) GameActivity.nativeResume();
+                        else if (y > h * 0.60f && y < h * 0.72f) owner.backToMenu();
+                    }
+                }
+                invalidate();
+                return true;
+            }
             int action = e.getActionMasked();
             int idx = e.getActionIndex();
             int id = e.getPointerId(idx);
@@ -357,6 +395,8 @@ public class GameActivity extends NativeActivity {
                 } else if (in(x, y, zoomCx, zoomCy, zoomR * 1.15f) && zoomPtr < 0) {
                     zoomPtr = id;
                     GameActivity.nativeHudZoom();
+                } else if (in(x, y, pauseCx, pauseCy, pauseR * 1.3f)) {
+                    GameActivity.nativePause();
                 } else if (in(x, y, dbgCx, dbgCy, dbgR * 1.25f) && dbgPtr < 0) {
                     dbgPtr = id;
                     GameActivity.nativeHudDebug(0);
@@ -539,6 +579,19 @@ public class GameActivity extends NativeActivity {
                 postInvalidateDelayed(100);
                 return;
             }
+            if (GameActivity.nativePaused() != 0) {
+                /* Halo's pause: the world held behind a veil, two choices. */
+                int w = getWidth(), h = getHeight();
+                c.drawRect(0, 0, w, h, boardBg);
+                c.drawText("PAUSED", w * 0.5f, h * 0.34f, banner);
+                c.drawRect(w * 0.35f, h * 0.44f, w * 0.65f, h * 0.56f, pauseBtn);
+                c.drawRect(w * 0.35f, h * 0.60f, w * 0.65f, h * 0.72f, pauseBtn);
+                c.drawText("RESUME GAME", w * 0.5f, h * 0.515f, label);
+                c.drawText("QUIT TO MAIN MENU", w * 0.5f, h * 0.675f, label);
+                drawGame(c);
+                postInvalidateDelayed(100);
+                return;
+            }
             int vehicleMode = GameActivity.nativeVehicleMode();
             if (vehicleMode != 0) {
                 float savedSize = label.getTextSize();
@@ -552,6 +605,9 @@ public class GameActivity extends NativeActivity {
             c.drawCircle(stickCx, stickCy, stickR, ring);
             c.drawCircle(stickTx, stickTy, stickR * 0.38f, thumb);
 
+            c.drawCircle(pauseCx, pauseCy, pauseR, dbgP);
+            c.drawCircle(pauseCx, pauseCy, pauseR, ring);
+            c.drawText("II", pauseCx, pauseCy + label.getTextSize() * 0.35f, label);
             c.drawCircle(dbgCx, dbgCy, dbgR, dbgP);
             c.drawCircle(dbgCx, dbgCy, dbgR, ring);
             c.drawText("DBG", dbgCx, dbgCy + label.getTextSize() * 0.35f, label);
