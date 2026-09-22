@@ -105,7 +105,7 @@ HTA_MAP=/path/to/your/bloodgulch.map scripts/run_two_players.sh 32270
 
 Desktop controls: WASD move, mouse look, Space jump, Left Ctrl crouch, left
 click fire event, right click melee event, G grenade event, 1/2 weapon slots,
-Escape quit. The Android app's setup screen offers Play (unchanged solo path),
+F1 release/capture mouse, Escape quit. The Android app's setup screen offers Play (unchanged solo path),
 Host LAN game (other players join this device's LAN IPv4), and Join LAN server
 (numeric desktop or Android host IPv4, UDP port 32270). Start
 `./build-host/htanet server 32270 86400` on the desktop first. Both peers must

@@ -16,7 +16,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 echo "Blood Gulch LAN: two windows on UDP $port; logs in scratch/net-live/"
-echo "WASD move, mouse look, Space jump, Ctrl crouch, 1/2 weapon, click fire/melee, G grenade, Esc quit."
+echo "WASD move, mouse look, Space jump, Ctrl crouch, 1/2 weapon, click fire/melee, G grenade, F1 release mouse, Esc quit."
 ./build-host/htaplay "$map" 127.0.0.1 "$port" --position 40 90 \
     >scratch/net-live/a.log 2>&1 & a=$!
 ./build-host/htaplay "$map" 127.0.0.1 "$port" --position 900 90 \

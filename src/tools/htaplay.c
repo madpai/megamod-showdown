@@ -135,7 +135,8 @@ int main(int argc,char **argv)
     SDL_Texture *texture=renderer ? SDL_CreateTexture(renderer,SDL_PIXELFORMAT_RGBA32,
                                                       SDL_TEXTUREACCESS_STREAMING,WIDTH,HEIGHT) : NULL;
     if (!texture) { fprintf(stderr,"SDL video: %s\n",SDL_GetError()); return 1; }
-    if (!auto_seconds) SDL_SetRelativeMouseMode(SDL_TRUE);
+    bool mouse_captured=!auto_seconds;
+    if (mouse_captured) SDL_SetRelativeMouseMode(SDL_TRUE);
     hta_gfx *gfx=hta_gfx_create_offscreen(WIDTH,HEIGHT,err,sizeof(err));
     if (!gfx) { fprintf(stderr,"Vulkan: %s\n",err); return 1; }
     hta_gfx_mesh *world=hta_gfx_mesh_upload(gfx,&mesh,err,sizeof(err));
@@ -161,7 +162,7 @@ int main(int argc,char **argv)
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type==SDL_QUIT) running=false;
-            if (event.type==SDL_MOUSEMOTION && !auto_seconds) {
+            if (event.type==SDL_MOUSEMOTION && mouse_captured) {
                 mouse_yaw-=event.motion.xrel*0.003f;
                 mouse_pitch-=event.motion.yrel*0.003f;
             }
@@ -172,6 +173,10 @@ int main(int argc,char **argv)
             if (event.type==SDL_KEYDOWN && !event.key.repeat) {
                 SDL_Keycode key=event.key.keysym.sym;
                 if (key==SDLK_ESCAPE) running=false;
+                if (key==SDLK_F1) {
+                    mouse_captured=!mouse_captured;
+                    SDL_SetRelativeMouseMode(mouse_captured ? SDL_TRUE : SDL_FALSE);
+                }
                 if (key==SDLK_g) action(&net,HTA_NET_EVENT_GRENADE,weapon,&event_id);
                 if (key==SDLK_1 || key==SDLK_2) {
                     weapon=key==SDLK_1 ? 0 : 1;
