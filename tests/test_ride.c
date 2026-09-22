@@ -355,6 +355,28 @@ int main(int argc, char **argv)
     step(HTA_DROP_LIFE + 1.0f);
     CHECK(hta_game_drop_near(&g, g.units[t].body.pos, 5.0f) < 0, "dropped weapons are cleared away in time");
 
+    printf("\n[motion tracker]\n");
+    {
+        put(a, 60, -120, 1, 0);           /* looking along +x */
+        put(t, 62, -118, 1, 0);           /* ahead and to the left */
+        g.units[t].body.velocity[0] = 2.0f;
+        hta_game_contact con[8];
+        uint32_t nc = hta_game_sensor(&g, a, con, 8);
+        CHECK(nc == 1 && con[0].y > 0.1f && con[0].x < -0.1f, "a runner ahead and to the left shows there");
+        g.units[t].body.velocity[0] = 0.2f;
+        g.units[t].since_shot = 5.0f;
+        CHECK(hta_game_sensor(&g, a, con, 8) == 0, "standing still, nothing");
+        g.units[t].since_shot = 0.2f;
+        CHECK(hta_game_sensor(&g, a, con, 8) == 1, "firing gives you away");
+        g.units[t].since_shot = 5.0f;
+        g.units[t].body.velocity[0] = 2.0f;
+        g.units[t].body.crouch_t = 1.0f;
+        CHECK(hta_game_sensor(&g, a, con, 8) == 0, "crouch-walking stays off it");
+        g.units[t].body.crouch_t = 0.0f;
+        g.units[t].body.pos[0] = 60 + HTA_MOTION_RANGE + 1;
+        CHECK(hta_game_sensor(&g, a, con, 8) == 0, "out of range, nothing");
+    }
+
     printf("\n[leaving]\n");
     hta_game_seat(&g, a, car, 0);
     hta_game_remove(&g, a);

@@ -388,6 +388,10 @@ int main(int argc, char **argv)
                 hta_hud_set_number(&hud, ammo >= 0 ? ammo : wdef.rounds_initial);
             }
             hta_hud_set_zoom(&hud, zoom_level);
+            /* Three contacts on the tracker, to see it working. */
+            hta_hud_blip demo[3] = { { 0.3f, 0.5f, 1.0f, false }, { -0.6f, -0.2f, 1.0f, true },
+                                     { 0.0f, 0.85f, 1.8f, false } };
+            hta_hud_set_blips(&hud, demo, 3);
             hta_hud_layout(&hud, W, H);
             ghud = hta_gfx_mesh_upload_dynamic(g, &hud.mesh, herr, sizeof(herr));
             if (ghud) {

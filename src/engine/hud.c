@@ -1,5 +1,6 @@
 #include "hud.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -694,6 +695,152 @@ static void load_fade(hta_hud *h)
     h->fade_elem = e;
 }
 
+/* globals -> interface bitmaps (304 each): sweep at +112, blip at +192.
+ * hud_globals: motion sensor scale at +728. */
+#define MATG_INTERFACE_BITMAPS 320u
+#define IFB_SWEEP  112u
+#define IFB_BLIP   192u
+#define IFB_HUD_GLOBALS 96u
+#define HUDG_SENSOR_SCALE 728u
+#define HUDG_MP_SCALE     444u
+#define UNHI_SENSOR_BACKGROUND 620u
+#define UNHI_SENSOR_FOREGROUND 724u
+#define UNHI_SENSOR_CENTER     860u
+
+static int add_whole(hta_hud *h, const hta_cache *c, const hta_resource_map *bitmaps,
+                     uint32_t bm, const float tint[4])
+{
+    hta_bitmap_sprite sp;
+    if (!bm || !sprite_or_frame(c, bm, 0, &sp)) return -1;
+    uint32_t tex = hta_mesh_intern_bitmap(&h->mesh, c, bitmaps, bm, sp.bitmap_index);
+    if (tex == ~0u) return -1;
+    return add_elem(h, tex, &sp, (float)h->mesh.textures[tex].width,
+                    (float)h->mesh.textures[tex].height, 0, 0,
+                    HTA_HUD_ANCHOR_TOP_LEFT, tint, -1.0f);
+}
+
+static void load_sensor(hta_hud *h, const hta_cache *c, const hta_resource_map *bitmaps)
+{
+    h->have_sensor = false;
+    for (int i = 0; i < 3; i++) h->sensor_elem[i] = -1;
+    for (int i = 0; i < HTA_HUD_MAX_BLIPS; i++) h->blip_elem[i] = -1;
+    uint32_t unhi = 0;
+    for (uint32_t i = 0; i < c->tag_count; i++) {
+        hta_tag_entry t;
+        char path[192];
+        if (!hta_cache_tag(c, i, &t) || t.indexed ||
+            t.primary_class != HTA_FOURCC('u','n','h','i')) continue;
+        if (hta_cache_tag_path(c, &t, path, sizeof(path)) && strstr(path, "cyborg_mp")) {
+            unhi = t.tag_id; break;
+        }
+    }
+    int32_t ti = hta_cache_find_tag_by_id(c, unhi);
+    hta_tag_entry ut;
+    uint32_t base = 0;
+    if (!unhi || ti < 0 || !hta_cache_tag(c, (uint32_t)ti, &ut) ||
+        !hta_cache_ptr_to_offset(c, ut.tag_data_ptr, &base)) return;
+    uint32_t sweep = 0, blip = 0;
+    float radius = 32.0f;
+    int32_t gi = hta_cache_find_tag_by_class(c, HTA_TAG_MATG);
+    hta_tag_entry gt;
+    uint32_t gb, n = 0, ptr = 0, arr = 0;
+    if (gi >= 0 && hta_cache_tag(c, (uint32_t)gi, &gt) &&
+        hta_cache_ptr_to_offset(c, gt.tag_data_ptr, &gb) &&
+        hta_read_reflexive(c, gb + MATG_INTERFACE_BITMAPS, &n, &ptr) && n &&
+        hta_cache_ptr_to_offset(c, ptr, &arr)) {
+        hta_rd_u32(c, arr + IFB_SWEEP + 12u, &sweep);
+        hta_rd_u32(c, arr + IFB_BLIP + 12u, &blip);
+        uint32_t hudg = 0, ho;
+        hta_rd_u32(c, arr + IFB_HUD_GLOBALS + 12u, &hudg);
+        int32_t hi = hta_cache_find_tag_by_id(c, hudg);
+        hta_tag_entry ht;
+        float sc = 0.0f;
+        if (hi >= 0 && hta_cache_tag(c, (uint32_t)hi, &ht) &&
+            hta_cache_ptr_to_offset(c, ht.tag_data_ptr, &ho) &&
+            hta_rd_f32(c, ho + HUDG_SENSOR_SCALE, &sc) && sc > 1.0f && sc < 200.0f) radius = sc;
+        float mp = 0.0f;
+        h->sensor_scale = 1.0f;
+        if (hi >= 0 && hta_rd_f32(c, ho + HUDG_MP_SCALE, &mp) && mp > 0.2f && mp <= 1.0f)
+            h->sensor_scale = mp;
+    }
+    if (sweep == 0xFFFFFFFFu) sweep = 0;
+    if (blip == 0xFFFFFFFFu || !blip) return;
+    /* Disc, sweep ring, then the view cone and its range label on top. */
+    h->sensor_elem[0] = add_panel(h, c, bitmaps, base, UNHI_SENSOR_BACKGROUND,
+                                  HTA_HUD_ANCHOR_TOP_LEFT, PANEL_COLOR, PANEL_SEQUENCE, -1.0f, NULL);
+    /* The sweep ring is opaque black round its edge: drawn over the disc
+     * it shows as a grey square. It animates the sweep in Halo; the disc
+     * and cone carry the look without it. */
+    (void)sweep;
+    h->sensor_elem[1] = -1;
+    h->sensor_elem[2] = add_panel(h, c, bitmaps, base, UNHI_SENSOR_FOREGROUND,
+                                  HTA_HUD_ANCHOR_TOP_LEFT, PANEL_COLOR, PANEL_SEQUENCE, -1.0f, NULL);
+    if (h->sensor_elem[0] < 0) return;
+    int16_t cx = 32, cy = 32;
+    hta_rd_u16(c, base + UNHI_SENSOR_CENTER, (uint16_t *)&cx);
+    hta_rd_u16(c, base + UNHI_SENSOR_CENTER + 2u, (uint16_t *)&cy);
+    h->sensor_center[0] = cx;
+    h->sensor_center[1] = cy;
+    h->sensor_radius = radius;
+    h->sensor_origin[0] = HTA_HUD_SENSOR_X;
+    h->sensor_origin[1] = HTA_HUD_SENSOR_Y;
+    /* Everything shares the disc's corner in the bottom-left; the sweep
+     * and cone are centred on it. Offsets are canvas px from the corner. */
+    float es = h->sensor_scale > 0.0f ? h->sensor_scale : 1.0f;
+    const hta_hud_elem *disc = &h->elem[h->sensor_elem[0]];
+    float dw = disc->w_px, dh = disc->h_px;
+    for (int i = 0; i < 3; i++) {
+        if (h->sensor_elem[i] < 0) continue;
+        hta_hud_elem *e = &h->elem[h->sensor_elem[i]];
+        e->anchor = HTA_HUD_ANCHOR_BOTTOM_LEFT;
+        e->extra_scale = es;
+        e->offset[0] = HTA_HUD_SENSOR_X + (dw - e->w_px) * 0.5f * es;
+        e->offset[1] = HTA_HUD_SENSOR_Y + (dh - e->h_px) * 0.5f * es;
+    }
+    h->sensor_center[0] = dw * 0.5f * es;
+    h->sensor_center[1] = dh * 0.5f * es;
+    h->sensor_radius *= es;
+    const float red[4] = { 1.0f, 0.25f, 0.15f, 1.0f };
+    for (int i = 0; i < HTA_HUD_MAX_BLIPS; i++) {
+        h->blip_elem[i] = add_whole(h, c, bitmaps, blip, red);
+        if (h->blip_elem[i] < 0) break;
+        h->elem[h->blip_elem[i]].anchor = HTA_HUD_ANCHOR_BOTTOM_LEFT;
+        if (i == 0) h->blip_px = h->elem[h->blip_elem[0]].w_px;
+        h->elem[h->blip_elem[i]].w_px = 0.0f;
+        h->elem[h->blip_elem[i]].h_px = 0.0f;
+    }
+    h->have_sensor = true;
+}
+
+void hta_hud_set_blips(hta_hud *h, const hta_hud_blip *b, uint32_t n)
+{
+    if (!h || !h->have_sensor) return;
+    uint32_t used = 0;
+    for (uint32_t i = 0; i < n && used < HTA_HUD_MAX_BLIPS; i++) {
+        float d = sqrtf(b[i].x * b[i].x + b[i].y * b[i].y);
+        if (d > 1.0f) continue;
+        int32_t ei = h->blip_elem[used];
+        if (ei < 0) break;
+        hta_hud_elem *e = &h->elem[ei];
+        /* The art is a soft dot the size of the disc's quarter: Halo draws
+         * a contact at about a sixth of that. */
+        float size = h->blip_px * 0.28f * (b[i].size > 0.0f ? b[i].size : 1.0f);
+        e->w_px = e->h_px = size;
+        /* Bottom-left anchored: y counts up from the bottom edge. */
+        e->offset[0] = h->sensor_origin[0] + h->sensor_center[0] + b[i].x * h->sensor_radius - size * 0.5f;
+        e->offset[1] = h->sensor_origin[1] + h->sensor_center[1] + b[i].y * h->sensor_radius - size * 0.5f;
+        float *tint = h->mesh.submeshes[e->submesh].tint;
+        if (b[i].friendly) { tint[0] = 1.0f; tint[1] = 0.9f; tint[2] = 0.25f; }
+        else { tint[0] = 1.0f; tint[1] = 0.25f; tint[2] = 0.15f; }
+        tint[3] = 1.0f;
+        used++;
+    }
+    for (uint32_t i = used; i < HTA_HUD_MAX_BLIPS; i++) {
+        if (h->blip_elem[i] < 0) break;
+        h->elem[h->blip_elem[i]].w_px = h->elem[h->blip_elem[i]].h_px = 0.0f;
+    }
+}
+
 bool hta_hud_load(hta_hud *h, const hta_cache *c, const hta_resource_map *bitmaps,
                   const hta_weapon_def *weap, char *err, size_t errlen)
 {
@@ -729,6 +876,7 @@ bool hta_hud_load(hta_hud *h, const hta_cache *c, const hta_resource_map *bitmap
     load_unit(h, c, bitmaps);
     load_weapon_hud(h, c, bitmaps, weap->hud_interface_id, 0);
 
+    load_sensor(h, c, bitmaps);
     load_crosshair(h, c, bitmaps, weap);
     load_scope(h, c, bitmaps, weap);
     load_fade(h);

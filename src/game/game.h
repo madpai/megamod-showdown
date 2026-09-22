@@ -365,6 +365,23 @@ bool hta_game_enclosed(const hta_game *g, int32_t unit);
 /* Where a seated unit's body is: its root in the world. */
 bool hta_game_seat_root(const hta_game *g, int32_t unit, hta_transform *out);
 
+/* ---- The motion tracker -------------------------------------------- */
+/* Retail Halo's tracker reaches 25 m; the Trial's `motion sensor range`
+ * says 20 with no unit and its art is labelled 15m, so neither can be
+ * taken at face value. 25 m in world units. Ours. */
+#define HTA_MOTION_RANGE   (25.0f / 3.048f)
+/* Slower than this is a crouch-walk and does not show. Ours. */
+#define HTA_MOTION_SPEED    0.5f
+/* A shot shows its shooter this long. Ours. */
+#define HTA_MOTION_FIRE     1.0f
+typedef struct {
+    float x, y;      /* right, forward, as fractions of the range */
+    bool  friendly;
+    bool  vehicle;
+} hta_game_contact;
+/* Who `viewer` sees on its tracker. Returns how many were written. */
+uint32_t hta_game_sensor(const hta_game *g, int32_t viewer, hta_game_contact *out, uint32_t max);
+
 /* ---- Weapons on the ground ----------------------------------------- */
 /* Put a weapon down: falls from `pos` with `vel`. Returns its slot. The
  * oldest one goes when the ground is full. */

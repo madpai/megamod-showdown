@@ -1064,6 +1064,38 @@ static void take_items(hta_game *g, int32_t idx)
     hta_pickups_take(it, ws);
 }
 
+/* ---------------------------------------------------------------- sensor */
+
+uint32_t hta_game_sensor(const hta_game *g, int32_t viewer, hta_game_contact *out, uint32_t max)
+{
+    if (!g || viewer < 0 || viewer >= (int32_t)g->unit_count || !out) return 0;
+    const hta_unit *me = &g->units[viewer];
+    float fx = cosf(me->eye.yaw), fy = sinf(me->eye.yaw);
+    uint32_t n = 0;
+    bool car_shown[HTA_VEHICLE_MAX] = { false };
+    for (uint32_t i = 0; i < g->unit_count && n < max; i++) {
+        const hta_unit *u = &g->units[i];
+        if ((int32_t)i == viewer || !u->alive || u->kind == HTA_UNIT_NONE) continue;
+        float dx = u->body.pos[0] - me->body.pos[0], dy = u->body.pos[1] - me->body.pos[1];
+        if (dx * dx + dy * dy > HTA_MOTION_RANGE * HTA_MOTION_RANGE) continue;
+        float speed = hypotf(u->body.velocity[0], u->body.velocity[1]);
+        bool moving = speed > HTA_MOTION_SPEED && (u->body.crouch_t < 0.5f || u->vehicle >= 0);
+        bool shot = u->since_shot < HTA_MOTION_FIRE && u->kind != HTA_UNIT_LOCAL;
+        if (!moving && !shot) continue;
+        /* A vehicle is one big contact, whoever is in it. */
+        if (u->vehicle >= 0 && u->vehicle < (int32_t)HTA_VEHICLE_MAX) {
+            if (car_shown[u->vehicle]) continue;
+            car_shown[u->vehicle] = true;
+        }
+        hta_game_contact *c = &out[n++];
+        c->x = (dx * fy - dy * fx) / HTA_MOTION_RANGE;
+        c->y = (dx * fx + dy * fy) / HTA_MOTION_RANGE;
+        c->friendly = g->teams && u->team == me->team;
+        c->vehicle = u->vehicle >= 0;
+    }
+    return n;
+}
+
 /* ---------------------------------------------------------------- drops */
 
 int32_t hta_game_drop_weapon(hta_game *g, int32_t weapon, const hta_ammo *ammo,
@@ -1794,6 +1826,7 @@ void hta_game_update(hta_game *g, float dt)
         }
         if (u->vehicle >= 0) {
             u->fired = u->meleed = u->threw = u->hurt = false;
+            u->since_shot += dt;
             seated(g, (int32_t)i, dt);
             if (u->vehicle >= 0 && u->kind != HTA_UNIT_LOCAL) {
                 hta_vitals_update(&u->vitals, dt);

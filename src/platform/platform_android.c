@@ -3291,6 +3291,8 @@ static void net_client_world(hta_android *s)
         } else if (!u->alive) u->dead_for+=0.05f;
         u->score=e->score; u->kills=e->kills; u->deaths=e->deaths;
         u->fired=(e->flags&HTA_NET_ENTITY_FIRE)!=0;
+        /* The motion tracker's "fired lately", kept here from the flag. */
+        u->since_shot=u->fired ? 0.0f : u->since_shot+0.05f;
         u->meleed=(e->flags&HTA_NET_ENTITY_MELEE)!=0;
         u->threw=(e->flags&HTA_NET_ENTITY_GRENADE)!=0;
         u->body.on_ground=(e->flags&HTA_NET_ENTITY_GROUNDED)!=0;
@@ -4110,6 +4112,17 @@ void android_main(struct android_app *app)
             if (state.damage_flash_left < 0.0f) state.damage_flash_left = 0.0f;
         }
         atomic_store(&g_damage_flash, (int)(255.0f * state.damage_flash_left / HTA_DAMAGE_FLASH_TIME));
+        if (state.game_on && state.me >= 0) {
+            hta_game_contact con[HTA_HUD_MAX_BLIPS];
+            hta_hud_blip blips[HTA_HUD_MAX_BLIPS];
+            uint32_t nc = state.dead ? 0 : hta_game_sensor(&state.game, state.me, con, HTA_HUD_MAX_BLIPS);
+            for (uint32_t i = 0; i < nc; i++) {
+                blips[i].x = con[i].x; blips[i].y = con[i].y;
+                blips[i].friendly = con[i].friendly;
+                blips[i].size = con[i].vehicle ? 1.8f : 1.0f;
+            }
+            hta_hud_set_blips(&state.hud, blips, nc);
+        }
         if (state.vit->loaded) {
             hta_hud_set_shield(&state.hud, hta_vitals_shield_fraction(state.vit));
             hta_hud_set_health(&state.hud, hta_vitals_health_fraction(state.vit));

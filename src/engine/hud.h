@@ -50,7 +50,12 @@
 #define HTA_HUD_ANCHOR_BOTTOM_RIGHT  3u
 #define HTA_HUD_ANCHOR_CENTER        4u
 
-#define HTA_HUD_MAX_ELEMENTS 48
+#define HTA_HUD_MAX_ELEMENTS 80
+#define HTA_HUD_MAX_BLIPS 16
+/* Where the motion tracker sits: Halo's bottom-left corner, this far in.
+ * On a wide phone that is left of the thumb stick. Ours. */
+#define HTA_HUD_SENSOR_X 4.0f
+#define HTA_HUD_SENSOR_Y 4.0f
 
 typedef struct {
     uint32_t vertex;        /* first of its four */
@@ -112,7 +117,27 @@ typedef struct {
     /* A black sheet over everything, for dying behind. Added last so it
      * draws last; -1 when there was no room for it. */
     int32_t  fade_elem;
+
+    /* The motion tracker: the unit HUD's disc and view cone, the globals'
+     * sweep ring and blip, and a pool of blip elements placed per frame. */
+    bool     have_sensor;
+    int32_t  sensor_elem[3];
+    int32_t  blip_elem[HTA_HUD_MAX_BLIPS];
+    float    blip_px;           /* the blip art's size, canvas px */
+    float    sensor_origin[2];  /* the disc's top-left corner, canvas px */
+    float    sensor_center[2];  /* offset of its centre within that, px */
+    float    sensor_radius;     /* hud_globals `motion sensor scale`, px */
+    float    sensor_scale;      /* hud_globals `hud scale in multiplayer` */
 } hta_hud;
+
+/* One contact on the motion tracker: x right and y forward, -1..1 of the
+ * range; `size` scales the dot; `friendly` paints it yellow, not red. */
+typedef struct {
+    float x, y, size;
+    bool  friendly;
+} hta_hud_blip;
+/* Place this frame's contacts. Beyond the edge they are not drawn. */
+void hta_hud_set_blips(hta_hud *h, const hta_hud_blip *b, uint32_t n);
 
 /* Reads the weapon's `wphi`, decodes its reticle, and reserves geometry.
  * Returns false only on a hard error; a weapon with no crosshair simply
