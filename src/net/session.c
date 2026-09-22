@@ -172,10 +172,12 @@ static void client_packet(hta_net_client *c, const hta_net_packet *p, double now
         uint8_t id=p->payload[0];
         if (id>=1 && id<=HTA_NET_MAX_PLAYERS) {
             c->id=id; c->token=hta_net_u32_read(p->payload+1); c->connected=true;
+            c->last_receive=now;
         } else c->stats.invalid++;
         return;
     }
     if (!c->connected) { c->stats.invalid++; return; }
+    c->last_receive=now;
     switch (p->type) {
     case HTA_NET_PONG:
         if (p->length==8 && hta_net_u32_read(p->payload)==c->token &&
@@ -219,6 +221,17 @@ static void client_packet(hta_net_client *c, const hta_net_packet *p, double now
 void hta_net_client_pump(hta_net_client *c, double now)
 {
     if (!c || c->udp.fd<0) return;
+    if (c->connected && now-c->last_receive>10.0) {
+        c->connected=false; c->id=0; c->token=0;
+        c->last_snapshot_tick=0; c->event_count=0;
+        memset(c->present,0,sizeof(c->present));
+        uint32_t old_nonce=c->nonce;
+        c->nonce=random_word();
+        if (!c->nonce || c->nonce==old_nonce) c->nonce=old_nonce+1u;
+        if (!c->nonce) c->nonce=1;
+        c->last_hello=0; c->last_ping=0;
+        c->stats.dropped++;
+    }
     if (!c->connected && (c->last_hello==0 || now-c->last_hello>=0.25)) {
         uint8_t payload[4]; hta_net_u32_write(payload,c->nonce);
         send_packet(&c->udp,&c->server,&c->stats,HTA_NET_HELLO,&c->sequence,0,payload,4);

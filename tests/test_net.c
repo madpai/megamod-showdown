@@ -122,6 +122,18 @@ static void sessions(void)
     hta_net_server_pump(&s,3.2);
     assert(hta_net_server_count(&s)==0);
     hta_net_server_close(&s);
+
+    /* An unexpectedly lost server clears stale remote state and retries. */
+    assert(hta_net_server_open(&s,0));
+    port=hta_udp_port(&s.udp);
+    assert(hta_net_client_open(&a,"127.0.0.1",port));
+    pump(&s,&a,NULL,20.0);
+    assert(a.connected);
+    uint32_t old_nonce=a.nonce;
+    hta_net_server_close(&s);
+    hta_net_client_pump(&a,31.0);
+    assert(!a.connected && a.id==0 && a.nonce!=old_nonce && !a.present[0]);
+    hta_net_client_close(&a);
 }
 
 int main(void) { codec(); interpolation(); sessions(); puts("net: codec, interpolation, malformed input, two UDP clients, snapshots, events, ping, disconnect OK"); }

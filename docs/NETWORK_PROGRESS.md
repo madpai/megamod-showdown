@@ -90,8 +90,9 @@ gameplay loop's first-person weapon, pickups, audio or vehicles.
   AR/pistol starting slots for visible models.
 - A client can submit a finite but implausible transform; server movement
   authority and plausibility validation are the next major architecture step.
-- No session timeout notification is sent to a disconnected client. Disconnect
-  and server peer expiry do clear server presence.
+- The client clears stale remote state and retries HELLO after ten seconds of
+  server silence; the server expires peers after ten seconds. There is no
+  instant disconnect notification for an unexpectedly lost host.
 
 ## Reproduction
 

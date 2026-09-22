@@ -33,7 +33,7 @@ typedef struct {
     uint32_t last_snapshot_tick;
     uint8_t id;
     bool connected;
-    double last_hello, last_ping, ping_sent;
+    double last_hello, last_ping, ping_sent, last_receive;
     uint32_t ping_nonce;
     hta_net_player players[HTA_NET_MAX_PLAYERS];
     bool present[HTA_NET_MAX_PLAYERS];

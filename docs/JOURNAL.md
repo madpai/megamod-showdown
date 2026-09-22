@@ -38,6 +38,9 @@ was 59/59 at that point. A stale WELCOME nonce is rejected before replacing a li
 The gate now also verifies the APK's `INTERNET` permission (60/60).
 Desktop rendering is capped near 60 fps. The Android setup screen scrolls in
 landscape so the new Host/Join controls remain reachable.
+The next robustness pass made clients clear stale peers and retry the handshake
+after ten seconds without server traffic. A host test now covers a server
+disappearing without a graceful disconnect. The 60-check gate remains green.
 
 Android now has Host LAN and Join LAN server actions, but no device is attached
 to verify them. The headless server owns identity and presence; transforms are

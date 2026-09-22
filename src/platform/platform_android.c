@@ -1768,6 +1768,7 @@ static void net_frame(hta_android *s, double now, float dt)
     if (!s->net_enabled) return;
     if (s->net_hosting) hta_net_server_pump(&s->host_server,now);
     hta_net_client_pump(&s->net,now);
+    if (!s->net.connected) { s->net_spawned=false; s->remote_visible=false; }
     if (s->net.connected && !s->net_spawned && s->spawn_count) {
         hta_spawn_point *sp=&s->spawn[(s->net.id-1u)%s->spawn_count];
         hta_player_spawn(&s->player,sp); s->cam.yaw=sp->facing;

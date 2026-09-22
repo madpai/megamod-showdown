@@ -176,6 +176,7 @@ int main(int argc,char **argv)
             }
         }
         hta_net_client_pump(&net,now);
+        if (!net.connected) { spawned=false; remote_visible=false; }
         if (net.connected && !spawned) {
             hta_spawn_point *sp=&spawns[(net.id-1u)%spawn_count];
             hta_player_spawn(&player,sp); cam.yaw=sp->facing;
