@@ -31,6 +31,12 @@ The next automated run asserted airborne/crouch/pistol snapshots and remote
 action clip starts in both directions: five events received and four clips
 played per client. Position/yaw interpolation moved into a portable helper,
 with a host check for the yaw wrap at ±π.
+The two-client Blood Gulch run is now `scripts/test_two_players.sh`, included
+in `scripts/verify.sh` when the owner's map is available. It requires both
+processes to observe movement, air, crouch, pistol and action clips; the gate
+is 59/59. A stale WELCOME nonce is rejected before replacing a live session.
+Desktop rendering is capped near 60 fps. The Android setup screen scrolls in
+landscape so the new Host/Join controls remain reachable.
 
 Android now has Host LAN and Join LAN server actions, but no device is attached
 to verify them. The headless server owns identity and presence; transforms are

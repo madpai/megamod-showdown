@@ -40,8 +40,9 @@ cd /home/commander/projects/halo-trial-android
 HTA_MAP=/home/commander/halo-trial-data/extract/maps/bloodgulch.map scripts/verify.sh
 ```
 
-58 checks: host build, every unit test twice (synthetic, then against the real
-map), a synthetic-fixture CLI pass, an offscreen render, the APK build, and the
+59 checks: host build, every unit test twice (synthetic, then against the real
+map), a synthetic-fixture CLI pass, an offscreen render, two Blood Gulch client
+processes, the APK build, and the
 APK's contents (arm64 only, no bundled audio, right entry points).
 
 **`verify.sh` must be green before you publish.** If you add a module, add its
@@ -100,7 +101,7 @@ the section below, and update it every time.
 > **Network slice in progress (2026-09-21).** Read
 > [`NETWORK_PROGRESS.md`](NETWORK_PROGRESS.md) and
 > [`NETWORK_ARCHITECTURE.md`](NETWORK_ARCHITECTURE.md). The old 57-check
-> baseline is tagged `net-baseline-2026-09-21`; the current gate is 58/58.
+> baseline is tagged `net-baseline-2026-09-21`; the current gate is 59/59.
 > An automated two-process desktop run on the real Blood Gulch map received
 > remote movement in both directions, with one captured image showing the
 > other Spartan. No two-human or Android device test has happened. Next,

@@ -36,9 +36,10 @@ gameplay loop's first-person weapon, pickups, audio or vehicles.
 
 ## What was demonstrated
 
-- `scripts/verify.sh` with the owner's Blood Gulch map: **58 passed, 0 failed**.
+- `scripts/verify.sh` with the owner's Blood Gulch map: **59 passed, 0 failed**.
   This includes host build/tests, map-backed engine checks, offscreen gameplay
-  renders and the arm64 Android APK build, rerun after Host LAN was added.
+  renders, a three-process multiplayer Blood Gulch regression, and the arm64
+  Android APK build, rerun after Host LAN was added.
   The APK was **not device tested**.
 - `scripts/run_two_clients.sh 32271 4`: two distinct client processes joined
   one headless server, IDs 1 and 2; each received the other's state and fire
@@ -62,6 +63,9 @@ gameplay loop's first-person weapon, pickups, audio or vehicles.
   matching actor clips (`scratch/net-session/a2.log`, `b2.log`). Both exited 0.
   The shared interpolation helper has host checks for midpoint, clamping and
   shortest-path yaw across the ±π wrap.
+- `scripts/test_two_players.sh` now makes that asset-backed check repeatable
+  and part of `scripts/verify.sh` when the map and desktop graphics dependencies
+  are available. The latest full gate passed 59/59 after this addition.
 
 ## Known limits and risks
 
@@ -89,6 +93,7 @@ gameplay loop's first-person weapon, pickups, audio or vehicles.
 ```
 HTA_MAP=/path/to/your/bloodgulch.map scripts/verify.sh
 scripts/run_two_clients.sh 32270 8
+HTA_MAP=/path/to/your/bloodgulch.map scripts/test_two_players.sh
 HTA_MAP=/path/to/your/bloodgulch.map scripts/run_two_players.sh 32270
 ```
 

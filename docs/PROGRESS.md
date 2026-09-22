@@ -84,7 +84,8 @@ Run `scripts/device_test.sh` with the S24+ connected to convert remaining 🟡.
   interface so wire-compatibility with real Halo servers can be attempted later
   without rearchitecting. See Decisions.
 - ✅ Versioned UDP protocol, bounded server/client sessions, headless test,
-  and Android APK build. Current gate: 58/58. See `NETWORK_PROGRESS.md`.
+  two desktop client regression, and Android APK build. Current gate: 59/59.
+  See `NETWORK_PROGRESS.md`.
 - ✅ Two separate desktop clients connect to one headless server on loopback,
   assign IDs and receive movement snapshots/events in automated tests.
 - 🟡 Remote Spartan visibly rendered in one captured automated Blood Gulch
