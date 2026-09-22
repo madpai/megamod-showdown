@@ -27,6 +27,8 @@ uses the same client session and actor path, with interpolation and actor clips
 for crouch, airborne, running, AR/pistol, firing, melee and grenade.
 Network mode removes the local stationary practice target so it cannot be
 mistaken for the other player or take local-only combat damage.
+Vehicle entry is disabled in network mode until vehicle state can be owned by
+the server; the SWAP control remains weapon selection near parked Warthogs.
 The Android log prints ping, packet/byte rates, snapshot rate and invalid or
 dropped packet totals every two seconds; the touch HUD shows ping and IDs.
 

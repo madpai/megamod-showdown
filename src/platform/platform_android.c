@@ -2077,7 +2077,7 @@ void android_main(struct android_app *app)
          * hta_player_update with a blank input keeps gravity and the ground
          * query -- so dying on a slope still slides you down it. */
         if (state.dead) memset(&in, 0, sizeof(in));
-        int32_t near_vehicle = state.dead ? -1 :
+        int32_t near_vehicle = (state.dead || state.net_enabled) ? -1 :
             hta_vehicles_near(&state.vehicles, &state.col, state.player.pos);
         bool was_driving = state.vehicles.loaded && state.vehicles.driver >= 0;
         if (!state.dead && state.hud_swap && (was_driving || near_vehicle >= 0)) {
