@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon silhouette: helmet with the visor cut out, and the ring. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+        android:pathData="M35,50 C35,29 73,29 73,50 L73,59 C73,64 70,67 66,69 L61,76 L47,76 L42,69 C38,67 35,64 35,59 Z M39.5,47.5 C45,42 63,42 68.5,47.5 L66.5,57 C61,61.5 47,61.5 41.5,57 Z"/>
+    <group android:rotation="-18" android:pivotX="54" android:pivotY="56">
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="3.6"
+            android:strokeLineCap="round" android:pathData="M22,56 A32,11 0 0,0 86,56"/>
+    </group>
+</vector>

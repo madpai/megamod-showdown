@@ -18,9 +18,15 @@ from a tag.
 
 **Hard constraints — do not break these:**
 
-- **No Halo assets, executables or DLLs are ever committed or bundled in an
-  APK.** The owner supplies their own Trial copy; the app asks for it on first
-  run. No DRM is involved or circumvented.
+- **No Halo assets, executables or DLLs are ever committed.** The owner
+  supplies their own Trial copy. No DRM is involved or circumvented.
+- **The shareable APK carries no Trial data** (`verify.sh` checks it). Since
+  2026-09-22 the owner publishes a PERSONAL build with
+  `scripts/publish_apk.sh --with-assets`, which puts their own maps
+  (`bloodgulch`, `bitmaps`, `sounds`, `ui`) into the APK uncompressed; native
+  code maps them straight out of it. That APK is for the owner's own device
+  only and must never be given to anyone else -- a LAN friend installs the
+  plain build and picks their own maps.
 - **Never commit Trial `.map` files.** They live outside the repo at
   `/home/commander/halo-trial-data/extract/maps/`.
 - Project code is **GPLv3**.

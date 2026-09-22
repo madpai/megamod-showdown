@@ -161,6 +161,9 @@ $TOOLS/llvm-readelf -d "$SO" | grep -q 'libvulkan.so' && ok "links libvulkan" ||
 $TOOLS/llvm-readelf -d "$SO" | grep -q 'libaaudio.so' && ok "links libaaudio" || bad "links libaaudio"
 # Nothing in the APK may be an audio asset: the user supplies sounds.map.
 unzip -l "$APK" | grep -qiE '\.(wav|ogg|mp3|m4a|aac|opus)$' && bad "no audio bundled in the APK" || ok "no audio bundled in the APK"
+# The gate builds the shareable APK: the owner's maps only ever go into a
+# personal build made by publish_apk.sh --with-assets.
+unzip -l "$APK" | grep -qiE '\.map$' && bad "no Trial maps in the shareable APK" || ok "no Trial maps in the shareable APK"
 
 echo
 echo "$pass passed, $fail failed"

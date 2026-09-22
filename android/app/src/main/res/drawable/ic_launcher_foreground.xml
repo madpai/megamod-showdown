@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A Spartan helmet orbited by a ring. Original art for this project: no
+     Halo logo or game asset is used. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:rotation="-18" android:pivotX="54" android:pivotY="56">
+        <path android:pathData="M22,56 A32,11 0 0,1 86,56"
+            android:strokeWidth="3.6" android:strokeLineCap="round">
+            <aapt:attr name="android:strokeColor">
+                <gradient android:type="linear" android:startX="22" android:startY="0"
+                    android:endX="86" android:endY="0">
+                    <item android:offset="0" android:color="#FF5FA8FF"/>
+                    <item android:offset="0.5" android:color="#FFE8F2FF"/>
+                    <item android:offset="1" android:color="#FF3B7BE0"/>
+                </gradient>
+            </aapt:attr>
+        </path>
+    </group>
+    <path android:pathData="M35,50 C35,29 73,29 73,50 L73,59 C73,64 70,67 66,69 L61,76 L47,76 L42,69 C38,67 35,64 35,59 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="30"
+                android:endX="0" android:endY="76">
+                <item android:offset="0" android:color="#FF7B8A6A"/>
+                <item android:offset="1" android:color="#FF2C3424"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:fillColor="#FF232A1C" android:pathData="M47,76 L50,70 L58,70 L61,76 Z"/>
+    <path android:pathData="M39.5,47.5 C45,42 63,42 68.5,47.5 L66.5,57 C61,61.5 47,61.5 41.5,57 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="40" android:startY="43"
+                android:endX="68" android:endY="60">
+                <item android:offset="0" android:color="#FFFFE9A3"/>
+                <item android:offset="0.5" android:color="#FFF2A93B"/>
+                <item android:offset="1" android:color="#FF9A4A08"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:fillColor="#8CFFFFFF"
+        android:pathData="M43,48.4 C48,45.4 56,45 60,45.8 C54,46.8 48,48.6 44.6,51.2 Z"/>
+    <group android:rotation="-18" android:pivotX="54" android:pivotY="56">
+        <path android:pathData="M22,56 A32,11 0 0,0 86,56"
+            android:strokeWidth="3.6" android:strokeLineCap="round">
+            <aapt:attr name="android:strokeColor">
+                <gradient android:type="linear" android:startX="22" android:startY="0"
+                    android:endX="86" android:endY="0">
+                    <item android:offset="0" android:color="#FF5FA8FF"/>
+                    <item android:offset="0.5" android:color="#FFE8F2FF"/>
+                    <item android:offset="1" android:color="#FF3B7BE0"/>
+                </gradient>
+            </aapt:attr>
+        </path>
+    </group>
+</vector>

@@ -91,7 +91,7 @@ public class SetupActivity extends Activity {
         status = tv("", 14, 0xFF8FB6FF, false);
         lanAddress = tv("", 14, 0xFF8FB6FF, false);
 
-        root.addView(tv("Halo Trial PoC", 22, 0xFFE6E9EF, true));
+        root.addView(tv("Halo: MP", 26, 0xFFE6E9EF, true));
         root.addView(space(12));
         root.addView(tv(
                 "This app does not bundle any Halo files.\n"
@@ -141,7 +141,11 @@ public class SetupActivity extends Activity {
         File map = existingMap();
         File bitm = existingBitmaps();
         File snd = existingSounds();
-        if (map != null) {
+        if (builtInData()) {
+            play.setEnabled(true);
+            play.setAlpha(1f);
+            status.setText("Trial data is built into this APK. Tap Play.");
+        } else if (map != null) {
             play.setEnabled(true);
             play.setAlpha(1f);
             String msg = "Map ready: " + map.getName() + " ("
@@ -206,6 +210,18 @@ public class SetupActivity extends Activity {
             }
         }
         return null;
+    }
+
+    /* A personal build carries the owner's own maps, uncompressed, under
+     * assets/maps/ (publish_apk.sh --with-assets). openFd only succeeds on an
+     * uncompressed asset, which is also what the native side needs. */
+    private boolean builtInData() {
+        try {
+            getAssets().openFd("maps/bloodgulch.map").close();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private File existingBitmaps() {
@@ -286,7 +302,7 @@ public class SetupActivity extends Activity {
     }
 
     private void launchGame(boolean join, boolean host) {
-        if (existingMap() == null) {
+        if (existingMap() == null && !builtInData()) {
             status.setText("Pick a map first.");
             return;
         }

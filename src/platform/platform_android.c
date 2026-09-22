@@ -49,6 +49,7 @@
 
 #include <android/log.h>
 #include <android/input.h>
+#include <android/asset_manager.h>
 #include <android_native_app_glue.h>
 #include <jni.h>
 
@@ -120,6 +121,11 @@ typedef struct {
     size_t    sounds_size;
     bool      map_loaded;
     char      status[256];
+    /* What was mapped, for unmapping: an APK asset maps from a page
+     * boundary before its data, so the pointer handed out is not the base. */
+    void     *mapped_base[8];
+    size_t    mapped_len[8];
+    uint32_t  mapped_count;
 
     hta_cache     cache;
     hta_bsp_mesh  mesh;
@@ -368,8 +374,69 @@ static bool file_exists(const char *p)
  *
  * A hta_data.txt file in externalDataPath can override the directory entirely. */
 #define HTA_MAX_SEARCH_DIRS 12
+/* Built-in Trial data. A personal build (publish_apk.sh --with-assets)
+ * carries the owner's own maps uncompressed under assets/maps/, and they
+ * are mapped straight out of the APK -- no copy, no picker. A path of the
+ * form "apk:maps/<name>" names one of those. */
+#define HTA_APK_PREFIX "apk:"
+
+static bool apk_has(hta_android *s, const char *name)
+{
+    AAssetManager *am = s->app->activity->assetManager;
+    if (!am) return false;
+    AAsset *a = AAssetManager_open(am, name, AASSET_MODE_UNKNOWN);
+    if (!a) return false;
+    off64_t start = 0, len = 0;
+    int fd = AAsset_openFileDescriptor64(a, &start, &len);
+    AAsset_close(a);
+    if (fd < 0) {
+        hta_log("[assets] %s is in the APK but compressed; it cannot be mapped", name);
+        return false;
+    }
+    close(fd);
+    return len > 0;
+}
+
+/* Maps a data file read-only, from disk or from the APK. */
+static bool map_data_file(hta_android *s, const char *path, uint8_t **out, size_t *out_size)
+{
+    int fd = -1;
+    off64_t start = 0, len = 0;
+    if (!strncmp(path, HTA_APK_PREFIX, strlen(HTA_APK_PREFIX))) {
+        AAssetManager *am = s->app->activity->assetManager;
+        AAsset *a = am ? AAssetManager_open(am, path + strlen(HTA_APK_PREFIX),
+                                            AASSET_MODE_UNKNOWN) : NULL;
+        if (!a) return false;
+        fd = AAsset_openFileDescriptor64(a, &start, &len);
+        AAsset_close(a);
+    } else {
+        fd = open(path, O_RDONLY);
+        struct stat st;
+        if (fd >= 0 && fstat(fd, &st) == 0) len = st.st_size;
+    }
+    if (fd < 0) return false;
+    if (len <= 0 || s->mapped_count >= 8) { close(fd); return false; }
+    long page = sysconf(_SC_PAGESIZE);
+    off64_t aligned = start - (start % page);
+    size_t maplen = (size_t)(len + (start - aligned));
+    void *p = mmap(NULL, maplen, PROT_READ, MAP_PRIVATE, fd, aligned);
+    close(fd);
+    if (p == MAP_FAILED) return false;
+    s->mapped_base[s->mapped_count] = p;
+    s->mapped_len[s->mapped_count] = maplen;
+    s->mapped_count++;
+    *out = (uint8_t *)p + (start - aligned);
+    *out_size = (size_t)len;
+    return true;
+}
+
 static bool find_map(hta_android *s)
 {
+    if (apk_has(s, "maps/bloodgulch.map")) {
+        snprintf(s->map_path, sizeof(s->map_path), HTA_APK_PREFIX "maps/bloodgulch.map");
+        hta_log("[assets] using the Trial data built into this APK");
+        return true;
+    }
     const char *ext = s->app->activity->externalDataPath;
     const char *intn = s->app->activity->internalDataPath;
     char dirs[HTA_MAX_SEARCH_DIRS][400];
@@ -1014,6 +1081,11 @@ static void play_footstep(hta_android *s, uint8_t material)
 
 static bool find_named(hta_android *s, const char *name, char *out, size_t outlen)
 {
+    if (!strncmp(s->map_path, HTA_APK_PREFIX, strlen(HTA_APK_PREFIX))) {
+        char asset[128];
+        snprintf(asset, sizeof(asset), "maps/%s", name);
+        if (apk_has(s, asset)) { snprintf(out, outlen, HTA_APK_PREFIX "%s", asset); return true; }
+    }
     /* Reuse the map search directories: same folder as the cache, plus Download. */
     char dir[512];
     if (s->map_path[0]) {
@@ -1054,17 +1126,11 @@ static bool load_map(hta_android *s)
     if (!find_map(s)) return false;
     hta_log("[assets] found %s", s->map_path);
 
-    int fd = open(s->map_path, O_RDONLY);
-    if (fd < 0) { snprintf(s->status, sizeof(s->status), "cannot open map"); return false; }
-    struct stat st;
-    if (fstat(fd, &st) != 0 || st.st_size <= 0) { close(fd); snprintf(s->status, sizeof(s->status), "cannot stat map"); return false; }
-
-    /* mmap the cache read-only: no 700 MB copy, and the OS pages it in lazily */
-    void *p = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-    close(fd);
-    if (p == MAP_FAILED) { snprintf(s->status, sizeof(s->status), "mmap failed"); return false; }
-    s->map_data = (uint8_t *)p;
-    s->map_size = (size_t)st.st_size;
+    /* mmap the cache read-only: no copy, and the OS pages it in lazily */
+    if (!map_data_file(s, s->map_path, &s->map_data, &s->map_size)) {
+        snprintf(s->status, sizeof(s->status), "cannot map %s", s->map_path);
+        return false;
+    }
 
     char err[HTA_ERRLEN];
     double t0 = hta_time_seconds();
@@ -1092,14 +1158,8 @@ static bool load_map(hta_android *s)
 
     /* sounds.map, same external-resource pattern as bitmaps but type 2. */
     if (find_named(s, "sounds.map", s->sounds_path, sizeof(s->sounds_path))) {
-        int sfd = open(s->sounds_path, O_RDONLY);
-        struct stat sst;
-        if (sfd >= 0 && fstat(sfd, &sst) == 0 && sst.st_size > 0) {
-            void *sp = mmap(NULL, (size_t)sst.st_size, PROT_READ, MAP_PRIVATE, sfd, 0);
-            close(sfd);
-            if (sp != MAP_FAILED) {
-                s->sounds_data = (uint8_t *)sp;
-                s->sounds_size = (size_t)sst.st_size;
+        {
+            if (map_data_file(s, s->sounds_path, &s->sounds_data, &s->sounds_size)) {
                 if (hta_resource_open_typed(&s->sounds_rm, s->sounds_data, s->sounds_size,
                                             HTA_RESOURCE_SOUNDS, err, sizeof(err)))
                     hta_log("[assets] sounds.map %zu bytes from %s",
@@ -1107,7 +1167,7 @@ static bool load_map(hta_android *s)
                 else
                     hta_log("[assets] sounds.map rejected: %s", err);
             }
-        } else if (sfd >= 0) close(sfd);
+        }
     } else {
         hta_log("[assets] no sounds.map -- the game will be silent. Copy it next to bloodgulch.map");
     }
@@ -1116,20 +1176,14 @@ static bool load_map(hta_android *s)
      * resource map has to outlive load_map. */
     memset(&s->bitmaps_rm, 0, sizeof(s->bitmaps_rm));
     if (find_named(s, "bitmaps.map", s->bitmaps_path, sizeof(s->bitmaps_path))) {
-        int bfd = open(s->bitmaps_path, O_RDONLY);
-        struct stat bst;
-        if (bfd >= 0 && fstat(bfd, &bst) == 0 && bst.st_size > 0) {
-            void *bp = mmap(NULL, (size_t)bst.st_size, PROT_READ, MAP_PRIVATE, bfd, 0);
-            close(bfd);
-            if (bp != MAP_FAILED) {
-                s->bitmaps_data = (uint8_t *)bp;
-                s->bitmaps_size = (size_t)bst.st_size;
+        {
+            if (map_data_file(s, s->bitmaps_path, &s->bitmaps_data, &s->bitmaps_size)) {
                 if (hta_resource_open(&s->bitmaps_rm, s->bitmaps_data, s->bitmaps_size, err, sizeof(err)))
                     hta_log("[assets] bitmaps.map %zu bytes from %s", s->bitmaps_size, s->bitmaps_path);
                 else
                     hta_log("[assets] bitmaps.map rejected: %s", err);
             }
-        } else if (bfd >= 0) close(bfd);
+        }
     } else {
         hta_log("[assets] no bitmaps.map — world will stay untextured. Copy it next to bloodgulch.map");
     }
@@ -3446,7 +3500,6 @@ done:
     hta_bsp_free(&state.coll_mesh);
     hta_viewmodel_free(&state.vm);
     for (int slot=0;slot<2;slot++) hta_actor_free(&state.remote[slot]);
-    if (state.map_data) munmap(state.map_data, state.map_size);
-    if (state.bitmaps_data) munmap(state.bitmaps_data, state.bitmaps_size);
-    if (state.sounds_data) munmap(state.sounds_data, state.sounds_size);
+    for (uint32_t i = 0; i < state.mapped_count; i++)
+        munmap(state.mapped_base[i], state.mapped_len[i]);
 }

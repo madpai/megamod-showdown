@@ -8,6 +8,9 @@
 #   scripts/publish_apk.sh --notes scratch/notes.html
 #   scripts/publish_apk.sh --title "animated FP guns" --notes-text "Reinstall. ..."
 #   scripts/publish_apk.sh --no-build          # publish what is already built
+#   scripts/publish_apk.sh --with-assets ...   # PERSONAL build: the owner's own
+#       Trial maps inside the APK (from HTA_DATA, default ~/halo-trial-data/
+#       extract/maps). Such an APK must never be given to anyone else.
 #
 # The serve root lives in scratch/ (gitignored) so it survives across sessions.
 # It used to sit in a session scratchpad under /tmp, which silently went stale.
@@ -22,12 +25,15 @@ GRADLE=${GRADLE:-$HOME/android/gradle-8.9/bin/gradle}
 APK=android/app/build/outputs/apk/debug/app-debug.apk
 
 BUILD=1
+WITH_ASSETS=0
+HTA_DATA=${HTA_DATA:-$HOME/halo-trial-data/extract/maps}
 TITLE=""
 NOTES_FILE=""
 NOTES_TEXT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build)   BUILD=0 ;;
+    --with-assets) WITH_ASSETS=1 ;;
     --title)      TITLE=$2; shift ;;
     --notes)      NOTES_FILE=$2; shift ;;
     --notes-text) NOTES_TEXT=$2; shift ;;
@@ -38,7 +44,18 @@ done
 
 if [ "$BUILD" = 1 ]; then
   echo "building APK…"
-  (cd android && $GRADLE --no-daemon -q :app:assembleDebug)
+  PROPS="-PhtaVersionCode=$(git rev-list --count HEAD) -PhtaVersionName=$(git log -1 --format=%h)"
+  if [ "$WITH_ASSETS" = 1 ]; then
+    STAGE=$PWD/scratch/apk-assets
+    rm -rf "$STAGE"; mkdir -p "$STAGE/maps"
+    for f in bloodgulch.map bitmaps.map sounds.map ui.map; do
+      [ -f "$HTA_DATA/$f" ] || { echo "missing $HTA_DATA/$f" >&2; exit 1; }
+      ln "$HTA_DATA/$f" "$STAGE/maps/$f" 2>/dev/null || cp "$HTA_DATA/$f" "$STAGE/maps/$f"
+    done
+    PROPS="$PROPS -PhtaAssetsDir=$STAGE"
+    echo "bundling the owner's Trial data from $HTA_DATA (personal build)"
+  fi
+  (cd android && $GRADLE --no-daemon -q :app:assembleDebug $PROPS)
 fi
 [ -f "$APK" ] || { echo "no APK at $APK (run without --no-build)" >&2; exit 1; }
 
