@@ -1,7 +1,10 @@
 # Native multiplayer architecture
 
-Status: design for the first network slice, 2026-09-21. The pre-network build is
-preserved at `net-baseline-2026-09-21` (`ecc99b8`); `scripts/verify.sh` passed
+Status: original design and baseline audit for the first network slice,
+2026-09-21. For implemented state and test results, read
+`NETWORK_PROGRESS.md`; the baseline statements below describe the build
+before networking. The pre-network build is preserved at
+`net-baseline-2026-09-21` (`ecc99b8`); `scripts/verify.sh` passed
 57/57 checks with the owner's Blood Gulch map before any networking edits.
 
 ## Current engine, as audited
@@ -22,10 +25,11 @@ weapon tags and render assets are loaded from each player's own Trial data.
 
 `hta_actor` is the world-space Spartan renderer used for corpses and the target
 bot. Remote players should use that same actor/model/animation path. The Vulkan
-draw path currently allows eight dynamic meshes, seven already used; adding
+draw path at baseline allowed eight dynamic meshes, seven already used; adding
 multiple independent remote-actor meshes needs a capacity change or a batched
-actor mesh. The desktop `htaview` is an offscreen inspector, not an interactive
-game client. The Android layer is the only playable runtime today. Its Java
+actor mesh. The limit has since been raised to ten for the first remote actor.
+At baseline, desktop `htaview` was an offscreen inspector, not an interactive
+game client. The Android layer was the only playable runtime. Its Java
 classes handle setup, asset access and touch HUD; native C handles gameplay.
 
 ## Boundaries

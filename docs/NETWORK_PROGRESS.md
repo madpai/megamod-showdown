@@ -1,5 +1,26 @@
 # Network phase checkpoint — 2026-09-22
 
+## Start here next session
+
+- Published APK code commit: `97d7cea` on `fp-animated-guns`. Pre-network
+  known-good tag: `net-baseline-2026-09-21`. This handoff documentation is a
+  later commit; check `git status` before starting work.
+- The Android LAN test APK is published at the private Tailscale sideload page
+  `http://100.89.1.14:8731/` as `scratch/serve/halo-trial-poc.apk` (build
+  `97d7cea`, SHA-256
+  `485dd4a68ba691b7efca95fe54f51777b40d0e542c7d4afd2f4e27d1b95e5f4d`).
+  A GET download matched the built APK. The APK contains no Trial assets.
+- The next decisive test is **Android host + Android joiner on the same Wi-Fi**
+  if a friend/device is available, or Android client + desktop server first.
+  No Android runtime session has yet been observed; `adb devices` was empty.
+- Server registry and snapshots accept up to eight peers, but **Android and
+  desktop currently render only one remote Spartan each**. Two visible players
+  are the tested scope. A third device can connect, but a complete three-player
+  game needs per-peer remote actor and interpolation slots.
+- **Vehicles intentionally cannot be entered in LAN mode** because their state
+  is not replicated. Solo vehicle driving remains available. Player-vs-player
+  health, shields, damage, death and respawn are also not networked.
+
 ## What exists
 
 The baseline at `net-baseline-2026-09-21` passed all 57 existing checks.
@@ -104,6 +125,7 @@ gameplay loop's first-person weapon, pickups, audio or vehicles.
   sequence wrap logic, clock sync or client reconciliation.
 - Only the first remote player is rendered per client even though the server
   registry holds eight. Snapshot state reaches all clients; extra actors wait.
+  A third player may join but each client sees only one other player.
 - The desktop probe sends action events without playing the full local weapon
   behavior. Remote fire/melee/grenade actor clips are cosmetic and lack remote
   muzzle flash, projectile and sound. Weapon selection is limited to the map's
@@ -131,13 +153,36 @@ Host LAN game (other players join this device's LAN IPv4), and Join LAN server
 `./build-host/htanet server 32270 86400` on the desktop first. Both peers must
 own their Trial map files; no assets are transmitted or committed.
 
+### Android LAN playtest
+
+1. Install the published ARM64 APK on each phone. On each device, use the
+   setup picker for its own `bloodgulch.map` and `bitmaps.map`; `sounds.map`
+   is optional for audio. Connect devices to the same Wi-Fi.
+2. On the first phone, note the **Hosting address** shown on the setup screen,
+   then tap **Host LAN game**. This opens UDP port 32270 and joins its own
+   in-process server over loopback. Keep the game open while others join.
+3. On the second phone, enter the first phone's numeric Wi-Fi IPv4 address
+   and tap **Join LAN server**. A desktop host is also possible via
+   `./build-host/htanet server 32270 86400` on the same LAN.
+4. Check that both devices show IDs and ping in the debug HUD and each sees
+   the other's Spartan move, turn, jump, crouch, switch AR/pistol, fire, melee
+   and throw a grenade. Report the exact step that fails and screenshots from
+   both devices. If ADB is available, capture
+   `adb logcat -s halo-trial-android:I` from each device; the native log
+   prints connection and packet statistics every two seconds.
+
+The phone's displayed address comes from its Wi-Fi interface. If no address
+appears, connect to Wi-Fi and reopen setup. Router client isolation or a
+firewall blocking UDP 32270 can prevent a LAN join even when both phones show
+the same SSID. Do not use ADB forwarding as the runtime network path.
+
 ## Next testing objective
 
-Run `scripts/run_two_players.sh` with two people controlling desktop windows and
-observe both directions while walking, turning, jumping, crouching, switching
-between AR/pistol, and pressing fire/melee/grenade. Check for correct third-
-person clips and no sudden origin flash at join. Then run the desktop server
-and join from the Android APK on the same LAN. Capture device logs and screen
-before changing authority or adding damage. A second Android device is optional
-after Android ↔ desktop works. **Do not claim phase success until two players
-have visibly run together in Blood Gulch.**
+Run the published Android APK with a second device on the same LAN (or use a
+desktop server if a second phone is unavailable). Capture both screens and
+connection logs, and check movement plus each listed action before changing
+authority or adding damage. If Android connects and renders correctly, use two
+people to check simultaneous control. Then decide whether to add per-peer
+actors for three players or begin server-side movement authority; do not expand
+combat or vehicles as part of the visual slice. **Do not claim Android or
+two-human success until it is observed.**

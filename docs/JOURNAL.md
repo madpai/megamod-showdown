@@ -9,6 +9,26 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## Network session closeout (2026-09-22)
+
+The owner requested a phone build that can host on LAN and join its own game.
+The existing native UDP Host LAN / Join LAN flow was already present, so the
+only new code needed was a setup-screen Wi-Fi IPv4 display and a host-neutral
+join hint. The 60-check verification gate passed and build `97d7cea` was
+published to the private sideload page; the served APK hash matched the build.
+No Android device was attached, so the phone path is compiled and packaged but
+has not been exercised on hardware. The next session should prioritize the
+friend's two-phone LAN run, with Android ↔ desktop as a useful fallback.
+
+The owner also asked about vehicles and three players. Vehicle entry is
+disabled only in network mode because vehicles are not replicated; solo
+driving is unchanged. The server supports eight peers and sends all their
+snapshot states, but Android and desktop currently allocate/render only one
+remote actor. A third person can connect but will not get a complete
+three-player visual session. These are explicit scope limits, not protocol
+failure. Do not claim two-human or Android runtime success without an observed
+test. See `NETWORK_PROGRESS.md` for the exact next-session playtest steps.
+
 ## First LAN slice (2026-09-21)
 
 On 2026-09-22 the owner unlocked the desktop for a live X11 two-window

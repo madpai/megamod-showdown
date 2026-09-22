@@ -98,7 +98,7 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Network slice in progress (2026-09-21).** Read
+> **Network slice in progress (2026-09-22).** Read
 > [`NETWORK_PROGRESS.md`](NETWORK_PROGRESS.md) and
 > [`NETWORK_ARCHITECTURE.md`](NETWORK_ARCHITECTURE.md). The old 57-check
 > baseline is tagged `net-baseline-2026-09-21`; the current gate is 60/60.
@@ -107,11 +107,16 @@ the section below, and update it every time.
 > desktop playtest showed a Spartan in each view; the owner moved one player
 > in front of the other and reported reciprocal visibility. The peer log
 > recorded that player's position changing. One human operated the session;
-> no two-human or Android device test has happened. Next, use
-> `HTA_MAP=... scripts/run_two_players.sh` and check movement, jump,
-> crouch, AR/pistol selection and fire/melee/grenade animations in both
-> windows. Then test Android ↔ desktop LAN. Movement is provisional client
-> submitted transform relay; no authoritative damage or player combat yet.
+> no two-human or Android device test has happened. The ARM64 APK from
+> `97d7cea` is published at `http://100.89.1.14:8731/` after a 60/60 gate;
+> its setup screen offers Host LAN game and Join LAN server and displays the
+> host phone's Wi-Fi IPv4:32270. Next, test Android host + Android joiner on
+> the same LAN if a friend is available, otherwise Android ↔ desktop. Each
+> phone must supply its own map and bitmaps. Check movement, jump, crouch,
+> AR/pistol and fire/melee/grenade in both views; capture screens and logs.
+> Movement is provisional client-submitted transform relay. Multiplayer
+> vehicles and damage are intentionally unavailable. A third client can join
+> the eight-peer server but each client currently renders only one remote.
 >
 > **Vehicle slice accepted for now (2026-09-21).** The owner says handling is
 > much better and wants to move on. There is no active vehicle phone test.
@@ -213,9 +218,12 @@ remain a rendering gap; phone confirmation of this fix is pending.
   shared session state, simulation timing and network messages belong.
 - Two automated desktop clients now connect through one headless server and
   receive each other's position, orientation and action events. The desktop
-  window reuses `hta_player_update` and `hta_actor`; Android has compiled
-  Host LAN and Join LAN flows. Two-human and device runs remain the active
-  verification target before adding server-side damage or vehicles.
+  window reuses `hta_player_update` and `hta_actor`; Android has a published
+  Host LAN and Join LAN build, still awaiting runtime verification. The host
+  phone joins its own nonblocking UDP server through loopback. Two-human and
+  device runs remain the active verification target before server-side damage
+  or vehicles. LAN mode disables vehicle entry; solo vehicles are unaffected.
+  The server accepts eight peers, but render code uses one remote actor slot.
 - Preserve the asset boundary: each client imports its own Trial data. Do not
   send or bundle map assets. Use the existing `scripts/verify.sh` gate before
   publishing an APK for device testing.
@@ -224,7 +232,7 @@ remain a rendering gap; phone confirmation of this fix is pending.
 
 | | |
 |---|---|
-| Dropped weapons | A weapon you swap off vanishes. Drawing one needs a second dynamic mesh holding each weapon model once. `HTA_GFX_MAX_DYNAMIC` was raised to 8 to leave room — six were already in use. |
+| Dropped weapons | A weapon you swap off vanishes. Drawing one needs a separate dynamic mesh. `HTA_GFX_MAX_DYNAMIC` is currently 10; mesh capacity alone does not implement dropped weapons. |
 | Items do not rotate | Halo spins powerups. Doing it means paying the full item upload every frame or splitting powerups into their own dynamic mesh. The latter. |
 | Camouflage does nothing | It runs its timer. Nothing to hide from yet. |
 | Picked-up weapons are full | `hta_ammo_init` runs on equip; a dropped weapon should carry what was left in it. |
@@ -234,7 +242,6 @@ remain a rendering gap; phone confirmation of this fix is pending.
 | Vehicle collision remains planar | Wall and jeep contacts rebound, deflect and apply yaw torque, but there is no full 3-D rigid body or flip. A truly too-narrow passage can still trap the Warthog; reverse or exit if safe. |
 | Driving re-poses the whole fleet | About 1.5 ms/frame on the host, mostly rebuilding all 12 jeeps' shared collision grid. Eleven are parked. Per-vehicle grids is the fix if the phone shows a repeatable fps drop. |
 | Vehicles take no damage | You cannot destroy or flip a Warthog, and it does not hurt what it hits. |
-| Only 1 dynamic mesh slot left | The vehicle fleet took one; 7 of `HTA_GFX_MAX_DYNAMIC`'s 8 are now in use, and dropped weapons still want one. |
 
 ---
 
