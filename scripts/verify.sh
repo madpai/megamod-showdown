@@ -101,6 +101,14 @@ else
   echo "  SKIP  htaview not built (host Vulkan missing)"
 fi
 
+if [ -x ./build-host/htaplay ] && [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
+  if scripts/test_two_players.sh >/dev/null 2>&1; then
+    ok "two desktop Blood Gulch clients replicate movement and actions"
+  else
+    bad "two desktop Blood Gulch clients replicate movement and actions"
+  fi
+fi
+
 echo "== 2. android APK build =="
 if (cd android && $GRADLE --no-daemon -q :app:assembleDebug >/dev/null 2>&1); then
   ok "gradle assembleDebug"
