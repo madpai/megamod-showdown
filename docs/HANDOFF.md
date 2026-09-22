@@ -104,32 +104,18 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Network slice in progress (2026-09-22).** Read
-> [`NETWORK_PROGRESS.md`](NETWORK_PROGRESS.md) and
-> [`NETWORK_ARCHITECTURE.md`](NETWORK_ARCHITECTURE.md). The old 57-check
-> baseline is tagged `net-baseline-2026-09-21`; the current gate is 60/60.
-> An automated two-process desktop run on the real Blood Gulch map received
-> remote movement and actions in both directions. A subsequent live two-window
-> desktop playtest showed a Spartan in each view; the owner moved one player
-> in front of the other and reported reciprocal visibility. The peer log
-> recorded that player's position changing. One human operated the session;
-> no two-human or Android device test has happened. The ARM64 APK from
-> `97d7cea` is published at `http://100.89.1.14:8731/` after a 60/60 gate;
-> its setup screen offers Host LAN game and Join LAN server and displays the
-> host phone's Wi-Fi IPv4:32270. Next, test Android host + Android joiner on
-> the same LAN if a friend is available, otherwise Android ↔ desktop. Each
-> phone must supply its own map and bitmaps. Check movement, jump, crouch,
-> AR/pistol and fire/melee/grenade in both views; capture screens and logs.
-> Movement is provisional client-submitted transform relay. Multiplayer
-> vehicles and damage are intentionally unavailable. A third client can join
-> the eight-peer server but each client currently renders only one remote.
->
-> **Vehicle slice accepted for now (2026-09-21).** The owner says handling is
-> much better and wants to move on. There is no active vehicle phone test.
-> The latest collision release (`8f6ecca`) passed all 57 verification checks;
-> its rebound, powered pivot and jeep-to-jeep impulse have host coverage, but
-> no separate phone report confirming those exact behaviors. Keep the planar
-> collision, damage and seat gaps below visible when returning to vehicles.
+> **2026-09-22, build `339c6b4`: one APK, main menu, Slayer against bots.**
+> The owner installs a single personal APK (`publish_apk.sh --with-assets`)
+> carrying their own maps. It opens on the Trial's main menu (ui.map ring,
+> sky, HALO logo, menu words, title music). MULTIPLAYER starts Slayer
+> against 0-7 bots (set in SETTINGS, Easy..Legendary); first to 25.
+> Check on device: menu layout on the phone's aspect, music and taps;
+> fps with bots in view; bots stuck or walking through walls; weapons in
+> bot hands; kill feed / banner / announcer; the new Blood Gulch sky
+> (clouds, Threshold, Basis, the ring). The first launch builds the bots'
+> nav grid (a few seconds); later launches read it from app storage.
+> None of this has been seen on a device yet. The LAN build from
+> `97d7cea` is still untested on Android; LAN sessions run with no bots.
 >
 ---
 
@@ -195,23 +181,36 @@ opaque placed `shader_model` surfaces use scene lighting. This fixes the
 Warthog sampling the wrong texture regions and being drawn unlit. Reflections
 remain a rendering gap; phone confirmation of this fix is pending.
 
+### New on 2026-09-22 (host-verified, not yet seen on a device)
+
+- **`src/game/`**: portable game layer. `game.c` units, attributed damage,
+  Slayer scoring, kill feed from `ui\multiplayer_game_text`, bot names from
+  `ui\random_player_names`, announcer events; `brain.c` bot AI; `nav.c`
+  layered walkable grid from collision with A* (cached to disk);
+  `view.c` skinned bot bodies + held weapons (instanced draw);
+  `menu.c` the main menu from ui.map.
+- **Renderer**: `hta_gfx_set_instances` (static mesh + rigid transform);
+  sky pass with its own depth range, per-layer blending and the chicago
+  multi-map fold (`chicago` fields on `hta_submesh`, mode `light_color.w=2`).
+- **Audio**: Ogg Vorbis via vendored `src/third_party/stb_vorbis.c`;
+  `hta_sound_decode_chain` for long sounds cut into permutations.
+- **Tools**: `htamatch` (bot match rendered offscreen), `htamenu`.
+- **Personal APK**: `publish_apk.sh --with-assets`; native maps
+  `apk:maps/*.map` straight out of the APK.
+
 ### Not started
 
 - **Vehicles beyond the driver's seat.** The Warthog now drives (see below).
   Passengers, the turret, vehicle damage and flipping, and the Scorpion,
   Ghost and Banshee are all still untouched.
-- **Bots.** The body exists; it needs somewhere to walk, something to walk
-  towards, an eye test and a trigger. None of that touches what is there.
 - **Authoritative multiplayer combat.** The first LAN transport and visual
   replication slice exists; server-side movement, damage, death, vehicles and
   game modes are still absent. See `NETWORK_PROGRESS.md`.
-- **Menus.** `ui.map` holds the entire Halo shell as 811 `DeLa` widget
-  definitions, 168 string lists, 6 fonts, 222 bitmaps, a virtual keyboard and
-  a map list. A faithful main menu is a widget-tree interpreter, not asset
-  work.
-- **The announcer.** All 39 multiplayer lines are in `bloodgulch.map` already
-  (`sound\dialog\multiplayer1\*`): slayer, CTF, double kill, killtacular,
-  game over. They need a game mode to mean anything.
+- **Deeper menus.** The main menu is done from ui.map's bitmaps; the
+  submenus (game setup, profiles, pause) are not a `DeLa` interpreter yet.
+  SETTINGS is the Java setup screen. BACK in-game quits the app.
+- **Other game types.** CTF, Oddball, King of the Hill and Race lines and
+  the flag/ball weapons are in the map; only Slayer runs.
 - **Music.** There is none in Blood Gulch, and that is correct — Halo CE
   multiplayer maps carry no score. The campaign map has it.
 
@@ -397,6 +396,18 @@ wrong, this list is the first place to look — they are all one constant.
 | `HTA_VEHICLE_MAX_SLOPE` | 0.75 rad | cap on the pitch/roll the wheels may pose the body to (43°) |
 | `HTA_VEHICLE_CAMERA_BACK` | 2.5 wu | chase camera distance, pulled in by terrain |
 | `HTA_VEHICLE_CAMERA_UP` | 0.7 wu | chase camera height above the hull |
+| `HTA_SLAYER_SCORE_LIMIT` | 25 | Slayer's kill limit (stock Halo CE gametype, not in any map) |
+| `HTA_SLAYER_RESPAWN` | 5 s | bots' respawn (the player's `HTA_RESPAWN_DELAY`) |
+| `HTA_MULTIKILL_WINDOW` | 4 s | double/triple kill / killtacular window |
+| `HTA_SPREE_KILLS` / `HTA_RIOT_KILLS` | 5 / 10 | killing spree, running riot |
+| `HTA_CREDIT_WINDOW` | 5 s | a death this soon after a hit is that attacker's kill |
+| `HTA_BACKSMACK_MULT` | 10 | melee from behind kills (weapon melee `jpt!` is 56) |
+| `UNIT_SWING_TIME` / `UNIT_THROW_TIME` | 0.6 / 0.45 s | bot/remote melee and grenade timing |
+| brain tables (`src/game/brain.c`) | per skill | sight range, FOV, turn rate, reaction, aim error; weapon preference |
+| `HTA_NAV_CELL` | 0.35 wu | nav grid spacing; max drop 1.0 wu |
+| `HTA_FEED_TIME` / `HTA_BANNER_TIME` / `HTA_POSTGAME` | 6 / 3 / 10 s | kill feed, announcer banner, scoreboard |
+| menu layout (`src/game/menu.c`) | fractions | measured from a PC Trial screenshot; menu light and camera sway ours |
+| sky depth range | 10 .. 200000 | the sky pass's own near/far planes |
 
 ---
 
