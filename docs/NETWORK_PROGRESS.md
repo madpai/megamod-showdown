@@ -38,7 +38,7 @@ gameplay loop's first-person weapon, pickups, audio or vehicles.
 
 ## What was demonstrated
 
-- `scripts/verify.sh` with the owner's Blood Gulch map: **59 passed, 0 failed**.
+- `scripts/verify.sh` with the owner's Blood Gulch map: **60 passed, 0 failed**.
   This includes host build/tests, map-backed engine checks, offscreen gameplay
   renders, a three-process multiplayer Blood Gulch regression, and the arm64
   Android APK build, rerun after Host LAN was added.
@@ -67,7 +67,8 @@ gameplay loop's first-person weapon, pickups, audio or vehicles.
   shortest-path yaw across the ±π wrap.
 - `scripts/test_two_players.sh` now makes that asset-backed check repeatable
   and part of `scripts/verify.sh` when the map and desktop graphics dependencies
-  are available. The latest full gate passed 59/59 after this addition.
+  are available. The latest full gate passed 60/60 and checks that the APK
+  actually declares Android's `INTERNET` permission.
 
 ## Known limits and risks
 

@@ -130,6 +130,11 @@ if [ -n "$AAPT" ] && "$AAPT" dump badging "$APK" | grep -q "launchable-activity:
 else
   bad "launcher is SetupActivity"
 fi
+if [ -n "$AAPT" ] && "$AAPT" dump permissions "$APK" | grep -q "uses-permission: name='android.permission.INTERNET'"; then
+  ok "Android INTERNET permission present"
+else
+  bad "Android INTERNET permission present"
+fi
 if [ -n "$DEXDUMP" ] && "$DEXDUMP" "$APK" 2>/dev/null | grep -q "Lnet/hta/halotrial/SetupActivity;"; then
   ok "SetupActivity in DEX"
 else

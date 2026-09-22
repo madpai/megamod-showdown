@@ -34,7 +34,8 @@ with a host check for the yaw wrap at ±π.
 The two-client Blood Gulch run is now `scripts/test_two_players.sh`, included
 in `scripts/verify.sh` when the owner's map is available. It requires both
 processes to observe movement, air, crouch, pistol and action clips; the gate
-is 59/59. A stale WELCOME nonce is rejected before replacing a live session.
+was 59/59 at that point. A stale WELCOME nonce is rejected before replacing a live session.
+The gate now also verifies the APK's `INTERNET` permission (60/60).
 Desktop rendering is capped near 60 fps. The Android setup screen scrolls in
 landscape so the new Host/Join controls remain reachable.
 

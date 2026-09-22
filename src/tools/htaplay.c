@@ -106,7 +106,7 @@ int main(int argc,char **argv)
     hta_scene scene={0}; hta_scene_light_from_bsp(&mesh,scene.light_dir,scene.light_color,scene.ambient);
     scene.clear[0]=0.42f; scene.clear[1]=0.55f; scene.clear[2]=0.72f;
     uint32_t bip=find_tag(&cache,HTA_FOURCC('b','i','p','d'),"cyborg_mp");
-    hta_actor remote[2]={{0}};
+    hta_actor remote[2]; memset(remote,0,sizeof(remote));
     if (!bip) { fprintf(stderr,"no multiplayer Spartan\n"); return 1; }
     uint32_t models[2]={
         find_tag(&cache,HTA_FOURCC('m','o','d','2'),"weapons\\assault rifle\\assault rifle"),
