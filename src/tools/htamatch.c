@@ -16,6 +16,7 @@
 #include "engine/scene_light.h"
 #include "game/game.h"
 #include "game/view.h"
+#include "engine/contrail.h"
 #include "game/nav.h"
 #include "gfx/gfx.h"
 #include "platform/platform.h"
@@ -156,6 +157,14 @@ int main(int argc, char **argv)
         game.units[0].eye.yaw = veh.cars[ride_car].yaw;
     }
     hta_gfx_mesh *vgpu[HTA_VEHICLE_TYPES] = {0};
+    /* Tracers and trails: each roster weapon's round, each pool's. */
+    static hta_contrails trails;
+    uint32_t wtrail[HTA_GAME_MAX_WEAPONS], ptrail[HTA_GAME_MAX_POOLS];
+    for (uint32_t w = 0; w < game.weapon_count; w++)
+        wtrail[w] = hta_contrails_for_projectile(&trails, &cache, bmp, game.weapons[w].def.projectile_id);
+    for (uint32_t p = 0; p < game.pool_count; p++)
+        ptrail[p] = hta_contrails_for_projectile(&trails, &cache, bmp, game.pools[p].proj_tag_id);
+    printf("contrails      %s\n", hta_contrails_build(&trails, err, sizeof(err)) ? err : "none");
     hta_gfx *gfx = hta_gfx_create_offscreen(W, H, err, sizeof(err));
     if (!gfx) { fprintf(stderr, "Vulkan: %s\n", err); return 1; }
     hta_gfx_mesh *world = hta_gfx_mesh_upload(gfx, &mesh, err, sizeof(err));
@@ -172,6 +181,8 @@ int main(int argc, char **argv)
     for (uint32_t p = 0; p < game.pool_count; p++)
         poolgpu[p] = hta_gfx_mesh_upload_dynamic_world(gfx, &game.pools[p].mesh, err, sizeof(err));
     if (!world) { fprintf(stderr, "GPU: %s\n", err); return 1; }
+    hta_gfx_mesh *trailgpu = trails.loaded ?
+        hta_gfx_mesh_upload_dynamic(gfx, &trails.mesh, err, sizeof(err)) : NULL;
     for (uint32_t t2 = 0; veh.loaded && t2 < veh.type_count; t2++)
         vgpu[t2] = hta_gfx_mesh_upload(gfx, &veh.types[t2].mesh, err, sizeof(err));
 
@@ -205,8 +216,23 @@ int main(int argc, char **argv)
         hta_game_event e;
         while (hta_game_pop(&game, &e)) {
             if (e.kind == HTA_EV_KILL) { kills++; printf("  %6.1f  %s\n", t, e.text); }
+            if (e.kind == HTA_EV_FIRE && e.weapon >= 0 && (uint32_t)e.weapon < game.weapon_count &&
+                !game.weapons[e.weapon].travels && wtrail[e.weapon] != HTA_CONT_NONE) {
+                float end[3], ht = 100.0f;
+                hta_collision_ray(&col, e.pos, e.dir, 100.0f, &ht, NULL, NULL);
+                for (int k = 0; k < 3; k++) end[k] = e.pos[k] + e.dir[k] * ht;
+                hta_contrails_tracer(&trails, wtrail[e.weapon], e.pos, end, 300.0f);
+            }
             if (e.kind == HTA_EV_ANNOUNCE && e.line != HTA_LINE_NONE) printf("  %6.1f  [%s]\n", t, e.text);
         }
+        for (uint32_t p = 0; p < game.pool_count; p++) {
+            if (ptrail[p] == HTA_CONT_NONE) continue;
+            for (uint32_t k = 0; k < HTA_PROJ_MAX; k++)
+                if (game.pools[p].live[k].alive)
+                    hta_contrails_feed(&trails, ptrail[p], p * 16u + k, game.pools[p].live[k].pos,
+                                       game.pools[p].live[k].age);
+        }
+        hta_contrails_update(&trails, &cam, dt);
         if (hta_pickups_dirty(&items)) { hta_pickups_pose(&items); items_upload = 8; }
         if (t < next_shot) continue;
         next_shot += every;
@@ -257,6 +283,13 @@ int main(int argc, char **argv)
             dyn[nd].vertices = items_upload ? items.posed : NULL;
             dyn[nd].vertex_count = items.mesh.vertex_count;
             if (items_upload) items_upload--;
+            nd++;
+        }
+        if (trailgpu && nd < HTA_GFX_MAX_DYNAMIC) {
+            dyn[nd].mesh = trailgpu;
+            dyn[nd].vertices = trails.mesh.vertices;
+            dyn[nd].vertex_count = trails.mesh.vertex_count;
+            dyn[nd].vertex_color = true;
             nd++;
         }
         for (uint32_t p = 0; p < game.pool_count && nd < HTA_GFX_MAX_DYNAMIC; p++) {

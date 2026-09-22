@@ -60,6 +60,16 @@ void main() {
         return;
     }
     vec4 base = texture(u_base, v_uv);
+    /* Vertex colour (contrails): the colour rides in the normal and the
+     * alpha in the lightmap U, both unused by anything unlit. A contrail
+     * point changes colour and fades as it ages, and a texture per step
+     * would be a texture per frame. Additive draws ignore alpha, so it is
+     * folded into the colour as well. */
+    if (push.detail.w > 2.5 && push.light_color.w < 1.5) {
+        float a = clamp(v_lm_uv.x, 0.0, 1.0);
+        out_color = vec4(base.rgb * v_normal * a, base.a * a);
+        return;
+    }
     vec3 albedo = base.rgb;
     vec3 lm     = texture(u_light, v_lm_uv).rgb;
 

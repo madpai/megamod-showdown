@@ -87,6 +87,8 @@ typedef struct {
      * glows, and wrong for a BODY: the same reason the first-person weapon
      * needed lighting, and the same path. */
     bool              lit;
+    /* Colour per vertex: rgb in the normal, alpha in lm_uv[0]. Contrails. */
+    bool              vertex_color;
 } hta_gfx_dynamic;
 
 /* `dyn` is an array: projectiles in flight and the particles they throw

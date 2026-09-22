@@ -1620,7 +1620,8 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                          * their former static submeshes, including detail maps. */
                         float lw = (dyn[dq].lit || dm->submeshes[i].scene_lit) ? 1.0f : 0.0f;
                         float det[4] = { dm->submeshes[i].detail_scale,
-                            dm->submeshes[i].detail2_scale, dm->submeshes[i].detail_mask, 0.0f };
+                            dm->submeshes[i].detail2_scale, dm->submeshes[i].detail_mask,
+                            dyn[dq].vertex_color ? 3.0f : 0.0f };
                         memcpy(push + 80 + 12, &lw, sizeof(lw));
                         memcpy(push + 112, det, sizeof(det));
                         vkCmdPushConstants(cb, g->layout,

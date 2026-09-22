@@ -24,6 +24,7 @@
 #include "../engine/pickup.h"
 #include "../engine/bot.h"
 #include "../engine/vehicle.h"
+#include "../engine/contrail.h"
 #include <stdatomic.h>
 #include "../engine/ammo.h"
 #include "../engine/hud.h"
@@ -151,6 +152,11 @@ typedef struct {
     bool          vhave[HTA_VEHICLE_MAX];
     uint32_t      veh_in_snd, veh_out_snd;
     uint32_t      vfire_recipe[HTA_GAME_MAX_WEAPONS];
+    /* Tracers and trails, from each round's own contrail tag. */
+    hta_contrails trails;
+    hta_gfx_mesh *gpu_trails;
+    uint32_t      wtrail[HTA_GAME_MAX_WEAPONS], ptrail[HTA_GAME_MAX_POOLS];
+    uint32_t      local_trail;     /* the held weapon's flying round */
 
     /* Sound. One bank entry per snd! tag actually asked for, decoded once and
      * kept; Halo tags carry several permutations of the same sound and pick
@@ -1779,6 +1785,19 @@ static void start_game(hta_android *s)
     }
     hta_game_start(&s->game);
     s->world_round = 1;
+    /* Every round's contrail, once: the roster's and the pools'. */
+    hta_contrails_free(&s->trails);
+    hta_contrails_init(&s->trails);
+    for (uint32_t w = 0; w < HTA_GAME_MAX_WEAPONS; w++)
+        s->wtrail[w] = w < s->game.weapon_count
+            ? hta_contrails_for_projectile(&s->trails, &s->cache, bm,
+                                           s->game.weapons[w].def.projectile_id)
+            : HTA_CONT_NONE;
+    for (uint32_t p = 0; p < HTA_GAME_MAX_POOLS; p++)
+        s->ptrail[p] = p < s->game.pool_count
+            ? hta_contrails_for_projectile(&s->trails, &s->cache, bm, s->game.pools[p].proj_tag_id)
+            : HTA_CONT_NONE;
+    if (hta_contrails_build(&s->trails, err, sizeof(err))) hta_log("[game] %s", err);
     /* The practice target is gone: there are real people to shoot now. */
     if (bots > 0) hta_bot_free(&s->bot);
     hta_log("[game] Slayer: you and %d bot(s) at skill %d, first to %d, %d min, respawn %.0f s",
@@ -1796,6 +1815,8 @@ static void game_gpu_upload(hta_android *s)
     for (uint32_t w = 0; w < s->game.weapon_count; w++)
         if (s->gview.have_weapon[w] && !s->gpu_held[w])
             s->gpu_held[w] = hta_gfx_mesh_upload(s->gfx, &s->gview.weapon_mesh[w], err, sizeof(err));
+    if (s->trails.loaded && !s->gpu_trails)
+        s->gpu_trails = hta_gfx_mesh_upload_dynamic(s->gfx, &s->trails.mesh, err, sizeof(err));
     for (uint32_t p = 0; p < s->game.pool_count; p++)
         if (s->game.pools[p].mesh.index_count && !s->gpu_pools[p])
             s->gpu_pools[p] = hta_gfx_mesh_upload_dynamic_world(s->gfx,
@@ -1810,6 +1831,20 @@ static void game_gpu_free(hta_android *s)
         if (s->gpu_held[w]) { hta_gfx_mesh_free(s->gfx, s->gpu_held[w]); s->gpu_held[w] = NULL; }
     for (uint32_t p = 0; p < HTA_GAME_MAX_POOLS; p++)
         if (s->gpu_pools[p]) { hta_gfx_mesh_free(s->gfx, s->gpu_pools[p]); s->gpu_pools[p] = NULL; }
+    if (s->gpu_trails) { hta_gfx_mesh_free(s->gfx, s->gpu_trails); s->gpu_trails = NULL; }
+}
+
+/* A hitscan round's tracer, from where it left to the first thing in its
+ * way, if its projectile carries a contrail. */
+static void tracer(hta_android *s, int32_t weapon, const float from[3], const float dir[3])
+{
+    if (!s->trails.loaded || weapon < 0 || weapon >= (int32_t)s->game.weapon_count) return;
+    uint32_t type = s->wtrail[weapon];
+    if (type == HTA_CONT_NONE || s->game.weapons[weapon].travels) return;
+    float t = 100.0f, end[3];
+    if (s->col.built) hta_collision_ray(&s->col, from, dir, 100.0f, &t, NULL, NULL);
+    for (int k = 0; k < 3; k++) end[k] = from[k] + dir[k] * t;
+    hta_contrails_tracer(&s->trails, type, from, end, 300.0f);
 }
 
 /* Everything the game did this frame, turned into sound, words and dust. */
@@ -1833,6 +1868,7 @@ static void game_events(hta_android *s)
         switch (e.kind) {
         case HTA_EV_FIRE:
             if (e.weapon < 0 || e.weapon >= HTA_GAME_MAX_WEAPONS) break;
+            if (e.a != s->me || s->game.weapons[e.weapon].vehicle) tracer(s, e.weapon, e.pos, e.dir);
             /* Our own rifle speaks for itself; a vehicle gun is the game's. */
             if (e.a == s->me && !s->game.weapons[e.weapon].vehicle) break;
             if (s->game.weapons[e.weapon].vehicle &&
@@ -3305,6 +3341,7 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
             !(fx.kind==HTA_NET_FX_FIRE && fx.weapon<s->game.weapon_count &&
               s->game.weapons[fx.weapon].vehicle)) continue;
         if (fx.kind==HTA_NET_FX_FIRE && fx.weapon<s->game.weapon_count) {
+            tracer(s,fx.weapon,fx.pos,fx.dir);
             if (!s->unit_fire_known[fx.weapon]) {
                 s->unit_fire_known[fx.weapon]=1;
                 s->unit_fire_snd[fx.weapon]=hta_effect_first_sound(&s->cache,
@@ -4411,6 +4448,27 @@ void android_main(struct android_app *app)
                         hta_gun_impact(&state.gun,
                                        state.col.built ? &state.col : NULL,
                                        &state.cam, dir, onbot ? bt : -1.0f);
+                        /* Our own tracer leaves from just under the eye,
+                         * where the barrel is, toward what we hit. */
+                        int32_t mine_w = held_roster(&state);
+                        if (state.trails.loaded && mine_w >= 0 &&
+                            state.wtrail[mine_w] != HTA_CONT_NONE) {
+                            float fwd[3], right[3], up[3], from[3], end[3];
+                            hta_camera_forward(&state.cam, fwd);
+                            hta_camera_right(&state.cam, right);
+                            hta_camera_up(&state.cam, up);
+                            float reach = onbot ? bt : HTA_GUN_RANGE;
+                            float wt;
+                            if (!onbot && state.col.built &&
+                                hta_collision_ray(&state.col, state.cam.pos, dir, HTA_GUN_RANGE,
+                                                  &wt, NULL, NULL)) reach = wt;
+                            if (reach > 100.0f) reach = 100.0f;
+                            for (int k = 0; k < 3; k++) {
+                                from[k] = state.cam.pos[k] + fwd[k] * 0.4f + right[k] * 0.08f - up[k] * 0.1f;
+                                end[k] = state.cam.pos[k] + dir[k] * reach;
+                            }
+                            hta_contrails_tracer(&state.trails, state.wtrail[mine_w], from, end, 300.0f);
+                        }
                         if (onbot && who >= 0 && (!state.net_enabled || state.net_hosting)) {
                             int pellets = state.weap.projectiles_per_shot > 0
                                         ? state.weap.projectiles_per_shot : 1;
@@ -4820,6 +4878,24 @@ void android_main(struct android_app *app)
         net_frame(&state,now,dt,&in);
         vehicle_transition(&state);
         vehicle_camera(&state);
+        if (state.trails.loaded) {
+            for (uint32_t p = 0; p < state.game.pool_count; p++) {
+                if (state.ptrail[p] == HTA_CONT_NONE) continue;
+                for (uint32_t k = 0; k < HTA_PROJ_MAX; k++) {
+                    const hta_projectile *q = &state.game.pools[p].live[k];
+                    if (q->alive) hta_contrails_feed(&state.trails, state.ptrail[p], p * 16u + k,
+                                                     q->pos, q->age);
+                }
+            }
+            uint32_t lt = state.proj.loaded
+                ? hta_contrails_for_projectile(&state.trails, &state.cache, NULL, state.proj.proj_tag_id)
+                : HTA_CONT_NONE;
+            for (uint32_t k = 0; lt != HTA_CONT_NONE && k < HTA_PROJ_MAX; k++)
+                if (state.proj.live[k].alive)
+                    hta_contrails_feed(&state.trails, lt, 1000u + k, state.proj.live[k].pos,
+                                       state.proj.live[k].age);
+            hta_contrails_update(&state.trails, &state.cam, dt);
+        }
 
         if (state.gun.dirty && state.gfx) {
             char err[HTA_ERRLEN];
@@ -4917,6 +4993,13 @@ void android_main(struct android_app *app)
                 dynlist[dyncount].lit = true;
                 dyncount++;
             }
+            if (state.gpu_trails && dyncount < HTA_GFX_MAX_DYNAMIC) {
+                dynlist[dyncount].mesh = state.gpu_trails;
+                dynlist[dyncount].vertices = state.trails.mesh.vertices;
+                dynlist[dyncount].vertex_count = state.trails.mesh.vertex_count;
+                dynlist[dyncount].vertex_color = true;
+                dyncount++;
+            }
             g_inst_count = 0;
             dyncount = game_draw(&state, dynlist, dyncount);
             vehicles_draw(&state);
@@ -5010,6 +5093,7 @@ done:
     hta_nav_free(&state.nav);
     hta_collision_free(&state.col);
     hta_vehicles_free(&state.vehicles);
+    hta_contrails_free(&state.trails);
     hta_gun_free(&state.gun);
     hta_projectiles_free(&state.proj);
     hta_projectiles_free(&state.nades);

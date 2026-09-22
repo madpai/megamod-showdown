@@ -36,6 +36,7 @@ if ./build-host/test_bot        >/dev/null 2>&1; then ok "bot tests"; else bad "
 if ./build-host/test_nav        >/dev/null 2>&1; then ok "nav grid tests"; else bad "nav grid tests"; fi
 if ./build-host/test_game       >/dev/null 2>&1; then ok "game rules tests"; else bad "game rules tests"; fi
 if ./build-host/test_ride       >/dev/null 2>&1; then ok "vehicle game rules (no map)"; else bad "vehicle game rules (no map)"; fi
+if ./build-host/test_contrail   >/dev/null 2>&1; then ok "contrail tests (no map)"; else bad "contrail tests (no map)"; fi
 if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_biped "$HTA_MAP" >/dev/null 2>&1; then ok "biped/globals physics from Trial map"; else bad "biped/globals physics from Trial map"; fi
   if ./build-host/test_anim "$HTA_MAP" >/dev/null 2>&1; then ok "FP animation graph + skinned viewmodel"; else bad "FP animation graph + skinned viewmodel"; fi
@@ -53,6 +54,7 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_bot    "$HTA_MAP" >/dev/null 2>&1; then ok "a body to shoot at, and what hurts it"; else bad "a body to shoot at, and what hurts it"; fi
   if ./build-host/test_nav    "$HTA_MAP" >/dev/null 2>&1; then ok "a biped walks a planned path base to base"; else bad "a biped walks a planned path base to base"; fi
   if ./build-host/test_game   "$HTA_MAP" >/dev/null 2>&1; then ok "bots play Slayer to the score limit"; else bad "bots play Slayer to the score limit"; fi
+  if ./build-host/test_contrail "$HTA_MAP" >/dev/null 2>&1; then ok "tracers and trails from the Trial's contrails"; else bad "tracers and trails from the Trial's contrails"; fi
   if ./build-host/test_ride   "$HTA_MAP" >/dev/null 2>&1; then ok "players drive, gun, splatter and bail from every vehicle"; else bad "players drive, gun, splatter and bail from every vehicle"; fi
 fi
 

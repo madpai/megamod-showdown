@@ -17,6 +17,7 @@ if(ANDROID)
         src/engine/gun.c
         src/engine/projectile.c
         src/engine/particle.c
+        src/engine/contrail.c
         src/engine/vitals.c
         src/engine/actor.c
         src/engine/pickup.c
@@ -66,6 +67,7 @@ else()
     add_library(hta_engine STATIC src/engine/engine.c src/engine/camera.c src/engine/player.c src/engine/vehicle.c src/engine/gun.c
         src/engine/projectile.c
         src/engine/particle.c
+        src/engine/contrail.c
         src/engine/vitals.c
         src/engine/actor.c
         src/engine/pickup.c
@@ -192,6 +194,10 @@ else()
     add_executable(test_game tests/test_game.c)
     target_link_libraries(test_game PRIVATE hta_engine m)
     add_test(NAME game COMMAND test_game)
+
+    add_executable(test_contrail tests/test_contrail.c)
+    target_link_libraries(test_contrail PRIVATE hta_engine m)
+    add_test(NAME contrail COMMAND test_contrail)
 
     add_executable(test_ride tests/test_ride.c)
     target_link_libraries(test_ride PRIVATE hta_engine m)
