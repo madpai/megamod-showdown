@@ -6,6 +6,7 @@
 #include "asset/bsp.h"
 #include "asset/bitmap.h"
 #include "asset/biped.h"
+#include "asset/model.h"
 #include "engine/player.h"
 #include "engine/actor.h"
 #include "engine/scene_light.h"
@@ -87,6 +88,7 @@ int main(int argc,char **argv)
     hta_sky_load(&sky,&cache,bm.data ? &bm : NULL,err,sizeof(err));
     hta_collision col={0};
     if (!hta_bsp_load_collision(&cache,&collision_mesh,err,sizeof(err)) ||
+        !hta_scenario_add_collision(&collision_mesh,&cache,err,sizeof(err)) ||
         !hta_collision_build(&col,&collision_mesh)) {
         fprintf(stderr,"collision: %s\n",err); return 1;
     }
@@ -123,7 +125,7 @@ int main(int argc,char **argv)
         fprintf(stderr,"bad server address\n"); return 1;
     }
     if (SDL_Init(SDL_INIT_VIDEO|SDL_INIT_EVENTS)) { fprintf(stderr,"SDL: %s\n",SDL_GetError()); return 1; }
-    SDL_Window *window=SDL_CreateWindow("Blood Gulch LAN",SDL_WINDOWPOS_CENTERED,
+    SDL_Window *window=SDL_CreateWindow("Blood Gulch LAN - connecting",SDL_WINDOWPOS_CENTERED,
                         SDL_WINDOWPOS_CENTERED,WIDTH,HEIGHT,0);
     SDL_Renderer *renderer=window ? SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE) : NULL;
     SDL_Texture *texture=renderer ? SDL_CreateTexture(renderer,SDL_PIXELFORMAT_RGBA32,
@@ -274,6 +276,13 @@ int main(int argc,char **argv)
         SDL_UpdateTexture(texture,NULL,rgba,WIDTH*4);
         SDL_RenderCopy(renderer,texture,NULL,NULL); SDL_RenderPresent(renderer);
         if (now-last_log>=2) {
+            char title[128];
+            if (net.connected)
+                snprintf(title,sizeof(title),"Blood Gulch LAN - player %u - remote %u - %.0f ms",
+                         net.id,remote_visible ? remote_id : 0,net.stats.ping_ms);
+            else snprintf(title,sizeof(title),"Blood Gulch LAN - connecting to %s:%u",
+                          argv[2],port);
+            SDL_SetWindowTitle(window,title);
             printf("id=%u remote=%u pos=%.2f %.2f %.2f ping=%.1fms bytes=%llu/%llu events=%llu clips=%u crouch=%d air=%d pistol=%d\n",
                    net.id,remote_visible?remote_id:0,player.pos[0],player.pos[1],player.pos[2],
                    net.stats.ping_ms,(unsigned long long)net.stats.bytes_in,

@@ -18,7 +18,9 @@ loads the owner's own Blood Gulch map, uses existing `hta_player_update` and
 `hta_actor`, shows one remote Spartan, and sends movement and fire/melee/
 grenade/weapon intentions. It renders via the existing offscreen Vulkan path.
 `scripts/run_two_players.sh` starts one server and two interactive desktop
-windows. The Android setup screen has Host LAN game and numeric IPv4 Join LAN
+windows. The desktop client uses the map's BSP and placed-object collision,
+and its window title reports the connection and remote player ID. The Android
+setup screen has Host LAN game and numeric IPv4 Join LAN
 server actions. Host runs the same nonblocking server inside the Android
 process and joins it through loopback; this path is compile tested only. Android
 uses the same client session and actor path, with interpolation and actor clips
