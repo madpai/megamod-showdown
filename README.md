@@ -20,7 +20,9 @@ shields before health, at the damage the tags say each weapon does.
 Human Warthogs can be driven across Blood Gulch with a chase camera, steering,
 braking, wheel motion, and terrain contact.
 
-Not yet: other drivable vehicles, bots that think, menus, netcode.
+Not yet: other drivable vehicles, bots that think, menus, authoritative
+multiplayer combat. The first LAN movement/action replication slice is underway;
+see [`docs/NETWORK_PROGRESS.md`](docs/NETWORK_PROGRESS.md).
 
 ## Legal
 
@@ -43,3 +45,5 @@ Not yet: other drivable vehicles, bots that think, menus, netcode.
 | [INVADER_ASSET_PIPELINE.md](docs/INVADER_ASSET_PIPELINE.md) | How Invader's tag definitions are used |
 | [ANDROID_PORT_INVESTIGATION.md](docs/ANDROID_PORT_INVESTIGATION.md) | The original feasibility study |
 | [PROGRESS.md](docs/PROGRESS.md) | Early milestone log |
+| [NETWORK_ARCHITECTURE.md](docs/NETWORK_ARCHITECTURE.md) | Current engine audit and native multiplayer design |
+| [NETWORK_PROGRESS.md](docs/NETWORK_PROGRESS.md) | Verified LAN slice, commands and remaining tests |

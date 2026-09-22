@@ -9,6 +9,36 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## First LAN slice (2026-09-21)
+
+The live engine already had player physics, actors, weapon logic, vitals and
+vehicles; its gameplay coordinator was Android's `android_main`, and desktop
+had only an offscreen inspector. The 57-check baseline was preserved as
+`net-baseline-2026-09-21` before edits. `NETWORK_ARCHITECTURE.md` records
+the audit and boundary decision. We chose bounded nonblocking UDP and an
+explicit native wire codec rather than working on Halo Trial compatibility.
+
+The first asset-free loopback test proved handshake, distinct IDs, ping/pong,
+disconnect, malformed/version rejection, state and event relay. A headless
+server and two synthetic client processes then ran at 20 snapshots/s; both
+saw one remote player and received fire events. A thin SDL2 desktop client
+loads the owner's own map and reuses `hta_player_update` and `hta_actor`.
+Two such processes ran simultaneously under SDL's dummy video driver with the
+real Blood Gulch map. Both received remote positions; a captured frame shows
+one moving Spartan in the canyon. After adding AR/pistol actor variants, the
+6-second run succeeded again and both clients logged the other's ID.
+The next automated run asserted airborne/crouch/pistol snapshots and remote
+action clip starts in both directions: five events received and four clips
+played per client. Position/yaw interpolation moved into a portable helper,
+with a host check for the yaw wrap at ±π.
+
+Android now has Host LAN and Join LAN server actions, but no device is attached
+to verify them. The headless server owns identity and presence; transforms are
+still client-simulated and relayed as provisional input. Action events are
+cosmetic and no player-vs-player damage exists. These limits are explicit in
+`NETWORK_PROGRESS.md`. The 58-check gate passed again after the Host LAN
+addition.
+
 ## Vehicle slice closed for now (2026-09-21)
 
 The owner reported the Warthog was behaving much better and chose to move on

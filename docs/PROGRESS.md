@@ -1,6 +1,6 @@
 # Progress
 
-Last updated: **2026-09-21** (vehicle slice accepted; multiplayer next session)
+Last updated: **2026-09-21** (first LAN slice: two automated desktop clients)
 
 This is the milestone log. For the current implementation and next-session
 instructions, use `docs/HANDOFF.md`; older test counts below record their
@@ -83,11 +83,15 @@ Run `scripts/device_test.sh` with the S24+ connected to convert remaining 🟡.
 - ✅ **Scope decided (2026-09-18): our own protocol.** Transport stays behind an
   interface so wire-compatibility with real Halo servers can be attempted later
   without rearchitecting. See Decisions.
-- ⬜ Implementation begins when the owner prompts next session. Start with a
-  two-instance connection and remote-player visibility slice; see `HANDOFF.md`.
-- ⬜ Two clients connect
-- ⬜ Players see each other
-- ⬜ Shooting / hit registration over network
+- ✅ Versioned UDP protocol, bounded server/client sessions, headless test,
+  and Android APK build. Current gate: 58/58. See `NETWORK_PROGRESS.md`.
+- ✅ Two separate desktop clients connect to one headless server on loopback,
+  assign IDs and receive movement snapshots/events in automated tests.
+- 🟡 Remote Spartan visibly rendered in one captured automated Blood Gulch
+  frame; both clients logged the other's ID. Two-human and LAN tests pending.
+- 🟡 Fire/melee/grenade/weapon events relay; remote actor clips and AR/pistol
+  models built, but visual inspection of each action remains pending.
+- ⬜ Shooting / hit registration and damage over network
 - ⬜ Death / respawn
 - ⬜ Teams / score
 - ⬜ Vehicles

@@ -4,7 +4,7 @@
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-21
+**Date of this revision:** 2026-09-22
 **Repo:** `/home/commander/projects/halo-trial-android`
 
 ---
@@ -40,7 +40,7 @@ cd /home/commander/projects/halo-trial-android
 HTA_MAP=/home/commander/halo-trial-data/extract/maps/bloodgulch.map scripts/verify.sh
 ```
 
-57 checks: host build, every unit test twice (synthetic, then against the real
+58 checks: host build, every unit test twice (synthetic, then against the real
 map), a synthetic-fixture CLI pass, an offscreen render, the APK build, and the
 APK's contents (arm64 only, no bundled audio, right entry points).
 
@@ -97,6 +97,18 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+> **Network slice in progress (2026-09-21).** Read
+> [`NETWORK_PROGRESS.md`](NETWORK_PROGRESS.md) and
+> [`NETWORK_ARCHITECTURE.md`](NETWORK_ARCHITECTURE.md). The old 57-check
+> baseline is tagged `net-baseline-2026-09-21`; the current gate is 58/58.
+> An automated two-process desktop run on the real Blood Gulch map received
+> remote movement in both directions, with one captured image showing the
+> other Spartan. No two-human or Android device test has happened. Next,
+> use `HTA_MAP=... scripts/run_two_players.sh` and check movement, jump,
+> crouch, AR/pistol selection and fire/melee/grenade animations in both
+> windows. Then test Android ↔ desktop LAN. Movement is provisional client
+> submitted transform relay; no authoritative damage or player combat yet.
+>
 > **Vehicle slice accepted for now (2026-09-21).** The owner says handling is
 > much better and wants to move on. There is no active vehicle phone test.
 > The latest collision release (`8f6ecca`) passed all 57 verification checks;
@@ -104,14 +116,6 @@ the section below, and update it every time.
 > no separate phone report confirming those exact behaviors. Keep the planar
 > collision, damage and seat gaps below visible when returning to vehicles.
 >
-> **Next session, when the owner prompts: begin netcode/multiplayer.** First
-> inspect the live gameplay loop and choose the smallest two-instance
-> connection/replication slice. Then implement and verify that slice. The
-> existing scope decision is our own protocol behind a transport interface;
-> no networking implementation exists yet. For the first device test, name
-> the exact connection, remote-player visibility and failure signs in this
-> section after there is a build to test.
-
 ---
 
 ## Where things stand
@@ -183,9 +187,9 @@ remain a rendering gap; phone confirmation of this fix is pending.
   Ghost and Banshee are all still untouched.
 - **Bots.** The body exists; it needs somewhere to walk, something to walk
   towards, an eye test and a trigger. None of that touches what is there.
-- **Netcode.** No implementation yet. This is the next requested area of work,
-  to start when the owner prompts in the next session. Our own protocol behind
-  a transport interface is the established scope decision (investigation §5.2).
+- **Authoritative multiplayer combat.** The first LAN transport and visual
+  replication slice exists; server-side movement, damage, death, vehicles and
+  game modes are still absent. See `NETWORK_PROGRESS.md`.
 - **Menus.** `ui.map` holds the entire Halo shell as 811 `DeLa` widget
   definitions, 168 string lists, 6 fonts, 222 bitmaps, a virtual keyboard and
   a map list. A faithful main menu is a widget-tree interpreter, not asset
@@ -196,17 +200,18 @@ remain a rendering gap; phone confirmation of this fix is pending.
 - **Music.** There is none in Blood Gulch, and that is correct — Halo CE
   multiplayer maps carry no score. The campaign map has it.
 
-### Multiplayer starting point for the next session
+### Multiplayer continuation
 
 - The gameplay state and per-frame update currently live in
   `src/platform/platform_android.c` (`hta_android`, `android_main`). The
   player, vehicles, projectiles, vitals and other mechanics already have
   portable `src/engine/` modules. Read the live loop before deciding where
   shared session state, simulation timing and network messages belong.
-- Begin with a small, verifiable two-instance connection and remote-player
-  visibility slice; plan shooting, hit registration, death/respawn, score and
-  vehicles as later multiplayer milestones. The eventual target remains two
-  devices in one Blood Gulch session (investigation stage 8).
+- Two automated desktop clients now connect through one headless server and
+  receive each other's position, orientation and action events. The desktop
+  window reuses `hta_player_update` and `hta_actor`; Android has compiled
+  Host LAN and Join LAN flows. Two-human and device runs remain the active
+  verification target before adding server-side damage or vehicles.
 - Preserve the asset boundary: each client imports its own Trial data. Do not
   send or bundle map assets. Use the existing `scripts/verify.sh` gate before
   publishing an APK for device testing.
