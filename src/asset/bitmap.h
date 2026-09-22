@@ -185,4 +185,15 @@ bool hta_bitmap_decode_pixels(uint16_t format, uint32_t w, uint32_t h,
                               const uint8_t *src, uint32_t src_len,
                               hta_bitmap *out, char *err, size_t errlen);
 
+/* A chicago shader's maps, in stage order: `schi` maps (+84), or `scex`
+ * four-stage maps (+84) falling back to its two-stage ones (+96). Each map
+ * (ShaderTransparentChicagoMap, 220, reconciles) gives a bitmap (+108), a
+ * u/v repeat (+84/+88) and colour/alpha functions (+44/+46). Returns how
+ * many were written (up to `max`), and the framebuffer blend function
+ * (shader +44) through `blend`. */
+uint32_t hta_chicago_maps(const hta_cache *c, uint32_t shader_tag_id,
+                          uint32_t *bitmap, float (*scale)[2],
+                          uint8_t *color_fn, uint8_t *alpha_fn, uint32_t max,
+                          uint16_t *blend);
+
 #endif

@@ -22,7 +22,43 @@ layout(location = 2) in vec3 v_world;
 layout(location = 3) in vec2 v_lm_uv;
 layout(location = 0) out vec4 out_color;
 
+/* ShaderColorFunctionType, folding the running colour with the next map. */
+vec4 fold(vec4 cur, vec4 nxt, int op) {
+    if (op == 1)  return nxt;
+    if (op == 2)  return cur * nxt;
+    if (op == 3)  return cur * nxt * 2.0;
+    if (op == 4)  return cur + nxt;
+    if (op == 5 || op == 6) return cur + nxt - 0.5;
+    if (op == 7)  return cur - nxt;
+    if (op == 8)  return nxt - cur;
+    if (op == 9)  return mix(nxt, cur, cur.a);
+    if (op == 10) return mix(cur, nxt, cur.a);
+    if (op == 11) return mix(cur, nxt, nxt.a);
+    if (op == 12) return mix(nxt, cur, nxt.a);
+    return cur;
+}
+
 void main() {
+    /* A chicago layer (skies): up to three maps, each at its own repeat,
+     * folded by the shader's colour and alpha functions. The scales ride in
+     * detail (u) and light_dir (v), the functions in ambient. */
+    if (push.light_color.w > 1.5) {
+        int n = int(push.detail.w + 0.5);
+        vec4 m0 = texture(u_base, v_uv * vec2(push.detail.x, push.light_dir.x));
+        vec4 acc = m0;
+        if (n > 1) {
+            vec4 m1 = texture(u_detail, v_uv * vec2(push.detail.y, push.light_dir.y));
+            acc = vec4(fold(acc, m1, int(push.ambient.x + 0.5)).rgb,
+                       fold(acc, m1, int(push.ambient.z + 0.5)).a);
+            if (n > 2) {
+                vec4 m2 = texture(u_detail2, v_uv * vec2(push.detail.z, push.light_dir.z));
+                acc = vec4(fold(acc, m2, int(push.ambient.y + 0.5)).rgb,
+                           fold(acc, m2, int(push.ambient.w + 0.5)).a);
+            }
+        }
+        out_color = clamp(acc, 0.0, 1.0);
+        return;
+    }
     vec4 base = texture(u_base, v_uv);
     vec3 albedo = base.rgb;
     vec3 lm     = texture(u_light, v_lm_uv).rgb;

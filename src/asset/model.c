@@ -369,16 +369,47 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
             sti >= 0 && hta_cache_tag(c, (uint32_t)sti, &shader) &&
             shader.primary_class == HTA_TAG_SOSO;
         if (sky && sm->draw_mode == HTA_DRAW_SKIP) sm->draw_mode = HTA_DRAW_OPAQUE;
-        uint32_t base_bm = hta_shader_base_bitmap(c, shader_id);
+        /* A sky layer is a chicago shader of up to three maps, and drawn
+         * with only its first at 1x it is a smear of star mask. */
+        if (sky) {
+            uint32_t maps[3];
+            float scl[3][2];
+            uint8_t cf[3], af[3];
+            uint16_t blend = 0;
+            uint32_t nm = hta_chicago_maps(c, shader_id, maps, scl, cf, af, 3, &blend);
+            uint32_t tex[3] = { ~0u, ~0u, ~0u };
+            uint32_t got = 0;
+            for (uint32_t k = 0; k < nm; k++) {
+                tex[k] = hta_mesh_intern_bitmap(dst, c, bitmaps, maps[k], 0);
+                if (tex[k] == ~0u) break;
+                got = k + 1;
+            }
+            if (got) {
+                sm->chicago = (uint8_t)got;
+                sm->albedo_tex = tex[0];
+                sm->detail_tex = got > 1 ? tex[1] : ~0u;
+                sm->detail2_tex = got > 2 ? tex[2] : ~0u;
+                for (uint32_t k = 0; k < got; k++) {
+                    sm->chicago_scale[k][0] = scl[k][0];
+                    sm->chicago_scale[k][1] = scl[k][1];
+                    sm->chicago_color[k] = cf[k];
+                    sm->chicago_alpha[k] = af[k];
+                }
+                /* FramebufferBlendFunction: 3 is add; the rest we draw
+                 * as alpha blending, the nearest pipeline we have. */
+                sm->draw_mode = blend == 3u ? HTA_DRAW_ADD : HTA_DRAW_ALPHA;
+            }
+        }
+        uint32_t base_bm = sm->chicago ? 0u : hta_shader_base_bitmap(c, shader_id);
         if (base_bm) sm->albedo_tex = hta_mesh_intern_bitmap(dst, c, bitmaps, base_bm, 0);
         float dscale = 0.0f;
-        uint32_t det_bm = hta_shader_detail_bitmap(c, shader_id, &dscale);
+        uint32_t det_bm = sm->chicago ? 0u : hta_shader_detail_bitmap(c, shader_id, &dscale);
         if (det_bm) {
             uint32_t dt = hta_mesh_intern_bitmap(dst, c, bitmaps, det_bm, 0);
             if (dt != ~0u) { sm->detail_tex = dt; sm->detail_scale = dscale; }
         }
         /* And the channel that gates it, if the shader asks for one. */
-        if (sm->detail_tex != ~0u) {
+        if (sm->detail_tex != ~0u && !sm->chicago) {
             uint8_t mask = 0;
             uint32_t mp = hta_shader_multipurpose(c, shader_id, &mask);
             if (mp && mask) {

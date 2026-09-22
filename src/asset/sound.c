@@ -1,4 +1,5 @@
 #include "sound.h"
+#include "ogg.h"
 #include "bsp.h"     /* hta_read_reflexive */
 
 #include <stdarg.h>
@@ -264,8 +265,74 @@ bool hta_sound_decode(const hta_cache *c, const hta_resource_map *sounds,
         return true;
     }
 
+    if (pfmt == HTA_SND_FMT_OGG) {
+        int16_t *pcm = NULL;
+        uint32_t frames = 0, orate = 0;
+        uint8_t och = 0;
+        if (!hta_ogg_decode(src, ssize, &pcm, &frames, &och, &orate)) {
+            fail(err, errlen, "Ogg Vorbis decode failed");
+            return false;
+        }
+        out->samples = pcm;
+        out->frame_count = frames;
+        out->channels = och;
+        out->sample_rate = orate;
+        return true;
+    }
+
     fail(err, errlen, "permutation format %u (%s) is not decoded yet", pfmt,
          pfmt == HTA_SND_FMT_OGG ? "Ogg Vorbis" :
          pfmt == HTA_SND_FMT_IMA ? "IMA ADPCM" : "?");
     return false;
+}
+
+bool hta_sound_decode_chain(const hta_cache *c, const hta_resource_map *sounds,
+                            uint32_t tag_id, uint32_t *rng, hta_pcm *out,
+                            char *err, size_t errlen)
+{
+    if (!c || !out) { fail(err, errlen, "bad arguments"); return false; }
+    memset(out, 0, sizeof(*out));
+    int32_t ti = hta_cache_find_tag_by_id(c, tag_id);
+    hta_tag_entry t;
+    uint32_t base, prc = 0, prp = 0, pro = 0, perm_off = 0, count = 0;
+    if (ti < 0 || !hta_cache_tag(c, (uint32_t)ti, &t) || t.indexed ||
+        !hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base) ||
+        !hta_read_reflexive(c, base + SND_PITCH_RANGES, &prc, &prp) || !prc ||
+        !hta_cache_ptr_to_offset(c, prp, &pro) ||
+        !pitch_range_0(c, tag_id, &perm_off, &count)) {
+        fail(err, errlen, "snd! 0x%08X unreadable", tag_id);
+        return false;
+    }
+    /* The first `actual permutation count` are the places a play may
+     * start; each names the segment that follows it, to the end. */
+    uint16_t actual = 0;
+    hta_rd_u16(c, pro + 44u, &actual);
+    if (!actual || actual > count) actual = (uint16_t)count;
+    uint32_t start = 0;
+    if (rng && actual > 1) { *rng = *rng * 1664525u + 1013904223u; start = (*rng >> 8) % actual; }
+    uint32_t p = start;
+    for (uint32_t guard = 0; guard < 64u && p < count; guard++) {
+        hta_pcm seg;
+        if (!hta_sound_decode(c, sounds, tag_id, p, &seg, err, errlen)) break;
+        if (out->samples && (seg.channels != out->channels || seg.sample_rate != out->sample_rate)) {
+            hta_pcm_free(&seg);
+            break;
+        }
+        size_t have = (size_t)out->frame_count * (out->channels ? out->channels : seg.channels);
+        size_t add = (size_t)seg.frame_count * seg.channels;
+        int16_t *grown = (int16_t *)realloc(out->samples, (have + add) * sizeof(int16_t));
+        if (!grown) { hta_pcm_free(&seg); break; }
+        memcpy(grown + have, seg.samples, add * sizeof(int16_t));
+        out->samples = grown;
+        out->frame_count += seg.frame_count;
+        out->channels = seg.channels;
+        out->sample_rate = seg.sample_rate;
+        hta_pcm_free(&seg);
+        uint16_t next = 0xFFFFu;
+        hta_rd_u16(c, perm_off + p * SPERM_SIZE + 42u, &next);
+        if (next == 0xFFFFu || next == p) break;
+        p = next;
+    }
+    if (!out->samples) { if (err && !err[0]) fail(err, errlen, "no samples"); return false; }
+    return true;
 }

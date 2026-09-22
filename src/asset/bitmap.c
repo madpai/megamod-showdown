@@ -736,3 +736,45 @@ uint32_t hta_mesh_intern_atlas(hta_bsp_mesh *mesh, const hta_cache *c,
     mesh->textures[slot].rgba   = rgba;
     return slot;
 }
+
+uint32_t hta_chicago_maps(const hta_cache *c, uint32_t shader_tag_id,
+                          uint32_t *bitmap, float (*scale)[2],
+                          uint8_t *color_fn, uint8_t *alpha_fn, uint32_t max,
+                          uint16_t *blend)
+{
+    if (!c || !shader_tag_id || shader_tag_id == 0xFFFFFFFFu) return 0;
+    int32_t ti = hta_cache_find_tag_by_id(c, shader_tag_id);
+    hta_tag_entry t;
+    uint32_t base = 0;
+    if (ti < 0 || !hta_cache_tag(c, (uint32_t)ti, &t) || t.indexed) return 0;
+    if (t.primary_class != HTA_TAG_SCHI && t.primary_class != HTA_TAG_SCEX) return 0;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) return 0;
+    uint16_t bf = 0;
+    hta_rd_u16(c, base + 44u, &bf);
+    if (blend) *blend = bf;
+    uint32_t cnt = 0, ptr = 0, off = 0;
+    bool ok = hta_read_reflexive(c, base + 84u, &cnt, &ptr) && cnt;
+    if (!ok && t.primary_class == HTA_TAG_SCEX)
+        ok = hta_read_reflexive(c, base + 96u, &cnt, &ptr) && cnt;
+    if (!ok || !hta_cache_ptr_to_offset(c, ptr, &off)) return 0;
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < cnt && n < max; i++) {
+        uint32_t m = off + i * 220u, id = 0;
+        uint16_t cf = 0, af = 0;
+        float us = 1.0f, vs = 1.0f;
+        if (!hta_rd_u32(c, m + 108u + 12u, &id) || !id || id == 0xFFFFFFFFu) continue;
+        hta_rd_u16(c, m + 44u, &cf);
+        hta_rd_u16(c, m + 46u, &af);
+        hta_rd_f32(c, m + 84u, &us);
+        hta_rd_f32(c, m + 88u, &vs);
+        if (!(us != 0.0f)) us = 1.0f;
+        if (!(vs != 0.0f)) vs = 1.0f;
+        bitmap[n] = id;
+        scale[n][0] = us;
+        scale[n][1] = vs;
+        color_fn[n] = (uint8_t)cf;
+        alpha_fn[n] = (uint8_t)af;
+        n++;
+    }
+    return n;
+}

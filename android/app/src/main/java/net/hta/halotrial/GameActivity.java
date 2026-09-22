@@ -1,6 +1,7 @@
 package net.hta.halotrial;
 
 import android.app.NativeActivity;
+import android.content.Intent;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
@@ -151,6 +152,27 @@ public class GameActivity extends NativeActivity {
     static native int nativeVehicleMode();
     /* Banner, place, kill feed and scoreboard, separated by 0x1E. */
     static native String nativeGameText();
+    /* 1 while the main menu is up: the overlay draws no controls and hands
+     * touches to the menu instead. */
+    static native int nativeMenuMode();
+    static native void nativeMenuTouch(int action, float x, float y);
+
+    static volatile boolean creditsUp;
+
+    /** Called from native when SETTINGS is chosen. */
+    public void openSettings() {
+        runOnUiThread(() -> {
+            Intent i = new Intent(this, SetupActivity.class);
+            i.putExtra("settings", true);
+            startActivity(i);
+            finish();
+        });
+    }
+
+    /** Called from native when CREDITS is chosen. */
+    public void showCredits() {
+        creditsUp = true;
+    }
 
     private static final class HudOverlay extends View {
         private final Paint ring = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -291,6 +313,20 @@ public class GameActivity extends NativeActivity {
 
         @Override
         public boolean onTouchEvent(MotionEvent e) {
+            if (GameActivity.nativeMenuMode() != 0) {
+                int a = e.getActionMasked();
+                if (creditsUp) {
+                    if (a == MotionEvent.ACTION_UP) creditsUp = false;
+                    invalidate();
+                    return true;
+                }
+                int code = a == MotionEvent.ACTION_DOWN ? 0
+                         : a == MotionEvent.ACTION_MOVE ? 1
+                         : (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) ? 2 : -1;
+                if (code >= 0 && getWidth() > 0 && getHeight() > 0)
+                    GameActivity.nativeMenuTouch(code, e.getX() / getWidth(), e.getY() / getHeight());
+                return true;
+            }
             int action = e.getActionMasked();
             int idx = e.getActionIndex();
             int id = e.getPointerId(idx);
@@ -430,6 +466,28 @@ public class GameActivity extends NativeActivity {
             GameActivity.nativeHudCrouch(false);
         }
 
+        private void drawCredits(Canvas c) {
+            int w = getWidth(), h = getHeight();
+            c.drawRect(w * 0.15f, h * 0.12f, w * 0.85f, h * 0.88f, boardBg);
+            String[] lines = {
+                "HALO: MP",
+                "",
+                "Halo: Combat Evolved by Bungie; PC Trial by Gearbox Software.",
+                "Every map, model, sound and word here comes from your own",
+                "copy of the Trial, read at runtime.",
+                "",
+                "This engine: C, Vulkan and AAudio, GPLv3.",
+                "Tag layouts from Invader. Ogg Vorbis by stb_vorbis.",
+                "",
+                "Tap to return."
+            };
+            float y = h * 0.22f;
+            for (String l : lines) {
+                c.drawText(l, w * 0.5f, y, l.startsWith("HALO") ? banner : label);
+                y += label.getTextSize() * 1.9f;
+            }
+        }
+
         /* The game's words: the announcer's banner across the middle, where
          * you stand along the top, who killed whom down the left, and at the
          * end of a game the scoreboard. */
@@ -476,6 +534,11 @@ public class GameActivity extends NativeActivity {
 
         @Override
         protected void onDraw(Canvas c) {
+            if (GameActivity.nativeMenuMode() != 0) {
+                if (creditsUp) drawCredits(c);
+                postInvalidateDelayed(100);
+                return;
+            }
             int vehicleMode = GameActivity.nativeVehicleMode();
             if (vehicleMode != 0) {
                 float savedSize = label.getTextSize();

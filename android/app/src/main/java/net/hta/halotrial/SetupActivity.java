@@ -76,8 +76,11 @@ public class SetupActivity extends Activity {
         skillButton.setOnClickListener(v -> { skill = (skill + 1) % 4; showBotSettings(); });
         showBotSettings();
 
-        play = btn("Play Slayer", 0xFF2A7A3A);
-        play.setOnClickListener(v -> launchGame());
+        play = btn("Back to main menu", 0xFF2A7A3A);
+        play.setOnClickListener(v -> {
+            if (existingMap() == null && !builtInData()) { status.setText("Pick a map first."); return; }
+            openMenu();
+        });
         Button host = btn("Host LAN game", 0xFF2A7A3A);
         host.setOnClickListener(v -> launchGame(false, true));
         serverAddress = new EditText(this);
@@ -131,6 +134,21 @@ public class SetupActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refresh();
+        /* With the data in place, the main menu is the front door; this
+         * screen is SETTINGS, reached from it. */
+        if (!getIntent().getBooleanExtra("settings", false)
+                && (builtInData() || existingMap() != null)) {
+            openMenu();
+        }
+    }
+
+    private void openMenu() {
+        Intent i = new Intent(this, GameActivity.class);
+        i.putExtra("menu", 1);
+        i.putExtra("bots", bots);
+        i.putExtra("skill", skill);
+        startActivity(i);
+        finish();
     }
 
     private void refresh() {

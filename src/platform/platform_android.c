@@ -44,6 +44,7 @@
 #include "../game/game.h"
 #include "../game/view.h"
 #include "../game/nav.h"
+#include "../game/menu.h"
 #include "../asset/items.h"
 #include "../asset/strings.h"
 
@@ -210,6 +211,23 @@ typedef struct {
     /* The game: Slayer against bots, everyone's damage attributed. The
      * local player is unit `me`, mirrored in every frame; the bots live
      * entirely inside it and are drawn from `gview`. */
+    /* The main menu: ui.map's ring and sky, the HALO logo and the shell's
+     * words, before any level is loaded. */
+    bool          menu_mode;
+    hta_menu      menu;
+    hta_cache     ui_cache;
+    uint8_t      *ui_data;
+    size_t        ui_size;
+    hta_gfx_mesh *gpu_menu_scene, *gpu_menu_sky, *gpu_menu_ui;
+    int           menu_pressed;
+    bool          menu_go;           /* MULTIPLAYER was chosen: load the level */
+    uint32_t      menu_clip[3];      /* cursor, forward, back */
+    uint32_t      music_in, music_loop;
+    float         music_left;        /* seconds of the intro still playing */
+    bool          music_looping;
+    int16_t      *menu_pcm[8];
+    uint32_t      menu_pcm_count;
+
     hta_game      game;
     hta_game_view gview;
     hta_nav       nav;
@@ -1118,6 +1136,9 @@ static bool find_named(hta_android *s, const char *name, char *out, size_t outle
 }
 
 static void start_game(hta_android *s);
+static void start_gfx(hta_android *s);
+static void stop_gfx(hta_android *s);
+static void rebuild_gfx_if_size_changed(hta_android *s);
 static void game_gpu_upload(hta_android *s);
 static void game_gpu_free(hta_android *s);
 
@@ -1157,9 +1178,11 @@ static bool load_map(hta_android *s)
             s->mesh.bounds_max[0], s->mesh.bounds_max[1], s->mesh.bounds_max[2]);
 
     /* sounds.map, same external-resource pattern as bitmaps but type 2. */
-    if (find_named(s, "sounds.map", s->sounds_path, sizeof(s->sounds_path))) {
+    if (s->sounds_data || find_named(s, "sounds.map", s->sounds_path, sizeof(s->sounds_path))) {
         {
-            if (map_data_file(s, s->sounds_path, &s->sounds_data, &s->sounds_size)) {
+            /* The menu may have mapped it already. */
+            if (s->sounds_data ||
+                map_data_file(s, s->sounds_path, &s->sounds_data, &s->sounds_size)) {
                 if (hta_resource_open_typed(&s->sounds_rm, s->sounds_data, s->sounds_size,
                                             HTA_RESOURCE_SOUNDS, err, sizeof(err)))
                     hta_log("[assets] sounds.map %zu bytes from %s",
@@ -1175,9 +1198,10 @@ static bool load_map(hta_android *s)
     /* Kept on the state: swapping weapons re-decodes their art, so the
      * resource map has to outlive load_map. */
     memset(&s->bitmaps_rm, 0, sizeof(s->bitmaps_rm));
-    if (find_named(s, "bitmaps.map", s->bitmaps_path, sizeof(s->bitmaps_path))) {
+    if (s->bitmaps_data || find_named(s, "bitmaps.map", s->bitmaps_path, sizeof(s->bitmaps_path))) {
         {
-            if (map_data_file(s, s->bitmaps_path, &s->bitmaps_data, &s->bitmaps_size)) {
+            if (s->bitmaps_data ||
+                map_data_file(s, s->bitmaps_path, &s->bitmaps_data, &s->bitmaps_size)) {
                 if (hta_resource_open(&s->bitmaps_rm, s->bitmaps_data, s->bitmaps_size, err, sizeof(err)))
                     hta_log("[assets] bitmaps.map %zu bytes from %s", s->bitmaps_size, s->bitmaps_path);
                 else
@@ -1838,6 +1862,212 @@ static uint32_t game_draw(hta_android *s, hta_gfx_dynamic *dyn, uint32_t n)
     return n;
 }
 
+/* ------------------------------- main menu ------------------------------ */
+
+#define HTA_LOOP_MUSIC 10u
+#define HTA_LOOP_MUSIC_IN 11u   /* the intro, stopped when it has played once */
+
+/* A ui.map sound as a mixer clip, or HTA_AUDIO_NO_CLIP. `chain` joins a
+ * long sound's segments -- the title music is cut into five-second pieces. */
+static uint32_t menu_clip(hta_android *s, uint32_t tag, bool chain)
+{
+    if (!tag || !s->audio_ok || !s->sounds_rm.data || s->menu_pcm_count >= 8) return HTA_AUDIO_NO_CLIP;
+    char err[HTA_ERRLEN];
+    hta_pcm pcm;
+    bool ok = chain ? hta_sound_decode_chain(&s->ui_cache, &s->sounds_rm, tag, &s->rng, &pcm, err, sizeof(err))
+                    : hta_sound_decode(&s->ui_cache, &s->sounds_rm, tag, 0, &pcm, err, sizeof(err));
+    if (!ok) { hta_log("[menu] sound 0x%08X: %s", tag, err); return HTA_AUDIO_NO_CLIP; }
+    uint32_t clip = hta_audio_add_clip(&s->audio, pcm.samples, pcm.frame_count,
+                                       pcm.sample_rate, pcm.channels);
+    if (clip == HTA_AUDIO_NO_CLIP) { hta_pcm_free(&pcm); return clip; }
+    s->menu_pcm[s->menu_pcm_count++] = pcm.samples;   /* the mixer reads it */
+    return clip;
+}
+
+static bool menu_load(hta_android *s)
+{
+    char err[HTA_ERRLEN];
+    char path[512];
+    if (!find_map(s)) return false;           /* where the data is, not loaded */
+    if (!find_named(s, "ui.map", path, sizeof(path)) ||
+        !map_data_file(s, path, &s->ui_data, &s->ui_size) ||
+        !hta_cache_open(&s->ui_cache, s->ui_data, s->ui_size, err, sizeof(err))) {
+        hta_log("[menu] no usable ui.map; straight into the game");
+        return false;
+    }
+    if (!s->bitmaps_data && find_named(s, "bitmaps.map", s->bitmaps_path, sizeof(s->bitmaps_path)) &&
+        map_data_file(s, s->bitmaps_path, &s->bitmaps_data, &s->bitmaps_size))
+        hta_resource_open(&s->bitmaps_rm, s->bitmaps_data, s->bitmaps_size, err, sizeof(err));
+    if (!s->sounds_data && find_named(s, "sounds.map", s->sounds_path, sizeof(s->sounds_path)) &&
+        map_data_file(s, s->sounds_path, &s->sounds_data, &s->sounds_size))
+        hta_resource_open_typed(&s->sounds_rm, s->sounds_data, s->sounds_size,
+                                HTA_RESOURCE_SOUNDS, err, sizeof(err));
+    if (!hta_menu_load(&s->menu, &s->ui_cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL,
+                       err, sizeof(err))) {
+        hta_log("[menu] %s", err);
+        return false;
+    }
+    hta_log("[menu] %s", err);
+    s->menu_clip[0] = menu_clip(s, s->menu.snd_cursor, false);
+    s->menu_clip[1] = menu_clip(s, s->menu.snd_forward, false);
+    s->menu_clip[2] = menu_clip(s, s->menu.snd_back, false);
+    /* The title theme: its intro once, then its loop for as long as you
+     * sit here. Both are the looping sound's own first track. */
+    s->music_in = s->music_loop = HTA_AUDIO_NO_CLIP;
+    hta_loop_sound ls;
+    if (s->menu.music && hta_loop_sound_track(&s->ui_cache, s->menu.music, &ls)) {
+        s->music_in = menu_clip(s, ls.start, true);
+        s->music_loop = menu_clip(s, ls.loop, true);
+    }
+    if (s->music_in != HTA_AUDIO_NO_CLIP) {
+        hta_audio_loop(&s->audio, HTA_LOOP_MUSIC_IN, s->music_in, 0.9f);
+        const hta_audio_clip *cl = &s->audio.clips[s->music_in];
+        s->music_left = cl->rate ? (float)cl->frames / (float)cl->rate : 0.0f;
+    }
+    s->menu_pressed = -1;
+    return true;
+}
+
+static void menu_gpu_upload(hta_android *s)
+{
+    if (!s->menu_mode || !s->menu.loaded || !s->gfx) return;
+    char err[HTA_ERRLEN];
+    if (s->menu.scene.index_count)
+        s->gpu_menu_scene = hta_gfx_mesh_upload(s->gfx, &s->menu.scene, err, sizeof(err));
+    if (s->menu.sky.index_count)
+        s->gpu_menu_sky = hta_gfx_mesh_upload(s->gfx, &s->menu.sky, err, sizeof(err));
+    s->gpu_menu_ui = hta_gfx_mesh_upload_dynamic(s->gfx, &s->menu.overlay, err, sizeof(err));
+}
+
+static void menu_gpu_free(hta_android *s)
+{
+    if (s->gpu_menu_scene) { hta_gfx_mesh_free(s->gfx, s->gpu_menu_scene); s->gpu_menu_scene = NULL; }
+    if (s->gpu_menu_sky) { hta_gfx_mesh_free(s->gfx, s->gpu_menu_sky); s->gpu_menu_sky = NULL; }
+    if (s->gpu_menu_ui) { hta_gfx_mesh_free(s->gfx, s->gpu_menu_ui); s->gpu_menu_ui = NULL; }
+}
+
+/* A Java method on the activity with no arguments. */
+static void call_activity(hta_android *s, const char *method)
+{
+    JavaVM *vm = s->app->activity->vm;
+    JNIEnv *env = NULL;
+    if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK || !env) return;
+    jclass cls = (*env)->GetObjectClass(env, s->app->activity->clazz);
+    jmethodID mid = cls ? (*env)->GetMethodID(env, cls, method, "()V") : NULL;
+    if (mid) (*env)->CallVoidMethod(env, s->app->activity->clazz, mid);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    if (cls) (*env)->DeleteLocalRef(env, cls);
+}
+
+static void menu_sound(hta_android *s, int which)
+{
+    if (s->audio_ok && s->menu_clip[which] != HTA_AUDIO_NO_CLIP)
+        hta_audio_play(&s->audio, s->menu_clip[which], 1.0f);
+}
+
+static void menu_activate(hta_android *s, int item)
+{
+    menu_sound(s, 1);
+    switch (item) {
+    case HTA_MENU_MULTIPLAYER: s->menu_go = true; break;
+    case HTA_MENU_SETTINGS:    call_activity(s, "openSettings"); break;
+    case HTA_MENU_CREDITS:     call_activity(s, "showCredits"); break;
+    case HTA_MENU_QUIT:        ANativeActivity_finish(s->app->activity); break;
+    default: break;
+    }
+}
+
+/* From the Java overlay: 0 down, 1 move, 2 up; x and y are 0..1 of the
+ * screen. The HUD owns the touches, so the menu hears them through here. */
+static _Atomic int g_menu_touch_action = -1;
+static _Atomic int g_menu_touch_x, g_menu_touch_y;   /* x 10000ths */
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeMenuTouch(JNIEnv *env, jclass cls, jint action,
+                                                    jfloat x, jfloat y)
+{
+    (void)env; (void)cls;
+    atomic_store(&g_menu_touch_x, (int)(x * 10000.0f));
+    atomic_store(&g_menu_touch_y, (int)(y * 10000.0f));
+    /* An up must not be lost behind a move, so it is never overwritten. */
+    if (atomic_load(&g_menu_touch_action) != 2 || action == 0)
+        atomic_store(&g_menu_touch_action, action);
+}
+
+static _Atomic int g_menu_mode;
+
+JNIEXPORT jint JNICALL
+Java_net_hta_halotrial_GameActivity_nativeMenuMode(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    return atomic_load(&g_menu_mode);
+}
+
+/* One menu frame: the camera drifts, the words answer the finger, the
+ * music plays. */
+static void menu_frame(hta_android *s, float dt)
+{
+    int action = atomic_exchange(&g_menu_touch_action, -1);
+    if (action >= 0 && s->gfx) {
+        uint32_t w = 0, h = 0;
+        hta_gfx_extent(s->gfx, &w, &h);
+        float x = (float)atomic_load(&g_menu_touch_x) / 10000.0f * (float)w;
+        float y = (float)atomic_load(&g_menu_touch_y) / 10000.0f * (float)h;
+        int hit = hta_menu_hit(&s->menu, x, y);
+        if (action == 0 || action == 1) {
+            if (hit >= 0 && hit != s->menu.selected) { s->menu.selected = hit; menu_sound(s, 0); }
+            if (action == 0) s->menu_pressed = hit;
+        } else if (action == 2) {
+            if (hit >= 0 && hit == s->menu_pressed) menu_activate(s, hit);
+            s->menu_pressed = -1;
+        }
+    }
+    if (s->music_in != HTA_AUDIO_NO_CLIP && !s->music_looping) {
+        s->music_left -= dt;
+        if (s->music_left <= 0.0f) {
+            hta_audio_loop_stop(&s->audio, HTA_LOOP_MUSIC_IN);
+            if (s->music_loop != HTA_AUDIO_NO_CLIP)
+                hta_audio_loop(&s->audio, HTA_LOOP_MUSIC, s->music_loop, 0.9f);
+            s->music_looping = true;
+        }
+    }
+    hta_audio_android_poll(&s->audio);
+    hta_menu_update(&s->menu, dt);
+    if (!s->has_window || !s->gfx) return;
+    rebuild_gfx_if_size_changed(s);
+    if (!s->gfx) return;
+    uint32_t w = 0, h = 0;
+    hta_gfx_extent(s->gfx, &w, &h);
+    hta_menu_layout(&s->menu, w, h);
+    hta_camera cam;
+    hta_menu_camera(&s->menu, &cam, h ? (float)w / (float)h : 1.777f);
+    hta_scene sc = s->menu.light;
+    hta_gfx_overlay ov = { s->gpu_menu_ui, s->menu.overlay.vertices, s->menu.overlay.vertex_count,
+                           s->menu.overlay.submeshes, s->menu.overlay.submesh_count };
+    if (!hta_gfx_draw(s->gfx, &cam, &sc, s->gpu_menu_scene, s->gpu_menu_sky, NULL, NULL, 0,
+                      NULL, s->gpu_menu_ui ? &ov : NULL)) {
+        stop_gfx(s);
+        if (s->app->window) start_gfx(s);
+    }
+}
+
+/* Leave the menu for the level: the music stops, the shell's meshes go,
+ * and Blood Gulch loads behind the last menu frame. */
+static void menu_leave(hta_android *s)
+{
+    hta_audio_loop_stop(&s->audio, HTA_LOOP_MUSIC_IN);
+    hta_audio_loop_stop(&s->audio, HTA_LOOP_MUSIC);
+    stop_gfx(s);
+    hta_menu_free(&s->menu);
+    s->menu_mode = false;
+    atomic_store(&g_menu_mode, 0);
+    if (!load_map(s)) {
+        hta_log("[app] running without map data: %s", s->status);
+        s->scene.clear[0] = 0.55f; s->scene.clear[1] = 0.05f; s->scene.clear[2] = 0.45f;
+    }
+    if (s->app->window) start_gfx(s);
+}
+
 /* ------------------------------- input ------------------------------- */
 
 #define STICK_RADIUS_FRAC 0.12f   /* of the shorter screen edge */
@@ -2013,6 +2243,7 @@ static void start_gfx(hta_android *s)
     hta_gfx_extent(s->gfx, &w, &h);
     hta_log("[gfx] ready: %s, %ux%u", hta_gfx_device_name(s->gfx), w, h);
     s->cam.aspect = h ? (float)w / (float)h : 1.777f;
+    menu_gpu_upload(s);
 
     if (s->have_mesh) {
         double t0 = hta_time_seconds();
@@ -2089,6 +2320,7 @@ static void start_gfx(hta_android *s)
 static void stop_gfx(hta_android *s)
 {
     game_gpu_free(s);
+    menu_gpu_free(s);
     for (int slot=0;slot<2;slot++)
         if (s->gpu_remote[slot]) { hta_gfx_mesh_free(s->gfx,s->gpu_remote[slot]); s->gpu_remote[slot]=NULL; }
     if (s->gpu_vehicles) { hta_gfx_mesh_free(s->gfx, s->gpu_vehicles); s->gpu_vehicles = NULL; }
@@ -2293,7 +2525,11 @@ static void on_cmd(struct android_app *app, int32_t cmd)
                 hta_probe_fixed_map(0x40440000ull, 23u * 1024u * 1024u);
                 s->probe_done = true;
             }
-            if (!s->map_loaded) {
+            if (s->menu_mode && !s->menu.loaded && !menu_load(s)) {
+                s->menu_mode = false;
+                atomic_store(&g_menu_mode, 0);
+            }
+            if (!s->map_loaded && !s->menu_mode) {
                 if (!load_map(s)) {
                     hta_log("[app] running without map data: %s", s->status);
                     /* Unmistakable on-screen signal: magenta means "no data".
@@ -2446,6 +2682,9 @@ void android_main(struct android_app *app)
     state.hud_ready = g_hud_wanted;
     char net_host[64]; bool net_hosting=false;
     read_net_host(app,net_host,&net_hosting);
+    /* The setup screen asks for the menu first; a LAN launch goes straight in. */
+    state.menu_mode = intent_int(app, "menu", 0) != 0 && !net_host[0];
+    atomic_store(&g_menu_mode, state.menu_mode ? 1 : 0);
     /* Three bots at normal unless the setup screen says otherwise. Ours. */
     state.bot_count = intent_int(app, "bots", 3);
     state.bot_skill = intent_int(app, "skill", 1);
@@ -2509,6 +2748,14 @@ void android_main(struct android_app *app)
         double now = hta_time_seconds();
         float dt = (float)(now - state.last_time);
         state.last_time = now;
+
+        if (state.menu_mode) {
+            if (!state.menu_go) { menu_frame(&state, dt); continue; }
+            state.menu_go = false;
+            menu_leave(&state);
+            state.last_time = hta_time_seconds();   /* the load is not a frame */
+            continue;
+        }
 
         hta_player_input in;
         gather_input(&state, &in, dt);
@@ -3500,6 +3747,8 @@ done:
     hta_bsp_free(&state.coll_mesh);
     hta_viewmodel_free(&state.vm);
     for (int slot=0;slot<2;slot++) hta_actor_free(&state.remote[slot]);
+    for (uint32_t i = 0; i < state.menu_pcm_count; i++) free(state.menu_pcm[i]);
+    hta_menu_free(&state.menu);
     for (uint32_t i = 0; i < state.mapped_count; i++)
         munmap(state.mapped_base[i], state.mapped_len[i]);
 }

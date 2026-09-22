@@ -29,10 +29,12 @@ if(ANDROID)
         src/game/game.c
         src/game/brain.c
         src/game/view.c
+        src/game/menu.c
         src/asset/cache.c
         src/asset/bsp.c
         src/asset/bitmap.c
         src/asset/sound.c
+        src/asset/ogg.c
         src/asset/font.c
         src/asset/effect.c
         src/asset/dialogue.c
@@ -72,7 +74,8 @@ else()
         src/game/game.c
         src/game/brain.c
         src/game/view.c
-        src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c src/asset/sound.c src/asset/effect.c src/asset/dialogue.c src/asset/strings.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
+        src/game/menu.c
+        src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c src/asset/sound.c src/asset/ogg.c src/asset/effect.c src/asset/dialogue.c src/asset/strings.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
         src/asset/anim.c src/asset/model.c src/asset/font.c)
     target_include_directories(hta_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(hta_engine PRIVATE -Wall -Wextra)
@@ -105,6 +108,10 @@ else()
         target_include_directories(hta_gfx_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${Vulkan_INCLUDE_DIRS})
         target_link_libraries(hta_gfx_host PUBLIC ${Vulkan_LIBRARIES} m)
         target_compile_options(hta_gfx_host PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+
+        add_executable(htamenu src/tools/htamenu.c)
+        target_link_libraries(htamenu PRIVATE hta_engine hta_gfx_host m)
+        target_compile_options(htamenu PRIVATE -Wall -Wextra)
 
         add_executable(htamatch src/tools/htamatch.c)
         target_link_libraries(htamatch PRIVATE hta_engine hta_gfx_host m)

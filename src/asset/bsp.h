@@ -115,6 +115,14 @@ typedef struct {
      * unfired pips are drawn in a dark navy, which is what makes a full
      * magazine read as full. w > 0 means this element has one. */
     float    empty[4];
+    /* A chicago (schi / scex) layer: up to three maps, each with its own
+     * repeat, folded together by the shader's colour and alpha functions.
+     * The maps ride in albedo_tex, detail_tex and detail2_tex. Skies are
+     * built this way -- `sky clear blue` is star twinkle x12 times stars x8,
+     * added over the blue. `chicago` is the map count, 0 for none. */
+    uint8_t  chicago;
+    uint8_t  chicago_color[3], chicago_alpha[3];   /* ShaderColorFunctionType */
+    float    chicago_scale[3][2];
 } hta_submesh;
 
 /* Clears a submesh to sane defaults. Use this rather than memset: several

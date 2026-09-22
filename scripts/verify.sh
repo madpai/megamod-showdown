@@ -105,6 +105,15 @@ if [ -x ./build-host/htaview ]; then
     else
       bad "bots render with their weapons in hand"
     fi
+    UI_MAP="$(dirname "$HTA_MAP")/ui.map"
+    if [ -f "$UI_MAP" ]; then
+      OUT=$(cd "$VM" && "$OLDPWD/build-host/htamenu" "$UI_MAP" --out menu --width 320 --height 180 2>&1) || true
+      if echo "$OUT" | grep -qE "ring [1-9][0-9]* verts, sky [1-9]" && echo "$OUT" | grep -q "menu_00.ppm"; then
+        ok "main menu renders from ui.map"
+      else
+        bad "main menu renders from ui.map"
+      fi
+    fi
     rm -rf "$VM"
   fi
 else

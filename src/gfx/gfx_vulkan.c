@@ -55,6 +55,9 @@ typedef struct {
     float    detail_scale;   /* 0 = this surface has no detail map */
     float    detail2_scale;
     float    detail_mask;    /* ShaderModelDetailMask; 0 = no mask */
+    uint8_t  chicago;        /* map count of a chicago layer, 0 for none */
+    float    ch_scale[3][2];
+    float    ch_ops[4];      /* colour fn 0, 1; alpha fn 0, 1 */
 } hta_vk_submesh;
 
 struct hta_gfx_mesh {
@@ -1198,6 +1201,15 @@ static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
             dmask = mesh->submeshes[i].detail_mask;
         }
         m->submeshes[i].scene_lit = mesh->submesh_count && mesh->submeshes[i].scene_lit;
+        m->submeshes[i].chicago = mesh->submesh_count ? mesh->submeshes[i].chicago : 0;
+        if (m->submeshes[i].chicago) {
+            const hta_submesh *sc = &mesh->submeshes[i];
+            memcpy(m->submeshes[i].ch_scale, sc->chicago_scale, sizeof(sc->chicago_scale));
+            m->submeshes[i].ch_ops[0] = sc->chicago_color[0];
+            m->submeshes[i].ch_ops[1] = sc->chicago_color[1];
+            m->submeshes[i].ch_ops[2] = sc->chicago_alpha[0];
+            m->submeshes[i].ch_ops[3] = sc->chicago_alpha[1];
+        }
         m->submeshes[i].first_index = first;
         m->submeshes[i].index_count = count;
         m->submeshes[i].set = sets[i];
@@ -1373,6 +1385,13 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
         if (sky && sky->index_count) {
             hta_camera scam = *cam;
             scam.pos[0] = scam.pos[1] = scam.pos[2] = 0.0f;
+            /* The sky model sits thousands of units out -- Blood Gulch's is
+             * 6,400 to 98,000 -- far past the world's far plane, which
+             * clipped every triangle of it: what looked like sky was the
+             * clear colour. It gets a depth range of its own; it writes no
+             * depth, so the world still draws over it. */
+            scam.znear = 10.0f;
+            scam.zfar = 200000.0f;
             memset(push, 0, sizeof(push));
             fill_push(push, &scam, scene);
             vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline_sky);
@@ -1381,8 +1400,40 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                                0, PUSH_SIZE, push);
             vkCmdBindVertexBuffers(cb, 0, 1, &sky->vbuf, &zero);
             vkCmdBindIndexBuffer(cb, sky->ibuf, 0, VK_INDEX_TYPE_UINT32);
+            /* A sky is layers -- the backdrop, then planets, clouds and
+             * glows over it -- drawn in order and blended the way each
+             * layer's shader says. Drawn all opaque, a planet's black square
+             * and a star field's grey mask covered everything behind them. */
+            VkPipeline sky_bound = g->pipeline_sky;
             for (uint32_t i = 0; i < sky->submesh_count; i++) {
                 if (!sky->submeshes[i].index_count) continue;
+                uint8_t dm = sky->submeshes[i].draw_mode;
+                if (dm == HTA_DRAW_SKIP) continue;
+                VkPipeline want = dm == HTA_DRAW_ALPHA ? g->pipeline_alpha :
+                                  dm == HTA_DRAW_ADD ? g->pipeline_add : g->pipeline_sky;
+                if (want != sky_bound) {
+                    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, want);
+                    sky_bound = want;
+                }
+                /* A chicago layer tells the shader its maps' repeats and how
+                 * to fold them; light_color.w = 2 selects that path. */
+                uint8_t lp[PUSH_SIZE];
+                memcpy(lp, push, sizeof(lp));
+                const hta_vk_submesh *ss = &sky->submeshes[i];
+                if (ss->chicago) {
+                    float ld[4] = { ss->ch_scale[0][1], ss->ch_scale[1][1], ss->ch_scale[2][1], 0.0f };
+                    float lc[4] = { 0.0f, 0.0f, 0.0f, 2.0f };
+                    float ops[4] = { ss->ch_ops[0], ss->ch_ops[1], ss->ch_ops[2], ss->ch_ops[3] };
+                    float det[4] = { ss->ch_scale[0][0], ss->ch_scale[1][0], ss->ch_scale[2][0],
+                                     (float)ss->chicago };
+                    memcpy(lp + 64, ld, 16);
+                    memcpy(lp + 80, lc, 16);
+                    memcpy(lp + 96, ops, 16);
+                    memcpy(lp + 112, det, 16);
+                }
+                vkCmdPushConstants(cb, g->layout,
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                   0, PUSH_SIZE, lp);
                 vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
                                         0, 1, &sky->submeshes[i].set, 0, NULL);
                 vkCmdDrawIndexed(cb, sky->submeshes[i].index_count, 1,

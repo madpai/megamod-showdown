@@ -54,4 +54,12 @@ bool hta_sound_decode(const hta_cache *c, const hta_resource_map *sounds,
 bool hta_xbox_adpcm_decode(const uint8_t *src, uint32_t src_len, uint8_t channels,
                            int16_t *dst, uint32_t dst_frames);
 
+/* A long sound, whole: Halo cuts music and long lines into permutations
+ * that name the next (+42), and a play starts at one of the first `actual
+ * permutation count` (pitch range +44), chosen with `rng` (may be NULL for
+ * the first). The segments are joined into one clip. */
+bool hta_sound_decode_chain(const hta_cache *c, const hta_resource_map *sounds,
+                            uint32_t tag_id, uint32_t *rng, hta_pcm *out,
+                            char *err, size_t errlen);
+
 #endif

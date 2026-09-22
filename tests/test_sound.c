@@ -316,6 +316,44 @@ int main(int argc, char **argv)
         }
     }
 
+    /* The title music: Ogg Vorbis in ui.map's sounds, cut into segments
+     * that name the next. */
+    if (have_sounds) {
+        char up[1024];
+        snprintf(up, sizeof(up), "%s", argv[1]);
+        char *us = strrchr(up, '/');
+        if (us) snprintf(us + 1, sizeof(up) - (size_t)(us + 1 - up), "ui.map");
+        size_t usz = 0;
+        uint8_t *ud = slurp(up, &usz);
+        hta_cache uc;
+        if (ud && hta_cache_open(&uc, ud, usz, err, sizeof(err))) {
+            printf("\n[the title music]\n");
+            uint32_t tid = 0;
+            for (uint32_t i = 0; i < uc.tag_count && !tid; i++) {
+                hta_tag_entry t;
+                char pth[256];
+                if (!hta_cache_tag(&uc, i, &t) || t.primary_class != HTA_TAG_SND) continue;
+                if (hta_cache_tag_path(&uc, &t, pth, sizeof(pth)) &&
+                    !strcmp(pth, "sound\\music\\title1\\in")) tid = t.tag_id;
+            }
+            hta_pcm pcm;
+            bool ok = tid && hta_sound_decode_chain(&uc, &sm, tid, NULL, &pcm, err, sizeof(err));
+            CHECK(ok, "the title intro's Ogg Vorbis decodes");
+            if (ok) {
+                double secs = (double)pcm.frame_count / (double)pcm.sample_rate;
+                printf("    %.1f s at %u Hz, %u channel(s)\n", secs, pcm.sample_rate, pcm.channels);
+                CHECK(secs > 20.0 && pcm.sample_rate == 44100u && pcm.channels == 2,
+                      "and its segments chain into the whole piece");
+                int peak = 0;
+                for (uint32_t i = 0; i < pcm.frame_count * 2u; i += 97u)
+                    if (abs(pcm.samples[i]) > peak) peak = abs(pcm.samples[i]);
+                CHECK(peak > 5000, "and it is music, not silence");
+                hta_pcm_free(&pcm);
+            }
+        }
+        free(ud);
+    }
+
     printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }
