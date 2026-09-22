@@ -11,6 +11,7 @@ import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -35,6 +36,7 @@ public class SetupActivity extends Activity {
 
     private TextView status;
     private Button play;
+    private EditText serverAddress;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -57,6 +59,15 @@ public class SetupActivity extends Activity {
 
         play = btn("Play", 0xFF2A7A3A);
         play.setOnClickListener(v -> launchGame());
+        Button host = btn("Host LAN game", 0xFF2A7A3A);
+        host.setOnClickListener(v -> launchGame(false, true));
+        serverAddress = new EditText(this);
+        serverAddress.setSingleLine(true);
+        serverAddress.setHint("Desktop server IPv4 (example: 192.168.1.10)");
+        serverAddress.setTextColor(Color.WHITE);
+        serverAddress.setHintTextColor(0xFF94A0B4);
+        Button join = btn("Join LAN server", 0xFF2A7A3A);
+        join.setOnClickListener(v -> launchGame(true, false));
 
         status = tv("", 14, 0xFF8FB6FF, false);
 
@@ -77,6 +88,11 @@ public class SetupActivity extends Activity {
         root.addView(pickSnd);
         root.addView(space(10));
         root.addView(play);
+        root.addView(space(8));
+        root.addView(host);
+        root.addView(space(8));
+        root.addView(serverAddress);
+        root.addView(join);
         root.addView(space(16));
         root.addView(status);
         setContentView(root);
@@ -213,11 +229,27 @@ public class SetupActivity extends Activity {
     }
 
     private void launchGame() {
+        launchGame(false, false);
+    }
+
+    private void launchGame(boolean join, boolean host) {
         if (existingMap() == null) {
             status.setText("Pick a map first.");
             return;
         }
         Intent i = new Intent(this, GameActivity.class);
+        if (join) {
+            String ip = serverAddress.getText().toString().trim();
+            if (!ip.matches("[0-9.]{7,15}")) {
+                status.setText("Enter the desktop server's numeric IPv4 address.");
+                return;
+            }
+            i.putExtra("net_host", ip);
+        }
+        if (host) {
+            i.putExtra("net_host", "127.0.0.1");
+            i.putExtra("net_hosting", true);
+        }
         startActivity(i);
         finish();
     }

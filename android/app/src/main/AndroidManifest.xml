@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Optional fallback: native code still searches Download/ if the user
          grants All-files access. The primary path is the document picker in

@@ -39,6 +39,7 @@
 #include "../gfx/gfx.h"
 #include "../engine/scene_light.h"
 #include "audio_android.h"
+#include "../net/session.h"
 
 #include <android/log.h>
 #include <android/input.h>
@@ -245,6 +246,21 @@ typedef struct {
      * every weapon can be said to work at all. */
     hta_bot       bot;
     hta_gfx_mesh *gpu_bot;
+    /* First LAN slice: one other live Spartan, using the same world actor
+     * path as the corpse and target bot. Multiple remote meshes come later. */
+    hta_actor     remote[2]; /* map starting AR and pistol slots */
+    hta_gfx_mesh *gpu_remote[2];
+    hta_net_client net;
+    hta_net_server host_server;
+    bool          net_hosting;
+    bool          net_enabled, remote_visible;
+    uint8_t       remote_id;
+    hta_net_player remote_from, remote_to;
+    double        remote_snapshot_time, net_last_send;
+    uint64_t      net_last_snapshots;
+    uint32_t      net_event_id;
+    double        remote_action_until;
+    bool          net_spawned;
     uint32_t      impact_jpt;    /* the held weapon's own damage tag */
     float         melee_damage;  /* the cyborg's, 1000 -- see the handoff */
 
@@ -1255,6 +1271,30 @@ static bool load_map(hta_android *s)
                         hta_log("[bot] armed: %s", berr);
                     else
                         hta_log("[bot] unarmed (%s)", berr);
+                    if (s->net_enabled) {
+                        for (int slot=0;slot<2;slot++) {
+                            uint32_t model=slot==0 ? ar : 0;
+                            if (slot==1) {
+                                for (uint32_t i=0;i<s->cache.tag_count && !model;i++) {
+                                    hta_tag_entry t; char path[160];
+                                    if (!hta_cache_tag(&s->cache,i,&t) ||
+                                        t.primary_class!=HTA_FOURCC('m','o','d','2')) continue;
+                                    hta_cache_tag_path(&s->cache,&t,path,sizeof(path));
+                                    if (!strcmp(path,"weapons\\pistol\\pistol")) model=t.tag_id;
+                                }
+                            }
+                            hta_actor *a=&s->remote[slot];
+                            if (!hta_actor_load(a,&s->cache,
+                                    s->bitmaps_ok ? &s->bitmaps_rm : NULL,
+                                    bip,berr,sizeof(berr))) continue;
+                            if (model) hta_actor_hold(a,&s->cache,
+                                s->bitmaps_ok ? &s->bitmaps_rm : NULL,
+                                model,"right hand",berr,sizeof(berr));
+                            hta_actor_play(a,slot ? "stand pistol idle" : "stand rifle idle",false);
+                        }
+                        hta_log("[net] remote Spartan models: AR=%d pistol=%d",
+                                s->remote[0].loaded,s->remote[1].loaded);
+                    }
                 } else {
                     hta_log("[bot] none (%s)", berr);
                 }
@@ -1605,6 +1645,12 @@ static void start_gfx(hta_android *s)
                                                      err, sizeof(err));
             if (!s->gpu_bot) hta_log("[gfx] bot upload FAILED: %s", err);
         }
+        for (int slot=0;slot<2;slot++)
+            if (s->remote[slot].loaded && s->remote[slot].mesh.index_count) {
+                s->gpu_remote[slot]=hta_gfx_mesh_upload_dynamic_world(s->gfx,
+                    &s->remote[slot].mesh,err,sizeof(err));
+                if (!s->gpu_remote[slot]) hta_log("[gfx] remote upload FAILED: %s",err);
+            }
         if (s->items.have_mesh && s->items.mesh.index_count) {
             s->gpu_items = hta_gfx_mesh_upload_dynamic_world(s->gfx, &s->items.mesh,
                                                        err, sizeof(err));
@@ -1634,6 +1680,8 @@ static void start_gfx(hta_android *s)
 
 static void stop_gfx(hta_android *s)
 {
+    for (int slot=0;slot<2;slot++)
+        if (s->gpu_remote[slot]) { hta_gfx_mesh_free(s->gfx,s->gpu_remote[slot]); s->gpu_remote[slot]=NULL; }
     if (s->gpu_vehicles) { hta_gfx_mesh_free(s->gfx, s->gpu_vehicles); s->gpu_vehicles = NULL; }
     if (s->gpu_bot) { hta_gfx_mesh_free(s->gfx, s->gpu_bot); s->gpu_bot = NULL; }
     if (s->gpu_items) { hta_gfx_mesh_free(s->gfx, s->gpu_items); s->gpu_items = NULL; }
@@ -1666,6 +1714,125 @@ static void request_landscape(struct android_app *app)
         hta_log("[app] requested SENSOR_LANDSCAPE");
     }
     (*env)->DeleteLocalRef(env, cls);
+}
+
+/* NativeActivity intent is read once at startup. Only numeric IPv4 is
+ * accepted by the UDP layer; there is no DNS lookup on the game thread. */
+static void read_net_host(struct android_app *app, char host[64], bool *hosting)
+{
+    host[0]=0; *hosting=false;
+    JavaVM *vm=app->activity->vm; JNIEnv *env=NULL;
+    if ((*vm)->AttachCurrentThread(vm,&env,NULL)!=JNI_OK || !env) return;
+    jobject activity=app->activity->clazz;
+    jclass activity_class=(*env)->GetObjectClass(env,activity);
+    jmethodID get_intent=(*env)->GetMethodID(env,activity_class,"getIntent","()Landroid/content/Intent;");
+    jobject intent=get_intent ? (*env)->CallObjectMethod(env,activity,get_intent) : NULL;
+    if (intent) {
+        jclass intent_class=(*env)->GetObjectClass(env,intent);
+        jmethodID get_string=(*env)->GetMethodID(env,intent_class,"getStringExtra",
+                                                 "(Ljava/lang/String;)Ljava/lang/String;");
+        jstring key=(*env)->NewStringUTF(env,"net_host");
+        jstring value=get_string ? (jstring)(*env)->CallObjectMethod(env,intent,get_string,key) : NULL;
+        if (value) {
+            const char *utf=(*env)->GetStringUTFChars(env,value,NULL);
+            if (utf) { snprintf(host,64,"%s",utf); (*env)->ReleaseStringUTFChars(env,value,utf); }
+            (*env)->DeleteLocalRef(env,value);
+        }
+        (*env)->DeleteLocalRef(env,key);
+        jmethodID get_bool=(*env)->GetMethodID(env,intent_class,"getBooleanExtra",
+                                              "(Ljava/lang/String;Z)Z");
+        jstring host_key=(*env)->NewStringUTF(env,"net_hosting");
+        if (get_bool) *hosting=(*env)->CallBooleanMethod(env,intent,get_bool,host_key,JNI_FALSE);
+        (*env)->DeleteLocalRef(env,host_key);
+        (*env)->DeleteLocalRef(env,intent_class);
+        (*env)->DeleteLocalRef(env,intent);
+    }
+    (*env)->DeleteLocalRef(env,activity_class);
+}
+
+static void net_action(hta_android *s, uint8_t kind)
+{
+    if (!s->net_enabled || !s->net.connected) return;
+    hta_net_event e={s->net.id,kind,(uint8_t)s->held_slot,++s->net_event_id};
+    hta_net_client_event(&s->net,&e);
+}
+
+static void net_frame(hta_android *s, double now, float dt)
+{
+    if (!s->net_enabled) return;
+    if (s->net_hosting) hta_net_server_pump(&s->host_server,now);
+    hta_net_client_pump(&s->net,now);
+    if (s->net.connected && !s->net_spawned && s->spawn_count) {
+        hta_spawn_point *sp=&s->spawn[(s->net.id-1u)%s->spawn_count];
+        hta_player_spawn(&s->player,sp); s->cam.yaw=sp->facing;
+        float z;
+        if (s->col.built && hta_collision_ground(&s->col,s->player.pos[0],
+                s->player.pos[1],s->player.pos[2]+8.0f,&z)) {
+            s->player.pos[2]=z; s->player.on_ground=true;
+        }
+        s->net_spawned=true;
+        hta_log("[net] joined as player %u",s->net.id);
+    }
+    if (s->net.connected && now-s->net_last_send>=0.05) {
+        hta_net_player p={0}; p.id=s->net.id; p.weapon=(uint8_t)s->held_slot;
+        for (int k=0;k<3;k++) { p.pos[k]=s->player.pos[k]; p.velocity[k]=s->player.velocity[k]; }
+        p.yaw=s->cam.yaw; p.pitch=s->cam.pitch;
+        if (s->player.on_ground) p.flags|=HTA_NET_GROUNDED;
+        if (s->player.crouch_t>0.5f) p.flags|=HTA_NET_CROUCH;
+        hta_net_client_state(&s->net,&p); s->net_last_send=now;
+    }
+    if (s->net.stats.snapshots_in!=s->net_last_snapshots) {
+        s->net_last_snapshots=s->net.stats.snapshots_in;
+        bool had_remote=s->remote_visible;
+        s->remote_visible=false;
+        for (unsigned i=0;i<HTA_NET_MAX_PLAYERS;i++) {
+            if (!s->net.present[i] || i+1u==s->net.id) continue;
+            hta_net_player next=s->net.players[i];
+            s->remote_from=had_remote && s->remote_id==next.id
+                ? s->remote_to : next;
+            s->remote_to=next; s->remote_id=next.id;
+            s->remote_snapshot_time=now; s->remote_visible=true;
+            break; /* renderer currently has one remote actor slot */
+        }
+    }
+    hta_net_event e;
+    while (hta_net_client_pop_event(&s->net,&e)) {
+        int slot=e.weapon==1 ? 1 : 0;
+        hta_actor *a=&s->remote[slot];
+        if (!a->loaded || e.actor!=s->remote_id) continue;
+        const char *clip=NULL;
+        if (e.kind==HTA_NET_EVENT_FIRE) clip=slot ? "stand pistol hp fire-1" : "stand rifle ar fire-1";
+        if (e.kind==HTA_NET_EVENT_MELEE) clip=slot ? "stand pistol hp melee" : "stand rifle ar melee";
+        if (e.kind==HTA_NET_EVENT_GRENADE) clip="stand rifle throw-grenade";
+        if (clip && hta_actor_play(a,clip,false))
+            s->remote_action_until=now+(e.kind==HTA_NET_EVENT_GRENADE ? 0.8 : 0.3);
+        hta_log("[net] player %u event %u weapon %u",e.actor,e.kind,e.weapon);
+    }
+    if (s->remote_visible) {
+        const hta_net_player *p=&s->remote_to;
+        int slot=p->weapon==1 ? 1 : 0;
+        hta_actor *a=&s->remote[slot];
+        if (!a->loaded) return;
+        const char *clip=(p->flags&HTA_NET_CROUCH) ?
+            (slot ? "crouch pistol idle" : "crouch rifle idle") :
+            (slot ? "stand pistol idle" : "stand rifle idle");
+        if (!(p->flags&HTA_NET_GROUNDED)) clip=(p->flags&HTA_NET_CROUCH)
+             ? "crouch rifle airborne" : (slot ? "stand pistol airborne" : "stand rifle airborne");
+        else if (hypotf(p->velocity[0],p->velocity[1])>0.2f)
+            clip=(p->flags&HTA_NET_CROUCH) ?
+                (slot ? "crouch pistol move-front" : "crouch rifle move-front") :
+                (slot ? "stand pistol move-front" : "stand rifle move-front");
+        if (now>=s->remote_action_until &&
+            (a->clip<0 || strcmp(a->graph.anims[a->clip].name,clip)))
+            hta_actor_play(a,clip,false);
+        float t=(float)((now-s->remote_snapshot_time)/0.05);
+        if (t<0) t=0; if (t>1) t=1;
+        float pos[3]; for (int k=0;k<3;k++)
+            pos[k]=s->remote_from.pos[k]+(p->pos[k]-s->remote_from.pos[k])*t;
+        float dy=remainderf(p->yaw-s->remote_from.yaw,6.28318530718f);
+        float yaw=s->remote_from.yaw+dy*t;
+        hta_actor_update(a,dt); hta_actor_place(a,pos,yaw);
+    }
 }
 
 static void rebuild_gfx_if_size_changed(hta_android *s)
@@ -1844,6 +2011,19 @@ void android_main(struct android_app *app)
     state.move_pointer = state.look_pointer = -1;
     g_android = &state;
     state.hud_ready = g_hud_wanted;
+    char net_host[64]; bool net_hosting=false;
+    read_net_host(app,net_host,&net_hosting);
+    if (net_host[0]) {
+        if (net_hosting) {
+            state.net_hosting=hta_net_server_open(&state.host_server,32270);
+            if (!state.net_hosting) hta_log("[net] could not bind LAN host UDP 32270");
+        }
+        state.net_enabled=hta_net_client_open(&state.net,net_host,32270);
+        if (net_hosting && !state.net_hosting && state.net_enabled) {
+            hta_net_client_close(&state.net); state.net_enabled=false;
+        }
+        hta_log("[net] %s %s:32270",state.net_enabled ? "joining" : "bad address",net_host);
+    }
 
     app->userData     = &state;
     app->onAppCmd     = on_cmd;
@@ -2246,6 +2426,7 @@ void android_main(struct android_app *app)
             if (state.held_count > 1) {
                 state.held_slot = (state.held_slot + 1u) % state.held_count;
                 equip_weapon(&state, state.held[state.held_slot]);
+                net_action(&state,HTA_NET_EVENT_WEAPON);
             }
         }
 
@@ -2279,6 +2460,7 @@ void android_main(struct android_app *app)
                     }
                 }
                 hta_viewmodel_play(&state.vm, HTA_VM_MELEE);
+                net_action(&state,HTA_NET_EVENT_MELEE);
                 swinging = state.vm.state == HTA_VM_MELEE;
             }
         }
@@ -2367,6 +2549,7 @@ void android_main(struct android_app *app)
                     hta_particles_burst(&state.parts, state.casing_recipe, at, dir);
                 }
                 play_tag(&state, state.fire_snd, 1.0f);
+                net_action(&state,HTA_NET_EVENT_FIRE);
             } else if (state.ammo.dry && state.dry_cooldown <= 0.0f) {
                 /* Click, then reload by itself, the way Halo does. */
                 play_tag(&state, state.empty_snd, 1.0f);
@@ -2463,6 +2646,7 @@ void android_main(struct android_app *app)
                     dir[k] = fwd[k] + up[k] * 0.25f;
                 }
                 hta_projectiles_throw(&state.nades, at, dir, HTA_GRENADE_THROW);
+                net_action(&state,HTA_NET_EVENT_GRENADE);
                 state.nade_count--;
                 hta_log("[player] grenade away, %d left", state.nade_count);
             }
@@ -2605,6 +2789,7 @@ void android_main(struct android_app *app)
 
         hta_particles_update(&state.parts, state.col.built ? &state.col : NULL,
                              &state.cam, dt);
+        net_frame(&state,now,dt);
 
         if (state.gun.dirty && state.gfx) {
             char err[HTA_ERRLEN];
@@ -2698,6 +2883,15 @@ void android_main(struct android_app *app)
                 if (state.vehicles.upload_frames) state.vehicles.upload_frames--;
                 dyncount++;
             }
+            int remote_slot=state.remote_to.weapon==1 ? 1 : 0;
+            if (state.remote_visible && state.gpu_remote[remote_slot] &&
+                dyncount < HTA_GFX_MAX_DYNAMIC) {
+                dynlist[dyncount].mesh = state.gpu_remote[remote_slot];
+                dynlist[dyncount].vertices = state.remote[remote_slot].posed;
+                dynlist[dyncount].vertex_count = state.remote[remote_slot].mesh.vertex_count;
+                dynlist[dyncount].lit = true;
+                dyncount++;
+            }
             if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh,
                               state.gpu_sky, state.gpu_fx,
                               dynlist, dyncount,
@@ -2722,10 +2916,13 @@ void android_main(struct android_app *app)
                 snprintf(g_ammo_text, sizeof(g_ammo_text), "%d / %d",
                          state.ammo.loaded, state.ammo.reserve);
             snprintf(g_debug_text, sizeof(g_debug_text),
-                     "%.2f %.2f %.2f  %s  %.0f fps",
+                     "%.2f %.2f %.2f  %s  %.0f fps  net:%u/%u %.0fms",
                      state.player.pos[0], state.player.pos[1], state.player.pos[2],
                      state.player.on_ground ? "ground" : "air",
-                     state.fps_accum > 0.05 ? state.fps_frames / state.fps_accum : 0.0);
+                     state.fps_accum > 0.05 ? state.fps_frames / state.fps_accum : 0.0,
+                     state.net_enabled ? state.net.id : 0,
+                     state.remote_visible ? state.remote_id : 0,
+                     state.net_enabled ? state.net.stats.ping_ms : 0.0);
             if (state.fps_accum >= 2.0) {
                 hta_log("[perf] %.1f fps | pos (%.2f %.2f %.2f) %s | tris %u"
                         " | audio %s %u voices %u started %u dropped",
@@ -2751,6 +2948,8 @@ done:
     hta_log("[app] shutting down after %llu frames", (unsigned long long)state.frames);
     /* Stop the stream before freeing the PCM its voices point at. */
     hta_audio_android_stop();
+    if (state.net_enabled) hta_net_client_close(&state.net);
+    if (state.net_hosting) hta_net_server_close(&state.host_server);
     hta_hud_free(&state.hud);
     for (uint32_t i = 0; i < state.bank_count; i++)
         for (uint32_t k = 0; k < state.bank[i].count; k++)
@@ -2767,6 +2966,7 @@ done:
     hta_bsp_free(&state.sky);
     hta_bsp_free(&state.coll_mesh);
     hta_viewmodel_free(&state.vm);
+    for (int slot=0;slot<2;slot++) hta_actor_free(&state.remote[slot]);
     if (state.map_data) munmap(state.map_data, state.map_size);
     if (state.bitmaps_data) munmap(state.bitmaps_data, state.bitmaps_size);
     if (state.sounds_data) munmap(state.sounds_data, state.sounds_size);

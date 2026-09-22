@@ -97,7 +97,7 @@ typedef struct {
  * one next: weapons dropped on the ground, and powerups spinning where they
  * lie. Both need their own mesh rather than a share of an existing one.
  * Eight is a bigger stack array in the draw path and nothing else. */
-#define HTA_GFX_MAX_DYNAMIC 8u
+#define HTA_GFX_MAX_DYNAMIC 10u
 
 bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                   hta_gfx_mesh *mesh, hta_gfx_mesh *sky, hta_gfx_mesh *fx,
