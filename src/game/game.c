@@ -127,6 +127,8 @@ bool hta_game_load(hta_game *g, const hta_cache *c, const hta_resource_map *bitm
     g->winner = HTA_GAME_NONE;
     g->leader = HTA_GAME_NONE;
     g->grenade_pool = -1;
+    g->simulate_vehicles = true;
+    for (uint32_t t = 0; t < HTA_VEHICLE_TYPES; t++) g->vweapon[t][0] = g->vweapon[t][1] = -1;
     g->score_limit = HTA_SLAYER_SCORE_LIMIT;
     g->respawn_time = HTA_SLAYER_RESPAWN;
     g->rng = 0xC0FFEEu;
@@ -134,6 +136,12 @@ bool hta_game_load(hta_game *g, const hta_cache *c, const hta_resource_map *bitm
     char perr[HTA_ERRLEN];
     hta_player_physics_defaults(&g->phys);
     hta_player_physics_load(&g->phys, c, perr, sizeof(perr));
+    {
+        hta_player probe;
+        hta_player_init(&probe);
+        hta_player_apply_physics(&probe, &g->phys);
+        g->gravity = probe.gravity > 0.0f ? probe.gravity : 3.57f;
+    }
     if (!hta_vitals_load(&g->vitals_template, c)) {
         g->vitals_template.max_health = 75.0f;
         g->vitals_template.max_shield = 75.0f;
@@ -300,6 +308,8 @@ int32_t hta_game_add(hta_game *g, hta_unit_kind kind, const char *name, uint8_t 
     memset(u, 0, sizeof(*u));
     u->kind = kind;
     u->team = team;
+    u->vehicle = -1;
+    u->seat = -1;
     u->rng = 0x9E3779B9u * (uint32_t)(idx + 1);
     u->last_attacker = HTA_GAME_NONE;
     for (int k = 0; k < HTA_GAME_MAX_UNITS; k++) u->attackers[k] = 0;
@@ -336,6 +346,7 @@ void hta_game_remove(hta_game *g, int32_t idx)
 {
     if (!g || idx < 0 || idx >= (int32_t)g->unit_count) return;
     /* Leave the slot, empty: indices are how kills are credited. */
+    hta_game_unseat(g, idx);
     g->units[idx].kind = HTA_UNIT_NONE;
     g->units[idx].alive = false;
     if (g->local == idx) g->local = HTA_GAME_NONE;
@@ -408,6 +419,7 @@ void hta_game_pick_spawn(hta_game *g, int32_t idx, float out_pos[3], float *out_
 static void spawn_unit(hta_game *g, int32_t idx)
 {
     hta_unit *u = &g->units[idx];
+    hta_game_unseat(g, idx);
     float pos[3], facing;
     hta_game_pick_spawn(g, idx, pos, &facing);
     hta_player_init(&u->body);
@@ -447,6 +459,7 @@ void hta_game_revive(hta_game *g, int32_t idx)
 {
     if (!g || idx < 0 || idx >= (int32_t)g->unit_count) return;
     hta_unit *u = &g->units[idx];
+    hta_game_unseat(g, idx);
     u->alive = true;
     u->spree = 0;
     u->last_attacker = HTA_GAME_NONE;
@@ -472,6 +485,12 @@ void hta_game_start(hta_game *g)
     }
     for (uint32_t p = 0; p < g->pool_count; p++)
         for (uint32_t k = 0; k < HTA_PROJ_MAX; k++) g->pools[p].live[k].alive = false;
+    if (g->vehicles && g->simulate_vehicles) {
+        for (uint32_t i = 0; i < g->vehicles->count; i++) hta_vehicles_reset(g->vehicles, i);
+        hta_vehicles_sync(g->vehicles);
+    }
+    memset(g->vgun, 0, sizeof(g->vgun));
+    for (uint32_t i = 0; i < HTA_VEHICLE_MAX; i++) g->vgun[i].last_driver = -1;
     char buf[96];
     hta_game_event e = { .kind = HTA_EV_ANNOUNCE, .a = -1, .b = -1,
                          .line = g->teams ? HTA_LINE_NONE : HTA_LINE_SLAYER,
@@ -523,6 +542,8 @@ static float unit_height(const hta_unit *u)
 {
     float s = u->body.phys.coll_stand > 0.0f ? u->body.phys.coll_stand : 0.7f;
     float c = u->body.phys.coll_crouch > 0.0f ? u->body.phys.coll_crouch : 0.5f;
+    /* Sitting is about as tall as crouching. */
+    if (u->vehicle >= 0) return c;
     return s + (c - s) * u->body.crouch_t;
 }
 
@@ -535,6 +556,10 @@ int32_t hta_game_ray(const hta_game *g, const float o[3], const float d[3],
     for (uint32_t i = 0; i < g->unit_count; i++) {
         const hta_unit *u = &g->units[i];
         if ((int32_t)i == ignore || !u->alive || u->kind == HTA_UNIT_NONE) continue;
+        if (hta_game_enclosed(g, (int32_t)i)) continue;
+        /* Nobody shoots their own ride's other seats by accident. */
+        if (ignore >= 0 && ignore < (int32_t)g->unit_count && u->vehicle >= 0 &&
+            u->vehicle == g->units[ignore].vehicle) continue;
         float r = u->body.phys.radius > 0.0f ? u->body.phys.radius : 0.175f;
         float h = unit_height(u);
         /* Vertical cylinder: solve in XY, then check the height. */
@@ -582,6 +607,7 @@ int32_t hta_game_near(const hta_game *g, const float pos[3], float reach, int32_
     for (uint32_t i = 0; i < g->unit_count; i++) {
         const hta_unit *u = &g->units[i];
         if ((int32_t)i == ignore || !u->alive || u->kind == HTA_UNIT_NONE) continue;
+        if (hta_game_enclosed(g, (int32_t)i)) continue;
         float r = u->body.phys.radius > 0.0f ? u->body.phys.radius : 0.175f;
         float dz = 0.0f, h = unit_height(u);
         if (pos[2] < u->body.pos[2]) dz = u->body.pos[2] - pos[2];
@@ -658,6 +684,11 @@ void hta_game_blast(hta_game *g, int32_t attacker, const float centre[3],
                 t > 0.1f)
                 continue;
         }
+        /* Inside a hull, a rider takes the vehicle's tagged share. */
+        if (hta_game_enclosed(g, (int32_t)i) && g->vehicles) {
+            const hta_vehicle *car = &g->vehicles->cars[u->vehicle];
+            f *= g->vehicles->types[car->type].rider_damage;
+        }
         hta_game_hurt(g, (int32_t)i, attacker, damage * f, c);
     }
 }
@@ -675,6 +706,9 @@ static void announce(hta_game *g, hta_line line, const char *msg, bool for_local
 static void die(hta_game *g, int32_t idx)
 {
     hta_unit *v = &g->units[idx];
+    bool by_vehicle = v->splattered;
+    v->splattered = false;
+    hta_game_unseat(g, idx);
     v->alive = false;
     v->deaths++;
     v->respawn = g->respawn_time;
@@ -688,6 +722,10 @@ static void die(hta_game *g, int32_t idx)
     if (killer >= 0 && killer != idx && g->units[killer].kind != HTA_UNIT_NONE) {
         hta_unit *k = &g->units[killer];
         e.weapon = k->carry[k->slot & 1u].weapon;
+        if (k->vehicle >= 0 && g->vehicles) {
+            uint16_t type = g->vehicles->cars[k->vehicle].type;
+            if (type < HTA_VEHICLE_TYPES && g->vweapon[type][0] >= 0) e.weapon = g->vweapon[type][0];
+        }
         bool betrayal = g->teams && k->team == v->team;
         if (betrayal) {
             k->betrayals++;
@@ -732,6 +770,7 @@ static void die(hta_game *g, int32_t idx)
         v->suicides++;
         v->score--;
         if (killer == idx) text(g, 81, fmt, sizeof(fmt), "%s committed suicide");
+        else if (by_vehicle) text(g, 77, fmt, sizeof(fmt), "%s was killed by a vehicle");
         else text(g, 75, fmt, sizeof(fmt), "%s died");
         snprintf(e.text, sizeof(e.text), fmt, v->name);
         emit(g, &e);
@@ -971,6 +1010,495 @@ static void take_items(hta_game *g, int32_t idx)
     hta_pickups_take(it, ws);
 }
 
+/* ---------------------------------------------------------------- vehicles */
+
+static uint32_t find_tag_path(const hta_cache *c, uint32_t cls, const char *path)
+{
+    for (uint32_t i = 0; i < c->tag_count; i++) {
+        hta_tag_entry t;
+        char p[256];
+        if (!hta_cache_tag(c, i, &t) || t.primary_class != cls) continue;
+        if (hta_cache_tag_path(c, &t, p, sizeof(p)) && !strcmp(p, path)) return t.tag_id;
+    }
+    return 0;
+}
+
+/* A round slower than this flies as an object even with nothing to draw;
+ * a faster one is hitscan, as it is on foot. 150 wu/s splits the Trial's
+ * vehicle guns cleanly: bullets at 290-320, shells and bolts at 50-100. */
+#define VEHICLE_TRAVEL_SPEED 150.0f
+
+static int32_t pool_any(hta_game *g, uint32_t proj, const hta_resource_map *bm)
+{
+    for (uint32_t i = 0; i < g->pool_count; i++)
+        if (g->pools[i].proj_tag_id == proj) return (int32_t)i;
+    if (g->pool_count >= HTA_GAME_MAX_POOLS) return -1;
+    hta_projectiles *p = &g->pools[g->pool_count];
+    hta_projectiles_init(p);
+    char err[HTA_ERRLEN];
+    if (!hta_projectiles_equip_any(p, g->cache, bm, proj, err, sizeof(err))) return -1;
+    float speed = p->speed_initial > 0.0f ? p->speed_initial : p->speed_final;
+    if (p->verts_each == 0 && speed >= VEHICLE_TRAVEL_SPEED) {
+        hta_projectiles_free(p);
+        return -1;
+    }
+    g->pool_weapon[g->pool_count] = -1;
+    for (int k = 0; k < HTA_PROJ_MAX; k++) g->pool_owner[g->pool_count][k] = -1;
+    return (int32_t)g->pool_count++;
+}
+
+bool hta_game_attach_vehicles(hta_game *g, hta_vehicles *v, const hta_resource_map *bm)
+{
+    if (!g || !v || !v->loaded) return false;
+    g->vehicles = v;
+    g->splatter_jpt = find_tag_path(g->cache, HTA_FOURCC('j','p','t','!'),
+                                    "globals\\vehicle_collision");
+    for (uint32_t t = 0; t < v->type_count && t < HTA_VEHICLE_TYPES; t++) {
+        uint32_t tag = v->types[t].weapon_tag;
+        g->vweapon[t][0] = g->vweapon[t][1] = -1;
+        if (!tag) continue;
+        for (uint32_t trig = 0; trig < 2; trig++) {
+            if (g->weapon_count >= HTA_GAME_MAX_WEAPONS) break;
+            hta_game_weapon *w = &g->weapons[g->weapon_count];
+            memset(w, 0, sizeof(*w));
+            if (!hta_weapon_load_trigger(g->cache, tag, trig, &w->def)) break;
+            if (!w->def.projectile_id) continue;
+            w->tag = tag;
+            w->vehicle = true;
+            w->trigger = (int8_t)trig;
+            w->pool = -1;
+            int32_t ti = hta_cache_find_tag_by_id(g->cache, tag);
+            hta_tag_entry te;
+            uint32_t base = 0;
+            if (ti >= 0 && hta_cache_tag(g->cache, (uint32_t)ti, &te) &&
+                hta_cache_ptr_to_offset(g->cache, te.tag_data_ptr, &base)) {
+                read_label(g->cache, base, w->label);
+                hta_rd_f32(g->cache, base + WEAP_AUTOAIM_ANGLE, &w->autoaim_angle);
+                hta_rd_f32(g->cache, base + WEAP_AUTOAIM_RANGE, &w->autoaim_range);
+                hta_rd_f32(g->cache, base + WEAP_MAGNET_ANGLE, &w->magnet_angle);
+                hta_rd_f32(g->cache, base + WEAP_MAGNET_RANGE, &w->magnet_range);
+            }
+            snprintf(w->anim_class, sizeof(w->anim_class), "unarmed");
+            w->impact_jpt = hta_projectile_impact_damage(g->cache, w->def.projectile_id);
+            int32_t pool = pool_any(g, w->def.projectile_id, bm);
+            if (pool >= 0) {
+                w->travels = true;
+                w->pool = pool;
+                if (g->pool_weapon[pool] < 0) g->pool_weapon[pool] = (int32_t)g->weapon_count;
+                const hta_projectiles *p = &g->pools[pool];
+                w->speed = p->speed_initial > 0.0f ? p->speed_initial : p->speed_final;
+                w->blast_damage = p->blast_damage;
+                w->blast_radius = p->blast_damage_radius;
+                w->blast_core = p->blast_core;
+            }
+            g->vweapon[t][trig] = (int32_t)g->weapon_count++;
+        }
+    }
+    for (uint32_t i = 0; i < HTA_VEHICLE_MAX; i++) g->vgun[i].last_driver = -1;
+    return true;
+}
+
+bool hta_game_enclosed(const hta_game *g, int32_t unit)
+{
+    if (!g || !g->vehicles || unit < 0 || unit >= (int32_t)g->unit_count) return false;
+    const hta_unit *u = &g->units[unit];
+    if (u->vehicle < 0 || (uint32_t)u->vehicle >= g->vehicles->count) return false;
+    const hta_vehicle *car = &g->vehicles->cars[u->vehicle];
+    const hta_vehicle_seat *s = hta_vehicles_seat(g->vehicles, (uint32_t)u->vehicle,
+                                                  (uint32_t)u->seat);
+    /* The Scorpion's driver is under armour, the Banshee's under glass. */
+    return s && (s->flags & HTA_SEAT_DRIVER) &&
+           (car->kind == HTA_VK_TANK || car->kind == HTA_VK_FIGHTER);
+}
+
+bool hta_game_seat_root(const hta_game *g, int32_t unit, hta_transform *out)
+{
+    if (!g || !g->vehicles || unit < 0 || unit >= (int32_t)g->unit_count) return false;
+    const hta_unit *u = &g->units[unit];
+    if (u->vehicle < 0) return false;
+    return hta_vehicles_seat_transform(g->vehicles, (uint32_t)u->vehicle, (uint32_t)u->seat, out);
+}
+
+static bool hostile_car(const hta_game *g, int32_t unit, uint32_t car)
+{
+    const hta_vehicle *c = &g->vehicles->cars[car];
+    for (uint32_t s = 0; s < HTA_VEHICLE_SEATS; s++) {
+        int32_t o = c->occupant[s];
+        if (o >= 0 && o < (int32_t)g->unit_count && o != unit && enemies(g, unit, o) && g->teams)
+            return true;
+    }
+    return false;
+}
+
+int32_t hta_game_seat_near(const hta_game *g, int32_t unit, int32_t *out_seat)
+{
+    if (out_seat) *out_seat = -1;
+    if (!g || !g->vehicles || unit < 0 || unit >= (int32_t)g->unit_count) return -1;
+    const hta_unit *u = &g->units[unit];
+    if (!u->alive || u->vehicle >= 0) return -1;
+    int32_t seat = -1;
+    int32_t car = hta_vehicles_near(g->vehicles, g->col, u->body.pos, &seat);
+    if (car < 0 || hostile_car(g, unit, (uint32_t)car)) return -1;
+    if (out_seat) *out_seat = seat;
+    return car;
+}
+
+bool hta_game_seat(hta_game *g, int32_t unit, int32_t car, int32_t seat)
+{
+    if (!g || !g->vehicles || unit < 0 || unit >= (int32_t)g->unit_count ||
+        car < 0 || seat < 0) return false;
+    hta_unit *u = &g->units[unit];
+    if (u->vehicle == car && u->seat == seat) return true;
+    hta_game_unseat(g, unit);
+    if (!hta_vehicles_enter(g->vehicles, (uint32_t)car, (uint32_t)seat, unit)) return false;
+    u->vehicle = (int16_t)car;
+    u->seat = (int8_t)seat;
+    memset(u->body.velocity, 0, sizeof(u->body.velocity));
+    u->swing = u->throwing = 0.0f;
+    const hta_vehicle_seat *st = hta_vehicles_seat(g->vehicles, (uint32_t)car, (uint32_t)seat);
+    if (st && (st->flags & HTA_SEAT_DRIVER)) {
+        g->vgun[car].last_driver = unit;
+        g->vgun[car].since_driven = 0.0f;
+        g->vehicles->cars[car].ctl.yaw = u->eye.yaw;
+    }
+    hta_game_event e = { .kind = HTA_EV_ENTER, .a = unit, .b = car, .pool = seat };
+    for (int k = 0; k < 3; k++) e.pos[k] = u->body.pos[k];
+    emit(g, &e);
+    return true;
+}
+
+void hta_game_unseat(hta_game *g, int32_t unit)
+{
+    if (!g || unit < 0 || unit >= (int32_t)g->unit_count) return;
+    hta_unit *u = &g->units[unit];
+    if (g->vehicles) hta_vehicles_vacate(g->vehicles, unit);
+    u->vehicle = -1;
+    u->seat = -1;
+}
+
+bool hta_game_board(hta_game *g, int32_t unit)
+{
+    if (!g || !g->vehicles || unit < 0 || unit >= (int32_t)g->unit_count) return false;
+    hta_unit *u = &g->units[unit];
+    if (!u->alive) return false;
+    if (u->vehicle >= 0) {
+        int32_t car = u->vehicle, seat = u->seat;
+        float feet[3], yaw = u->eye.yaw;
+        float r = u->body.phys.radius > 0.0f ? u->body.phys.radius : 0.175f;
+        float h = u->body.phys.coll_stand > 0.0f ? u->body.phys.coll_stand : 0.7f;
+        if (!hta_vehicles_exit(g->vehicles, g->col, (uint32_t)car, (uint32_t)seat,
+                               r, h, feet, &yaw))
+            return false;
+        const hta_vehicle *c = &g->vehicles->cars[car];
+        u->vehicle = -1;
+        u->seat = -1;
+        for (int k = 0; k < 3; k++) u->body.pos[k] = feet[k];
+        u->body.velocity[0] = cosf(c->yaw) * c->speed + c->lateral_vel[0];
+        u->body.velocity[1] = sinf(c->yaw) * c->speed + c->lateral_vel[1];
+        u->body.velocity[2] = 0.0f;
+        u->body.on_ground = !( c->kind == HTA_VK_FIGHTER && !c->grounded);
+        u->body.landed = false;
+        u->body.crouch_t = 0.0f;
+        u->body.eye_height = u->body.phys.cam_stand;
+        u->eye.pos[0] = feet[0]; u->eye.pos[1] = feet[1];
+        u->eye.pos[2] = feet[2] + u->body.eye_height;
+        hta_game_event e = { .kind = HTA_EV_EXIT, .a = unit, .b = car, .pool = seat };
+        for (int k = 0; k < 3; k++) e.pos[k] = feet[k];
+        emit(g, &e);
+        return true;
+    }
+    int32_t seat = -1;
+    int32_t car = hta_game_seat_near(g, unit, &seat);
+    if (car < 0) return false;
+    return hta_game_seat(g, unit, car, seat);
+}
+
+/* What the crosshair is on: along the unit's eye into the world and
+ * everyone in it, but not through its own vehicle. */
+static void aim_point(hta_game *g, int32_t unit, float out[3])
+{
+    hta_unit *u = &g->units[unit];
+    float dir[3];
+    aim_dir(&u->eye, dir);
+    float t = HTA_VEHICLE_AIM_RANGE;
+    hta_collision_instance *own = NULL;
+    bool was = false;
+    if (u->vehicle >= 0 && g->vehicles) {
+        own = &g->vehicles->inst[u->vehicle];
+        was = own->active;
+        own->active = false;
+    }
+    float wt;
+    if (g->col && hta_collision_ray(g->col, u->eye.pos, dir, t, &wt, NULL, NULL)) t = wt;
+    float ut;
+    if (hta_game_ray(g, u->eye.pos, dir, t, unit, &ut, NULL) >= 0) t = ut;
+    if (own) own->active = was;
+    for (int k = 0; k < 3; k++) out[k] = u->eye.pos[k] + dir[k] * t;
+}
+
+static void vfire(hta_game *g, int32_t idx, uint32_t car, uint32_t trig, float dt)
+{
+    hta_unit *u = &g->units[idx];
+    hta_vehicle *c = &g->vehicles->cars[car];
+    hta_game_vgun *gun = &g->vgun[car];
+    int32_t wi = c->type < HTA_VEHICLE_TYPES ? g->vweapon[c->type][trig] : -1;
+    if (wi < 0) return;
+    const hta_game_weapon *w = &g->weapons[wi];
+    (void)dt;
+    /* One round per pull where the tag says so. */
+    bool single = w->def.single_shot || (w->def.trigger_flags & HTA_TRIGGER_NO_REPEAT);
+    if (single && gun->was_down[trig]) return;
+    if (gun->cooldown[trig] > 0.0f || gun->chamber[trig] > 0.0f) return;
+    if (gun->loaded[trig] == 0) return;
+
+    float rof = w->def.rof;
+    if (w->def.rof_accel > 0.0f && w->def.rof_initial > 0.0f) {
+        float f = gun->held[trig] / w->def.rof_accel;
+        if (f > 1.0f) f = 1.0f;
+        rof = w->def.rof_initial + (w->def.rof - w->def.rof_initial) * f;
+    }
+    gun->cooldown[trig] = single ? 0.0f : (rof > 0.1f ? 1.0f / rof : 0.25f);
+    if (gun->loaded[trig] > 0) {
+        int spend = w->def.rounds_per_shot > 0 ? w->def.rounds_per_shot : 0;
+        gun->loaded[trig] -= spend;
+        if (gun->loaded[trig] < 0) gun->loaded[trig] = 0;
+        bool every = (w->def.mag_flags & HTA_MAG_CHAMBER_EACH_ROUND) != 0;
+        if (gun->loaded[trig] == 0 || (every && spend)) {
+            float wait = fmaxf(w->def.chamber_time, w->def.reload_time);
+            gun->chamber[trig] = wait > 0.0f ? wait : 0.5f;
+        }
+    }
+    u->fired = true;
+    u->since_shot = 0.0f;
+
+    float muzzle[3], barrel[3];
+    hta_vehicles_trigger(g->vehicles, car, trig, muzzle, barrel);
+    /* Converge on the crosshair, as long as the barrel is roughly there. */
+    float target[3], aim[3];
+    aim_point(g, idx, target);
+    float d[3] = { target[0]-muzzle[0], target[1]-muzzle[1], target[2]-muzzle[2] };
+    float dl = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+    float bl = sqrtf(barrel[0]*barrel[0] + barrel[1]*barrel[1] + barrel[2]*barrel[2]);
+    if (dl > 0.5f && bl > 1e-4f &&
+        (d[0]*barrel[0] + d[1]*barrel[1] + d[2]*barrel[2]) / (dl * bl) > cosf(0.35f)) {
+        for (int k = 0; k < 3; k++) aim[k] = d[k] / dl;
+    } else {
+        for (int k = 0; k < 3; k++) aim[k] = bl > 1e-4f ? barrel[k] / bl : 0.0f;
+    }
+    float spread = w->def.error_angle[0] +
+                   (w->def.error_angle[1] - w->def.error_angle[0]) * gun->error[trig];
+    if (w->def.error_accel > 0.0f) {
+        gun->error[trig] += (gun->cooldown[trig] > 0.0f ? gun->cooldown[trig] : 0.2f) /
+                            w->def.error_accel;
+        if (gun->error[trig] > 1.0f) gun->error[trig] = 1.0f;
+    }
+    if (g->vehicles->types[c->type].barrel_node >= 0)
+        c->barrel_speed = HTA_VEHICLE_BARREL_SPIN;
+
+    hta_game_event fe = { .kind = HTA_EV_FIRE, .a = idx, .b = (int32_t)car, .weapon = wi };
+    for (int k = 0; k < 3; k++) { fe.pos[k] = muzzle[k]; fe.dir[k] = aim[k]; }
+    emit(g, &fe);
+
+    int pellets = w->def.projectiles_per_shot > 0 ? w->def.projectiles_per_shot : 1;
+    if (pellets > 16) pellets = 16;
+    if (w->travels && w->pool >= 0) {
+        for (int p = 0; p < pellets; p++) {
+            float dir[3];
+            cone(&u->rng, aim, spread, dir);
+            int slot = hta_projectiles_fire(&g->pools[w->pool], muzzle, dir);
+            if (slot >= 0) {
+                g->pool_owner[w->pool][slot] = (int8_t)idx;
+                /* Clear of its own hull before it can hit a vehicle. */
+                g->pools[w->pool].live[slot].clear = c->body_radius + 0.5f;
+            }
+        }
+        return;
+    }
+    int hits[HTA_GAME_MAX_UNITS];
+    float hit_at[HTA_GAME_MAX_UNITS][3];
+    memset(hits, 0, sizeof(hits));
+    hta_collision_instance *own = &g->vehicles->inst[car];
+    bool was = own->active;
+    own->active = false;
+    for (int p = 0; p < pellets; p++) {
+        float dir[3];
+        cone(&u->rng, aim, spread, dir);
+        float wt = HTA_GUN_RANGE, wh[3], wn[3];
+        uint8_t mat = HTA_MATERIAL_NONE;
+        bool wall = g->col && hta_collision_ray_material(g->col, muzzle, dir,
+                                  HTA_GUN_RANGE, &wt, wh, wn, &mat);
+        float ut, uh[3];
+        int32_t who = hta_game_ray(g, muzzle, dir, wall ? wt : HTA_GUN_RANGE, idx, &ut, uh);
+        if (who >= 0) {
+            hits[who]++;
+            for (int k = 0; k < 3; k++) hit_at[who][k] = uh[k];
+        } else if (wall) {
+            hta_game_event e = { .kind = HTA_EV_HIT_WORLD, .a = idx, .b = -1,
+                                 .weapon = wi, .material = mat };
+            for (int k = 0; k < 3; k++) { e.pos[k] = wh[k]; e.dir[k] = wn[k]; }
+            emit(g, &e);
+        }
+    }
+    own->active = was;
+    for (uint32_t v = 0; v < g->unit_count; v++)
+        if (hits[v]) hta_game_hurt_jpt(g, (int32_t)v, idx, w->impact_jpt, hits[v], hit_at[v]);
+}
+
+/* The guns' own clocks: cooldowns, chambers, bloom, spin-up. */
+static void vguns_tick(hta_game *g, float dt)
+{
+    if (!g->vehicles) return;
+    for (uint32_t i = 0; i < g->vehicles->count && i < HTA_VEHICLE_MAX; i++) {
+        hta_game_vgun *gun = &g->vgun[i];
+        const hta_vehicle *c = &g->vehicles->cars[i];
+        gun->since_driven += dt;
+        for (int t = 0; t < 2; t++) {
+            int32_t wi = c->type < HTA_VEHICLE_TYPES ? g->vweapon[c->type][t] : -1;
+            if (wi < 0) continue;
+            const hta_game_weapon *w = &g->weapons[wi];
+            if (gun->cooldown[t] > 0.0f) gun->cooldown[t] -= dt;
+            if (gun->chamber[t] > 0.0f) {
+                gun->chamber[t] -= dt;
+                if (gun->chamber[t] <= 0.0f) {
+                    gun->chamber[t] = 0.0f;
+                    gun->loaded[t] = w->def.rounds_loaded_max > 0 ? w->def.rounds_loaded_max : -1;
+                }
+            }
+            if (gun->loaded[t] == 0 && gun->chamber[t] <= 0.0f)
+                gun->loaded[t] = (w->def.magazine < 0 || w->def.rounds_loaded_max <= 0)
+                               ? -1 : w->def.rounds_loaded_max;
+            if (!gun->was_down[t] && w->def.error_decel > 0.0f) {
+                gun->error[t] -= dt / w->def.error_decel;
+                if (gun->error[t] < 0.0f) gun->error[t] = 0.0f;
+            }
+        }
+    }
+}
+
+/* Everything a seated unit does through its vehicle. */
+static void seated(hta_game *g, int32_t idx, float dt)
+{
+    hta_unit *u = &g->units[idx];
+    hta_vehicles *v = g->vehicles;
+    if (!v || u->vehicle < 0 || (uint32_t)u->vehicle >= v->count ||
+        v->cars[u->vehicle].occupant[u->seat] != idx || !v->cars[u->vehicle].active) {
+        hta_game_unseat(g, idx);
+        return;
+    }
+    uint32_t car = (uint32_t)u->vehicle;
+    hta_vehicle *c = &v->cars[car];
+    const hta_vehicle_seat *s = hta_vehicles_seat(v, car, (uint32_t)u->seat);
+    hta_unit_input *in = &u->in;
+    /* The look still turns: it is where the gun and the camera go. The
+     * local player's look is the platform's own camera. */
+    if (idx != g->local) {
+        hta_camera_look(&u->eye, in->move.look_yaw, in->move.look_pitch);
+        in->move.look_yaw = in->move.look_pitch = 0.0f;
+    }
+    if (s->flags & HTA_SEAT_DRIVER) {
+        c->ctl.driven = true;
+        c->ctl.throttle = in->move.move_forward;
+        c->ctl.strafe = in->move.move_right;
+        c->ctl.yaw = u->eye.yaw;
+        c->ctl.pitch = u->eye.pitch;
+        c->ctl.brake = in->move.jump;
+        g->vgun[car].last_driver = idx;
+        g->vgun[car].since_driven = 0.0f;
+    }
+    if (s->flags & HTA_SEAT_GUNNER) {
+        hta_vehicles_aim(v, car, u->eye.yaw, u->eye.pitch, dt);
+        hta_game_vgun *gun = &g->vgun[car];
+        bool down[2] = { in->move.fire, in->fire2 };
+        for (uint32_t t = 0; t < 2; t++) {
+            if (down[t]) {
+                gun->held[t] += dt;
+                if (!g->over) vfire(g, idx, car, t, dt);
+            } else gun->held[t] = 0.0f;
+            gun->was_down[t] = down[t];
+        }
+    }
+}
+
+/* A body in a seat sits where the seat is; its eye goes to the seat's
+ * camera. The local player's camera belongs to the platform. */
+static void place_seated(hta_game *g, int32_t idx)
+{
+    hta_unit *u = &g->units[idx];
+    hta_transform root;
+    if (!hta_game_seat_root(g, idx, &root)) return;
+    const hta_vehicle *c = &g->vehicles->cars[u->vehicle];
+    for (int k = 0; k < 3; k++) u->body.pos[k] = root.t[k];
+    u->body.velocity[0] = cosf(c->yaw) * c->speed + c->lateral_vel[0];
+    u->body.velocity[1] = sinf(c->yaw) * c->speed + c->lateral_vel[1];
+    u->body.velocity[2] = c->fall_speed;
+    u->body.on_ground = true;
+    u->body.landed = u->body.footstep = false;
+    if (idx == g->local) return;
+    hta_camera cam = u->eye;
+    hta_vehicles_camera(g->vehicles, g->col, (uint32_t)u->vehicle, (uint32_t)u->seat,
+                        u->eye.yaw, u->eye.pitch, &cam);
+    for (int k = 0; k < 3; k++) u->eye.pos[k] = cam.pos[k];
+}
+
+/* A moving vehicle and somebody on foot in its way. */
+static void splatter(hta_game *g)
+{
+    hta_vehicles *v = g->vehicles;
+    if (!v || !g->splatter_jpt) return;
+    float full = hta_damage_vs(g->cache, g->splatter_jpt, HTA_MATERIAL_CYBORG_ARMOR);
+    for (uint32_t i = 0; i < v->count; i++) {
+        const hta_vehicle *c = &v->cars[i];
+        if (!c->active) continue;
+        float vel[3] = { cosf(c->yaw) * c->speed + c->lateral_vel[0],
+                         sinf(c->yaw) * c->speed + c->lateral_vel[1],
+                         c->kind == HTA_VK_FIGHTER ? c->fall_speed : 0.0f };
+        float speed = sqrtf(vel[0]*vel[0] + vel[1]*vel[1] + vel[2]*vel[2]);
+        if (speed < HTA_SPLATTER_MIN_SPEED) continue;
+        const hta_game_vgun *gun = &g->vgun[i];
+        int32_t driver = gun->last_driver >= 0 && gun->since_driven < HTA_CREDIT_WINDOW
+                       ? gun->last_driver : -1;
+        for (uint32_t k = 0; k < g->unit_count; k++) {
+            hta_unit *u = &g->units[k];
+            if (!u->alive || u->kind == HTA_UNIT_NONE || u->vehicle >= 0) continue;
+            float r = u->body.phys.radius > 0.0f ? u->body.phys.radius : 0.175f;
+            float h = unit_height(u);
+            if (hypotf(u->body.pos[0]-c->pos[0], u->body.pos[1]-c->pos[1]) >
+                c->body_radius + r + 0.2f) continue;
+            for (uint32_t p = 0; p < c->point_count; p++) {
+                hta_transform world;
+                hta_vehicles_world(v, i, &world);
+                float at[3];
+                hta_xf_point(at, &world, c->points[p].pos);
+                float pr = c->points[p].radius;
+                float dz = 0.0f;
+                if (at[2] < u->body.pos[2]) dz = u->body.pos[2] - at[2];
+                else if (at[2] > u->body.pos[2] + h) dz = at[2] - (u->body.pos[2] + h);
+                float dx = u->body.pos[0] - at[0], dy = u->body.pos[1] - at[1];
+                float dxy = hypotf(dx, dy);
+                if (dxy - r > pr || dz > pr) continue;
+                /* Closing speed: how fast the vehicle comes at them. */
+                float n[3] = { dxy > 1e-4f ? dx / dxy : 1.0f, dxy > 1e-4f ? dy / dxy : 0.0f, 0.0f };
+                float closing = vel[0]*n[0] + vel[1]*n[1] - (u->body.velocity[0]*n[0] +
+                                u->body.velocity[1]*n[1]);
+                if (closing < HTA_SPLATTER_MIN_SPEED) break;
+                float f = (closing - HTA_SPLATTER_MIN_SPEED) /
+                          (HTA_SPLATTER_FULL_SPEED - HTA_SPLATTER_MIN_SPEED);
+                if (f > 1.0f) f = 1.0f;
+                float at_c[3];
+                hta_game_centre(g, (int32_t)k, at_c);
+                u->splattered = driver < 0;
+                hta_game_hurt(g, (int32_t)k, driver, full * f, at_c);
+                /* And out of the way. */
+                if ((int32_t)k != g->local) {
+                    u->body.velocity[0] += vel[0];
+                    u->body.velocity[1] += vel[1];
+                }
+                break;
+            }
+        }
+    }
+}
+
 /* ---------------------------------------------------------------- update */
 
 static void simulate(hta_game *g, int32_t idx, float dt)
@@ -1099,6 +1627,7 @@ void hta_game_update(hta_game *g, float dt)
         finish(g, hta_game_standings(g, order, HTA_GAME_MAX_UNITS) ? order[0] : HTA_GAME_NONE);
     }
 
+    vguns_tick(g, dt);
     for (uint32_t i = 0; i < g->unit_count; i++) {
         hta_unit *u = &g->units[i];
         if (u->kind == HTA_UNIT_NONE) continue;
@@ -1115,6 +1644,33 @@ void hta_game_update(hta_game *g, float dt)
         if (u->kind == HTA_UNIT_BOT && g->nav && !g->over)
             hta_brain_think(g, (int32_t)i, &g->brains[i], dt);
         if (u->kind == HTA_UNIT_BOT && g->over) memset(&u->in, 0, sizeof(u->in));
+        /* In and out of vehicles, for everyone -- the local player too. */
+        if (u->in.action) {
+            u->in.action = false;
+            if (!g->over) hta_game_board(g, (int32_t)i);
+        }
+        if (u->vehicle >= 0) {
+            u->fired = u->meleed = u->threw = u->hurt = false;
+            seated(g, (int32_t)i, dt);
+            if (u->vehicle >= 0 && u->kind != HTA_UNIT_LOCAL) {
+                hta_vitals_update(&u->vitals, dt);
+                const hta_vehicle_seat *st = hta_vehicles_seat(g->vehicles,
+                    (uint32_t)u->vehicle, (uint32_t)u->seat);
+                /* A passenger who may shoot does, with what they carry. */
+                if (st && (st->flags & HTA_SEAT_ALLOWS_WEAPONS)) {
+                    hta_carried *cw = &u->carry[u->slot & 1u];
+                    hta_ammo_update(&cw->ammo, dt);
+                    if (u->cooldown > 0.0f) u->cooldown -= dt;
+                    u->since_shot += dt;
+                    if (u->in.reload) { u->in.reload = false; hta_ammo_reload(&cw->ammo); }
+                    if (u->in.move.fire && u->cooldown <= 0.0f &&
+                        cw->ammo.phase == HTA_AMMO_READY && !g->over)
+                        fire(g, (int32_t)i, dt);
+                }
+                u->in.melee = u->in.grenade = u->in.swap = u->in.pickup = false;
+            }
+            if (u->vehicle >= 0) continue;
+        }
         if (u->kind != HTA_UNIT_LOCAL) simulate(g, (int32_t)i, dt);
 
         /* Powerups run down for everyone; the overshield bleeds. */
@@ -1128,6 +1684,22 @@ void hta_game_update(hta_game *g, float dt)
             }
             if (u->powerup_timer <= 0.0f) { u->powerup_timer = 0.0f; u->powerup = HTA_ITEM_NONE; }
         }
+    }
+    /* Empty driver's seats let go of the controls. */
+    if (g->vehicles) {
+        for (uint32_t i = 0; i < g->vehicles->count; i++) {
+            hta_vehicle *c = &g->vehicles->cars[i];
+            int32_t d = hta_vehicles_driver_seat(g->vehicles, i);
+            if (d < 0 || c->occupant[d] < 0) {
+                float yaw = c->ctl.yaw;
+                memset(&c->ctl, 0, sizeof(c->ctl));
+                c->ctl.yaw = yaw;
+            }
+        }
+        if (g->simulate_vehicles) hta_vehicles_update(g->vehicles, g->col, g->gravity, dt);
+        for (uint32_t i = 0; i < g->unit_count; i++)
+            if (g->units[i].alive && g->units[i].vehicle >= 0) place_seated(g, (int32_t)i);
+        if (g->simulate_vehicles && !g->over) splatter(g);
     }
     fly(g, dt);
 

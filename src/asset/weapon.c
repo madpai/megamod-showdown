@@ -37,11 +37,14 @@ uint32_t hta_globals_fp_hands(const hta_cache *c)
     return rddep(c, arr + HTA_FPI_HANDS);
 }
 
-static void load_magazine(const hta_cache *c, uint32_t weap, hta_weapon_def *def)
+static void load_magazine(const hta_cache *c, uint32_t weap, hta_weapon_def *def,
+                          uint32_t which)
 {
     uint32_t n = 0, ptr = 0, arr = 0;
-    if (!hta_read_reflexive(c, weap + HTA_WEAP_MAGAZINES, &n, &ptr) || n == 0) return;
+    if (!hta_read_reflexive(c, weap + HTA_WEAP_MAGAZINES, &n, &ptr) || n <= which) return;
     if (!hta_cache_ptr_to_offset(c, ptr, &arr)) return;
+    arr += which * HTA_MAG_SIZE;
+    hta_rd_u32(c, arr, &def->mag_flags);
     def->rounds_initial     = rdi16(c, arr + HTA_MAG_ROUNDS_INITIAL);
     def->rounds_reserve_max = rdi16(c, arr + HTA_MAG_ROUNDS_RESERVE);
     def->rounds_loaded_max  = rdi16(c, arr + HTA_MAG_ROUNDS_LOADED);
@@ -51,11 +54,17 @@ static void load_magazine(const hta_cache *c, uint32_t weap, hta_weapon_def *def
     def->reloading_fx_id    = rddep(c, arr + HTA_MAG_RELOADING_FX);
 }
 
-static void load_trigger(const hta_cache *c, uint32_t weap, hta_weapon_def *def)
+static void load_trigger(const hta_cache *c, uint32_t weap, hta_weapon_def *def,
+                         uint32_t which)
 {
     uint32_t n = 0, ptr = 0, arr = 0;
-    if (!hta_read_reflexive(c, weap + HTA_WEAP_TRIGGERS, &n, &ptr) || n == 0) return;
+    if (!hta_read_reflexive(c, weap + HTA_WEAP_TRIGGERS, &n, &ptr) || n <= which) return;
     if (!hta_cache_ptr_to_offset(c, ptr, &arr)) return;
+    def->trigger = which;
+    def->trigger_count = n;
+    arr += which * HTA_TRIG_SIZE;
+    hta_rd_u32(c, arr, &def->trigger_flags);
+    def->magazine = rdi16(c, arr + 32u);
 
     float a = rdf(c, arr + HTA_TRIG_ROF);
     float b = rdf(c, arr + HTA_TRIG_ROF + 4u);
@@ -64,6 +73,9 @@ static void load_trigger(const hta_cache *c, uint32_t weap, hta_weapon_def *def)
         def->rof = rof;
         def->cooldown = 1.0f / rof;
     }
+    def->rof_initial = a > 0.1f ? a : rof;
+    def->rof_accel = rdf(c, arr + 12u);
+    def->single_shot = !(a > 0.1f) && !(b > 0.1f);
     def->rounds_per_shot      = rdi16(c, arr + HTA_TRIG_ROUNDS_SHOT);
     def->projectiles_per_shot = rdi16(c, arr + HTA_TRIG_PROJ_SHOT);
     def->error_angle[0] = rdf(c, arr + HTA_TRIG_ERROR_ANGLE);
@@ -117,8 +129,8 @@ bool hta_weapon_load_id(const hta_cache *c, const hta_resource_map *bitmaps,
     def->pickup_snd_id   = rddep(c, off + HTA_WEAP_PICKUP_SND);
     def->zoom_in_snd_id  = rddep(c, off + HTA_WEAP_ZOOM_IN_SND);
     def->zoom_out_snd_id = rddep(c, off + HTA_WEAP_ZOOM_OUT_SND);
-    load_magazine(c, off, def);
-    load_trigger(c, off, def);
+    load_trigger(c, off, def, 0);
+    load_magazine(c, off, def, def->magazine > 0 ? (uint32_t)def->magazine : 0u);
 
     if (fp) {
         memset(fp, 0, sizeof(*fp));
@@ -131,6 +143,27 @@ bool hta_weapon_load_id(const hta_cache *c, const hta_resource_map *bitmaps,
             }
         }
     }
+    return true;
+}
+
+bool hta_weapon_load_trigger(const hta_cache *c, uint32_t weap_tag_id, uint32_t trigger,
+                             hta_weapon_def *def)
+{
+    if (!hta_weapon_load_id(c, NULL, weap_tag_id, def, NULL, NULL, 0)) return false;
+    if (trigger == 0) return true;
+    int32_t ti = hta_cache_find_tag_by_id(c, weap_tag_id);
+    hta_tag_entry t;
+    uint32_t off;
+    if (ti < 0 || !hta_cache_tag(c, (uint32_t)ti, &t) ||
+        !hta_cache_ptr_to_offset(c, t.tag_data_ptr, &off)) return false;
+    if (trigger >= def->trigger_count) return false;
+    /* Start the trigger's fields fresh: nothing of trigger 0 carries over. */
+    def->rof = 3.5f; def->cooldown = 1.0f / 3.5f;
+    def->projectile_id = def->firing_fx_id = def->empty_fx_id = def->firing_damage_id = 0;
+    def->rounds_initial = def->rounds_reserve_max = def->rounds_loaded_max = 0;
+    def->rounds_reloaded = 0; def->reload_time = def->chamber_time = 0; def->mag_flags = 0;
+    load_trigger(c, off, def, trigger);
+    if (def->magazine >= 0) load_magazine(c, off, def, (uint32_t)def->magazine);
     return true;
 }
 

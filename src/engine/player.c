@@ -177,6 +177,8 @@ static int32_t ground_tri(const hta_collision *c, float x, float y, float z_from
     return best_tri;
 }
 
+static bool inst_ground(const hta_collision_instance *in, float x, float y, float from,
+                        float *out_z, uint8_t *mat);
 uint8_t hta_collision_ground_material(const hta_collision *c,
                                       float x, float y, float z_from)
 {
@@ -185,7 +187,12 @@ uint8_t hta_collision_ground_material(const hta_collision *c,
     int32_t t = ground_tri(c, x, y, z_from, &z);
     if (c->extra && hta_collision_ground(c->extra, x, y, z_from, &ez) && ez > z)
         return hta_collision_ground_material(c->extra, x, y, z_from);
-    return t >= 0 && c->tri_material ? c->tri_material[t] : HTA_MATERIAL_NONE;
+    uint8_t best = t >= 0 && c->tri_material ? c->tri_material[t] : HTA_MATERIAL_NONE;
+    for (uint32_t i = 0; i < c->instance_count; i++) {
+        uint8_t m;
+        if (inst_ground(&c->instances[i], x, y, z_from, &ez, &m) && ez > z) { z = ez; best = m; }
+    }
+    return best;
 }
 
 void hta_collision_rebind_material(hta_collision *c, const uint8_t *tri_material)
@@ -572,6 +579,49 @@ static bool collision_ray_static(const hta_collision *c,
     return true;
 }
 
+/* ---- placed rigid grids --------------------------------------------- */
+
+static void inst_to_local(const hta_collision_instance *in, const float w[3], float l[3])
+{
+    float d[3] = { w[0]-in->pos[0], w[1]-in->pos[1], w[2]-in->pos[2] };
+    /* rot is local->world, so its transpose takes world to local. */
+    for (int k = 0; k < 3; k++)
+        l[k] = in->rot[0*3+k]*d[0] + in->rot[1*3+k]*d[1] + in->rot[2*3+k]*d[2];
+}
+static void inst_dir_to_local(const hta_collision_instance *in, const float w[3], float l[3])
+{
+    for (int k = 0; k < 3; k++)
+        l[k] = in->rot[0*3+k]*w[0] + in->rot[1*3+k]*w[1] + in->rot[2*3+k]*w[2];
+}
+static void inst_dir_to_world(const hta_collision_instance *in, const float l[3], float w[3])
+{
+    for (int k = 0; k < 3; k++)
+        w[k] = in->rot[k*3+0]*l[0] + in->rot[k*3+1]*l[1] + in->rot[k*3+2]*l[2];
+}
+static bool inst_near_xy(const hta_collision_instance *in, float x, float y, float pad)
+{
+    if (!in->active || !in->grid || !in->grid->built) return false;
+    float dx = x - in->pos[0], dy = y - in->pos[1], r = in->radius + pad;
+    return dx*dx + dy*dy <= r*r;
+}
+
+/* The ground of a placed grid, taken along the grid's own up. Vehicles tilt
+ * a few degrees, so local "down" is close enough to world down to stand on. */
+static bool inst_ground(const hta_collision_instance *in, float x, float y, float from,
+                        float *out_z, uint8_t *mat)
+{
+    if (!inst_near_xy(in, x, y, 0.5f)) return false;
+    float w[3] = { x, y, from }, l[3], lz;
+    inst_to_local(in, w, l);
+    int32_t t = ground_tri(in->grid, l[0], l[1], l[2], &lz);
+    if (t < 0) return false;
+    float lp[3] = { l[0], l[1], lz }, wd[3];
+    inst_dir_to_world(in, lp, wd);
+    *out_z = wd[2] + in->pos[2];
+    if (mat) *mat = in->grid->tri_material ? in->grid->tri_material[t] : HTA_MATERIAL_NONE;
+    return true;
+}
+
 bool hta_collision_ground(const hta_collision *c, float x, float y, float from,
                            float *out)
 {
@@ -581,8 +631,26 @@ bool hta_collision_ground(const hta_collision *c, float x, float y, float from,
     if (c->extra && hta_collision_ground(c->extra, x, y, from, &ez)) {
         z = found ? fmaxf(z, ez) : ez; found = true;
     }
+    for (uint32_t i = 0; i < c->instance_count; i++)
+        if (inst_ground(&c->instances[i], x, y, from, &ez, NULL)) {
+            z = found ? fmaxf(z, ez) : ez; found = true;
+        }
     if (found) *out = z;
     return found;
+}
+
+static void inst_depenetrate(const hta_collision_instance *in, float *x, float *y,
+                             float z, float height, float radius)
+{
+    if (!inst_near_xy(in, *x, *y, radius + 0.1f)) return;
+    float w[3] = { *x, *y, z }, l[3];
+    inst_to_local(in, w, l);
+    float lx = l[0], ly = l[1];
+    collision_depenetrate_static(in->grid, &lx, &ly, l[2], height, radius);
+    if (lx == l[0] && ly == l[1]) return;
+    float d[3] = { lx - l[0], ly - l[1], 0.0f }, wd[3];
+    inst_dir_to_world(in, d, wd);
+    *x += wd[0]; *y += wd[1];
 }
 
 void hta_collision_depenetrate(const hta_collision *c, float *x, float *y,
@@ -590,10 +658,18 @@ void hta_collision_depenetrate(const hta_collision *c, float *x, float *y,
 {
     if (!c) return;
     collision_depenetrate_static(c, x, y, z, height, radius);
+    bool moved = false;
     if (c->extra) {
         hta_collision_depenetrate(c->extra, x, y, z, height, radius);
-        collision_depenetrate_static(c, x, y, z, height, radius);
+        moved = true;
     }
+    for (uint32_t i = 0; i < c->instance_count; i++) {
+        float ox = *x, oy = *y;
+        inst_depenetrate(&c->instances[i], x, y, z, height, radius);
+        if (ox != *x || oy != *y) moved = true;
+    }
+    /* Pushed out of a vehicle and into a wall is no good: the world wins. */
+    if (moved) collision_depenetrate_static(c, x, y, z, height, radius);
 }
 
 bool hta_collision_ray_material(const hta_collision *c, const float orig[3],
@@ -608,6 +684,30 @@ bool hta_collision_ray_material(const hta_collision *c, const float orig[3],
         if (hit) memcpy(hit, eh, sizeof(eh));
         if (nrm) memcpy(nrm, en, sizeof(en));
         if (mat) *mat = em;
+    }
+    for (uint32_t i = 0; i < c->instance_count; i++) {
+        const hta_collision_instance *in = &c->instances[i];
+        if (!in->active || !in->grid || !in->grid->built) continue;
+        /* Sphere cull: does the segment pass within the bound? */
+        float dl2 = dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2];
+        if (dl2 < 1e-12f) continue;
+        float oc[3] = { in->pos[0]-orig[0], in->pos[1]-orig[1], in->pos[2]-orig[2] };
+        float s = (oc[0]*dir[0] + oc[1]*dir[1] + oc[2]*dir[2]) / dl2;
+        if (s < 0.0f) s = 0.0f;
+        if (s > t) s = t;
+        float q[3] = { orig[0]+dir[0]*s - in->pos[0], orig[1]+dir[1]*s - in->pos[1],
+                       orig[2]+dir[2]*s - in->pos[2] };
+        if (q[0]*q[0] + q[1]*q[1] + q[2]*q[2] > in->radius * in->radius) continue;
+        float lo[3], ld[3];
+        inst_to_local(in, orig, lo);
+        inst_dir_to_local(in, dir, ld);
+        float it = t, ln[3];
+        uint8_t im = HTA_MATERIAL_NONE;
+        if (!collision_ray_static(in->grid, lo, ld, t, &it, NULL, ln, &im) || it >= t) continue;
+        t = it; found = true;
+        if (hit) for (int k = 0; k < 3; k++) hit[k] = orig[k] + dir[k] * it;
+        if (nrm) inst_dir_to_world(in, ln, nrm);
+        if (mat) *mat = im;
     }
     if (found && out_t) *out_t = t;
     return found;

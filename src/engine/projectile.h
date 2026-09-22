@@ -43,6 +43,9 @@ typedef struct {
     float fuse;          /* seconds left once armed; < 0 until then */
     float fall;          /* downward speed picked up from gravity, wu/s */
     uint32_t bounces;
+    /* World units to fly before placed rigid grids (vehicles) can stop it:
+     * a round fired from inside its own vehicle's hull clears it first. */
+    float clear;
     bool  alive;
 } hta_projectile;
 
@@ -123,6 +126,12 @@ bool hta_projectiles_equip_projectile(hta_projectiles *p, const hta_cache *c,
                                       const hta_resource_map *bitmaps,
                                       uint32_t projectile_id,
                                       char *err, size_t errlen);
+
+/* The same, but a projectile with no model still loads: it flies with no
+ * mesh (verts_each 0). The Scorpion's shell and the Covenant bolts. */
+bool hta_projectiles_equip_any(hta_projectiles *p, const hta_cache *c,
+                               const hta_resource_map *bitmaps,
+                               uint32_t projectile_id, char *err, size_t errlen);
 
 /* Fly, collide and expire. Sets `detonated` for the update in which one
  * went off. Re-poses the mesh, so the caller re-uploads the vertices. */

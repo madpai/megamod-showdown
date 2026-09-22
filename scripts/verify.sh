@@ -35,6 +35,7 @@ if ./build-host/test_pickup     >/dev/null 2>&1; then ok "pickup tests"; else ba
 if ./build-host/test_bot        >/dev/null 2>&1; then ok "bot tests"; else bad "bot tests"; fi
 if ./build-host/test_nav        >/dev/null 2>&1; then ok "nav grid tests"; else bad "nav grid tests"; fi
 if ./build-host/test_game       >/dev/null 2>&1; then ok "game rules tests"; else bad "game rules tests"; fi
+if ./build-host/test_ride       >/dev/null 2>&1; then ok "vehicle game rules (no map)"; else bad "vehicle game rules (no map)"; fi
 if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_biped "$HTA_MAP" >/dev/null 2>&1; then ok "biped/globals physics from Trial map"; else bad "biped/globals physics from Trial map"; fi
   if ./build-host/test_anim "$HTA_MAP" >/dev/null 2>&1; then ok "FP animation graph + skinned viewmodel"; else bad "FP animation graph + skinned viewmodel"; fi
@@ -45,13 +46,14 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_projectile "$HTA_MAP" >/dev/null 2>&1; then ok "projectiles from the projectile tags"; else bad "projectiles from the projectile tags"; fi
   if ./build-host/test_particle "$HTA_MAP" >/dev/null 2>&1; then ok "effect particles from the effect tags"; else bad "effect particles from the effect tags"; fi
   if ./build-host/test_vitals "$HTA_MAP" >/dev/null 2>&1; then ok "vitality and falling from the Trial tags"; else bad "vitality and falling from the Trial tags"; fi
-  if ./build-host/test_vehicle "$HTA_MAP" >/dev/null 2>&1; then ok "Trial Warthog entry, driving and exit"; else bad "Trial Warthog entry, driving and exit"; fi
+  if ./build-host/test_vehicle "$HTA_MAP" >/dev/null 2>&1; then ok "Trial vehicles: all five types load, drive, fly and seat"; else bad "Trial vehicles: all five types load, drive, fly and seat"; fi
   if ./build-host/test_model "$HTA_MAP" >/dev/null 2>&1; then ok "Warthog textures and lighting"; else bad "Warthog textures and lighting"; fi
   if ./build-host/test_actor  "$HTA_MAP" >/dev/null 2>&1; then ok "the cyborg poses and dies"; else bad "the cyborg poses and dies"; fi
   if ./build-host/test_pickup "$HTA_MAP" >/dev/null 2>&1; then ok "what the map leaves on the ground"; else bad "what the map leaves on the ground"; fi
   if ./build-host/test_bot    "$HTA_MAP" >/dev/null 2>&1; then ok "a body to shoot at, and what hurts it"; else bad "a body to shoot at, and what hurts it"; fi
   if ./build-host/test_nav    "$HTA_MAP" >/dev/null 2>&1; then ok "a biped walks a planned path base to base"; else bad "a biped walks a planned path base to base"; fi
   if ./build-host/test_game   "$HTA_MAP" >/dev/null 2>&1; then ok "bots play Slayer to the score limit"; else bad "bots play Slayer to the score limit"; fi
+  if ./build-host/test_ride   "$HTA_MAP" >/dev/null 2>&1; then ok "players drive, gun, splatter and bail from every vehicle"; else bad "players drive, gun, splatter and bail from every vehicle"; fi
 fi
 
 # Optional: validate against the user's own Trial data if HTA_MAP points at it.

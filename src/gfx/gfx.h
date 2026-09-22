@@ -114,7 +114,7 @@ typedef struct {
     bool          lit;
 } hta_gfx_instance;
 
-#define HTA_GFX_MAX_INSTANCES 256u
+#define HTA_GFX_MAX_INSTANCES 512u
 
 /* The instances the NEXT hta_gfx_draw should add to the world. Copied;
  * the list is consumed by that draw. */

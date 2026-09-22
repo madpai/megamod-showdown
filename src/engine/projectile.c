@@ -72,10 +72,25 @@ bool hta_projectiles_equip(hta_projectiles *p, const hta_cache *c,
                                             err, errlen);
 }
 
+static bool equip(hta_projectiles *p, const hta_cache *c,
+                  const hta_resource_map *bitmaps, uint32_t projectile_id,
+                  bool bare, char *err, size_t errlen);
 bool hta_projectiles_equip_projectile(hta_projectiles *p, const hta_cache *c,
                                       const hta_resource_map *bitmaps,
                                       uint32_t projectile_id,
                                       char *err, size_t errlen)
+{
+    return equip(p, c, bitmaps, projectile_id, false, err, errlen);
+}
+bool hta_projectiles_equip_any(hta_projectiles *p, const hta_cache *c,
+                               const hta_resource_map *bitmaps,
+                               uint32_t projectile_id, char *err, size_t errlen)
+{
+    return equip(p, c, bitmaps, projectile_id, true, err, errlen);
+}
+static bool equip(hta_projectiles *p, const hta_cache *c,
+                  const hta_resource_map *bitmaps, uint32_t projectile_id,
+                  bool bare, char *err, size_t errlen)
 {
     if (!p || !c) return false;
     hta_bsp_free(&p->mesh);
@@ -93,8 +108,10 @@ bool hta_projectiles_equip_projectile(hta_projectiles *p, const hta_cache *c,
     uint32_t model = 0;
     hta_rd_u32(c, base + OBJ_MODEL + 12u, &model);
     /* Most of the roster's rounds are particles, not objects. Nothing to
-     * draw is the normal answer, not a failure. */
-    if (!model || model == 0xFFFFFFFFu) return false;
+     * draw is the normal answer, not a failure -- unless the caller wants
+     * the round to fly anyway (a tank shell), drawn some other way. */
+    if (model == 0xFFFFFFFFu) model = 0;
+    if (!model && !bare) return false;
 
     float v0 = 0.0f, v1 = 0.0f;
     hta_rd_f32(c, base + PROJ_INITIAL_VELOCITY, &v0);
@@ -144,6 +161,11 @@ bool hta_projectiles_equip_projectile(hta_projectiles *p, const hta_cache *c,
         }
     }
 
+    if (!model) {
+        /* Flies, collides and goes off; nothing of its own to draw. */
+        p->loaded = true;
+        return true;
+    }
     /* The intern table has to exist before anything can be appended into
      * this mesh -- without it every submesh comes out with no texture and
      * the renderer draws nothing at all. */
@@ -348,7 +370,15 @@ void hta_projectiles_update(hta_projectiles *p, const hta_collision *col, float 
             float ray[3] = { move[0]/len, move[1]/len, move[2]/len };
             float t = 0.0f, hit[3], nrm[3];
             uint8_t material = 0;
-            if (col && hta_collision_ray_material(col, q->pos, ray, len,
+            hta_collision bare;
+            const hta_collision *use = col;
+            if (col && q->travelled < q->clear) {
+                bare = *col;
+                bare.instances = NULL;
+                bare.instance_count = 0;
+                use = &bare;
+            }
+            if (use && hta_collision_ray_material(use, q->pos, ray, len,
                                                   &t, hit, nrm, &material)) {
                 if (p->bounces) {
                     /* Off the wall, not against it. The fuse starts here if

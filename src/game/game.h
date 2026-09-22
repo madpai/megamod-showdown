@@ -28,13 +28,14 @@
 #include "../engine/pickup.h"
 #include "../engine/gun.h"
 #include "../asset/weapon.h"
+#include "../engine/vehicle.h"
 #include "nav.h"
 #include "brain.h"
 
 #define HTA_GAME_MAX_UNITS    16
-#define HTA_GAME_MAX_WEAPONS  24
+#define HTA_GAME_MAX_WEAPONS  32
 #define HTA_GAME_MAX_EVENTS   96
-#define HTA_GAME_MAX_POOLS     4
+#define HTA_GAME_MAX_POOLS    12
 #define HTA_GAME_NAME         24
 #define HTA_GAME_NONE         (-1)
 
@@ -59,6 +60,13 @@
 #define HTA_GAME_MELEE_REACH      0.5f
 /* Throw speed, the platform's HTA_GRENADE_THROW. Invented there. */
 #define HTA_GAME_GRENADE_THROW    9.0f
+/* A vehicle that runs into somebody: below this closing speed it only
+ * shoves; by the second it deals the whole of `globals\vehicle_collision`
+ * (1000, a splatter). The tag has the damage, not the speeds. Ours. */
+#define HTA_SPLATTER_MIN_SPEED    1.0f
+#define HTA_SPLATTER_FULL_SPEED   3.0f
+/* How far ahead a vehicle gun looks for what the crosshair is on. Ours. */
+#define HTA_VEHICLE_AIM_RANGE   200.0f
 
 /* ---- The weapon roster, read once ----------------------------------- */
 typedef struct {
@@ -77,7 +85,22 @@ typedef struct {
     bool     z_prefix;        /* the flamethrower and cannon's "zstand" */
     float    autoaim_angle, autoaim_range;   /* +996, +1000 */
     float    magnet_angle, magnet_range;     /* +1004, +1008 */
+    /* A vehicle's gun: one roster entry per trigger, never carried. */
+    bool     vehicle;
+    int8_t   trigger;
 } hta_game_weapon;
+
+/* The state of one vehicle's gun, per trigger. */
+typedef struct {
+    float   cooldown[2];      /* seconds until it may fire again */
+    float   held[2];          /* seconds the trigger has been down: spin-up */
+    float   error[2];         /* 0 settled .. 1 bloomed */
+    int     loaded[2];        /* rounds in the magazine; -1 bottomless */
+    float   chamber[2];       /* seconds until the magazine is full again */
+    bool    was_down[2];      /* for a gun that fires once per pull */
+    int32_t last_driver;      /* for the kill when an empty car rolls on */
+    float   since_driven;
+} hta_game_vgun;
 
 /* ---- A body in the game --------------------------------------------- */
 typedef enum {
@@ -92,6 +115,8 @@ typedef enum {
 typedef struct {
     hta_player_input move;
     bool melee, grenade, reload, swap, pickup;
+    bool action;     /* get in, or out: one-shot */
+    bool fire2;      /* a vehicle gun's second trigger (the grenade button) */
 } hta_unit_input;
 
 typedef struct {
@@ -113,6 +138,10 @@ typedef struct {
     float    respawn;         /* seconds until back, while dead */
     float    dead_for;        /* seconds since death, for the corpse */
     float    death_yaw;
+
+    /* In a vehicle: which car and seat, -1 on foot. */
+    int16_t  vehicle;
+    int8_t   seat;
 
     hta_carried carry[2];
     uint32_t slot;            /* which of the two is in hand */
@@ -136,6 +165,7 @@ typedef struct {
     /* Cosmetic state for the renderer and the network. */
     bool     fired;           /* one-shot: a round left this update */
     bool     meleed, threw, hurt, reloading;
+    bool     splattered;      /* the last hurt was a vehicle running into it */
     float    powerup_timer;
     uint8_t  powerup;         /* hta_item_kind */
 
@@ -157,7 +187,9 @@ typedef enum {
     HTA_EV_ANNOUNCE,      /* text + announcer line id in `line` */
     HTA_EV_GAME_OVER,     /* a: winner */
     HTA_EV_RELOAD,        /* a */
-    HTA_EV_SWAP           /* a, weapon */
+    HTA_EV_SWAP,          /* a, weapon */
+    HTA_EV_ENTER,         /* a: unit, b: car, pool: seat */
+    HTA_EV_EXIT           /* a: unit, b: car, pool: seat */
 } hta_event_kind;
 
 /* The announcer, by line. The Trial's `sound\dialog\multiplayer1\...`. */
@@ -193,6 +225,15 @@ typedef struct hta_game {
     const hta_collision *col;    /* static world plus whatever `extra` holds */
     hta_nav             *nav;    /* borrowed; bots cannot move without it */
     hta_pickups         *items;  /* borrowed; the platform draws them */
+    hta_vehicles        *vehicles; /* borrowed; see hta_game_attach_vehicles */
+    /* Roster entries of each vehicle type's gun, per trigger; -1 none. */
+    int32_t         vweapon[HTA_VEHICLE_TYPES][2];
+    hta_game_vgun   vgun[HTA_VEHICLE_MAX];
+    uint32_t        splatter_jpt;   /* globals\vehicle_collision */
+    float           gravity;        /* the biped's, for vehicle physics */
+    /* True where this device runs vehicle physics (solo, a host). A
+     * client copies the host's cars and only reads seats. */
+    bool            simulate_vehicles;
 
     hta_game_weapon weapons[HTA_GAME_MAX_WEAPONS];
     uint32_t        weapon_count;
@@ -283,6 +324,25 @@ void hta_game_sync_local(hta_game *g, const hta_player *body, const hta_camera *
 /* One step: bots and remote players move and fight, rounds fly, the dead
  * come back, and the score is kept. */
 void hta_game_update(hta_game *g, float dt);
+
+/* ---- Vehicles ----------------------------------------------------- */
+/* Hand the game the map's vehicles: their guns join the roster (one entry
+ * per trigger), their seats take units. `bitmaps` loads projectile art. */
+bool hta_game_attach_vehicles(hta_game *g, hta_vehicles *v,
+                              const hta_resource_map *bitmaps);
+/* The seat `unit` would get into from where it stands, or -1. */
+int32_t hta_game_seat_near(const hta_game *g, int32_t unit, int32_t *out_seat);
+/* Get in (on foot) or out (seated). True if it happened. */
+bool hta_game_board(hta_game *g, int32_t unit);
+/* Put a unit in a particular seat, or take it out without a safe exit
+ * (death, disconnect). Clients mirror the host's seats this way. */
+bool hta_game_seat(hta_game *g, int32_t unit, int32_t car, int32_t seat);
+void hta_game_unseat(hta_game *g, int32_t unit);
+/* Is the unit hidden inside its vehicle -- the Scorpion's driver, the
+ * Banshee's pilot -- where bullets cannot reach it? */
+bool hta_game_enclosed(const hta_game *g, int32_t unit);
+/* Where a seated unit's body is: its root in the world. */
+bool hta_game_seat_root(const hta_game *g, int32_t unit, hta_transform *out);
 
 /* ---- Damage, from anyone ------------------------------------------- */
 /* A ray against every living unit but `ignore`. The nearest hit's unit, or

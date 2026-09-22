@@ -104,7 +104,26 @@ typedef struct {
      * parents `frame gun` to `frame r wriste`. */
     float    fp_offset[3];
     char     path[96];
+
+    /* Which trigger of the weapon this describes, and how many it has.
+     * Vehicle guns have two: the Scorpion's cannon and machine gun, the
+     * Banshee's bolts and fuel rod. */
+    uint32_t trigger, trigger_count;
+    uint32_t trigger_flags;  /* WeaponTriggerFlags */
+    int      magazine;       /* the trigger's magazine index, -1 for none */
+    uint32_t mag_flags;      /* WeaponMagazineFlags of that magazine */
+    float    rof_initial;    /* shots per second when the trigger is first held */
+    float    rof_accel;      /* seconds to spin up to `rof` */
+    bool     single_shot;    /* rate of fire 0: one round per pull */
 } hta_weapon_def;
+
+/* WeaponTriggerFlags bit 3, WeaponMagazineFlags bit 1. */
+#define HTA_TRIGGER_NO_REPEAT       (1u << 3)
+#define HTA_MAG_CHAMBER_EACH_ROUND  (1u << 1)
+
+/* The same, for trigger `trigger` and ITS magazine rather than the first. */
+bool hta_weapon_load_trigger(const hta_cache *c, uint32_t weap_tag_id, uint32_t trigger,
+                             hta_weapon_def *def);
 
 /* One specific weapon by tag id. */
 bool hta_weapon_load_id(const hta_cache *c, const hta_resource_map *bitmaps,

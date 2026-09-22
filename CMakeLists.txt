@@ -193,6 +193,10 @@ else()
     target_link_libraries(test_game PRIVATE hta_engine m)
     add_test(NAME game COMMAND test_game)
 
+    add_executable(test_ride tests/test_ride.c)
+    target_link_libraries(test_ride PRIVATE hta_engine m)
+    add_test(NAME ride COMMAND test_ride)
+
     add_executable(test_bot tests/test_bot.c)
     target_link_libraries(test_bot PRIVATE hta_engine m)
     add_test(NAME bot COMMAND test_bot)

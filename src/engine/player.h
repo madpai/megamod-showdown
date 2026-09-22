@@ -12,6 +12,19 @@
 #include "../asset/bsp.h"
 #include "../asset/biped.h"
 
+struct hta_collision;
+/* A rigid collision grid placed in the world: a vehicle's own `coll`
+ * geometry, built ONCE in model space and queried through its pose. Moving
+ * one costs a matrix, not a grid rebuild. `rot` is row-major local->world,
+ * orthonormal. `radius` bounds the grid around `pos` for cheap culling. */
+typedef struct hta_collision_instance {
+    const struct hta_collision *grid;
+    float rot[9];
+    float pos[3];
+    float radius;
+    bool  active;
+} hta_collision_instance;
+
 typedef struct hta_collision {
     /* uniform grid over XY; each cell lists triangle indices */
     float    min[2], cell;
@@ -28,6 +41,10 @@ typedef struct hta_collision {
      * hta_collision_build memsets this struct, so re-point `extra` AFTER any
      * rebuild of the grid that carries it, or the link silently vanishes. */
     const struct hta_collision *extra;
+    /* Optional placed rigid grids (vehicles); borrowed. Same caveat as
+     * `extra`: re-point after any hta_collision_build of this grid. */
+    const hta_collision_instance *instances;
+    uint32_t instance_count;
 } hta_collision;
 
 bool hta_collision_build(hta_collision *c, const hta_bsp_mesh *mesh);
