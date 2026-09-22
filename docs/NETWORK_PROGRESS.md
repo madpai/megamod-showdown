@@ -25,6 +25,8 @@ server actions. Host runs the same nonblocking server inside the Android
 process and joins it through loopback; this path is compile tested only. Android
 uses the same client session and actor path, with interpolation and actor clips
 for crouch, airborne, running, AR/pistol, firing, melee and grenade.
+Network mode removes the local stationary practice target so it cannot be
+mistaken for the other player or take local-only combat damage.
 The Android log prints ping, packet/byte rates, snapshot rate and invalid or
 dropped packet totals every two seconds; the touch HUD shows ping and IDs.
 

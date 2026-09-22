@@ -1296,6 +1296,10 @@ static bool load_map(hta_android *s)
                         }
                         hta_log("[net] remote Spartan models: AR=%d pistol=%d",
                                 s->remote[0].loaded,s->remote[1].loaded);
+                        /* The stationary practice target is another Spartan.
+                         * In a live session it is misleading, and its local
+                         * damage is not server authority, so remove it. */
+                        hta_bot_free(&s->bot);
                     }
                 } else {
                     hta_log("[bot] none (%s)", berr);
