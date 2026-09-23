@@ -18,6 +18,9 @@ local.properties
 # The user supplies their own Halo Trial copy. Nothing proprietary
 # enters this repo or any APK. See docs/ANDROID_PORT_INVESTIGATION.md §7
 *.map
+# Decoded Trial audio (a title-theme dump once slipped in this way)
+*.wav
+*.ogg
 *.exe
 *.7z
 maps/
