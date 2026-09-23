@@ -899,6 +899,12 @@ static float blast_falloff(const float centre[3], const float at[3],
 static void equip_weapon(hta_android *s, uint32_t weap_tag_id);
 static int32_t held_roster(hta_android *s);
 
+/* How far above a start to look down for its floor. Blood Gulch's starts
+ * are in the open and some sit a little under the ground, so 8 wu; an
+ * imported map's are under arches and beside roofs, where 8 wu finds the
+ * roof. The package already puts its starts on the ground. Ours. */
+static float spawn_lift(const hta_android *s) { return s->world_loaded ? 1.0f : 8.0f; }
+
 static void respawn(hta_android *s)
 {
     if (!s->spawn_count) return;
@@ -912,7 +918,7 @@ static void respawn(hta_android *s)
     float gz;
     if (s->col.built &&
         hta_collision_ground(&s->col, s->player.pos[0], s->player.pos[1],
-                             s->player.pos[2] + 8.0f, &gz)) {
+                             s->player.pos[2] + spawn_lift(s), &gz)) {
         s->player.pos[2] = gz;
         s->player.on_ground = true;
     }
@@ -1830,7 +1836,7 @@ static bool load_map(hta_android *s)
         float gz;
         if (s->col.built &&
             hta_collision_ground(&s->col, s->player.pos[0], s->player.pos[1],
-                                 s->player.pos[2] + 8.0f, &gz)) {
+                                 s->player.pos[2] + spawn_lift(s), &gz)) {
             s->player.pos[2] = gz;
             s->player.on_ground = true;
             hta_log("[assets] snapped spawn to ground z=%.2f", gz);
@@ -1845,7 +1851,7 @@ static bool load_map(hta_android *s)
             };
             float gz;
             if (s->col.built &&
-                hta_collision_ground(&s->col, bp[0], bp[1], bp[2] + 8.0f, &gz))
+                hta_collision_ground(&s->col, bp[0], bp[1], bp[2] + spawn_lift(s), &gz))
                 bp[2] = gz;
             hta_bot_spawn(&s->bot, bp, sp[0].facing + 3.14159265f);
             hta_log("[bot] standing at (%.2f %.2f %.2f)", bp[0], bp[1], bp[2]);
@@ -3987,7 +3993,7 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
         hta_player_spawn(&s->player,sp); s->cam.yaw=sp->facing;
         float z;
         if (s->col.built && hta_collision_ground(&s->col,s->player.pos[0],
-                s->player.pos[1],s->player.pos[2]+8.0f,&z)) {
+                s->player.pos[1],s->player.pos[2]+spawn_lift(s),&z)) {
             s->player.pos[2]=z; s->player.on_ground=true;
         }
         s->net_spawned=true;

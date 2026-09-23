@@ -159,6 +159,9 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+> **Spawn fix build:** you no longer respawn on roofs outside de_dust2
+> (22 of 40 starts did). Die a dozen times in TEAM SLAYER on both teams.
+>
 > **Props build:** de_dust2 now has its static props (windows, crates,
 > domes, palms, trims): the holes to the sky in window recesses should be
 > gone. Check the window you reported near -16.4 1.0, that crates block
@@ -617,6 +620,11 @@ are how much of a hit a player actually takes.
 ---
 
 ## Traps that have already cost a session
+
+- **Snapping a start to the floor from 8 wu up** puts you on the roof on
+  any map with overhead geometry: 22 of de_dust2's 40 starts did (the
+  player only; bots go through `hta_game_pick_spawn`'s 1 wu). The
+  platform uses `spawn_lift()`: 1 wu on imported maps, 8 on Blood Gulch.
 
 - **`GameActivity.ShellMenu` is a field initializer**: its constructor runs
   before the activity has a context. Anything touching `getAssets()`,
