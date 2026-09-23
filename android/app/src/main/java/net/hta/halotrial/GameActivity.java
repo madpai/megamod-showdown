@@ -254,6 +254,12 @@ public class GameActivity extends NativeActivity {
             title.setTextAlign(Paint.Align.CENTER);
             text.setColor(0xFFFFFFFF);
             text.setTextAlign(Paint.Align.CENTER);
+        }
+
+        /* Built on first use, not in the constructor: this object is a field
+         * of the activity, created before it has a context to ask. */
+        private void findMaps() {
+            if (!maps.isEmpty()) return;
             maps.add("bloodgulch");
             try {
                 String[] bundled = owner.getAssets().list("maps");
@@ -275,6 +281,7 @@ public class GameActivity extends NativeActivity {
         private void cycleMap() { map = (map + 1) % maps.size(); }
 
         void open(int next) {
+            findMaps();
             screen = next;
             nativeShellScreen(next == 2 ? 1 : 2);
             nativeShellSound(1);
