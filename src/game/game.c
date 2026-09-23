@@ -2498,6 +2498,13 @@ static void fly(hta_game *g, float dt)
 {
     for (uint32_t p = 0; p < g->pool_count; p++) {
         hta_projectiles *pool = &g->pools[p];
+        /* Where each round was: a shell covers more than a body's width in
+         * an update, so it is the path that hits people, not the point. */
+        float was[HTA_PROJ_MAX][3];
+        for (uint32_t k = 0; k < HTA_PROJ_MAX; k++)
+            if (pool->live[k].alive) memcpy(was[k], pool->live[k].pos, sizeof(was[k]));
+        bool fresh[HTA_PROJ_MAX];
+        for (uint32_t k = 0; k < HTA_PROJ_MAX; k++) fresh[k] = !pool->live[k].alive;
         hta_projectiles_update(pool, g->col, dt);
         const hta_game_weapon *w = g->pool_weapon[p] >= 0
                                  ? &g->weapons[g->pool_weapon[p]] : NULL;
@@ -2509,7 +2516,19 @@ static void fly(hta_game *g, float dt)
             int32_t owner = g->pool_owner[p][k];
             /* A thrown grenade bounces off people; it waits for its fuse. */
             if ((int32_t)p == g->grenade_pool) continue;
-            int32_t who = hta_game_near(g, q->pos, 0.02f, q->age < 0.1f ? owner : -1);
+            int32_t ignore = q->age < 0.1f ? owner : -1;
+            int32_t who = -1;
+            if (!fresh[k]) {
+                float d[3] = { q->pos[0]-was[k][0], q->pos[1]-was[k][1], q->pos[2]-was[k][2] };
+                float len = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+                float t, at[3];
+                if (len > 1e-4f) {
+                    for (int m = 0; m < 3; m++) d[m] /= len;
+                    who = hta_game_ray(g, was[k], d, len, ignore, &t, at);
+                    if (who >= 0) memcpy(q->pos, at, sizeof(at));
+                }
+            }
+            if (who < 0) who = hta_game_near(g, q->pos, 0.02f, ignore);
             if (who < 0) continue;
             if (jpt) hta_game_hurt_jpt(g, who, owner, jpt, 1, q->pos);
             if (pool->blast_damage > 0.0f)

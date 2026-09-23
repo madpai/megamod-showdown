@@ -33,7 +33,7 @@ static uint8_t *slurp(const char *p, size_t *n)
 static hta_game g;
 static hta_vehicles v;
 static int kills, enters, exits, fires, detonations, wrecks;
-static int32_t last_victim = -1, last_killer = -1, last_weapon = -1;
+static int32_t last_victim = -1, last_killer = -1, last_weapon = -1, last_struck = -1;
 static char last_text[96];
 
 static void step(float seconds)
@@ -50,7 +50,7 @@ static void step(float seconds)
             if (e.kind == HTA_EV_ENTER) enters++;
             if (e.kind == HTA_EV_EXIT) exits++;
             if (e.kind == HTA_EV_FIRE) fires++;
-            if (e.kind == HTA_EV_DETONATE) detonations++;
+            if (e.kind == HTA_EV_DETONATE) { detonations++; last_struck = e.b; }
             if (e.kind == HTA_EV_WRECK) wrecks++;
         }
     }
@@ -82,6 +82,43 @@ static void look_at(int32_t u, const float at[3])
     float d[3] = { at[0]-un->eye.pos[0], at[1]-un->eye.pos[1], at[2]-un->eye.pos[2] };
     un->eye.yaw = atan2f(d[1], d[0]);
     un->eye.pitch = atan2f(d[2], hypotf(d[0], d[1]));
+}
+
+/* Somewhere in the open field: the car at `c`, facing +x, a bot six units
+ * to its left and a man at (14, 10) from it, all on level ground in sight
+ * of each other. Blood Gulch rolls; a spot picked by eye had a hill in the
+ * way twice. */
+static bool open_ground(float c[3])
+{
+    hta_collision stat = *g.col;
+    stat.instances = NULL; stat.instance_count = 0; stat.extra = NULL;
+    for (float y = -150; y <= -60; y += 4)
+        for (float x = 30; x <= 100; x += 4) {
+            const float off[3][2] = { { 0, 0 }, { 0, 6 }, { 14, 10 } };
+            float z[3];
+            bool ok = true;
+            for (int i = 0; i < 3 && ok; i++)
+                ok = hta_collision_ground(&stat, x + off[i][0], y + off[i][1], 40, &z[i]) && z[i] > -0.5f;
+            if (!ok || fabsf(z[1] - z[0]) > 0.6f || fabsf(z[2] - z[0]) > 0.6f) continue;
+            /* Level all the way across, not just at the ends. */
+            for (int k = 1; k < 20 && ok; k++) {
+                float t = k / 20.0f, gz;
+                ok = hta_collision_ground(&stat, x + 14 * t, y + 10 * t, 40, &gz) &&
+                     fabsf(gz - (z[0] + (z[2] - z[0]) * t)) < 0.5f;
+                for (int j = 0; j < 4 && ok; j++) {
+                    float px = x - 4 + 4 * j * t, py = y + 6 * t;
+                    ok = hta_collision_ground(&stat, px, py, 40, &gz) && fabsf(gz - z[0]) < 1.0f;
+                }
+            }
+            if (!ok) continue;
+            float from[3] = { x, y, z[0] + 1 }, d[3] = { 14, 10, z[2] - z[0] };
+            float l = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+            for (int k = 0; k < 3; k++) d[k] /= l;
+            if (hta_collision_ray(&stat, from, d, l, NULL, NULL, NULL)) continue;
+            c[0] = x; c[1] = y; c[2] = z[0];
+            return true;
+        }
+    return false;
 }
 
 int main(int argc, char **argv)
@@ -500,11 +537,150 @@ int main(int argc, char **argv)
               "it swings the gun onto an enemy and hits him");
         hta_game_unseat(&g, a);
         put(a, 90, -150, 1, 0);
-        step(RIDE_TEST_WAIT);
-        CHECK(g.units[mate].vehicle < 0, "and gets off when the driver does");
+        bool left_gun = false;
+        for (int i = 0; i < (int)(RIDE_TEST_WAIT * 60) && !left_gun; i++) {
+            step(1.0f / 60.0f);
+            left_gun = g.units[mate].vehicle != hog || g.units[mate].seat != gs;
+        }
+        CHECK(left_gun, "and gets off the gun when the driver does");
+        hta_game_unseat(&g, mate);
         hta_game_set_mode(&g, HTA_MODE_SLAYER);
         g.nav = NULL;
         g.units[mate].kind = HTA_UNIT_NONE; g.units[mate].alive = false;
+    }
+
+    printf("\n[a bot at the wheel]\n");
+    {
+        static hta_nav flat;
+        memset(&flat, 0, sizeof(flat));
+        g.nav = &flat;
+        hta_game_set_mode(&g, HTA_MODE_TEAM_SLAYER);
+        int32_t drv = hta_game_add(&g, HTA_UNIT_BOT, "Wheel", HTA_TEAM_RED);
+        g.units[drv].team = HTA_TEAM_RED;
+        g.units[t].team = HTA_TEAM_BLUE;
+        g.units[a].team = HTA_TEAM_RED;
+        hta_game_unseat(&g, a);
+        put(a, 20, -200, 1, 0);
+        g.units[a].alive = false; g.units[a].respawn = 1e9f;
+        if (b >= 0) { hta_game_unseat(&g, b); g.units[b].alive = false; g.units[b].respawn = 1e9f; }
+        for (uint32_t i = 0; i < g.unit_count; i++)
+            if (g.units[i].kind == HTA_UNIT_BOT && (int32_t)i != drv) {
+                hta_game_unseat(&g, (int32_t)i); g.units[i].alive = false; g.units[i].respawn = 1e9f;
+            }
+        int32_t hog = car_at_placement(1);
+        hta_vehicles_reset(&v, (uint32_t)hog);
+        v.cars[hog].active = true;
+        g.vgun[hog].wreck = 0; g.vgun[hog].hull = g.vgun[hog].hull_max;
+        /* Out in the open field, away from the base it parks against. */
+        float field[3];
+        CHECK(open_ground(field), "a level, open stretch of the field");
+        printf("  field at %.0f, %.0f\n", field[0], field[1]);
+        v.cars[hog].pos[0] = field[0]; v.cars[hog].pos[1] = field[1];
+        v.cars[hog].pos[2] = field[2] + (v.cars[hog].pos[2] - v.cars[hog].home_pos[2]);
+        v.cars[hog].yaw = 0.0f;
+        hta_vehicles_sync(&v);
+        step(0.5f);
+        hta_transform w;
+        hta_vehicles_world(&v, (uint32_t)hog, &w);
+        float side[3] = { 0.0f, 6.0f, 0.0f }, at[3];
+        hta_xf_point(at, &w, side);
+        put(drv, at[0], at[1], at[2], 0);
+        hta_brain_reset(&g.brains[drv]);
+        g.units[drv].vitals.health = g.units[drv].vitals.max_health;
+        put(t, 200, 200, 30, 0);
+        bool in_seat = false;
+        for (int i = 0; i < 600 && !in_seat; i++) {
+            step(1.0f / 60.0f);
+            in_seat = g.units[drv].vehicle == hog &&
+                      g.units[drv].seat == hta_vehicles_driver_seat(&v, (uint32_t)hog);
+        }
+        CHECK(in_seat, "a bot walks to an empty Warthog and takes the wheel");
+
+        /* An enemy off to the left: it must turn to reach him. */
+        /* Placed on the ground itself: the car's frame is tilted a little
+         * on its springs, and fourteen units out that is under the grass. */
+        put(t, field[0] + 14.0f, field[1] + 10.0f, field[2] + 2.0f, 0);
+        g.units[t].vitals.health = g.units[t].vitals.max_health;
+        kills = 0; last_victim = -1;
+        float yaw0 = v.cars[hog].yaw;
+        float closest = 1e9f;
+        for (int i = 0; i < 60 * 8 && kills == 0; i++) {
+            memset(&g.units[t].in, 0, sizeof(g.units[t].in));
+            step(1.0f / 60.0f);
+            float d = hypotf(v.cars[hog].pos[0] - g.units[t].body.pos[0],
+                             v.cars[hog].pos[1] - g.units[t].body.pos[1]);
+            if (d < closest) closest = d;
+        }
+        printf("  turned %.2f rad, came within %.2f wu; %s\n",
+               hta_angle_wrap(v.cars[hog].yaw - yaw0), closest, kills ? last_text : "no kill");
+        CHECK(closest < 2.5f, "it turns and drives at an enemy off to one side");
+        CHECK(kills == 1 && last_victim == t && last_killer == drv, "and runs him down");
+
+        /* Wrecked nearly through: it stops and gets out. */
+        put(t, 200, 200, 30, 0);
+        g.units[t].alive = false; g.units[t].respawn = 1e9f;
+        g.vgun[hog].hull = g.vgun[hog].hull_max * 0.2f;
+        bool out = false;
+        for (int i = 0; i < 60 * 6 && !out; i++) { step(1.0f / 60.0f); out = g.units[drv].vehicle < 0; }
+        CHECK(out && g.units[drv].alive, "with the hull nearly gone it brakes and bails out");
+        g.vgun[hog].hull = g.vgun[hog].hull_max;
+
+        /* The Scorpion: the turret finds a man at range and shells him. */
+        int32_t tank = car_at_placement(6);
+        if (tank >= 0) {
+            hta_vehicles_reset(&v, (uint32_t)tank);
+            v.cars[tank].active = true;
+            g.vgun[tank].wreck = 0; g.vgun[tank].hull = g.vgun[tank].hull_max;
+            hta_vehicles_sync(&v);
+            g.brains[drv].board_skip = -1;
+            hta_game_seat(&g, drv, tank, hta_vehicles_driver_seat(&v, (uint32_t)tank));
+            hta_brain_reset(&g.brains[drv]);
+            hta_vehicles_world(&v, (uint32_t)tank, &w);
+            float off[3] = { 18.0f, -8.0f, 0.0f }, gz = 0.0f;
+            hta_xf_point(at, &w, off);
+            if (hta_collision_ground(g.col, at[0], at[1], 40.0f, &gz)) at[2] = gz;
+            put(t, at[0], at[1], at[2] + 1.0f, 0);
+            g.units[t].alive = true;
+            g.units[t].vitals.health = g.units[t].vitals.max_health;
+            fires = 0; detonations = 0; kills = 0;
+            float was = g.units[t].vitals.health + g.units[t].vitals.shield;
+            for (int i = 0; i < 60 * 6 && kills == 0; i++) {
+                memset(&g.units[t].in, 0, sizeof(g.units[t].in));
+                step(1.0f / 60.0f);
+            }
+            printf("  tank fired %d, %d detonation(s); target %s\n", fires, detonations,
+                   kills ? "dead" : "alive");
+            CHECK(fires >= 1 && detonations >= 1, "a bot in the Scorpion turns the cannon and fires");
+            CHECK(kills == 1 || g.units[t].vitals.health + g.units[t].vitals.shield < was,
+                  "and hits him");
+            hta_game_unseat(&g, drv);
+        }
+        g.units[drv].kind = HTA_UNIT_NONE; g.units[drv].alive = false;
+        hta_game_set_mode(&g, HTA_MODE_SLAYER);
+        g.nav = NULL;
+        g.units[a].alive = true; g.units[a].respawn = 0;
+    }
+
+    printf("\n[a shell does not pass through a man]\n");
+    {
+        /* A tank shell covers more than a body's width every update. The
+         * hit is the path it flew, not the point it reached. */
+        put(t, 60, -135, 1, 0);
+        g.units[t].alive = true;
+        g.units[t].vitals.health = g.units[t].vitals.max_health;
+        int32_t pool = cannon->pool;
+        float chest[3];
+        hta_game_centre(&g, t, chest);
+        float from[3] = { chest[0] - 12.0f, chest[1], chest[2] }, dir[3] = { 1, 0, 0 };
+        int slot = pool >= 0 ? hta_projectiles_fire(&g.pools[pool], from, dir) : -1;
+        CHECK(slot >= 0, "a shell in flight");
+        if (slot >= 0) {
+            g.pool_owner[pool][slot] = (int8_t)a;
+            printf("  %.0f wu a step at 60 Hz\n", g.pools[pool].speed_initial / 60.0f);
+            last_struck = -1; detonations = 0;
+            step(1.0f);
+            CHECK(detonations >= 1 && last_struck == t, "it stops in him and goes off");
+        }
     }
 
     printf("\n[leaving]\n");

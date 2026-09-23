@@ -9,6 +9,54 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## Bots drive; shells stop hitting nothing (2026-09-23, morning)
+
+No device report on the playtest-fixes build, so the next objective:
+bots at the wheel.
+
+**Driving.** On foot, a bot with nobody close to fight and no flag just
+ahead claims the nearest empty Warthog, Ghost or Scorpion within 18 wu
+(one bot per car; `wheel_free`), walks to the driver's door and gets in.
+At the wheel (`drive`): a Warthog steers by stick (`-err * 2.5`; right is
+clockwise, measured), backs round when the goal is behind; the tank pivots
+on its treads; the Ghost turns to the look and the stick is relative to
+it. It follows the nav path with a car-length corner reach toward the
+flag, the last sighting, or a roam goal 30-70 wu off. In a fight a lone
+Warthog runs him down, a crewed one circles, a Ghost closes and strafes,
+a tank holds at 25 wu and shells. Jammed (<0.5 wu in a second with the
+stick pushed), it backs out 1.2 s; three in a row and it gets out and
+leaves that car alone for 30 s -- before that it re-boarded the same
+stuck car every 5 s (`htamatch` log showed Donut in and out of the
+Scorpion all match). A Warthog driver in a team game waits 3 s for a
+teammate bot, and `ride_offer` now accepts bot drivers.
+
+**The target was invisible.** The first ram test found nobody. Two causes,
+both worth remembering: a seated unit's `eye.pos` is the chase camera
+(behind, above, sometimes in a hill) -- sight now comes from the body in
+the seat, while AIM angles stay from the camera because `vfire` converges
+on its crosshair ray (changing both made the gunner test miss); and the
+test put the target 14 wu out along the parked car's frame, which is
+tilted on its springs, so he stood underground. `open_ground` now searches
+for level, open field.
+
+**Shells went through people.** The tank bot laid the cannon on a man's
+chest to 0.001 rad and the shell burst 7 wu behind him. `fly` asked "is
+anyone within 0.02 wu of where the round IS" once an update; a shell moves
+about 1.5 wu an update and a body is 0.35 wu wide. It now sweeps
+`hta_game_ray` along the segment flown. This was hitting people too:
+every tank shell, fuel rod and rocket that met a man in the open. The new
+test fails on the old code.
+
+**Feet.** Even so, the tag's spread put a shell 0.27 wu wide at 18 wu --
+past a body -- and nearly parallel to the ground it flies on. Bots aim
+anything with blast damage at an on-foot target's feet, as people do.
+
+`htamatch --vehicles` runs a bot match with live vehicles and prints every
+entry, exit and wreck. 300 s of team Slayer: 26 kills (11 before the jam
+fixes), about 90 jams among 4-5 drivers. The jams are real contacts --
+hillsides the biped nav grid allows and the vehicle physics refuses, cars
+parked nose to tail at the bases. Next: a vehicle-aware grid.
+
 ## Playtest fixes, hulls, LAN team modes, bots on guns (2026-09-23, evening)
 
 The owner played the vehicles build and reported: tracers "almost solid

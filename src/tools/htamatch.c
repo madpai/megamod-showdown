@@ -4,10 +4,12 @@
  *
  *   htamatch <bloodgulch.map> [--bots N] [--skill 0-3] [--seconds S] [--mode ffa|team|ctf]
  *            [--shots N] [--every S] [--follow UNIT] [--out prefix]
- *            [--width W] [--height H]
+ *            [--width W] [--height H] [--vehicles]
  *
  * Simulates S seconds, then keeps simulating and takes a frame every
  * `--every` seconds from a camera behind and above the followed unit.
+ * `--vehicles` makes the map's vehicles live for the bots to take; every
+ * getting in, getting out and wreck is printed.
  */
 #include "asset/cache.h"
 #include "asset/bsp.h"
@@ -52,6 +54,7 @@ int main(int argc, char **argv)
         return 2;
     }
     int bots = 4, skill = 2, shots = 3, follow = 0, ride = -1;
+    bool vehicles = false;
     hta_game_mode mode = HTA_MODE_SLAYER;
     float seconds = 20.0f, every = 0.5f, back = 1.6f;
     uint32_t W = 800, H = 450;
@@ -66,6 +69,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--out") && i + 1 < argc) prefix = argv[++i];
         else if (!strcmp(argv[i], "--back") && i + 1 < argc) back = strtof(argv[++i], NULL);
         else if (!strcmp(argv[i], "--ride") && i + 1 < argc) ride = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--vehicles")) vehicles = true;
         else if (!strcmp(argv[i], "--mode") && i + 1 < argc) {
             const char *m = argv[++i];
             mode = !strcmp(m, "ctf") ? HTA_MODE_CTF : !strcmp(m, "team") ? HTA_MODE_TEAM_SLAYER
@@ -106,7 +110,7 @@ int main(int argc, char **argv)
     memcpy(bmax, mesh.bounds_max, sizeof(bmax));
     /* With --ride the vehicles are live: drawn as parts, solid as placed
      * grids, and seated. */
-    if (ride >= 0 && !hta_vehicles_load(&veh, &cache, bmp, err, sizeof(err))) {
+    if ((ride >= 0 || vehicles) && !hta_vehicles_load(&veh, &cache, bmp, err, sizeof(err))) {
         fprintf(stderr, "vehicles: %s\n", err); return 1;
     }
     hta_scenario_add_objects_excluding(&mesh, &cache, bmp, veh.skip, sizeof(veh.skip), err, sizeof(err));
@@ -232,6 +236,11 @@ int main(int argc, char **argv)
                 hta_contrails_tracer(&trails, wtrail[e.weapon], e.pos, end, 300.0f);
             }
             if (e.kind == HTA_EV_ANNOUNCE && e.line != HTA_LINE_NONE) printf("  %6.1f  [%s]\n", t, e.text);
+            if (vehicles && (e.kind == HTA_EV_ENTER || e.kind == HTA_EV_EXIT) && e.b >= 0)
+                printf("  %6.1f  %s %s %s seat %d at %.0f,%.0f\n", t, game.units[e.a].name,
+                       e.kind == HTA_EV_ENTER ? "into" : "out of",
+                       veh.types[veh.cars[e.b].type].name, e.pool, e.pos[0], e.pos[1]);
+            if (vehicles && e.kind == HTA_EV_WRECK) printf("  %6.1f  wreck\n", t);
         }
         for (uint32_t p = 0; p < game.pool_count; p++) {
             if (ptrail[p] == HTA_CONT_NONE) continue;

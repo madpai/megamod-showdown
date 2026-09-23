@@ -42,6 +42,20 @@ typedef struct {
     float    stuck_timer, last_pos[3];
     float    wander_yaw;
 
+    /* Vehicles. */
+    int16_t  board;           /* car whose wheel it is walking to, -1 none */
+    int16_t  board_skip;      /* car it gave up on, -1 none */
+    float    board_time;      /* seconds spent walking to it */
+    float    skip_time;       /* seconds until the given-up car is tried again */
+    bool     dismount;        /* at the wheel and wanting out: brake, then leave */
+    bool     reversing;
+    float    reverse_timer;   /* seconds left backing out of a jam */
+    uint8_t  stuck_count;     /* jams in a row; a few and it walks */
+    float    wait_gunner;     /* seconds held at the wheel for a teammate */
+    float    roam[3];         /* where it is driving to with nothing to do */
+    bool     roaming;
+    bool     trigger;         /* held last update: a single-shot gun wants letting go */
+
     uint8_t  skill;           /* 0 easy .. 3 legendary */
     uint32_t rng;
 } hta_brain;

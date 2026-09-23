@@ -26,6 +26,24 @@ static const float AIM_SETTLE[4]   = { 0.8f, 1.2f, 1.8f, 2.6f };      /* /s */
 #define RIDE_REACH     8.0f    /* wu: a teammate's vehicle this close is worth a seat */
 #define RIDE_ALONE     2.0f    /* s a gunner waits for a driver before it gets out */
 #define GUN_RANGE     40.0f    /* wu a gunner opens fire at */
+#define BOARD_REACH   18.0f    /* wu: an empty vehicle this close is worth the walk */
+#define BOARD_GIVE_UP  8.0f    /* s walking to a wheel before giving up on it */
+#define BOARD_SKIP    10.0f    /* s before a car given up on is tried again */
+#define BOARD_FIGHT   15.0f    /* wu: an enemy this close is fought on foot */
+#define BOARD_OBJECTIVE 30.0f  /* wu: a flag this near is walked to */
+#define DRIVE_REACH    2.5f    /* wu: a path corner this close is passed */
+#define DRIVE_ARRIVE   6.0f    /* wu: a roam goal this close is reached */
+#define DISMOUNT_NEAR 10.0f    /* wu from a flag: out and on foot */
+#define DISMOUNT_HULL  0.25f   /* hull fraction a bot bails out below */
+#define WAIT_GUNNER    3.0f    /* s a bot driver holds for a teammate on the gun */
+#define TANK_RANGE    25.0f    /* wu a tank holds off at and shells from */
+#define GHOST_RANGE   12.0f    /* wu a Ghost closes to before it circles */
+#define ORBIT         14.0f    /* wu a Warthog circles at while its gunner works */
+#define STUCK_LIMIT    3u      /* jams in a row before a bot walks */
+#define JAM_SKIP      30.0f    /* s before a car it jammed is tried again */
+#define ROAM_MIN      30.0f    /* wu: a drive with nothing to do goes this far... */
+#define ROAM_MAX      70.0f    /* ...and no further, so the path search finds it */
+#define BEHIND         1.9f    /* rad: a goal this far round, a Warthog backs round */
 
 static uint32_t rnd(uint32_t *s) { *s = *s * 1664525u + 1013904223u; return *s >> 8; }
 static float frand(uint32_t *s) { return (float)(rnd(s) & 0xFFFFu) / 65535.0f; }
@@ -54,6 +72,11 @@ void hta_brain_reset(hta_brain *b)
     b->grenade_timer = GRENADE_WAIT * 0.5f;
     b->stuck_timer = 0.0f;
     b->look_timer = 0.0f;
+    b->board = b->board_skip = -1;
+    b->board_time = b->skip_time = 0.0f;
+    b->dismount = b->reversing = b->roaming = false;
+    b->reverse_timer = b->wait_gunner = 0.0f;
+    b->stuck_count = 0;
 }
 
 void hta_brain_init(hta_brain *b, uint8_t skill, uint32_t seed)
@@ -108,13 +131,28 @@ static float max_range(const hta_game_weapon *w)
     return 28.0f;
 }
 
+/* Where a bot looks from. Seated, the eye is the vehicle's camera --
+ * behind and above a Warthog, sometimes in a hillside -- so a rider looks
+ * from its own body in the seat instead. */
+static void eye_of(const hta_game *g, int32_t me, float out[3])
+{
+    const hta_unit *u = &g->units[me];
+    if (u->vehicle >= 0) {
+        hta_game_centre(g, me, out);
+        out[2] += 0.25f;
+        return;
+    }
+    for (int k = 0; k < 3; k++) out[k] = u->eye.pos[k];
+}
+
 static bool sees(const hta_game *g, int32_t me, int32_t them, float range, float fov_cos,
                  float *out_dist)
 {
     const hta_unit *u = &g->units[me], *t = &g->units[them];
-    float c[3];
+    float c[3], e[3];
     hta_game_centre(g, them, c);
-    float d[3] = { c[0]-u->eye.pos[0], c[1]-u->eye.pos[1], c[2]-u->eye.pos[2] };
+    eye_of(g, me, e);
+    float d[3] = { c[0]-e[0], c[1]-e[1], c[2]-e[2] };
     float dist = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
     if (dist > range || dist < 1e-3f) return false;
     /* Camouflage: only close, or when it has just fired. */
@@ -134,12 +172,23 @@ static bool sees(const hta_game *g, int32_t me, int32_t them, float range, float
     if (g->vehicles && t->vehicle >= 0 && t->vehicle != u->vehicle) {
         theirs = &g->vehicles->inst[t->vehicle]; theirs_was = theirs->active; theirs->active = false;
     }
-    bool blocked = g->col && hta_collision_ray(g->col, u->eye.pos, d, dist - 0.1f, &hit, NULL, NULL);
+    bool blocked = g->col && hta_collision_ray(g->col, e, d, dist - 0.1f, &hit, NULL, NULL);
     if (own) own->active = own_was;
     if (theirs) theirs->active = theirs_was;
     if (blocked) return false;
     if (out_dist) *out_dist = dist;
     return true;
+}
+
+/* A round that explodes is aimed at the feet: a near miss into the ground
+ * still catches him, where one past his chest goes off far behind. How
+ * people use rockets and the tank. */
+static void feet_for_blast(const hta_game *g, int32_t them, const hta_game_weapon *w, float aim[3])
+{
+    if (!w || !(w->blast_damage > 0.0f)) return;
+    const hta_unit *t = &g->units[them];
+    if (t->vehicle >= 0 || !t->body.on_ground) return;
+    aim[2] = t->body.pos[2] + 0.1f;
 }
 
 static void plan_to(hta_game *g, int32_t me, hta_brain *b, const float to[3])
@@ -230,8 +279,8 @@ static int32_t pick_item(hta_game *g, int32_t me)
     return best;
 }
 
-/* A teammate -- a person, not another bot -- driving a vehicle with its
- * gun free and near enough to climb on. Returns the car, -1 for none. */
+/* A teammate driving a vehicle with its gun free and near enough to climb
+ * on. Returns the car, -1 for none. */
 static int32_t ride_offer(const hta_game *g, int32_t me, int32_t *out_seat, float door[3])
 {
     const hta_unit *u = &g->units[me];
@@ -247,7 +296,7 @@ static int32_t ride_offer(const hta_game *g, int32_t me, int32_t *out_seat, floa
         int32_t driver = car->occupant[ds];
         if (driver < 0 || driver >= (int32_t)g->unit_count) continue;
         const hta_unit *d = &g->units[driver];
-        if (d->kind == HTA_UNIT_BOT || d->team != u->team) continue;
+        if (d->team != u->team) continue;
         const hta_vehicle_seat *st = hta_vehicles_seat(v, c, (uint32_t)gs);
         hta_transform w;
         hta_vehicles_world(v, c, &w);
@@ -260,6 +309,104 @@ static int32_t ride_offer(const hta_game *g, int32_t me, int32_t *out_seat, floa
         }
     }
     return best;
+}
+
+/* Kinds a bot can drive: on the ground. The Banshee is left to people. */
+static bool drivable(uint16_t kind)
+{
+    return kind == HTA_VK_JEEP || kind == HTA_VK_TANK || kind == HTA_VK_SCOUT;
+}
+
+/* The driver's door of `car`, in the world. */
+static bool driver_door(const hta_game *g, uint32_t car, float door[3])
+{
+    const hta_vehicles *v = g->vehicles;
+    int32_t ds = hta_vehicles_driver_seat(v, car);
+    if (ds < 0) return false;
+    const hta_vehicle_seat *st = hta_vehicles_seat(v, car, (uint32_t)ds);
+    if (!st) return false;
+    hta_transform w;
+    hta_vehicles_world(v, car, &w);
+    hta_xf_point(door, &w, st->enter);
+    return true;
+}
+
+/* Is the wheel of `car` free for `me` to take: parked, whole enough, no
+ * enemy aboard, nobody else walking to it. */
+static bool wheel_free(const hta_game *g, int32_t me, uint32_t car)
+{
+    const hta_vehicles *v = g->vehicles;
+    const hta_vehicle *c = &v->cars[car];
+    if (!c->active || !drivable(c->kind)) return false;
+    int32_t ds = hta_vehicles_driver_seat(v, car);
+    if (ds < 0 || c->occupant[ds] >= 0) return false;
+    if (hta_vehicles_speed(v, car) > HTA_VEHICLE_EXIT_SPEED) return false;
+    if (hta_game_hull(g, (int32_t)car) < 0.5f) return false;
+    for (uint32_t s = 0; s < HTA_VEHICLE_SEATS; s++) {
+        int32_t o = c->occupant[s];
+        if (o >= 0 && o < (int32_t)g->unit_count && g->teams &&
+            g->units[o].team != g->units[me].team) return false;
+    }
+    for (uint32_t i = 0; i < g->unit_count; i++) {
+        if ((int32_t)i == me || g->units[i].kind != HTA_UNIT_BOT || !g->units[i].alive) continue;
+        if (g->brains[i].board == (int16_t)car) return false;
+    }
+    return true;
+}
+
+/* The nearest empty vehicle a bot could drive. Ours, like all of this:
+ * Halo CE's bots are the campaign's, and they never drove in multiplayer. */
+static int32_t board_offer(const hta_game *g, int32_t me, const hta_brain *b)
+{
+    const hta_unit *u = &g->units[me];
+    if (!g->vehicles || u->flag >= 0 || u->vehicle >= 0) return -1;
+    int32_t best = -1;
+    float best_d = BOARD_REACH;
+    for (uint32_t c = 0; c < g->vehicles->count; c++) {
+        if ((int32_t)c == b->board_skip && b->skip_time > 0.0f) continue;
+        if (!wheel_free(g, me, c)) continue;
+        float door[3];
+        if (!driver_door(g, c, door)) continue;
+        float d = hypotf(door[0] - u->body.pos[0], door[1] - u->body.pos[1]);
+        if (fabsf(door[2] - u->body.pos[2]) > 3.0f) continue;
+        if (d < best_d) { best_d = d; best = (int32_t)c; }
+    }
+    return best;
+}
+
+/* The nearest enemy in sight, all the way round; target, react and aim
+ * error kept the way the gunner keeps them. */
+static int32_t spot(hta_game *g, int32_t me, hta_brain *b, float dt, float *out_dist)
+{
+    const hta_unit *u = &g->units[me];
+    const uint8_t sk = b->skill;
+    int32_t seen = -1;
+    float seen_dist = 1e9f;
+    for (uint32_t i = 0; i < g->unit_count; i++) {
+        const hta_unit *o = &g->units[i];
+        if ((int32_t)i == me || !o->alive || o->kind == HTA_UNIT_NONE) continue;
+        if (g->teams && o->team == u->team) continue;
+        if (o->vehicle >= 0 && o->vehicle == u->vehicle) continue;
+        float d;
+        if (!sees(g, me, (int32_t)i, SIGHT_RANGE[sk], -1.0f, &d)) continue;
+        if ((int32_t)i == b->target) d *= 0.6f;
+        if (d < seen_dist) { seen_dist = d; seen = (int32_t)i; }
+    }
+    if (seen != b->target && seen >= 0) {
+        b->react = REACT_TIME[sk] * (0.7f + 0.6f * frand(&b->rng));
+        b->aim_err[0] = (frand(&b->rng) - 0.5f) * AIM_ERROR[sk] * 4.0f;
+        b->aim_err[1] = (frand(&b->rng) - 0.5f) * AIM_ERROR[sk] * 2.0f;
+    }
+    if (seen >= 0) {
+        b->seen_ago = 0.0f;
+        hta_game_centre(g, seen, b->seen_pos);
+    } else {
+        b->seen_ago += dt;
+    }
+    b->target = seen;
+    b->visible = seen >= 0;
+    *out_dist = seen_dist;
+    return seen;
 }
 
 /* On a gun: pick an enemy, swing onto it, fire; get off when the driver
@@ -311,6 +458,8 @@ static void ride(struct hta_game *g, int32_t me, hta_brain *b, float dt)
         const hta_game_weapon *w = wi >= 0 ? &g->weapons[wi] : NULL;
         if (w && w->travels && w->speed > 1.0f)
             for (int k = 0; k < 2; k++) aim[k] += g->units[seen].body.velocity[k] * seen_dist / w->speed;
+        feet_for_blast(g, seen, w, aim);
+        /* Aim from the camera: a vehicle gun fires along its line. */
         float d[3] = { aim[0]-u->eye.pos[0], aim[1]-u->eye.pos[1], aim[2]-u->eye.pos[2] };
         float flat = hypotf(d[0], d[1]);
         float settle = expf(-AIM_SETTLE[sk] * dt);
@@ -332,9 +481,284 @@ static void ride(struct hta_game *g, int32_t me, hta_brain *b, float dt)
     in->move.fire = shoot;
 }
 
+/* Turn the thumbs toward a world yaw/pitch at the skill's rate. */
+static void look_toward(hta_unit *u, const hta_brain *b, float want_yaw, float want_pitch, float dt)
+{
+    float dyaw = wrap(want_yaw - u->eye.yaw), dpitch = want_pitch - u->eye.pitch;
+    float turn = TURN_RATE[b->skill] * dt;
+    if (dyaw > turn) dyaw = turn;
+    if (dyaw < -turn) dyaw = -turn;
+    if (dpitch > turn) dpitch = turn;
+    if (dpitch < -turn) dpitch = -turn;
+    u->in.move.look_yaw = dyaw;
+    u->in.move.look_pitch = dpitch;
+}
+
+/* The next point to steer at: along the nav path when there is one (a
+ * corner is passed a car's length early), else straight at `goal`. */
+static void steer_point(hta_game *g, int32_t me, hta_brain *b, const float goal[3], float out[3])
+{
+    const hta_unit *u = &g->units[me];
+    while (g->nav && b->path_i < b->path_len) {
+        float w[3];
+        hta_nav_pos(g->nav, b->path[b->path_i], w);
+        if (hypotf(w[0] - u->body.pos[0], w[1] - u->body.pos[1]) < DRIVE_REACH &&
+            b->path_i + 1 < b->path_len) { b->path_i++; continue; }
+        for (int k = 0; k < 3; k++) out[k] = w[k];
+        return;
+    }
+    for (int k = 0; k < 3; k++) out[k] = goal[k];
+}
+
+/* At the wheel. Ours: a Warthog runs people down, or circles while a
+ * gunner works; a Ghost closes and strafes; a Scorpion shells from range.
+ * Anywhere else it drives the nav path to the flag, the last sighting, or
+ * somewhere far off. It backs out of jams, and walks when the car is
+ * nearly gone, when it keeps jamming, or near a flag. */
+static void drive(struct hta_game *g, int32_t me, hta_brain *b, float dt)
+{
+    hta_unit *u = &g->units[me];
+    hta_unit_input *in = &u->in;
+    memset(&in->move, 0, sizeof(in->move));
+    in->fire2 = false;
+    const uint8_t sk = b->skill;
+    hta_vehicles *v = g->vehicles;
+    uint32_t ci = (uint32_t)u->vehicle;
+    const hta_vehicle *car = &v->cars[ci];
+    float speed = hta_vehicles_speed(v, ci);
+    int32_t gs = hta_vehicles_gunner_seat(v, ci);
+    const hta_vehicle_seat *st = hta_vehicles_seat(v, ci, (uint32_t)u->seat);
+    bool shoots = st && (st->flags & HTA_SEAT_GUNNER);
+    b->board = -1;
+
+    float objective[3];
+    int stand = -1;
+    bool has_objective = hta_game_ctf_goal(g, me, objective, &stand);
+    if (!drivable(car->kind) || hta_game_hull(g, (int32_t)ci) < DISMOUNT_HULL ||
+        b->stuck_count >= STUCK_LIMIT ||
+        (has_objective && hypotf(objective[0] - u->body.pos[0],
+                                 objective[1] - u->body.pos[1]) < DISMOUNT_NEAR))
+        b->dismount = true;
+    if (b->dismount) {
+        if (b->stuck_count >= STUCK_LIMIT) { b->board_skip = (int16_t)ci; b->skip_time = JAM_SKIP; }
+        in->move.jump = true;              /* the brake */
+        if (speed <= HTA_VEHICLE_EXIT_SPEED) in->action = true;
+        return;
+    }
+
+    float seen_dist;
+    int32_t seen = spot(g, me, b, dt, &seen_dist);
+
+    /* A Warthog in a team game waits a moment for a teammate on the gun. */
+    if (car->kind == HTA_VK_JEEP && g->teams && gs >= 0 && car->occupant[gs] < 0 &&
+        b->wait_gunner < WAIT_GUNNER && (seen < 0 || seen_dist > BOARD_FIGHT)) {
+        bool mate = false;
+        for (uint32_t i = 0; i < g->unit_count && !mate; i++) {
+            const hta_unit *o = &g->units[i];
+            if ((int32_t)i == me || o->kind != HTA_UNIT_BOT || !o->alive || o->vehicle >= 0 ||
+                o->team != u->team || o->flag >= 0) continue;
+            if (hypotf(o->body.pos[0] - u->body.pos[0], o->body.pos[1] - u->body.pos[1]) < RIDE_REACH * 1.5f)
+                mate = true;
+        }
+        if (mate) {
+            b->wait_gunner += dt;
+            in->move.jump = true;
+            return;
+        }
+    }
+    if (gs >= 0 && car->occupant[gs] >= 0) b->wait_gunner = WAIT_GUNNER;
+
+    /* ---- where to ---- */
+    float goal[3] = { car->pos[0], car->pos[1], car->pos[2] };
+    bool go = false, hold = false;
+    const float *here = car->pos;
+    if (seen >= 0) {
+        float at[3];
+        hta_game_centre(g, seen, at);
+        const hta_unit *t = &g->units[seen];
+        bool manned_gun = gs >= 0 && gs != u->seat && car->occupant[gs] >= 0;
+        if (car->kind == HTA_VK_JEEP && manned_gun) {
+            /* Circle him: the gunner does the work. */
+            float d[2] = { here[0] - at[0], here[1] - at[1] };
+            float dl = hypotf(d[0], d[1]);
+            if (dl < 1e-3f) { d[0] = 1; d[1] = 0; dl = 1; }
+            d[0] /= dl; d[1] /= dl;
+            if (b->strafe == 0.0f) b->strafe = 1.0f;
+            float side[2] = { -d[1] * b->strafe, d[0] * b->strafe };
+            goal[0] = at[0] + d[0] * ORBIT + side[0] * 10.0f;
+            goal[1] = at[1] + d[1] * ORBIT + side[1] * 10.0f;
+            goal[2] = at[2];
+        } else if (car->kind == HTA_VK_JEEP) {
+            /* Run him down, leading him. */
+            float tof = speed > 1.0f ? seen_dist / speed : 0.0f;
+            if (tof > 1.5f) tof = 1.5f;
+            goal[0] = at[0] + t->body.velocity[0] * tof;
+            goal[1] = at[1] + t->body.velocity[1] * tof;
+            goal[2] = at[2];
+        } else {
+            float range = car->kind == HTA_VK_TANK ? TANK_RANGE : GHOST_RANGE;
+            for (int k = 0; k < 3; k++) goal[k] = at[k];
+            hold = seen_dist < range;
+        }
+        go = true;
+        b->path_len = 0;        /* straight at a fight */
+        b->roaming = false;
+    } else {
+        const float *to = NULL;
+        if (has_objective) to = objective;
+        else if (b->target >= 0 && b->seen_ago < THINK_LOST) to = b->seen_pos;
+        else {
+            if (!b->roaming || hypotf(b->roam[0] - here[0], b->roam[1] - here[1]) < DRIVE_ARRIVE) {
+                b->roaming = false;
+                if (g->nav && g->nav->built) {
+                    for (int tries = 0; tries < 24 && !b->roaming; tries++) {
+                        uint32_t r = hta_nav_random(g->nav, &b->rng);
+                        if (r == HTA_NAV_NONE) break;
+                        hta_nav_pos(g->nav, r, b->roam);
+                        /* Far enough to be going somewhere, near enough
+                         * for the path search to find. */
+                        float far = hypotf(b->roam[0] - here[0], b->roam[1] - here[1]);
+                        b->roaming = far > ROAM_MIN && far < ROAM_MAX &&
+                                     !(g->nav->nodes[r].flags & HTA_NAV_NEAR_WALL);
+                    }
+                    if (b->roaming) b->replan = 0.0f;
+                }
+            }
+            if (b->roaming) to = b->roam;
+        }
+        if (to) {
+            float moved = hypotf(to[0] - b->goal_pos[0], to[1] - b->goal_pos[1]);
+            b->replan -= dt;
+            if (b->replan <= 0.0f || moved > 3.0f || b->path_len == 0) {
+                if (stand >= 0 && to == objective && g->stand_field[stand]) plan_field(g, me, b, stand);
+                else plan_to(g, me, b, to);
+                for (int k = 0; k < 3; k++) b->goal_pos[k] = to[k];
+                b->replan = REPLAN * 2.0f;
+            }
+            float p[3];
+            steer_point(g, me, b, to, p);
+            for (int k = 0; k < 3; k++) goal[k] = p[k];
+            go = true;
+        }
+    }
+
+    /* ---- the wheel ---- */
+    float dx = goal[0] - here[0], dy = goal[1] - here[1];
+    float heading = hypotf(dx, dy) > 1e-3f ? atan2f(dy, dx) : car->yaw;
+    float err = wrap(heading - car->yaw);
+    float gas = 0.0f, steer = 0.0f;
+    if (go && !hold) {
+        switch (car->kind) {
+        case HTA_VK_JEEP:
+            /* Stick right turns right (clockwise, yaw falling). */
+            steer = -err * 2.5f;
+            gas = fabsf(err) < 1.2f ? 1.0f : 0.6f;
+            /* Behind it: back round, the wheel the other way. */
+            if (fabsf(err) > BEHIND) { gas = -0.8f; steer = err > 0.0f ? 1.0f : -1.0f; }
+            break;
+        case HTA_VK_TANK:
+            steer = -err * 2.0f;
+            gas = fabsf(err) < 0.5f ? 1.0f : (fabsf(err) < 1.2f ? 0.4f : 0.0f);
+            break;
+        default:
+            gas = 1.0f;
+            break;
+        }
+    } else if (hold && car->kind == HTA_VK_TANK) {
+        steer = -err * 2.0f;   /* square the hull up, the turret does the rest */
+    }
+    if (steer > 1.0f) steer = 1.0f;
+    if (steer < -1.0f) steer = -1.0f;
+
+    /* Jammed: back out, wheel the other way. */
+    b->stuck_timer += dt;
+    if (b->stuck_timer > 1.0f) {
+        float moved = hypotf(here[0] - b->last_pos[0], here[1] - b->last_pos[1]);
+        if (!b->reversing && fabsf(gas) > 0.3f && moved < 0.5f) {
+            b->reversing = true;
+            b->reverse_timer = 1.2f;
+            b->stuck_count++;
+            b->path_len = 0;
+            b->replan = 0.0f;
+        } else if (moved > 3.0f) b->stuck_count = 0;
+        b->stuck_timer = 0.0f;
+        for (int k = 0; k < 3; k++) b->last_pos[k] = here[k];
+    }
+    if (b->reversing) {
+        b->reverse_timer -= dt;
+        if (b->reverse_timer <= 0.0f) b->reversing = false;
+        /* Whichever way it was pushing, the other. */
+        gas = gas < 0.0f ? 1.0f : -1.0f;
+        steer = car->kind == HTA_VK_TANK ? steer : -steer;
+        if (fabsf(steer) < 0.3f) steer = 1.0f;
+    }
+
+    /* ---- the eyes and the gun ---- */
+    float want_yaw = heading, want_pitch = 0.0f;
+    bool shoot = false;
+    if (seen >= 0 && shoots) {
+        float aim[3];
+        hta_game_centre(g, seen, aim);
+        int32_t wi = car->type < HTA_VEHICLE_TYPES ? g->vweapon[car->type][0] : -1;
+        const hta_game_weapon *w = wi >= 0 ? &g->weapons[wi] : NULL;
+        if (w && w->travels && w->speed > 1.0f)
+            for (int k = 0; k < 2; k++) aim[k] += g->units[seen].body.velocity[k] * seen_dist / w->speed;
+        feet_for_blast(g, seen, w, aim);
+        /* Aim from the camera: a vehicle gun fires along its line. */
+        float d[3] = { aim[0]-u->eye.pos[0], aim[1]-u->eye.pos[1], aim[2]-u->eye.pos[2] };
+        float settle = expf(-AIM_SETTLE[sk] * dt);
+        b->aim_err[0] *= settle; b->aim_err[1] *= settle;
+        want_yaw = atan2f(d[1], d[0]) + b->aim_err[0];
+        want_pitch = atan2f(d[2], hypotf(d[0], d[1])) + b->aim_err[1];
+        if (b->react > 0.0f) b->react -= dt;
+        float off = fabsf(wrap(want_yaw - u->eye.yaw)) + fabsf(want_pitch - u->eye.pitch);
+        float range = car->kind == HTA_VK_TANK ? GUN_RANGE * 1.5f : GUN_RANGE;
+        /* A shell is one shot every few seconds: lay it properly. */
+        float tol = w && w->def.single_shot ? 0.03f + 0.3f / fmaxf(seen_dist, 1.0f) : 0.12f;
+        if (b->react <= 0.0f && off < tol && seen_dist < range) shoot = true;
+        /* A cannon fires once a pull. */
+        if (w && w->def.single_shot && b->trigger) shoot = false;
+    }
+    b->trigger = shoot;
+    look_toward(u, b, want_yaw, want_pitch, dt);
+
+    if (car->kind == HTA_VK_SCOUT) {
+        /* The Ghost turns to the look; the stick moves it relative to that.
+         * Toward the goal, or across the target's front when in range. */
+        float yaw = u->eye.yaw + in->move.look_yaw;
+        float f[2] = { cosf(yaw), sinf(yaw) }, r[2] = { f[1], -f[0] };
+        float mv[2] = { 0.0f, 0.0f };
+        if (go && !hold) { mv[0] = cosf(heading); mv[1] = sinf(heading); }
+        if (hold || (seen >= 0 && seen_dist < GHOST_RANGE * 1.5f)) {
+            b->strafe_timer -= dt;
+            if (b->strafe_timer <= 0.0f) {
+                b->strafe = frand(&b->rng) < 0.5f ? -1.0f : 1.0f;
+                b->strafe_timer = 0.8f + frand(&b->rng) * 1.2f;
+            }
+            mv[0] += r[0] * b->strafe; mv[1] += r[1] * b->strafe;
+        }
+        gas = mv[0]*f[0] + mv[1]*f[1];
+        steer = mv[0]*r[0] + mv[1]*r[1];
+        if (b->reversing) { gas = -1.0f; steer = 0.0f; }
+    }
+    in->move.move_forward = gas;
+    in->move.move_right = steer;
+    in->move.fire = shoot;
+}
+
 void hta_brain_think(struct hta_game *g, int32_t me, hta_brain *b, float dt)
 {
-    if (g->units[me].vehicle >= 0 && g->vehicles) { ride(g, me, b, dt); return; }
+    if (b->skip_time > 0.0f) b->skip_time -= dt;
+    if (g->units[me].vehicle >= 0 && g->vehicles) {
+        const hta_vehicle_seat *st = hta_vehicles_seat(g->vehicles, (uint32_t)g->units[me].vehicle,
+                                                       (uint32_t)g->units[me].seat);
+        if (st && (st->flags & HTA_SEAT_DRIVER)) drive(g, me, b, dt);
+        else ride(g, me, b, dt);
+        return;
+    }
+    b->dismount = b->reversing = false;
+    b->stuck_count = 0;
+    b->wait_gunner = 0.0f;
     hta_unit *u = &g->units[me];
     hta_unit_input *in = &u->in;
     memset(&in->move, 0, sizeof(in->move));
@@ -394,6 +818,7 @@ void hta_brain_think(struct hta_game *g, int32_t me, hta_brain *b, float dt)
                 float tof = seen_dist / w->speed;
                 for (int k = 0; k < 2; k++) aim[k] += t->body.velocity[k] * tof;
             }
+            feet_for_blast(g, b->target, w, aim);
         } else {
             for (int k = 0; k < 3; k++) aim[k] = b->seen_pos[k];
         }
@@ -558,11 +983,13 @@ void hta_brain_think(struct hta_game *g, int32_t me, hta_brain *b, float dt)
     }
 
     /* A teammate at the wheel with the gun free: climb on. Ours -- Halo CE
-     * has no multiplayer bots -- and only for a person driving. */
+     * has no multiplayer bots. */
+    bool riding = false;
     {
         int32_t seat = -1;
         float door[3];
         int32_t car = ride_offer(g, me, &seat, door);
+        riding = car >= 0;
         if (car >= 0 && !(fighting && seen_dist < PUSH_STOP)) {
             float dx = door[0] - u->body.pos[0], dy = door[1] - u->body.pos[1];
             float dl = hypotf(dx, dy);
@@ -573,6 +1000,39 @@ void hta_brain_think(struct hta_game *g, int32_t me, hta_brain *b, float dt)
                 in->action = true;
         }
     }
+
+    /* An empty vehicle near by, nobody close enough to fight on foot, and
+     * no flag just ahead: take the wheel. */
+    if (!riding && !in->action && g->vehicles && u->flag < 0 && !(fighting && seen_dist < BOARD_FIGHT)) {
+        bool near_goal = has_objective &&
+            hypotf(objective[0] - u->body.pos[0], objective[1] - u->body.pos[1]) < BOARD_OBJECTIVE;
+        if (b->board >= 0 && (!wheel_free(g, me, (uint32_t)b->board) || near_goal)) b->board = -1;
+        if (b->board >= 0) {
+            b->board_time += dt;
+            if (b->board_time > BOARD_GIVE_UP) {
+                b->board_skip = b->board;
+                b->skip_time = BOARD_SKIP;
+                b->board = -1;
+            }
+        } else if (!near_goal) {
+            int32_t car = board_offer(g, me, b);
+            if (car >= 0) { b->board = (int16_t)car; b->board_time = 0.0f; }
+        }
+        float door[3];
+        if (b->board >= 0 && driver_door(g, (uint32_t)b->board, door) &&
+            hypotf(door[0] - u->body.pos[0], door[1] - u->body.pos[1]) > BOARD_REACH * 1.5f)
+            b->board = -1;      /* driven off, or it was carried away */
+        if (b->board >= 0 && driver_door(g, (uint32_t)b->board, door)) {
+            float dx = door[0] - u->body.pos[0], dy = door[1] - u->body.pos[1];
+            float dl = hypotf(dx, dy);
+            if (dl > 0.05f) { move[0] = dx / dl; move[1] = dy / dl; }
+            if (!fighting) { want_yaw = atan2f(dy, dx); want_pitch = 0.0f; }
+            int32_t near_seat = -1;
+            if (hta_game_seat_near(g, me, &near_seat) == b->board &&
+                near_seat == hta_vehicles_driver_seat(g->vehicles, (uint32_t)b->board))
+                in->action = true;
+        }
+    } else b->board = -1;
 
     /* ---- stuck? ---- */
     b->stuck_timer += dt;

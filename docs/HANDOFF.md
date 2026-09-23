@@ -4,16 +4,14 @@
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-23, evening (playtest fixes: tracers,
-explosions, hulls, red reticle, momentum; LAN team modes; bots on guns;
-flag waypoints)
+**Date of this revision:** 2026-09-23, morning (bots drive vehicles; fast
+rounds no longer pass through people)
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Branch / HEAD:** `fp-animated-guns`, tracking `origin/main` on GitHub.
-Last published build: `069267f` (playtest fixes + LAN team modes + bots on
-guns + flag waypoints), verify.sh 75/75, on the sideload page, archived in
-`apks/INDEX` on the backup drive, pushed to GitHub `main`. No device report
-on it yet. Network protocol is now **v4**: every phone in a LAN game needs
-a build from `bb4efce` on.
+Last published build: bots-drive build (see `git log -1`), verify.sh
+75/75, on the sideload page, archived in `apks/INDEX` on the backup drive,
+pushed to GitHub `main`. No device report on it, nor on the playtest-fixes
+build before it. Network protocol is still **v4**.
 
 **Start of next session, in order:**
 1. `ls -lt scratch/uploads/ | head` -- screenshots from this build? The
@@ -159,9 +157,33 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Playtest-fixes build** (and the LAN team-modes build after it) at
-> `http://100.89.1.14:8731/`. Host-verified (verify.sh 75/75); not yet on a
-> phone. Everything below answers the owner's 2026-09-23 playtest notes.
+> **Bots-drive build** at `http://100.89.1.14:8731/`. Host-verified
+> (verify.sh 75/75, test_ride 86 checks); not yet on a phone. The
+> playtest-fixes list from the build before (tracers, explosions, red
+> reticle, hulls, momentum, LAN team games) is still unreported -- check it
+> in the same session.
+>
+> 1. **Bots take the wheel:** SINGLEPLAYER, TEAM SLAYER, 7 bots. Within a
+>    minute bots walk to the Warthogs, Ghosts and Scorpions near them and
+>    drive off. Failure: nobody drives, or a bot stands at a door forever
+>    (it should give up after 8 s).
+> 2. **Crews:** a red bot at a Warthog's wheel waits up to 3 s for a red bot
+>    to climb on the gun, then drives with it. Stand near your own team's
+>    Warthog: a bot may take the wheel -- climb on the gun and ride.
+> 3. **Fighting from them:** a Warthog without a gunner tries to run you
+>    over; with a gunner it circles you. A Ghost closes and strafes firing;
+>    a Scorpion stops about 25 wu off and shells your FEET. Is the tank too
+>    deadly? (tell me the skill setting)
+> 4. **Jams:** bots back out when they hit something; after three in a row
+>    they get out and walk. Report any bot rocking in place for more than
+>    ~5 s, with the HUD position.
+> 5. **CTF:** attackers drive toward the enemy base and get out ~10 wu from
+>    the flag.
+> 6. **Your own shots:** tank shells and fuel rods used to fly through a
+>    man and burst far behind him. A direct hit now stops in him. Check it
+>    feels right from the Scorpion.
+>
+> **Still unreported, from the playtest-fixes build:**
 >
 > 1. **Tracers:** fire the rifle and the Warthog chaingun. Expect short
 >    yellow streaks on about one round in four -- not solid lines.
@@ -276,32 +298,30 @@ the section below, and update it every time.
 
 ## NEXT ENGINEERING OBJECTIVES
 
-Done 2026-09-23 evening: red reticle + autoaim, team modes over LAN
-(protocol v4), bots as gunners, CTF waypoints, hit sounds on bodies,
-vehicle hulls/wrecks, momentum. Remaining, in order:
+Done 2026-09-23 morning: bots drive the Warthog, Ghost and Scorpion
+(`brain.c` `drive`, `board_offer`, `wheel_free`), crew each other's guns,
+and projectiles hit people along their path (`fly` in `game.c`).
+Remaining, in order:
 
-1. **Device feedback** on this build (see CURRENT TESTING OBJECTIVE) --
-   especially shake strength, coasting, and whether vehicle aim is now
-   good enough.
-2. **Bots driving:** a bot takes an empty vehicle's wheel (nav grid paths,
-   throttle/steer toward the next waypoint), and a bot gunner rides with a
-   bot driver. The gunner half is done (`brain.c` `ride`, `ride_offer`;
-   `hta_brain_think` hands any seated bot to `ride`). Starting points: the
-   nav grid is built for the biped's radius, so a Warthog path needs
-   clearance (sample the grid with the car's `body_radius`, or keep to
-   nodes far from walls); a driver's input is `u->in.move` forward/right
-   plus `eye.yaw` (Ghost/Banshee steer by yaw, Warthog/Scorpion by
-   `move_right`); `test_ride` [a bot on the gun] shows how to set up a team
-   game with an unbuilt nav for tests.
-3. **CTF polish:** the cloth moving (the `flag cloth` point physics);
-   bots that capture against a defence; carriers as passengers (check
-   Halo PC first).
-4. **Oddball, King of the Hill, Race.** Ball `weapons\ball\ball` (held as
+1. **Device feedback** on this build and the one before it (see CURRENT
+   TESTING OBJECTIVE).
+2. **Vehicle-aware paths.** In a 300 s bot match (`htamatch --vehicles`)
+   drivers jam about once every 15 s each: the nav grid is built for a
+   biped, so it offers hillsides the vehicle physics refuses and gaps a
+   Warthog cannot fit. They recover (back out, re-plan, walk after three),
+   but it looks clumsy. Options: a second grid built with the car's
+   `body_radius` and the vehicle's max slope (`HTA_VEHICLE_MAX_SLOPE`); or
+   A* cost on `HTA_NAV_NEAR_WALL` nodes for drivers only.
+3. **Banshee pilots.** `drivable()` leaves the Banshee to people. Flying
+   needs no path, only height and a target.
+4. **CTF polish:** the cloth moving; carriers as passengers (check Halo PC
+   first); bots that capture against a defence.
+5. **Oddball, King of the Hill, Race.** Ball `weapons\ball\ball` (held as
    a pistol); oddball spawns are netgame flags type 2; hills type 8 by
    usage id; race checkpoints type 3. Lines and texts (95, 155-166,
    170-177) are in the Trial. The GAME packet has room for their state.
-5. **Client-side prediction** for the local driver on a joining phone.
-6. **Smaller gaps:** a damaged hull could darken (instances carry no tint
+6. **Client-side prediction** for the local driver on a joining phone.
+7. **Smaller gaps:** a damaged hull could darken (instances carry no tint
    yet); powerups spinning; active camouflage rendering; free-for-all
    player colours; the tracker's sweep; the remaining menu screens.
 
@@ -386,8 +406,8 @@ remain a rendering gap; phone confirmation of this fix is pending.
 
 ### Not started
 
-- **Bots driving vehicles.** Every vehicle, seat and gun works for people
-  (solo and LAN), and bots ride guns behind a person; bots never drive.
+- **Bots flying.** Bots drive the Warthog, Ghost and Scorpion and crew
+  guns; nobody but a person flies the Banshee.
 - **Multiplayer beyond on-foot Slayer.** Android hosts now simulate remote
   movement, bots, damage, death, pickups, scoring and respawn; clients receive
   the match state. Vehicles and other game modes remain absent online. See
@@ -552,6 +572,18 @@ the full story.
   static state.
 - **The nav cache key** is map CRC + biped radius/height/slope. Change the
   nav algorithm → bump `NAV_VERSION` in `nav.c`.
+- **A seated unit's `eye.pos` is the vehicle's chase camera** -- behind
+  and above a Warthog, sometimes inside a hillside. Line of sight for a
+  seated bot comes from its body (`eye_of` in `brain.c`); AIM angles stay
+  from `eye.pos`, because `vfire` converges on the camera's crosshair ray.
+- **A fast round hits along its path, not at its point.** A tank shell
+  moves 1.3+ wu an update; the body is 0.35 wu wide. `fly` sweeps
+  `hta_game_ray` from last position to this one (test_ride "a shell does
+  not pass through a man").
+- **Place test targets on the ground, not in a vehicle's frame.** A parked
+  car sits tilted on its springs; 14 wu out along its frame is under the
+  grass, and a buried target is invisible. `open_ground` in test_ride
+  finds level, open field.
 - **Dynamic meshes write one vertex slot per in-flight frame.** Uploading a
   change once leaves stale geometry in the other slots. The count belongs to
   the swapchain, so re-upload for several frames.
@@ -646,6 +678,13 @@ wrong, this list is the first place to look — they are all one constant.
 | `HTA_VEHICLE_SWAY_*` | jeep 0.018, tank 0.008, Ghost 0.014 rad per wu/s^2; max 0.14; spring 45, damping 7 | visual suspension pitch/roll |
 | `HTA_HUD_TARGET_R/G/B` | 1.0, 0.12, 0.08 | the red reticle (no tag carries it) |
 | spark threshold | hull below 35% | a failing hull throws the chaingun's metal-impact sparks |
+| bot driving (`src/game/brain.c`) | `BOARD_REACH` 18 wu, `BOARD_GIVE_UP` 8 s, `BOARD_FIGHT` 15 wu, `BOARD_OBJECTIVE` 30 wu | a bot walks to an empty Warthog/Ghost/Scorpion wheel this close, gives up after this long, not with an enemy this near or a flag this near |
+| | `DISMOUNT_NEAR` 10 wu, `DISMOUNT_HULL` 0.25 | gets out this near a flag, or with the hull below this |
+| | `WAIT_GUNNER` 3 s | a bot Warthog driver holds for a teammate bot to climb on the gun |
+| | `TANK_RANGE` 25 wu, `GHOST_RANGE` 12 wu, `ORBIT` 14 wu | the tank shells from range; the Ghost closes then strafes; a crewed Warthog circles |
+| | `STUCK_LIMIT` 3 jams, `JAM_SKIP` 30 s, `ROAM_MIN/MAX` 30/70 wu, `BEHIND` 1.9 rad | a jam backs out 1.2 s; three and it walks and leaves that car alone; roam goals the path search can reach; a goal behind a Warthog is backed round to |
+| blast aim | the feet | bots aim anything that explodes at an on-foot target's feet, as people do |
+| shell tolerance | 0.03 rad + 0.3 wu | a single-shot cannon is laid this tight before a bot fires |
 
 ---
 
