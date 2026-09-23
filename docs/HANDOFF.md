@@ -104,6 +104,15 @@ The publish script marks builds from uncommitted source as `-dirty`.
 **Write real release notes.** The owner reads them, and they are how a change
 gets tested deliberately rather than stumbled into.
 
+**Local backup.** Every publish ends by running `scripts/backup_local.sh`,
+which mirrors the whole project folder, a git bundle of every branch, the
+owner's Trial data, and that build's personal and guest APKs to
+`/mnt/media/backups/halo-trial-android/` (the 8 TB drive; `apks/INDEX`
+lists every build, `apks/latest` is the newest). It skips with a warning if
+the drive is not mounted. The owner wants this copy current at all times --
+run it by hand after work that is not published. It holds Trial data: it
+is private and never goes anywhere else.
+
 ### 3. The owner tests on device and sends screenshots
 
 Screenshots uploaded from the phone land in `scratch/serve/uploads/` and are

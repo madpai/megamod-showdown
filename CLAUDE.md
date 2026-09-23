@@ -42,6 +42,11 @@ HTA_MAP=/home/commander/halo-trial-data/extract/maps/bloodgulch.map scripts/veri
 # 2. publish to the sideload server the owner installs from
 scripts/publish_apk.sh --title "what changed" --notes-text "a sentence or two"
 
+#    ...which also backs everything up to /mnt/media/backups/halo-trial-android
+#    (project, git bundle, Trial data, both APKs per build; apks/latest).
+#    The owner wants that copy current at all times: run
+#    scripts/backup_local.sh by hand after any work that is not published.
+
 # 3. the owner tests on device; screenshots arrive here, newest first
 ls -lt scratch/uploads/ | head
 ```
