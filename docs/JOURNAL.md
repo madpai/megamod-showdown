@@ -9,6 +9,41 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## Every vehicle, online; contrails, drops, tracker (2026-09-22 evening)
+
+**Vehicles.** The old module was Warthog-only with one global `driver`. It
+is now a type per palette entry and a car per placement (all 28 on Blood
+Gulch), with the tag's seats, door markers, turret nodes and trigger
+markers. The Scorpion, Ghost and Banshee needed control models the tags
+leave at zero; the driver seat's `yaw rate` turns their hulls, and every
+other choice is ledgered. Seated bodies play the cyborg's own seat clips
+(`W-driver unarmed idle`, `W-gunner fixed idle`, ...) on the seat marker.
+
+*Why collision instances:* the old path rebuilt one shared grid of every
+jeep whenever any moved (1.5 ms with 12). With 28 it would have tripled.
+Each type's grid is now built once in model space and queried through the
+car's pose: 0.03 ms per update.
+
+*Trap:* exit spots on a slope were always "blocked" — the headroom rays
+started at the centre's ground height, so the uphill ones began
+underground and hit it. Each ray now starts on its own ground.
+
+*Trap:* the vehicle gun's rounds started inside their own hull. Hitscan
+disables the shooter's instance for the ray; flying rounds carry a `clear`
+distance before instances count.
+
+**Contrails.** Every round's look is a `cont` tag on its projectile. The AR
+tracer's point lives 0.01 s — less than a frame — so taken literally
+nothing ever draws; points live at least 0.06 s with the states stretched.
+Colour and fade need vertex colour: the mesh shader's unlit path now reads
+rgb from the normal and alpha from lm_uv.x when `detail.w` is 3.
+
+**Also:** dropped weapons with their ammo; the motion tracker (art from the
+unhi and globals interface bitmaps, placement ours); engine loops with pitch
+and pan; pickup messages; switching weapons no longer refills the magazine;
+respawn re-arms if ANY slot differs from the start (the owner reported a
+debug weapon surviving death — it was in the second hand).
+
 ## Next objective changed to online vehicles (2026-09-22)
 
 The owner chose online vehicles as the next engineering objective and plans a
