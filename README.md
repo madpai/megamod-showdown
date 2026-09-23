@@ -1,51 +1,97 @@
-# Open Halo Project (halo-trial-android)
+<div align="center">
 
-A native ARM64 Android engine for the free **Halo: Combat Evolved Trial**,
-playing **Blood Gulch**. C, Vulkan and AAudio, with no engine dependencies. It
-reads **your own copy** of the Trial and takes every value it can from the
-original tags: weapons, vehicles, sounds, the HUD, the menu, the announcer.
+# Open Halo Project
 
-**This repository contains no Halo files, and never will.** You need your own
-copy of the Trial installer (`HaloTrialSetup.exe` / `lotrialsetup1.exe`).
+**Halo: Combat Evolved on Android, running natively.** A from-scratch engine that plays the
+free Halo Trial's **Blood Gulch** on your phone, built from your own copy of the game.
 
-## What it plays
+[![Release](https://img.shields.io/github/v/release/madpai/open-halo-project?label=download&color=2b6cf6)](https://github.com/madpai/open-halo-project/releases/latest)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Android%20arm64-3ddc84)
+![Renderer](https://img.shields.io/badge/renderer-Vulkan-ac162c)
+![Language](https://img.shields.io/badge/written%20in-C-555555)
 
-- The Trial's own main menu from `ui.map`: the ring, the space sky, the HALO
-  logo and the title theme.
-- Blood Gulch with lightmaps, detail maps and its real sky; eleven weapons
-  with their models, animations, sounds and HUD; grenades; powerups.
-- Every vehicle: Warthog (driver, gunner, passenger), Scorpion, Ghost and
-  Banshee.
-- Singleplayer against 0-7 bots: **Slayer, Team Slayer and Capture the Flag**,
-  with team colours and the Trial's own announcer.
-- LAN and direct-IP multiplayer (Slayer), host-authoritative over UDP.
+<img src="https://github.com/madpai/open-halo-project/releases/download/media/main-menu.jpg" alt="The Trial's own main menu: the ring, the HALO logo and the menu, rendered by this engine" width="100%">
 
-Not yet: team modes over LAN, Oddball, King of the Hill, Race, the campaign.
-See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the full state.
+<sub>The main menu, drawn from the Trial's own <code>ui.map</code>: the ring, the space sky, the logo and the title theme.</sub>
+
+</div>
+
+---
+
+This is **not** an emulator, a wrapper, or a port of the original executable. It's a new engine
+in C with Vulkan and AAudio that reads the Trial's map files directly and takes every number it
+can from the original tags: weapon damage, rate of fire, vehicle seats, sounds, HUD layout, even
+the announcer's lines and the kill-feed wording. When a value isn't in the data, the project
+says so in a public ledger of invented constants.
+
+**The repository contains no Halo files, and never will.** You bring your own Trial installer.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="https://github.com/madpai/open-halo-project/releases/download/media/first-person.jpg" alt="First person with the assault rifle in Blood Gulch"></td>
+    <td width="50%"><img src="https://github.com/madpai/open-halo-project/releases/download/media/team-slayer.jpg" alt="Team Slayer: a red player firing at three blue players on a ridge"></td>
+  </tr>
+  <tr>
+    <td><sub><b>Blood Gulch in first person.</b> The assault rifle's model, animations, ammo counter, shield and motion tracker all come from the Trial's tags.</sub></td>
+    <td><sub><b>Team Slayer.</b> Bots in red and blue armour, coloured through the cyborg shader's own change-colour mask.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/madpai/open-halo-project/releases/download/media/ctf-flag-run.jpg" alt="Capture the Flag: a red player running blue's flag home"></td>
+    <td><img src="https://github.com/madpai/open-halo-project/releases/download/media/ctf-blue-base.jpg" alt="Blue's flag on its stand inside the blue base"></td>
+  </tr>
+  <tr>
+    <td><sub><b>Capture the Flag.</b> A red bot runs blue's flag home, with a Warthog and a Ghost behind.</sub></td>
+    <td><sub><b>The flag stand.</b> The pole comes from the flag's model and the cloth from its widget tag, on the stand the map defines.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/madpai/open-halo-project/releases/download/media/warthog.jpg" alt="Driving a Warthog down a dirt track"></td>
+    <td><img src="https://github.com/madpai/open-halo-project/releases/download/media/ghost.jpg" alt="A Ghost beside the blue base"></td>
+  </tr>
+  <tr>
+    <td><sub><b>The Warthog.</b> Driver, gunner and passenger seats, with the chaingun spinning up.</sub></td>
+    <td><sub><b>The Ghost.</b> All 28 of Blood Gulch's vehicles: Warthogs, Ghosts, Scorpions and Banshees.</sub></td>
+  </tr>
+</table>
+
+<sub>All screenshots are rendered by this project's own offscreen tools (<code>htamenu</code>, <code>htaview</code>, <code>htamatch</code>) from the owner's Trial data.</sub>
+
+## Features
+
+| | |
+|---|---|
+| 🎮 **Game types** | Slayer, Team Slayer and Capture the Flag against 0–7 bots, with the Trial's announcer ("Red team has the flag!") |
+| 🚙 **Vehicles** | Warthog (driver, gunner, passenger), Scorpion, Ghost, Banshee: every seat and every gun |
+| 🔫 **Weapons** | Nine weapons (assault rifle, pistol, shotgun, sniper, rocket launcher, flamethrower, plasma rifle, plasma pistol, needler) with their first-person models, animations, sounds, HUD and tracers; grenades; powerups; dropped guns |
+| 🤖 **Bots** | They walk a navigation grid built from the map's collision, pick up weapons, fight, attack and defend flags, and chase the carrier |
+| 🌐 **Multiplayer** | LAN discovery and direct-IP play (Slayer), host-authoritative over UDP |
+| 🖥️ **Menus** | The Trial's own main menu and its words, with a touch overlay for match settings |
+| 🎨 **Rendering** | Lightmaps, detail maps, the real multi-layer sky, team colours, flag cloth, contrails, decals, particles |
+
+**Still to come:** team modes over LAN, Oddball, King of the Hill, Race, bots that drive, and the
+campaign. See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the full picture.
 
 ## Play it
 
-You need an ARM64 Android phone with Vulkan (Android 8.0+) and a PC to
-unpack the Trial installer.
+You need an **ARM64 Android phone with Vulkan** (Android 8.0 or later) and a PC to unpack the
+Trial installer.
 
-1. **Get the Trial's maps.** The installer (`HaloTrialSetup.exe`, sometimes
-   named `lotrialsetup1.exe`) is a cabinet archive, so you don't need to install
-   anything. Extract the four maps with [7-Zip](https://www.7-zip.org/):
+1. **Get the Trial's maps.** The installer (`HaloTrialSetup.exe`, sometimes named
+   `lotrialsetup1.exe`) is a cabinet archive, so you don't need to install anything. Extract four
+   files with [7-Zip](https://www.7-zip.org/):
 
    ```sh
    7z e lotrialsetup1.exe maps/bloodgulch.map maps/bitmaps.map maps/sounds.map maps/ui.map
    ```
 
-   On Windows, open the installer in 7-Zip and drag those four files out of
-   its `maps` folder. (Installing the Trial works too: the same files are in
-   the installed game's `maps` folder.)
-2. **Copy those four files to your phone**, for example into `Download`.
-3. **Install the APK.** Download `halo-trial-guest.apk` from this
-   repository's Releases page, or build it yourself (below). It contains no
-   Halo data.
-4. **Open the app and pick each file** in the setup screen: `bloodgulch.map`,
-   then `bitmaps.map` (textures), `sounds.map` (audio) and `ui.map` (the main
-   menu). The app copies them into its own storage, and you only do this once.
+   On Windows, open the installer in 7-Zip and drag those four files out of its `maps` folder.
+2. **Copy the four maps to your phone**, for example into `Download`.
+3. **Install the APK:** [`halo-trial-guest.apk` from the latest release](https://github.com/madpai/open-halo-project/releases/latest).
+   It contains no Halo data.
+4. **Open the app and pick each file** in the setup screen: `bloodgulch.map`, `bitmaps.map`
+   (textures), `sounds.map` (audio) and `ui.map` (the main menu). You only do this once.
 
 ## Build it
 
@@ -93,8 +139,9 @@ session history. Search it by symptom.
 - This project does **not** use the December 2024 Halo "Digsite" leak
   material that the current upstream Demon depends on.
 - No DRM is involved and none is circumvented.
-- Halo is a trademark of Microsoft. This is an unaffiliated fan project.
-- Our code is GPLv3 (compatible with Invader and Demon).
+- The screenshots above are hosted on a release, not in git, so the repository's
+  history carries no Halo imagery either.
+- Our code is [GPLv3](LICENSE) (compatible with Invader and Demon).
 
 ## Docs
 
@@ -109,3 +156,8 @@ session history. Search it by symptom.
 | [NETWORK_ARCHITECTURE.md](docs/NETWORK_ARCHITECTURE.md) | Engine audit and native multiplayer design |
 | [NETWORK_PROGRESS.md](docs/NETWORK_PROGRESS.md) | Verified LAN slice, commands and remaining tests |
 | [PROGRESS.md](docs/PROGRESS.md) | Early milestone log |
+
+---
+
+<div align="center"><sub>Halo is a trademark of Microsoft. This is an unaffiliated, non-commercial fan project
+that runs only on data the player already owns.</sub></div>
