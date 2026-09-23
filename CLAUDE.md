@@ -27,7 +27,10 @@ a session, and every invented constant. Read it before starting work.
   `/home/commander/halo-trial-data/extract/maps/`.
 - Project code is **GPLv3**.
 - Git author: **`Phase2 <schultz0@proton.me>`**.
-- **Do not push unless asked.** The backup remote is `origin`,
+- **Keep GitHub current (owner's standing instruction, 2026-09-23):** push
+  after every commit, and when a build is published, release its guest APK
+  (`gh release create vX.Y.Z scratch/serve/halo-trial-guest.apk --target main`,
+  never the personal one). The remote is `origin`,
   https://github.com/madpai/open-halo-project (PUBLIC). Local
   `fp-animated-guns` goes to its `main`: `git push origin fp-animated-guns:main`.
   Before any push, confirm no Trial data is in history:

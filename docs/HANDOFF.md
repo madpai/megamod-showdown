@@ -44,7 +44,8 @@ from a tag.
   `/home/commander/halo-trial-data/extract/maps/`.
 - Project code is **GPLv3**.
 - Git author on this repo is **`Phase2 <schultz0@proton.me>`**.
-- **Do not push unless asked.** Backups go to `origin`
+- **Push after every commit** (the owner's standing instruction since
+  2026-09-23), and release each published build's guest APK. Backups go to `origin`
   (https://github.com/madpai/open-halo-project, public), local
   `fp-animated-guns` → remote `main`. On 2026-09-23 the history was
   rewritten to remove the Trial's decoded title theme (`in_p0-6.wav`,
