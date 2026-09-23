@@ -299,8 +299,10 @@ public class GameActivity extends NativeActivity {
                     word(12, "START GAME"), word(18, "BACK") };
             case 3: return new String[] { word(10, "SERVER NAME") + ": " + serverName,
                     word(11, "MAX PLAYERS") + ": " + maxPlayers,
+                    "GAME: " + GAMETYPES[gametype],
                     "BOTS: " + bots, "BOT SKILL: " + skillName(),
-                    word(21, "KILLS TO WIN") + " " + (kills == 0 ? "NONE" : kills),
+                    gametype == 2 ? "CAPTURES TO WIN: " + (captures == 0 ? "NONE" : captures)
+                                  : word(21, "KILLS TO WIN") + " " + (kills == 0 ? "NONE" : kills),
                     "TIME LIMIT: " + (minutes == 0 ? "NONE" : minutes + " MIN"),
                     word(22, "RESPAWN TIME") + " " + respawn + " SEC",
                     "VEHICLES: " + VEHICLE_SETS[vehicles],
@@ -401,13 +403,17 @@ public class GameActivity extends NativeActivity {
             case 3:
                 if (i == 0) edit(false);
                 else if (i == 1) maxPlayers = maxPlayers == 8 ? 2 : maxPlayers + 1;
-                else if (i == 2) bots = (bots + 1) % 8;
-                else if (i == 3) skill = (skill + 1) % 4;
-                else if (i == 4) kills = next(kills, new int[] { 0, 10, 25, 50, 100 });
-                else if (i == 5) minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 });
-                else if (i == 6) respawn = next(respawn, new int[] { 2, 5, 10, 15 });
-                else if (i == 7) vehicles = (vehicles + 1) % VEHICLE_SETS.length;
-                else if (i == 8) start(1, "127.0.0.1"); else back();
+                else if (i == 2) gametype = (gametype + 1) % GAMETYPES.length;
+                else if (i == 3) bots = (bots + 1) % 8;
+                else if (i == 4) skill = (skill + 1) % 4;
+                else if (i == 5) {
+                    if (gametype == 2) captures = next(captures, new int[] { 1, 3, 5, 10, 0 });
+                    else kills = next(kills, new int[] { 0, 10, 25, 50, 100 });
+                }
+                else if (i == 6) minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 });
+                else if (i == 7) respawn = next(respawn, new int[] { 2, 5, 10, 15 });
+                else if (i == 8) vehicles = (vehicles + 1) % VEHICLE_SETS.length;
+                else if (i == 9) start(1, "127.0.0.1"); else back();
                 break;
             case 4:
                 if (i == 0) open(5); else if (i == 1) open(6); else back();
@@ -465,7 +471,8 @@ public class GameActivity extends NativeActivity {
         }
 
         private void start(int mode, String host) {
-            int type = mode == 0 ? gametype : 0;
+            // A joiner plays whatever the host chose; the host's GAME says.
+            int type = mode == 2 ? 0 : gametype;
             nativeStartMatch(new int[] { mode, bots, skill, type == 2 ? captures : kills, minutes, respawn,
                     maxPlayers, port, vehicles, type }, host, serverName);
             screen = 0;

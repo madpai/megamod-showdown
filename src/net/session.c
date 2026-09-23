@@ -305,6 +305,19 @@ bool hta_net_server_drops(hta_net_server *s, const hta_net_drops *drops)
     return sent;
 }
 
+bool hta_net_server_game(hta_net_server *s, const hta_net_game *game)
+{
+    if (!s || !game || s->udp.fd<0 || s->last_game_tick==s->tick) return false;
+    uint8_t payload[HTA_NET_GAME_BYTES];
+    if (!hta_net_game_pack(payload,sizeof(payload),game)) return false;
+    s->last_game_tick=s->tick;
+    bool sent=false;
+    for (unsigned i=0;i<HTA_NET_MAX_PLAYERS;i++) if (s->peers[i].active)
+        if (send_packet(&s->udp,&s->peers[i].addr,&s->stats,HTA_NET_GAME,
+                        &s->sequence,s->tick,payload,(uint16_t)sizeof(payload))) sent=true;
+    return sent;
+}
+
 bool hta_net_scan_open(hta_net_scan *s)
 {
     if (!s) return false;
@@ -479,6 +492,13 @@ static void client_packet(hta_net_client *c, const hta_net_packet *p, double now
         c->drops=d; c->have_drops=true; c->last_drop_tick=p->tick;
         break;
     }
+    case HTA_NET_GAME: {
+        if (p->tick<=c->last_game_tick) { c->stats.dropped++; break; }
+        hta_net_game gm;
+        if (!hta_net_game_unpack(p->payload,p->length,&gm)) { c->stats.invalid++; break; }
+        c->game=gm; c->have_game=true; c->last_game_tick=p->tick;
+        break;
+    }
     default: c->stats.invalid++; break;
     }
 }
@@ -494,6 +514,7 @@ void hta_net_client_pump(hta_net_client *c, double now)
         c->fx_count=0; c->have_projectiles=false; c->last_projectile_tick=0;
         c->have_vehicles=false; c->last_vehicle_tick=0;
         c->have_drops=false; c->last_drop_tick=0;
+        c->have_game=false; c->last_game_tick=0;
         memset(c->seen_kills,0,sizeof(c->seen_kills));
         memset(c->present,0,sizeof(c->present));
         uint32_t old_nonce=c->nonce;

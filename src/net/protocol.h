@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define HTA_NET_MAGIC 0x31415448u /* "HTA1" on the wire */
-#define HTA_NET_VERSION 3u
+#define HTA_NET_VERSION 4u
 #define HTA_NET_HEADER 20u
 #define HTA_NET_MAX_PACKET 1200u
 #define HTA_NET_MAX_PLAYERS 8u
@@ -39,7 +39,9 @@ typedef enum {
      * This is how a LAN lobby finds games without typing an address. */
     HTA_NET_DISCOVER, HTA_NET_INFO, HTA_NET_WORLD, HTA_NET_CONTROL,
     HTA_NET_KILL, HTA_NET_ACK, HTA_NET_FX, HTA_NET_PROJECTILES,
-    HTA_NET_REJECT, HTA_NET_VEHICLES, HTA_NET_DROPS
+    HTA_NET_REJECT, HTA_NET_VEHICLES, HTA_NET_DROPS,
+    /* v4: the rules -- mode, team scores, the flags, vehicle hulls. */
+    HTA_NET_GAME
 } hta_net_type;
 
 typedef struct {
@@ -81,7 +83,8 @@ typedef struct {
 enum { HTA_NET_ENTITY_NONE, HTA_NET_ENTITY_PLAYER, HTA_NET_ENTITY_BOT };
 enum { HTA_NET_ENTITY_ALIVE=1, HTA_NET_ENTITY_GROUNDED=2,
        HTA_NET_ENTITY_CROUCH=4, HTA_NET_ENTITY_FIRE=8,
-       HTA_NET_ENTITY_MELEE=16, HTA_NET_ENTITY_GRENADE=32 };
+       HTA_NET_ENTITY_MELEE=16, HTA_NET_ENTITY_GRENADE=32,
+       HTA_NET_ENTITY_BLUE=64 /* v4: on the blue team (team games) */ };
 typedef struct {
     uint8_t id, kind, flags, weapon, peer_id; /* peer_id 0 for bots */
     float pos[3], velocity[2], yaw, pitch, health, shield;
@@ -182,6 +185,25 @@ typedef struct {
 } hta_net_drops;
 bool hta_net_drops_pack(uint8_t *dst, size_t cap, const hta_net_drops *d, size_t *written);
 bool hta_net_drops_unpack(const uint8_t *src, size_t len, hta_net_drops *d);
+
+/* The game's rules and state beside WORLD, which is full: the mode, both
+ * teams' scores, each flag's state, carrier and place, and each vehicle's
+ * hull (0..255 of full; 0 for a wreck). */
+#define HTA_NET_GAME_BYTES (8u + 2u * 11u + HTA_NET_MAX_VEHICLES)
+enum { HTA_NET_FLAG_HOME = 0, HTA_NET_FLAG_CARRIED, HTA_NET_FLAG_DROPPED };
+typedef struct {
+    uint8_t mode;              /* hta_game_mode */
+    uint8_t score_limit;
+    int16_t team_score[2];
+    uint8_t winner_team;       /* 255: none or a draw */
+    struct {
+        uint8_t present, state, carrier;   /* carrier 255: nobody */
+        float pos[3], yaw;
+    } flag[2];
+    uint8_t hull[HTA_NET_MAX_VEHICLES];
+} hta_net_game;
+bool hta_net_game_pack(uint8_t *dst, size_t cap, const hta_net_game *g);
+bool hta_net_game_unpack(const uint8_t *src, size_t len, hta_net_game *g);
 
 bool hta_net_vehicles_pack(uint8_t *dst, size_t cap, const hta_net_vehicles *v,
                            size_t *written);

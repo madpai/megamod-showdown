@@ -10,7 +10,7 @@ void hta_net_u32_write(uint8_t *p, uint32_t v)
 uint32_t hta_net_u32_read(const uint8_t *p)
 { return (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24); }
 
-static bool known(uint8_t t) { return t >= HTA_NET_HELLO && t <= HTA_NET_DROPS; }
+static bool known(uint8_t t) { return t >= HTA_NET_HELLO && t <= HTA_NET_GAME; }
 
 bool hta_net_pack(uint8_t *dst, size_t cap, uint8_t type, uint32_t seq,
                   uint32_t tick, const uint8_t *payload, uint16_t len,
@@ -134,7 +134,7 @@ bool hta_net_world_pack(uint8_t *dst, size_t cap, const hta_net_world *w, size_t
         const hta_net_entity *e=&w->entities[i];
         if (e->id>=HTA_NET_MAX_ENTITIES || seen[e->id] ||
             e->kind<HTA_NET_ENTITY_PLAYER || e->kind>HTA_NET_ENTITY_BOT ||
-            e->flags & ~63u || (e->weapon!=255 && e->weapon>23) ||
+            e->flags & ~127u || (e->weapon!=255 && e->weapon>23) ||
             e->peer_id>HTA_NET_MAX_PLAYERS || e->slot>1 ||
             (e->carry[0]!=255 && e->carry[0]>23) ||
             (e->carry[1]!=255 && e->carry[1]>23) ||
@@ -458,4 +458,52 @@ bool hta_net_drops_unpack(const uint8_t *src, size_t len, hta_net_drops *d)
     if (!hta_net_drops_pack(check,sizeof(check),&tmp,&written) ||
         written!=len || memcmp(check,src,len)) return false;
     *d=tmp; return true;
+}
+
+/* ---- game ------------------------------------------------------------- */
+
+bool hta_net_game_pack(uint8_t *dst, size_t cap, const hta_net_game *g)
+{
+    if (!dst || !g || cap<HTA_NET_GAME_BYTES || g->mode>2) return false;
+    dst[0]=g->mode; dst[1]=g->score_limit;
+    u16w(dst+2,(uint16_t)g->team_score[0]); u16w(dst+4,(uint16_t)g->team_score[1]);
+    dst[6]=g->winner_team; dst[7]=0;
+    for (unsigned t=0;t<2;t++) {
+        uint8_t *o=dst+8+t*11;
+        if (g->flag[t].present>1 || g->flag[t].state>HTA_NET_FLAG_DROPPED ||
+            (g->flag[t].carrier!=255 && g->flag[t].carrier>=HTA_NET_MAX_ENTITIES)) return false;
+        o[0]=(uint8_t)(g->flag[t].present | (g->flag[t].state<<1));
+        o[1]=g->flag[t].carrier;
+        int16_t q;
+        for (unsigned k=0;k<3;k++) {
+            if (!q16(g->flag[t].pos[k],VQ_POS,&q)) return false;
+            u16w(o+2+k*2,(uint16_t)q);
+        }
+        if (!q16(wrapf(g->flag[t].yaw),VQ_ANGLE,&q)) return false;
+        u16w(o+8,(uint16_t)q);
+        o[10]=0;
+    }
+    memcpy(dst+30,g->hull,HTA_NET_MAX_VEHICLES);
+    return true;
+}
+
+bool hta_net_game_unpack(const uint8_t *src, size_t len, hta_net_game *g)
+{
+    if (!src || !g || len!=HTA_NET_GAME_BYTES) return false;
+    hta_net_game tmp;
+    memset(&tmp,0,sizeof(tmp));
+    tmp.mode=src[0]; tmp.score_limit=src[1];
+    tmp.team_score[0]=(int16_t)u16r(src+2); tmp.team_score[1]=(int16_t)u16r(src+4);
+    tmp.winner_team=src[6];
+    for (unsigned t=0;t<2;t++) {
+        const uint8_t *in=src+8+t*11;
+        tmp.flag[t].present=in[0]&1u; tmp.flag[t].state=(uint8_t)(in[0]>>1);
+        tmp.flag[t].carrier=in[1];
+        for (unsigned k=0;k<3;k++) tmp.flag[t].pos[k]=(float)(int16_t)u16r(in+2+k*2)/VQ_POS;
+        tmp.flag[t].yaw=(float)(int16_t)u16r(in+8)/VQ_ANGLE;
+    }
+    memcpy(tmp.hull,src+30,HTA_NET_MAX_VEHICLES);
+    uint8_t check[HTA_NET_GAME_BYTES];
+    if (!hta_net_game_pack(check,sizeof(check),&tmp) || memcmp(check,src,len)) return false;
+    *g=tmp; return true;
 }

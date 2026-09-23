@@ -148,6 +148,7 @@ typedef struct {
     uint16_t      net_action_count;
     uint16_t      peer_action_seen[8];
     uint32_t      vehicles_applied_tick;
+    uint32_t      game_applied_tick;
     double        vsnap_time;
     hta_net_vehicle vfrom[HTA_VEHICLE_MAX], vto[HTA_VEHICLE_MAX];
     bool          vhave[HTA_VEHICLE_MAX];
@@ -2636,9 +2637,8 @@ static void match_take(hta_android *s)
     s->respawn_delay = m.respawn < HTA_RESPAWN_MIN ? HTA_RESPAWN_MIN : (float)m.respawn;
     s->vehicle_roster = m.vehicles >= 0 && m.vehicles < HTA_VROSTER_COUNT ? m.vehicles
                                                                            : HTA_VROSTER_ALL;
-    /* Team games and CTF are solo for now: the LAN snapshot does not carry
-     * teams or flags yet. */
-    s->game_mode = m.mode == 0 && m.gametype > 0 && m.gametype < HTA_MODE_COUNT
+    /* A host chooses the game; a joiner learns it from the host's GAME. */
+    s->game_mode = m.mode != 2 && m.gametype > 0 && m.gametype < HTA_MODE_COUNT
                  ? m.gametype : HTA_MODE_SLAYER;
     uint16_t port = (uint16_t)(m.port > 0 && m.port < 65536 ? m.port : 32270);
     if (m.mode == 1) {
@@ -3141,7 +3141,7 @@ static void net_host_peers(hta_android *s, double now)
         if (unit<0) {
             char name[HTA_GAME_NAME];
             snprintf(name,sizeof(name),"Player %u",p->player.id);
-            unit=hta_game_add(&s->game,HTA_UNIT_REMOTE,name,0);
+            unit=hta_game_add(&s->game,HTA_UNIT_REMOTE,name,HTA_TEAM_AUTO);
             if (unit<0) continue;
             s->peer_unit[i]=(int8_t)unit;
             hta_game_spawn(&s->game,unit);
@@ -3180,6 +3180,9 @@ static void net_host_peers(hta_android *s, double now)
         }
         if (s->peer_pickup_seen[i]!=c->pickup_count) {
             s->peer_pickup_seen[i]=c->pickup_count; in->pickup=true;
+            /* A joiner puts the flag down with SWAP, which it sends as a
+             * pickup: its gun slot does not change while it carries. */
+            if (u->flag>=0) in->swap=true;
         }
     }
 }
@@ -3247,6 +3250,7 @@ static void net_host_world(hta_android *s)
         if (u->fired) e->flags|=HTA_NET_ENTITY_FIRE;
         if (u->meleed) e->flags|=HTA_NET_ENTITY_MELEE;
         if (u->threw) e->flags|=HTA_NET_ENTITY_GRENADE;
+        if (s->game.teams && u->team==HTA_TEAM_BLUE) e->flags|=HTA_NET_ENTITY_BLUE;
         const hta_game_weapon *held=hta_game_held(&s->game,(int32_t)i);
         e->weapon=held ? (uint8_t)(held-s->game.weapons) : 255;
         for (int k=0;k<3;k++) e->pos[k]=u->body.pos[k];
@@ -3344,6 +3348,32 @@ static void net_host_world(hta_android *s)
         drops.count++;
     }
     hta_net_server_drops(&s->host_server,&drops);
+    /* The rules beside WORLD: mode, scores, both flags, every hull. */
+    static hta_net_game gm;
+    memset(&gm,0,sizeof(gm));
+    gm.mode=(uint8_t)(s->game.mode<HTA_MODE_COUNT ? s->game.mode : 0);
+    gm.score_limit=(uint8_t)(s->game.score_limit>255 ? 255 : s->game.score_limit<0 ? 0 : s->game.score_limit);
+    for (int t=0;t<2;t++) {
+        int sc=s->game.team_score[t];
+        gm.team_score[t]=(int16_t)(sc>32767 ? 32767 : sc<-32767 ? -32767 : sc);
+        const hta_game_flag *f=&s->game.flags[t];
+        gm.flag[t].present=f->present ? 1 : 0;
+        gm.flag[t].state=f->state<=HTA_FLAG_DROPPED ? f->state : HTA_FLAG_HOME;
+        gm.flag[t].carrier=f->state==HTA_FLAG_CARRIED && f->carrier>=0 &&
+            f->carrier<(int32_t)HTA_NET_MAX_ENTITIES ? (uint8_t)f->carrier : 255;
+        for (int k=0;k<3;k++) {
+            float v=f->pos[k];
+            gm.flag[t].pos[k]=v>327.0f ? 327.0f : v<-327.0f ? -327.0f : v;
+        }
+        gm.flag[t].yaw=f->yaw;
+    }
+    gm.winner_team=s->game.over && s->game.winner_team>=0 ? (uint8_t)s->game.winner_team : 255;
+    for (uint32_t i=0;i<s->vehicles.count && i<HTA_NET_MAX_VEHICLES;i++) {
+        float h=hta_game_hull(&s->game,(int32_t)i);
+        gm.hull[i]=!s->vehicles.cars[i].active ? 0 :
+                   (uint8_t)(h*254.0f+1.0f>255.0f ? 255.0f : h*254.0f+1.0f);
+    }
+    hta_net_server_game(&s->host_server,&gm);
 }
 
 /* The host's vehicles, as of its last snapshot and eased between them,
@@ -3507,6 +3537,7 @@ static void net_client_world(hta_android *s)
         u->since_shot=u->fired ? 0.0f : u->since_shot+0.05f;
         u->meleed=(e->flags&HTA_NET_ENTITY_MELEE)!=0;
         u->threw=(e->flags&HTA_NET_ENTITY_GRENADE)!=0;
+        u->team=(e->flags&HTA_NET_ENTITY_BLUE)!=0 ? HTA_TEAM_BLUE : HTA_TEAM_RED;
         u->body.on_ground=(e->flags&HTA_NET_ENTITY_GROUNDED)!=0;
         u->body.crouch_t=(e->flags&HTA_NET_ENTITY_CROUCH)!=0 ? 1.0f : 0.0f;
         u->slot=0;
@@ -3578,7 +3609,18 @@ static void net_client_world(hta_android *s)
             s->game.units[i].kind=HTA_UNIT_NONE;
             s->game.units[i].alive=false;
         }
-    if (s->game.over && !was_over) {
+    if (s->game.over && !was_over && s->game.teams && s->me>=0) {
+        int mine=s->game.units[s->me].team;
+        char buf[96];
+        uint32_t tx=s->game.winner_team<0 ? 55 : s->game.winner_team==mine ? 58 : 56;
+        const char *fb=s->game.winner_team<0 ? "Game ends in a draw" :
+                       s->game.winner_team==mine ? "Your team won" : "Your team lost";
+        if (!hta_ustr_get(&s->cache,s->game.text_tag,tx,buf,sizeof(buf)))
+            snprintf(buf,sizeof(buf),"%s",fb);
+        snprintf(s->banner,sizeof(s->banner),"%s",buf);
+        s->banner_age=0.0f;
+        if (s->line_snd[HTA_LINE_GAME_OVER]) play_tag(s,s->line_snd[HTA_LINE_GAME_OVER],1.0f);
+    } else if (s->game.over && !was_over) {
         const char *winner="Nobody";
         if (s->game.winner>=0 && s->game.winner<(int32_t)s->game.unit_count)
             winner=s->game.units[s->game.winner].name;
@@ -3674,6 +3716,30 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
     if (!s->net_hosting) net_client_world(s);
     if (!s->net_hosting) net_client_projectiles(s);
     if (!s->net_hosting) net_client_vehicles(s,now);
+    if (!s->net_hosting && s->game_on && s->net.have_game &&
+        s->net.last_game_tick!=s->game_applied_tick) {
+        s->game_applied_tick=s->net.last_game_tick;
+        const hta_net_game *gm=&s->net.game;
+        hta_game_flag_state fl[2];
+        for (int t=0;t<2;t++) {
+            fl[t].present=gm->flag[t].present!=0;
+            fl[t].state=gm->flag[t].state;
+            fl[t].carrier=gm->flag[t].carrier==255 ? -1 : gm->flag[t].carrier;
+            for (int k=0;k<3;k++) fl[t].pos[k]=gm->flag[t].pos[k];
+            fl[t].yaw=gm->flag[t].yaw;
+        }
+        int sc[2]={gm->team_score[0],gm->team_score[1]};
+        hta_game_mode mode=(hta_game_mode)(gm->mode<HTA_MODE_COUNT ? gm->mode : 0);
+        if (mode!=s->game.mode) hta_log("[net] the host plays mode %d",(int)mode);
+        hta_game_mirror_rules(&s->game,mode,gm->score_limit,sc,
+                              gm->winner_team==255 ? -1 : gm->winner_team,fl);
+        s->game_mode=(int)s->game.mode;
+        /* Hulls as the host has them, for our HULL readout and sparks. */
+        for (uint32_t i=0;i<s->vehicles.count && i<HTA_NET_MAX_VEHICLES;i++) {
+            s->game.vgun[i].hull_max=1.0f;
+            s->game.vgun[i].hull=gm->hull[i] ? (float)(gm->hull[i]-1)/254.0f : 0.0f;
+        }
+    }
     if (!s->net_hosting && s->game_on && s->net.have_drops) {
         memset(s->game.drops,0,sizeof(s->game.drops));
         for (uint8_t i=0;i<s->net.drops.count && i<HTA_GAME_MAX_DROPS;i++) {
@@ -4319,7 +4385,10 @@ void android_main(struct android_app *app)
             }
             state.carried_flag = fl;
             if (fl >= 0) {
-                if (state.hud_swap && !state.dead) hta_game_drop_flag(&state.game, state.me);
+                if (state.hud_swap && !state.dead) {
+                    if (state.net_enabled && !state.net_hosting) state.net_pickup_count++;
+                    else hta_game_drop_flag(&state.game, state.me);
+                }
                 state.hud_swap = state.hud_zoom = false;
                 state.hud_reload = state.hud_grenade = false;
                 in.fire = false;
@@ -5380,7 +5449,7 @@ void android_main(struct android_app *app)
         hta_shake_update(&state.shake, dt);
         /* A hull on its last third throws sparks, faster as it goes. */
         if (state.game_on && state.spark_recipe != HTA_PART_NO_RECIPE &&
-            state.game.simulate_vehicles && state.vehicles.loaded) {
+            state.vehicles.loaded) {
             state.spark_clock += dt;
             if (state.spark_clock >= 0.12f) {
                 state.spark_clock = 0.0f;
@@ -5534,7 +5603,7 @@ void android_main(struct android_app *app)
                                (gun->chamber[0] > 0.0f || gun->chamber[1] > 0.0f);
                 float hull = hta_game_hull(&state.game, state.my_car);
                 char hulls[16] = "";
-                if (hull < 0.995f && (!state.net_enabled || state.net_hosting))
+                if (hull < 0.995f)
                     snprintf(hulls, sizeof(hulls), "  HULL %d%%", (int)(hull * 100.0f + 0.5f));
                 snprintf(g_ammo_text, sizeof(g_ammo_text), "%.0f km/h%s%s", kmh,
                          loading ? "  LOADING" : "", hulls);

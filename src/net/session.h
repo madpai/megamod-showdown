@@ -42,6 +42,7 @@ typedef struct {
     uint32_t last_projectile_tick;
     uint32_t last_vehicle_tick;
     uint32_t last_drop_tick;
+    uint32_t last_game_tick;
     uint32_t map_crc;
     /* What DISCOVER is told. max_players also caps who HELLO lets in;
      * hta_net_server_open sets it to HTA_NET_MAX_PLAYERS. */
@@ -89,6 +90,9 @@ typedef struct {
     hta_net_drops drops;
     bool have_drops;
     uint32_t last_drop_tick;
+    hta_net_game game;
+    bool have_game;
+    uint32_t last_game_tick;
 } hta_net_client;
 
 bool hta_net_server_open(hta_net_server *s, uint16_t port);
@@ -103,6 +107,7 @@ bool hta_net_server_fx(hta_net_server *s, const hta_net_fx *fx);
 bool hta_net_server_projectiles(hta_net_server *s, const hta_net_projectiles *projectiles);
 bool hta_net_server_vehicles(hta_net_server *s, const hta_net_vehicles *vehicles);
 bool hta_net_server_drops(hta_net_server *s, const hta_net_drops *drops);
+bool hta_net_server_game(hta_net_server *s, const hta_net_game *game);
 
 bool hta_net_scan_open(hta_net_scan *s);
 void hta_net_scan_close(hta_net_scan *s);

@@ -522,6 +522,52 @@ int main(int argc, char **argv)
           "a game that ends, ends at three");
     hta_game_free(&f);
 
+    printf("\n[a client mirrors the host's rules]\n");
+    ok = hta_game_load(&f, &c, NULL, &col, err, sizeof(err));
+    {
+        /* A joining phone: its own player (blue) and the host's two others,
+         * as WORLD would give them; the rules come as GAME. */
+        int32_t me = hta_game_add(&f, HTA_UNIT_LOCAL, "Me", HTA_TEAM_BLUE);
+        int32_t foe = hta_game_add(&f, HTA_UNIT_REMOTE, "Foe", HTA_TEAM_RED);
+        int32_t pal = hta_game_add(&f, HTA_UNIT_REMOTE, "Pal", HTA_TEAM_BLUE);
+        f.local = me;
+        f.units[foe].team = 0; f.units[pal].team = 1; f.units[me].team = 1;
+        hta_game_flag_state fl[2];
+        memset(fl, 0, sizeof(fl));
+        for (int t = 0; t < 2; t++) {
+            fl[t].present = true; fl[t].state = HTA_FLAG_HOME; fl[t].carrier = -1;
+            memcpy(fl[t].pos, f.flags[t].home, sizeof(fl[t].pos));
+        }
+        int sc[2] = { 0, 0 };
+        hta_game_mirror_rules(&f, HTA_MODE_CTF, 3, sc, -1, fl);
+        CHECK(f.mode == HTA_MODE_CTF && f.teams && f.score_limit == 3, "the host's CTF becomes ours");
+        while (hta_game_pop(&f, &e)) {}
+        fl[1].state = HTA_FLAG_CARRIED; fl[1].carrier = foe;
+        hta_game_mirror_rules(&f, HTA_MODE_CTF, 3, sc, -1, fl);
+        bool took = false; char said[96] = "";
+        while (hta_game_pop(&f, &e))
+            if (e.kind == HTA_EV_FLAG && e.pool == HTA_FLAG_TAKEN) { took = true; snprintf(said, sizeof(said), "%s", e.text); }
+        printf("  taken: \"%s\"\n", said);
+        CHECK(took && f.units[foe].flag == 1 && strstr(said, "enemy"),
+              "the enemy taking our flag is announced in our words");
+        fl[1].state = HTA_FLAG_HOME; fl[1].carrier = -1; sc[0] = 1;
+        hta_game_mirror_rules(&f, HTA_MODE_CTF, 3, sc, -1, fl);
+        bool scored = false;
+        while (hta_game_pop(&f, &e))
+            if (e.kind == HTA_EV_FLAG && e.pool == HTA_FLAG_CAPTURE && e.a == foe) scored = true;
+        CHECK(scored && f.units[foe].flag < 0 && f.team_score[0] == 1,
+              "home again with red's score up: a capture, and his hands are empty");
+        fl[0].state = HTA_FLAG_DROPPED; fl[0].carrier = -1; fl[0].pos[0] += 5;
+        hta_game_mirror_rules(&f, HTA_MODE_CTF, 3, sc, -1, fl);
+        fl[0].state = HTA_FLAG_HOME; memcpy(fl[0].pos, f.flags[0].home, sizeof(fl[0].pos));
+        hta_game_mirror_rules(&f, HTA_MODE_CTF, 3, sc, -1, fl);
+        bool returned = false;
+        while (hta_game_pop(&f, &e))
+            if (e.kind == HTA_EV_FLAG && e.pool == HTA_FLAG_RETURN) returned = true;
+        CHECK(returned, "home with no score change: returned");
+    }
+    hta_game_free(&f);
+
     hta_game_free(&g);
     hta_pickups_free(&items);
     hta_nav_free(&nav);

@@ -490,6 +490,20 @@ void hta_game_hurt_car_jpt(hta_game *g, int32_t car, int32_t attacker, uint32_t 
 /* 0..1 of the hull left; 1 for a car nobody has shot. */
 float hta_game_hull(const hta_game *g, int32_t car);
 
+/* ---- A client's copy of the host's rules ---------------------------- */
+typedef struct {
+    bool     present;
+    uint8_t  state;           /* hta_flag_state */
+    int32_t  carrier;         /* unit, or -1 */
+    float    pos[3], yaw;
+} hta_game_flag_state;
+/* Take the host's mode, limits, team scores and flags. Whatever changed in
+ * a flag is announced here, in THIS device's words ("The enemy has your
+ * flag"), as the host would have announced it to its own player. */
+void hta_game_mirror_rules(hta_game *g, hta_game_mode mode, int score_limit,
+                           const int team_score[2], int32_t winner_team,
+                           const hta_game_flag_state flags[2]);
+
 /* ---- Aim ------------------------------------------------------------ */
 /* The enemy `unit`'s crosshair is on, or near enough for the weapon's own
  * autoaim (Weapon +996 angle, +1000 range): the red reticle, and where an

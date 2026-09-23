@@ -1695,6 +1695,47 @@ static void flag_event(hta_game *g, int32_t unit, int team, hta_flag_event what)
     emit(g, &e);
 }
 
+void hta_game_mirror_rules(hta_game *g, hta_game_mode mode, int score_limit,
+                           const int team_score[2], int32_t winner_team,
+                           const hta_game_flag_state flags[2])
+{
+    if (!g || !team_score || !flags) return;
+    if (g->mode != mode) hta_game_set_mode(g, mode);
+    g->score_limit = score_limit;
+    for (int t = 0; t < 2; t++) {
+        hta_game_flag *f = &g->flags[t];
+        const hta_game_flag_state *n = &flags[t];
+        int32_t was = f->state == HTA_FLAG_CARRIED ? f->carrier : HTA_GAME_NONE;
+        int32_t now = n->state == HTA_FLAG_CARRIED ? n->carrier : HTA_GAME_NONE;
+        if (now >= (int32_t)g->unit_count) now = HTA_GAME_NONE;
+        if (g->mode == HTA_MODE_CTF && (f->state != n->state || was != now)) {
+            if (n->state == HTA_FLAG_CARRIED && now >= 0)
+                flag_event(g, now, t, HTA_FLAG_TAKEN);
+            else if (f->state == HTA_FLAG_CARRIED && n->state == HTA_FLAG_DROPPED)
+                flag_event(g, was, t, HTA_FLAG_DROP);
+            else if (f->state != HTA_FLAG_HOME && n->state == HTA_FLAG_HOME) {
+                /* Home again: scored (the other side's count went up) or
+                 * returned. */
+                int other = t ^ 1;
+                if (team_score[other] > g->team_score[other] && was >= 0)
+                    flag_event(g, was, t, HTA_FLAG_CAPTURE);
+                else flag_event(g, -1, t, HTA_FLAG_RETURN);
+            }
+        }
+        if (was >= 0 && was < (int32_t)g->unit_count && g->units[was].flag == t)
+            g->units[was].flag = -1;
+        if (now >= 0) g->units[now].flag = (int8_t)t;
+        f->state = n->state;
+        f->carrier = now;
+        for (int k = 0; k < 3; k++) f->pos[k] = n->pos[k];
+        f->yaw = n->yaw;
+        f->rest = n->state != HTA_FLAG_CARRIED;
+    }
+    g->team_score[0] = team_score[0];
+    g->team_score[1] = team_score[1];
+    g->winner_team = winner_team;
+}
+
 static void flag_home(hta_game *g, int team)
 {
     hta_game_flag *f = &g->flags[team & 1];

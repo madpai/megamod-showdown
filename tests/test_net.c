@@ -113,7 +113,7 @@ static void world_codec(void)
         .health=75,.shield=25,.score=3,.kills=4,.deaths=1};
     snprintf(a.entities[0].name,sizeof(a.entities[0].name),"Host");
     a.entities[1]=(hta_net_entity){.id=1,.kind=HTA_NET_ENTITY_BOT,
-        .flags=HTA_NET_ENTITY_ALIVE,.weapon=0,.health=60,.shield=75};
+        .flags=HTA_NET_ENTITY_ALIVE|HTA_NET_ENTITY_BLUE,.weapon=0,.health=60,.shield=75};
     snprintf(a.entities[1].name,sizeof(a.entities[1].name),"Bot");
     uint8_t payload[HTA_NET_MAX_PACKET]; size_t n=0;
     assert(hta_net_world_pack(payload,sizeof(payload),&a,&n));
@@ -121,6 +121,7 @@ static void world_codec(void)
     assert(hta_net_world_unpack(payload,n,&b));
     assert(b.round==3 && b.entities[0].score==3 && b.entities[0].health==75 &&
            !strcmp(b.entities[1].name,"Bot"));
+    assert((b.entities[1].flags&HTA_NET_ENTITY_BLUE) && !(b.entities[0].flags&HTA_NET_ENTITY_BLUE));
     assert(!hta_net_world_unpack(payload,n-1,&b));
     payload[HTA_NET_WORLD_HEADER+1]=9;
     assert(!hta_net_world_unpack(payload,n,&b));
@@ -260,6 +261,28 @@ static void sessions(void)
            fabsf(b.drops.drop[31].pos[0]-31)<0.01f && fabsf(b.drops.drop[5].yaw-3.0f)<0.001f);
     drops.drop[0].weapon=HTA_NET_MAX_WEAPONS;
     assert(!hta_net_server_drops(&s,&drops));
+    /* v4: the rules ride beside WORLD -- CTF with blue's flag in unit 3's
+     * hands, red's lying in the field, and a wrecked car. */
+    static hta_net_game gm;
+    memset(&gm,0,sizeof(gm));
+    gm.mode=2; gm.score_limit=3; gm.team_score[0]=2; gm.team_score[1]=-1; gm.winner_team=255;
+    gm.flag[0].present=1; gm.flag[0].state=HTA_NET_FLAG_DROPPED; gm.flag[0].carrier=255;
+    gm.flag[0].pos[0]=-12.5f; gm.flag[0].pos[2]=0.75f; gm.flag[0].yaw=-2.0f;
+    gm.flag[1].present=1; gm.flag[1].state=HTA_NET_FLAG_CARRIED; gm.flag[1].carrier=3;
+    for (unsigned i=0;i<HTA_NET_MAX_VEHICLES;i++) gm.hull[i]=255;
+    gm.hull[4]=0; gm.hull[5]=100;
+    assert(hta_net_server_game(&s,&gm));
+    assert(!hta_net_server_game(&s,&gm)); /* once per server tick */
+    hta_net_client_pump(&b,2.3058);
+    assert(b.have_game && b.game.mode==2 && b.game.team_score[0]==2 && b.game.team_score[1]==-1 &&
+           b.game.flag[0].state==HTA_NET_FLAG_DROPPED && fabsf(b.game.flag[0].pos[0]+12.5f)<0.01f &&
+           fabsf(b.game.flag[0].yaw+2.0f)<0.001f && b.game.flag[1].carrier==3 &&
+           b.game.hull[4]==0 && b.game.hull[5]==100 && b.game.hull[6]==255);
+    { uint8_t buf[HTA_NET_GAME_BYTES]; hta_net_game bad=gm; bad.flag[1].carrier=HTA_NET_MAX_ENTITIES;
+      assert(!hta_net_game_pack(buf,sizeof(buf),&bad));
+      bad=gm; bad.mode=7; assert(!hta_net_game_pack(buf,sizeof(buf),&bad));
+      assert(hta_net_game_pack(buf,sizeof(buf),&gm)); buf[8]=0xFF;
+      hta_net_game back; assert(!hta_net_game_unpack(buf,sizeof(buf),&back)); }
     hta_net_fx fx={.kind=HTA_NET_FX_FIRE,.entity=0,.weapon=1};
     assert(hta_net_server_fx(&s,&fx));
     hta_net_client_pump(&b,2.306);
