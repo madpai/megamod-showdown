@@ -4,22 +4,29 @@
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-23, evening (matches on imported maps:
-de_dust2 in the personal APK, a MAP row in SINGLEPLAYER and CREATE GAME)
+**Date of this revision:** 2026-09-23, end of day (imported maps playable:
+de_dust2 matches on the phone; props, spawn and bot fixes)
 **Repo:** `/home/commander/projects/halo-trial-android`
-**Branch / HEAD:** `fp-animated-guns`, tracking `origin/main` on GitHub.
-Last published build: bots-drive build (see `git log -1`), verify.sh
-75/75, on the sideload page, archived in `apks/INDEX` on the backup drive,
-pushed to GitHub `main`. No device report on it, nor on the playtest-fixes
-build before it. Network protocol is now **v5** (the LAN answer names the
-host's map; a v4 build cannot join).
+**Branches -- read this first:**
+- `halo-sandbox` (**local only, never push**): everything about imported
+  maps -- the owner's separate "Halo Garry's Mod" idea built on Open Halo.
+  HEAD `bd20c08` + docs. Last published (personal APK on the sideload
+  page, backed up): `bd20c08`, verify.sh 78/78. LAN protocol here is
+  **v5**; it cannot join `main` builds (v4).
+- `fp-animated-guns` -> GitHub `main`: **strictly Halo**. The owner said
+  imported-map work must not ship there. Codex's explorer commit
+  `2189479` is already on `main`; the owner has not said whether to
+  revert it -- ask. When returning to Halo work, `git switch
+  fp-animated-guns` (this HANDOFF on that branch predates the sandbox).
 
 **Start of next session, in order:**
-1. `ls -lt scratch/uploads/ | head` -- screenshots from this build? The
-   owner's reports decide what comes first.
-2. Otherwise NEXT ENGINEERING OBJECTIVES, top down.
-3. After any published build: it is already backed up; push to GitHub
-   (the owner wants it kept current; check for Trial data first).
+1. `git branch --show-current` -- be on the right branch for the task.
+2. `ls -lt scratch/uploads/ | head` -- screenshots from the latest build.
+3. Sandbox: the owner wants to **try another map**. Read Asset Lab's
+   `docs/MAP_IMPORT_PLAYBOOK.md` (`~/projects/open-asset-lab`) -- the
+   whole pipeline, every bug de_dust2 hit, and a dry run of all stock
+   CS:S maps. Best next: **de_dust**. Then the IMPORTED MAPS section here.
+4. Halo: NEXT ENGINEERING OBJECTIVES, top down; push only Halo work.
 
 ---
 

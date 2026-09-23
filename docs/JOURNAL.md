@@ -9,6 +9,33 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+
+## 2026-09-23 (evening) -- de_dust2 becomes a playable map (branch halo-sandbox)
+
+Owner's direction: matches on imported maps, chosen from a MAP row, the
+map bundled in the personal APK -- and, stated mid-session, **none of it
+on GitHub `main`**: it is a separate Halo-Garry's-Mod idea. Everything is
+on the local branch `halo-sandbox`.
+
+What it took, in the order the phone found it (details and the checklist
+for the next map: Asset Lab `docs/MAP_IMPORT_PLAYBOOK.md`):
+- Terrain ribbons/holes: Asset Lab built displacement grids transposed.
+- Match mode: `load_world_package` swaps the BSP for the package; tags,
+  sky, weapons still Blood Gulch's. Items spread by farthest-point over
+  the nav grid, flags at team-start centroids, protocol v5 names the map.
+- Bots idle: nav's biggest region was the rooftops -> region of the starts.
+  Bots under an unreachable item -> give-up timers.
+- Launch crash: `getAssets()` in `ShellMenu`'s constructor (a field
+  initializer, before the Activity has a context).
+- Sky through windows: static props were never imported -> MDL/VVD/VTX
+  reader in Asset Lab; `SOLID_NONE` props flagged non-colliding.
+- 3.5x tick after props: failed A* (one-way drops) retried every frame;
+  now once a second per goal node. Found with a gprof build, not guessed.
+- Respawn on roofs: 8 wu snap-to-ground found roofs for 22 of 40 starts.
+
+Owner's verdict on the phone: "Works amazing" at ~120 fps, before the
+roof-spawn fix (which is published, not yet confirmed on device).
+
 ## Vehicle-aware paths, and most jams were not jams (2026-09-23, midday)
 
 No device report, so objective 2: drivers jammed about every 15 s. The
