@@ -604,6 +604,11 @@ are how much of a hit a player actually takes.
 
 ## Traps that have already cost a session
 
+- **`GameActivity.ShellMenu` is a field initializer**: its constructor runs
+  before the activity has a context. Anything touching `getAssets()`,
+  files or resources there crashes every launch (build f4dfcb5). Do it
+  lazily, as `findMaps()` does from `open()`.
+
 Each of these bit once and is now defended by a test. Search `JOURNAL.md` for
 the full story.
 
