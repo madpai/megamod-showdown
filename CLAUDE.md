@@ -27,7 +27,11 @@ a session, and every invented constant. Read it before starting work.
   `/home/commander/halo-trial-data/extract/maps/`.
 - Project code is **GPLv3**.
 - Git author: **`Phase2 <schultz0@proton.me>`**.
-- **Do not push unless asked.**
+- **Do not push unless asked.** The backup remote is `origin`,
+  https://github.com/madpai/open-halo-project (PUBLIC). Local
+  `fp-animated-guns` goes to its `main`: `git push origin fp-animated-guns:main`.
+  Before any push, confirm no Trial data is in history:
+  `git rev-list --all --objects | grep -iE '\.(map|wav|ogg)$'` must print nothing.
 
 ## The loop
 
