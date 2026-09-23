@@ -722,6 +722,11 @@ second (verify.sh is still the real gate).
 ./build-host/htamatch $HTA_MAP --bots 6 --seconds 20 --shots 4 --back -0.9
 ./build-host/htamenu  $(dirname $HTA_MAP)/ui.map --select 1
 
+# how bots drive: 5 minutes headless, live vehicles, every entry/exit/wreck
+# logged. The baseline to beat (bc71493): team, 8 bots -> 26 kills, ~90 jams,
+# 48 entries. Count jams by adding a printf at `b->reversing = true` in drive().
+./build-host/htamatch $HTA_MAP --bots 8 --mode team --seconds 300 --shots 0 --vehicles
+
 # tags and sounds
 ./build-host/htainfo  $HTA_MAP
 ./build-host/htasound $HTA_MAP --dump <tag>
