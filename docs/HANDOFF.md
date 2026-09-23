@@ -15,14 +15,22 @@ de_dust2 matches on the phone; props, spawn and bot fixes)
   **v5**; it cannot join `main` builds (v4).
 - `fp-animated-guns` -> GitHub `main`: **strictly Halo**. The owner said
   imported-map work must not ship there. Codex's explorer commit
-  `2189479` is already on `main`; the owner has not said whether to
-  revert it -- ask. When returning to Halo work, `git switch
-  fp-animated-guns` (this HANDOFF on that branch predates the sandbox).
+  `2189479` was reverted on `main` (`4979acb`, 2026-09-23, verify 76/76);
+  the host-side OALMAP loader and `open-halo-map-test` (50c21e8) stay
+  there because Asset Lab validates packages with them. When returning
+  to Halo work, `git switch fp-animated-guns` (its HANDOFF predates the
+  sandbox).
+- **Planned:** the sandbox becomes its own repository (the owner's
+  "Garry's Mod-style" Open Halo with custom content; name not chosen).
+  Not created yet -- ask for the name and public/private before making
+  it. It should carry `halo-sandbox`'s history, and never any Trial,
+  Valve or converted map data.
 
 **Start of next session, in order:**
 1. `git branch --show-current` -- be on the right branch for the task.
 2. `ls -lt scratch/uploads/ | head` -- screenshots from the latest build.
-3. Sandbox: the owner wants to **try another map**. Read Asset Lab's
+3. Sandbox: the owner still has to confirm the **roof-spawn fix**
+   (`bd20c08`) on the phone. Then they want to **try another map**. Read Asset Lab's
    `docs/MAP_IMPORT_PLAYBOOK.md` (`~/projects/open-asset-lab`) -- the
    whole pipeline, every bug de_dust2 hit, and a dry run of all stock
    CS:S maps. Best next: **de_dust**. Then the IMPORTED MAPS section here.
