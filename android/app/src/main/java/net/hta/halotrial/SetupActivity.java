@@ -38,6 +38,7 @@ public class SetupActivity extends Activity {
     private static final int REQ_PICK_MAP = 1;
     private static final int REQ_PICK_BITM = 2;
     private static final int REQ_PICK_SND = 3;
+    private static final int REQ_PICK_UI = 4;
 
     private TextView status;
     private TextView lanAddress;
@@ -66,6 +67,8 @@ public class SetupActivity extends Activity {
         pickBm.setOnClickListener(v -> pickFile(REQ_PICK_BITM));
         Button pickSnd = btn("Pick sounds.map (audio)", 0xFF2B6CF6);
         pickSnd.setOnClickListener(v -> pickFile(REQ_PICK_SND));
+        Button pickUi = btn("Pick ui.map (main menu)", 0xFF2B6CF6);
+        pickUi.setOnClickListener(v -> pickFile(REQ_PICK_UI));
 
         android.content.SharedPreferences prefs = getSharedPreferences("hta", MODE_PRIVATE);
         bots = Math.max(0, Math.min(7, prefs.getInt("bots", 3)));
@@ -98,10 +101,11 @@ public class SetupActivity extends Activity {
         root.addView(space(12));
         root.addView(tv(
                 "This app does not bundle any Halo files.\n"
-                        + "Pick bloodgulch.map, then bitmaps.map (79 MB) and "
-                        + "sounds.map (76 MB), from the same Trial maps folder. "
-                        + "Without bitmaps.map the world stays untextured; "
-                        + "without sounds.map it stays silent.",
+                        + "Pick bloodgulch.map, then bitmaps.map (79 MB), "
+                        + "sounds.map (76 MB) and ui.map, from the same Trial maps "
+                        + "folder. Without bitmaps.map the world stays untextured; "
+                        + "without sounds.map it stays silent; without ui.map there "
+                        + "is no main menu.",
                 15, 0xFF94A0B4, false));
         root.addView(space(24));
         root.addView(pick);
@@ -109,6 +113,8 @@ public class SetupActivity extends Activity {
         root.addView(pickBm);
         root.addView(space(10));
         root.addView(pickSnd);
+        root.addView(space(10));
+        root.addView(pickUi);
         root.addView(space(10));
         root.addView(botsButton);
         root.addView(space(6));
@@ -174,6 +180,8 @@ public class SetupActivity extends Activity {
             msg += snd != null
                     ? " Audio: sounds.map (" + (snd.length() / 1024 / 1024) + " MB)."
                     : " No sounds.map — silent.";
+            msg += new File(destDir(), "ui.map").length() > 0
+                    ? " Menu: ui.map." : " No ui.map — no main menu.";
             if (bitm != null && snd != null) msg += " Tap Play.";
             status.setText(msg);
         } else {
@@ -263,13 +271,14 @@ public class SetupActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQ_PICK_MAP && requestCode != REQ_PICK_BITM
-                && requestCode != REQ_PICK_SND) return;
+                && requestCode != REQ_PICK_SND && requestCode != REQ_PICK_UI) return;
         if (resultCode != RESULT_OK || data == null || data.getData() == null) {
             status.setText("Pick cancelled.");
             return;
         }
         String name = (requestCode == REQ_PICK_BITM) ? "bitmaps.map"
                     : (requestCode == REQ_PICK_SND)  ? "sounds.map"
+                    : (requestCode == REQ_PICK_UI)   ? "ui.map"
                     : "bloodgulch.map";
         Uri uri = data.getData();
         File dest = new File(destDir(), name);

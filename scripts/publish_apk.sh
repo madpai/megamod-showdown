@@ -127,3 +127,7 @@ fi
 
 echo "published $SIZE  ->  http://$BIND:$PORT/"
 echo "  $TITLE (build $COMMIT)"
+
+# And onto the owner's backup drive: the project, the Trial data and this
+# build's APKs. Skipped (not failed) when the drive is not mounted.
+scripts/backup_local.sh --title "$TITLE" || echo "backup failed; the publish itself is fine" >&2
