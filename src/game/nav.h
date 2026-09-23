@@ -31,6 +31,9 @@
 #define HTA_NAV_MAX_LAYERS 6u
 #define HTA_NAV_NONE 0xFFFFFFFFu
 
+/* Clearance is counted this far and no further. */
+#define HTA_NAV_CLEAR_MAX 8u
+
 /* Node flags. */
 #define HTA_NAV_NEAR_WALL 0x01u   /* the wall push touched it; costs more */
 
@@ -40,6 +43,8 @@ typedef struct {
     uint16_t cx, cy;
     uint8_t  flags;
     uint8_t  region;     /* connected component, 0 for unreachable islands */
+    uint8_t  clear;      /* cells to the nearest place a car cannot go, up to
+                          * HTA_NAV_CLEAR_MAX: see hta_nav_car_clear */
 } hta_nav_node;
 
 typedef struct {
@@ -108,6 +113,27 @@ bool hta_nav_straight(const hta_nav *n, uint32_t a, uint32_t b);
 
 /* Pull a grid path taut: keep only the corners. Returns the new length. */
 uint32_t hta_nav_smooth(const hta_nav *n, uint32_t *path, uint32_t len);
+
+/* ---- For cars. ----
+ * The grid is a biped's: it runs a body width from walls, up the steps of
+ * the bases and over hillsides a vehicle's physics refuses. Every node also
+ * carries `clear`, how many cells lie between it and the nearest node that
+ * is not open ground for a car (hugging a wall, or at the edge of the grid,
+ * or with a neighbour steeper than HTA_VEHICLE_MAX_SLOPE). A car of a given
+ * radius keeps to nodes with at least hta_nav_car_clear(radius). */
+uint8_t hta_nav_car_clear(float radius);
+
+/* The walkers' calls again, restricted to nodes with `clear` >= `clear`
+ * (0 is the walkers' own). A path also pays for running near its limit, so
+ * it keeps to the middle of the open ground it has, and may cross
+ * narrower ground only near its two ends -- dearly -- to get a car out
+ * from between the posts it was parked among. */
+uint32_t hta_nav_nearest_wide(const hta_nav *n, const float at[3], float reach, uint8_t clear);
+uint32_t hta_nav_path_wide(hta_nav *n, uint32_t from, uint32_t to,
+                           uint32_t *out, uint32_t max, uint32_t budget, uint8_t clear);
+bool     hta_nav_straight_wide(const hta_nav *n, uint32_t a, uint32_t b, uint8_t clear);
+uint32_t hta_nav_smooth_wide(const hta_nav *n, uint32_t *path, uint32_t len, uint8_t clear);
+uint32_t hta_nav_random_wide(const hta_nav *n, uint32_t *rng, uint8_t clear);
 
 /* Keep a built grid on disk: building it is seconds on a phone, reading it
  * back is milliseconds. `key` should change whenever the map or the

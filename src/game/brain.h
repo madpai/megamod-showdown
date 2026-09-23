@@ -40,6 +40,8 @@ typedef struct {
     float    strafe, strafe_timer;
     float    grenade_timer;
     float    stuck_timer, last_pos[3];
+    float    last_blocked;    /* the car's `blocked` when the second began */
+    int16_t  jam_car;         /* the car last_blocked was read from */
     float    wander_yaw;
 
     /* Vehicles. */

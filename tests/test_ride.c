@@ -654,7 +654,45 @@ int main(int argc, char **argv)
             CHECK(fires >= 1 && detonations >= 1, "a bot in the Scorpion turns the cannon and fires");
             CHECK(kills == 1 || g.units[t].vitals.health + g.units[t].vitals.shield < was,
                   "and hits him");
+
+            /* Parked at home among the posts beside the base, nothing to
+             * shoot: it has to find its own way out. It used to turn on
+             * the spot into a post and sit there, the turn refused, for
+             * as long as the match lasted. */
+            put(t, 200, 200, 30, 0);
+            g.units[t].alive = false; g.units[t].respawn = 1e9f;
             hta_game_unseat(&g, drv);
+            static hta_nav nav;
+            hta_collision_set_slope(&col, g.phys.max_slope);   /* as the game builds it */
+            hta_nav_params prm = { g.phys.radius, g.phys.coll_stand, g.phys.max_slope, 1.0f };
+            /* Over the render BSP's bounds, as the game does: the collision
+             * mesh's reach up to a lid at z 50 that is no floor. */
+            static hta_bsp_mesh rm;
+            bool built = hta_bsp_load_first(&c, &rm, err, sizeof(err)) &&
+                         hta_nav_build(&nav, &col, rm.bounds_min, rm.bounds_max, &prm, err, sizeof(err));
+            CHECK(built, "a real nav grid, to drive by");
+            printf("  %s\n", err);
+            g.nav = &nav;
+            hta_vehicles_reset(&v, (uint32_t)tank);
+            v.cars[tank].active = true;
+            hta_vehicles_sync(&v);
+            hta_game_seat(&g, drv, tank, hta_vehicles_driver_seat(&v, (uint32_t)tank));
+            hta_brain_reset(&g.brains[drv]);
+            float held0 = v.cars[tank].blocked, away = 0.0f;
+            for (int i = 0; i < 60 * 20; i++) {
+                step(1.0f / 60.0f);
+                float d = hypotf(v.cars[tank].pos[0] - v.cars[tank].home_pos[0],
+                                 v.cars[tank].pos[1] - v.cars[tank].home_pos[1]);
+                if (d > away) away = d;
+            }
+            float held = v.cars[tank].blocked - held0;
+            printf("  from home: got %.0f wu away in 20 s, held %.1f s\n", away, held);
+            CHECK(away > 15.0f, "a bot drives the Scorpion out from where it parks");
+            CHECK(held < 5.0f, "without sitting against a post");
+            hta_game_unseat(&g, drv);
+            g.nav = NULL;
+            hta_nav_free(&nav);
+            hta_bsp_free(&rm);
         }
         g.units[drv].kind = HTA_UNIT_NONE; g.units[drv].alive = false;
         hta_game_set_mode(&g, HTA_MODE_SLAYER);

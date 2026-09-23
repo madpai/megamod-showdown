@@ -33,6 +33,8 @@ static const float AIM_SETTLE[4]   = { 0.8f, 1.2f, 1.8f, 2.6f };      /* /s */
 #define BOARD_OBJECTIVE 30.0f  /* wu: a flag this near is walked to */
 #define DRIVE_REACH    2.5f    /* wu: a path corner this close is passed */
 #define DRIVE_ARRIVE   6.0f    /* wu: a roam goal this close is reached */
+#define DRIVE_FROM     6.0f    /* wu a car looks round itself for open ground */
+#define DRIVE_TO      15.0f    /* wu round a goal it looks for open ground */
 #define DISMOUNT_NEAR 10.0f    /* wu from a flag: out and on foot */
 #define DISMOUNT_HULL  0.25f   /* hull fraction a bot bails out below */
 #define WAIT_GUNNER    3.0f    /* s a bot driver holds for a teammate on the gun */
@@ -40,7 +42,10 @@ static const float AIM_SETTLE[4]   = { 0.8f, 1.2f, 1.8f, 2.6f };      /* /s */
 #define GHOST_RANGE   12.0f    /* wu a Ghost closes to before it circles */
 #define ORBIT         14.0f    /* wu a Warthog circles at while its gunner works */
 #define STUCK_LIMIT    3u      /* jams in a row before a bot walks */
-#define JAM_SKIP      30.0f    /* s before a car it jammed is tried again */
+#define AVOID_AHEAD    8.0f    /* wu: a car nearer than this on the way is steered round */
+#define AVOID_GAP      0.8f    /* wu kept between the bodies passing it */
+#define JAM_HELD       0.3f    /* s of a second the physics refused a move: a jam */
+#define JAM_SKIP      (HTA_VEHICLE_RESPAWN + 5.0f)  /* s: a car it jammed stays left until it goes home */
 #define ROAM_MIN      30.0f    /* wu: a drive with nothing to do goes this far... */
 #define ROAM_MAX      70.0f    /* ...and no further, so the path search finds it */
 #define BEHIND         1.9f    /* rad: a goal this far round, a Warthog backs round */
@@ -72,7 +77,7 @@ void hta_brain_reset(hta_brain *b)
     b->grenade_timer = GRENADE_WAIT * 0.5f;
     b->stuck_timer = 0.0f;
     b->look_timer = 0.0f;
-    b->board = b->board_skip = -1;
+    b->board = b->board_skip = b->jam_car = -1;
     b->board_time = b->skip_time = 0.0f;
     b->dismount = b->reversing = b->roaming = false;
     b->reverse_timer = b->wait_gunner = 0.0f;
@@ -221,6 +226,35 @@ static void plan_field(hta_game *g, int32_t me, hta_brain *b, int stand)
     b->path_i = b->path_len > 1 ? 1 : 0;
 }
 
+/* Is the straight line from `a` to `b` open ground for a car? */
+static bool open_line(const hta_game *g, const float a[3], const float b[3], uint8_t clear)
+{
+    if (!g->nav || !g->nav->built) return true;
+    uint32_t na = hta_nav_nearest_wide(g->nav, a, 1.0f, clear);
+    uint32_t nb = hta_nav_nearest_wide(g->nav, b, 1.0f, clear);
+    if (na == HTA_NAV_NONE || nb == HTA_NAV_NONE) return false;
+    return hta_nav_straight_wide(g->nav, na, nb, clear);
+}
+
+/* At the wheel: a path over ground wide enough for this car, from where
+ * it is to the open ground nearest `to` -- a flag's stand indoors becomes
+ * the ground outside its door. */
+static void plan_drive(hta_game *g, int32_t me, hta_brain *b, const float to[3], uint8_t clear)
+{
+    b->path_len = b->path_i = 0;
+    if (!g->nav || !g->nav->built) return;
+    const float *here = g->vehicles->cars[g->units[me].vehicle].pos;
+    uint32_t from = hta_nav_nearest(g->nav, here, 1.5f);
+    if (from == HTA_NAV_NONE) from = hta_nav_nearest_wide(g->nav, here, DRIVE_FROM, clear);
+    uint32_t goal = hta_nav_nearest_wide(g->nav, to, DRIVE_TO, clear);
+    if (from == HTA_NAV_NONE || goal == HTA_NAV_NONE) return;
+    b->goal = goal;
+    uint32_t n = hta_nav_path_wide(g->nav, from, goal, b->path, HTA_BRAIN_PATH, PATH_BUDGET, clear);
+    if (!n) { b->goal = HTA_NAV_NONE; return; }
+    b->path_len = hta_nav_smooth_wide(g->nav, b->path, n, clear);
+    b->path_i = b->path_len > 1 ? 1 : 0;
+}
+
 /* The world direction the path wants, or false when there is no path. */
 static bool follow(hta_game *g, int32_t me, hta_brain *b, float out[2])
 {
@@ -350,6 +384,9 @@ static bool wheel_free(const hta_game *g, int32_t me, uint32_t car)
     for (uint32_t i = 0; i < g->unit_count; i++) {
         if ((int32_t)i == me || g->units[i].kind != HTA_UNIT_BOT || !g->units[i].alive) continue;
         if (g->brains[i].board == (int16_t)car) return false;
+        /* Somebody got out of it jammed: nobody takes it until it has gone
+         * home, which an empty car does after HTA_VEHICLE_RESPAWN. */
+        if (g->brains[i].board_skip == (int16_t)car && g->brains[i].skip_time > BOARD_SKIP) return false;
     }
     return true;
 }
@@ -510,6 +547,44 @@ static void steer_point(hta_game *g, int32_t me, hta_brain *b, const float goal[
     for (int k = 0; k < 3; k++) out[k] = goal[k];
 }
 
+/* Steer round another vehicle in the way: the grid is built without
+ * them, so a path runs straight through the cars parked at a base. The
+ * nearest car ahead, short of the goal and within reach of the bodies,
+ * is passed on its nearer side. A car the target sits in is rammed. */
+static void around_cars(const hta_game *g, uint32_t ci, int32_t target,
+                        float dx, float dy, float *out_x, float *out_y)
+{
+    *out_x = dx; *out_y = dy;
+    const hta_vehicles *v = g->vehicles;
+    const hta_vehicle *me = &v->cars[ci];
+    float dist = hypotf(dx, dy);
+    if (dist < 1e-3f) return;
+    float fx = dx / dist, fy = dy / dist;
+    int32_t block = -1;
+    float block_along = 0.0f, block_side = 0.0f, block_need = 0.0f;
+    for (uint32_t j = 0; j < v->count; j++) {
+        const hta_vehicle *o = &v->cars[j];
+        if (j == ci || !o->active) continue;
+        if (target >= 0 && g->units[target].vehicle == (int32_t)j) continue;
+        float rx = o->pos[0] - me->pos[0], ry = o->pos[1] - me->pos[1];
+        if (fabsf(o->pos[2] - me->pos[2]) > 3.0f) continue;
+        float along = rx * fx + ry * fy;
+        if (along <= 0.0f || along > AVOID_AHEAD || along > dist) continue;
+        float side = fx * ry - fy * rx;     /* > 0: it is to the left */
+        float need = me->body_radius + o->body_radius + AVOID_GAP;
+        if (fabsf(side) >= need) continue;
+        if (block < 0 || along < block_along) {
+            block = (int32_t)j; block_along = along; block_side = side; block_need = need;
+        }
+    }
+    if (block < 0) return;
+    /* A point beside it, away from the side it is on. */
+    float away = block_side > 0.0f ? -1.0f : 1.0f;
+    const hta_vehicle *o = &v->cars[block];
+    *out_x = o->pos[0] + (-fy) * away * block_need - me->pos[0];
+    *out_y = o->pos[1] + fx * away * block_need - me->pos[1];
+}
+
 /* At the wheel. Ours: a Warthog runs people down, or circles while a
  * gunner works; a Ghost closes and strafes; a Scorpion shells from range.
  * Anywhere else it drives the nav path to the flag, the last sighting, or
@@ -530,10 +605,10 @@ static void drive(struct hta_game *g, int32_t me, hta_brain *b, float dt)
     const hta_vehicle_seat *st = hta_vehicles_seat(v, ci, (uint32_t)u->seat);
     bool shoots = st && (st->flags & HTA_SEAT_GUNNER);
     b->board = -1;
+    const uint8_t clear = hta_nav_car_clear(v->types[car->type].coll_radius);
 
     float objective[3];
-    int stand = -1;
-    bool has_objective = hta_game_ctf_goal(g, me, objective, &stand);
+    bool has_objective = hta_game_ctf_goal(g, me, objective, NULL);
     if (!drivable(car->kind) || hta_game_hull(g, (int32_t)ci) < DISMOUNT_HULL ||
         b->stuck_count >= STUCK_LIMIT ||
         (has_objective && hypotf(objective[0] - u->body.pos[0],
@@ -600,40 +675,48 @@ static void drive(struct hta_game *g, int32_t me, hta_brain *b, float dt)
             for (int k = 0; k < 3; k++) goal[k] = at[k];
             hold = seen_dist < range;
         }
-        go = true;
-        b->path_len = 0;        /* straight at a fight */
         b->roaming = false;
-    } else {
+    }
+    {
         const float *to = NULL;
-        if (has_objective) to = objective;
+        float fight[3];
+        if (seen >= 0) {
+            for (int k = 0; k < 3; k++) fight[k] = goal[k];
+            to = fight;
+        } else if (has_objective) to = objective;
         else if (b->target >= 0 && b->seen_ago < THINK_LOST) to = b->seen_pos;
         else {
             if (!b->roaming || hypotf(b->roam[0] - here[0], b->roam[1] - here[1]) < DRIVE_ARRIVE) {
                 b->roaming = false;
                 if (g->nav && g->nav->built) {
                     for (int tries = 0; tries < 24 && !b->roaming; tries++) {
-                        uint32_t r = hta_nav_random(g->nav, &b->rng);
+                        uint32_t r = hta_nav_random_wide(g->nav, &b->rng, clear);
                         if (r == HTA_NAV_NONE) break;
                         hta_nav_pos(g->nav, r, b->roam);
                         /* Far enough to be going somewhere, near enough
                          * for the path search to find. */
                         float far = hypotf(b->roam[0] - here[0], b->roam[1] - here[1]);
-                        b->roaming = far > ROAM_MIN && far < ROAM_MAX &&
-                                     !(g->nav->nodes[r].flags & HTA_NAV_NEAR_WALL);
+                        b->roaming = far > ROAM_MIN && far < ROAM_MAX;
                     }
                     if (b->roaming) b->replan = 0.0f;
                 }
             }
             if (b->roaming) to = b->roam;
         }
-        if (to) {
+        /* Straight at a fight across open ground; round whatever is in
+         * the way. */
+        if (to == fight && open_line(g, here, fight, clear)) {
+            b->path_len = 0;
+            b->replan = 0.0f;       /* the moment it is not, a path */
+            go = true;
+        } else if (to) {
             float moved = hypotf(to[0] - b->goal_pos[0], to[1] - b->goal_pos[1]);
             b->replan -= dt;
-            if (b->replan <= 0.0f || moved > 3.0f || b->path_len == 0) {
-                if (stand >= 0 && to == objective && g->stand_field[stand]) plan_field(g, me, b, stand);
-                else plan_to(g, me, b, to);
+            if (b->replan <= 0.0f || moved > 3.0f) {
+                plan_drive(g, me, b, to, clear);
                 for (int k = 0; k < 3; k++) b->goal_pos[k] = to[k];
-                b->replan = REPLAN * 2.0f;
+                /* No way there: straight at it, and ask again soon. */
+                b->replan = b->path_len ? REPLAN * 2.0f : REPLAN * 0.3f;
             }
             float p[3];
             steer_point(g, me, b, to, p);
@@ -644,6 +727,7 @@ static void drive(struct hta_game *g, int32_t me, hta_brain *b, float dt)
 
     /* ---- the wheel ---- */
     float dx = goal[0] - here[0], dy = goal[1] - here[1];
+    if (go) around_cars(g, ci, seen, dx, dy, &dx, &dy);
     float heading = hypotf(dx, dy) > 1e-3f ? atan2f(dy, dx) : car->yaw;
     float err = wrap(heading - car->yaw);
     float gas = 0.0f, steer = 0.0f;
@@ -671,10 +755,19 @@ static void drive(struct hta_game *g, int32_t me, hta_brain *b, float dt)
     if (steer < -1.0f) steer = -1.0f;
 
     /* Jammed: back out, wheel the other way. */
+    if (b->jam_car != (int16_t)ci) {
+        b->jam_car = (int16_t)ci;
+        b->last_blocked = car->blocked;
+    }
     b->stuck_timer += dt;
     if (b->stuck_timer > 1.0f) {
         float moved = hypotf(here[0] - b->last_pos[0], here[1] - b->last_pos[1]);
-        if (!b->reversing && fabsf(gas) > 0.3f && moved < 0.5f) {
+        /* Held by the physics for a good part of it, not just slow: a car
+         * backing round, or still rolling back out of the last jam, moves
+         * little and is not stuck. A tank turning on the spot against a
+         * post is. */
+        bool held = car->blocked - b->last_blocked > JAM_HELD;
+        if (!b->reversing && (fabsf(gas) > 0.3f || fabsf(steer) > 0.3f) && moved < 0.5f && held) {
             b->reversing = true;
             b->reverse_timer = 1.2f;
             b->stuck_count++;
@@ -682,11 +775,20 @@ static void drive(struct hta_game *g, int32_t me, hta_brain *b, float dt)
             b->replan = 0.0f;
         } else if (moved > 3.0f) b->stuck_count = 0;
         b->stuck_timer = 0.0f;
+        b->last_blocked = car->blocked;
         for (int k = 0; k < 3; k++) b->last_pos[k] = here[k];
     }
     if (b->reversing) {
         b->reverse_timer -= dt;
-        if (b->reverse_timer <= 0.0f) b->reversing = false;
+        if (b->reverse_timer <= 0.0f) {
+            /* The next second is judged from here: one that began while
+             * backing out sees the car return to where it was and calls
+             * that a jam, which backs it out again, and again. */
+            b->reversing = false;
+            b->stuck_timer = 0.0f;
+            b->last_blocked = car->blocked;
+            for (int k = 0; k < 3; k++) b->last_pos[k] = here[k];
+        }
         /* Whichever way it was pushing, the other. */
         gas = gas < 0.0f ? 1.0f : -1.0f;
         steer = car->kind == HTA_VK_TANK ? steer : -steer;

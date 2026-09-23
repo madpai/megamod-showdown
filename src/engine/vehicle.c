@@ -1310,6 +1310,7 @@ void hta_vehicles_update(hta_vehicles *v,const hta_collision *world,float gravit
         if(blocked(v,i,car,&old,&terrain,&hit)) {
             hta_vehicle attempted=*car;
             *car=old;
+            if(driven)car->blocked+=h;
             car->steering=attempted.steering;
             car->speed=attempted.speed;
             memcpy(car->lateral_vel,attempted.lateral_vel,sizeof(car->lateral_vel));

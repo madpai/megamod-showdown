@@ -157,11 +157,27 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Bots-drive build** at `http://100.89.1.14:8731/`. Host-verified
-> (verify.sh 75/75, test_ride 86 checks); not yet on a phone. The
-> playtest-fixes list from the build before (tracers, explosions, red
-> reticle, hulls, momentum, LAN team games) is still unreported -- check it
-> in the same session.
+> **Vehicle-paths build** at `http://100.89.1.14:8731/`. Host-verified
+> (verify.sh 75/75, test_nav 30, test_ride 92); not yet on a phone. The
+> bots-drive and playtest-fixes lists below are still unreported too --
+> one SINGLEPLAYER TEAM SLAYER game with 7 bots covers most of it.
+>
+> **New in this build:**
+>
+> A. **Out of the base:** in the first 20 s, the Scorpions drive clear of
+>    the posts they park among (they used to sit turning into one all
+>    match), and Warthogs and Ghosts leaving a base steer round the cars
+>    still parked there instead of ramming them. Failure: a vehicle
+>    grinding against a post or another car for more than ~3 s.
+> B. **Open ground:** driven vehicles keep a car's width off walls and
+>    rocks and go round a base, not along its wall. They should rarely
+>    rock back and forth now. Report any that do, with the HUD position.
+> C. **Round, not through:** an enemy behind a rock or a base corner is
+>    driven round to; one in the open is still driven straight at.
+> D. **A stuck car is left alone** until it goes home (60 s empty):
+>    nobody climbs into a Warthog someone just abandoned on a rock.
+>
+> **From the bots-drive build (still unreported):**
 >
 > 1. **Bots take the wheel:** SINGLEPLAYER, TEAM SLAYER, 7 bots. Within a
 >    minute bots walk to the Warthogs, Ghosts and Scorpions near them and
@@ -304,17 +320,18 @@ the section below, and update it every time.
 Done 2026-09-23 morning: bots drive the Warthog, Ghost and Scorpion
 (`brain.c` `drive`, `board_offer`, `wheel_free`), crew each other's guns,
 and projectiles hit people along their path (`fly` in `game.c`).
-Remaining, in order:
+Done 2026-09-23 midday: vehicle-aware paths -- every nav node carries its
+clearance for cars, drivers plan over ground wide enough for their car,
+steer round other vehicles, and a jam is the physics refusing a move
+(team matches: 21% of wheel time blocked -> 10%). Remaining, in order:
 
-1. **Device feedback** on this build and the one before it (see CURRENT
+1. **Device feedback** on this build and the ones before it (see CURRENT
    TESTING OBJECTIVE).
-2. **Vehicle-aware paths.** In a 300 s bot match (`htamatch --vehicles`)
-   drivers jam about once every 15 s each: the nav grid is built for a
-   biped, so it offers hillsides the vehicle physics refuses and gaps a
-   Warthog cannot fit. They recover (back out, re-plan, walk after three),
-   but it looks clumsy. Options: a second grid built with the car's
-   `body_radius` and the vehicle's max slope (`HTA_VEHICLE_MAX_SLOPE`); or
-   A* cost on `HTA_NAV_NEAR_WALL` nodes for drivers only.
+2. **Driving in a fight.** Free-for-all barely moved (15.9% -> 15.1%
+   blocked): a car goes straight at an enemy whenever the line is open
+   ground, and chases hard into whatever he runs behind. The Ghosts'
+   scrapes against rocks are most of what is left. `scripts/drivebench.sh
+   ffa` measures it.
 3. **Banshee pilots.** `drivable()` leaves the Banshee to people. Flying
    needs no path, only height and a target.
 4. **CTF polish:** the cloth moving; carriers as passengers (check Halo PC
@@ -574,7 +591,24 @@ the full story.
   thread has exited (`onDestroy`); two `android_main`s would share the
   static state.
 - **The nav cache key** is map CRC + biped radius/height/slope. Change the
-  nav algorithm → bump `NAV_VERSION` in `nav.c`.
+  nav algorithm or `hta_nav_node` → bump `NAV_VERSION` in `nav.c` (3 since
+  car clearance).
+- **Build the nav grid over the RENDER BSP's bounds**, never the collision
+  mesh's: the collision reaches up to a lid at z 50, and a grid started
+  above it takes the lid's top for a floor -- twice the nodes, the map in
+  two regions, every car path "unreachable". `hta_nav_build` also drops
+  `col.instances` itself now (parked vehicles are not walls).
+- **A jam is the physics refusing a move, not slowness.** Bots compare
+  `hta_vehicle.blocked` across a second. Judged on distance alone, a car
+  still rolling back out of the last jam looked stuck again -- 90 "jams" a
+  match, most of them that loop -- while a tank turning on the spot into
+  a post (no gas, so never a jam) sat there all match. test_ride "from
+  home".
+- **A* needs its closed set.** Without it every re-pushed node was expanded
+  again: base to base took 64k expansions on foot and 100k+ for a car,
+  over the 60k budget, so cross-map drives had no path at all. Car
+  searches also overweight the heuristic (`NAV_CAR_GREED`). test_nav "for
+  cars" plans base to base inside the budget.
 - **A seated unit's `eye.pos` is the vehicle's chase camera** -- behind
   and above a Warthog, sometimes inside a hillside. Line of sight for a
   seated bot comes from its body (`eye_of` in `brain.c`); AIM angles stay
@@ -689,7 +723,13 @@ wrong, this list is the first place to look — they are all one constant.
 | | `DISMOUNT_NEAR` 10 wu, `DISMOUNT_HULL` 0.25 | gets out this near a flag, or with the hull below this |
 | | `WAIT_GUNNER` 3 s | a bot Warthog driver holds for a teammate bot to climb on the gun |
 | | `TANK_RANGE` 25 wu, `GHOST_RANGE` 12 wu, `ORBIT` 14 wu | the tank shells from range; the Ghost closes then strafes; a crewed Warthog circles |
-| | `STUCK_LIMIT` 3 jams, `JAM_SKIP` 30 s, `ROAM_MIN/MAX` 30/70 wu, `BEHIND` 1.9 rad | a jam backs out 1.2 s; three and it walks and leaves that car alone; roam goals the path search can reach; a goal behind a Warthog is backed round to |
+| | `STUCK_LIMIT` 3 jams, `JAM_SKIP` `HTA_VEHICLE_RESPAWN` + 5 s, `ROAM_MIN/MAX` 30/70 wu, `BEHIND` 1.9 rad | a jam backs out 1.2 s; three and it walks, and no bot takes that car until it has gone home; roam goals the path search can reach; a goal behind a Warthog is backed round to |
+| | `JAM_HELD` 0.3 s | a second in which the physics refused the car this long, with the stick or wheel pushed and under 0.5 wu moved, is a jam |
+| | `AVOID_AHEAD` 8 wu, `AVOID_GAP` 0.8 wu | another car on the line ahead this near is passed beside, bodies this far apart (the grid has no vehicles in it); an enemy's car is rammed |
+| | `DRIVE_FROM` 6 wu, `DRIVE_TO` 15 wu | how far round itself / its goal a car looks for open ground |
+| car clearance (`src/game/nav.c`) | `hta_nav_car_clear`: 0.8 x the collision radius, less 0.2 wu, in 0.35 wu cells | room a car keeps from walls: Warthog and Ghost 2 cells, Scorpion 5. A node is open ground when it is not near a wall and all 8 neighbours are there within `HTA_VEHICLE_MAX_SLOPE` |
+| | `NAV_ESCAPE` 10 wu | a car path may cross narrower ground only this near its ends, at 2 + the shortfall times the cost |
+| | room cost 1 + 0.5 per cell short of `clear + 2`; `NAV_CAR_GREED` 2 | car paths keep to the middle of what room there is; the search's distance-to-go counts double |
 | blast aim | the feet | bots aim anything that explodes at an on-foot target's feet, as people do |
 | shell tolerance | 0.03 rad + 0.3 wu | a single-shot cannon is laid this tight before a bot fires |
 
@@ -730,9 +770,14 @@ second (verify.sh is still the real gate).
 ./build-host/htamenu  $(dirname $HTA_MAP)/ui.map --select 1
 
 # how bots drive: 5 minutes headless, live vehicles, every entry/exit/wreck
-# logged. The baseline to beat (bc71493): team, 8 bots -> 26 kills, ~90 jams,
-# 48 entries. Count jams by adding a printf at `b->reversing = true` in drive().
-./build-host/htamatch $HTA_MAP --bots 8 --mode team --seconds 300 --shots 0 --vehicles
+# logged, and at the end "driving: N entries, S s at a wheel, B s blocked" --
+# blocked is time the vehicle physics refused a driven move. --seed N plays
+# another match of the same setup.
+./build-host/htamatch $HTA_MAP --bots 8 --mode team --seconds 300 --shots 0 --vehicles --seed 3
+# ...but one match is chaos. Judge driving changes on eight, side by side:
+scripts/drivebench.sh team        # or ctf / ffa
+# Baseline (vehicle-aware paths): team 10.1% blocked, ctf 9.5%, ffa 15.1%
+# (the commit before: 21.2 / 13.0 / 15.9).
 
 # tags and sounds
 ./build-host/htainfo  $HTA_MAP

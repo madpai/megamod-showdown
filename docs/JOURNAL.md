@@ -9,6 +9,68 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## Vehicle-aware paths, and most jams were not jams (2026-09-23, midday)
+
+No device report, so objective 2: drivers jammed about every 15 s. The
+first measurement undid the premise. Logging every "jam" with what the
+physics had actually done (a debug field set in `blocked()`) showed most
+had no contact at all in their second: after backing out for 1.2 s the
+car still rolls backwards (the momentum from the playtest build), the
+next one-second window sees it return to where it was, calls that a
+jam, and backs it out again. Meanwhile the worst real case never counted:
+a Scorpion at home, turning on the spot (gas 0, the waypoint behind it)
+into one of the posts beside the base, refused every step, all match --
+no gas, so no jam. The vehicle now keeps `blocked`, seconds a driven move
+was refused; a jam is a second the car was held at least 0.3 s with the
+stick or the wheel pushed.
+
+That gave a measure worth having: **share of wheel time blocked**, printed
+by `htamatch --vehicles`. One match is chaos (8 seeds ran 11-47%), so
+`--seed` and `scripts/drivebench.sh` average eight. Parked cars touching
+each other count as blocked too, so only driven time counts.
+
+What moved it, team Slayer, 8 matches:
+
+- the commit before: 21.2%
+- clearance paths + the new jam test: 16.5%
+- + steering round other cars (car-on-car was then the largest cause --
+  the grid has no vehicles in it, so paths run through the ones parked at
+  a base): 15.5%
+- + a blocked turn is a jam (the Scorpion at home): 9.8%
+
+**Clearance.** Every node carries `clear`: cells to the nearest node that
+is not open ground for a car (near a wall, or missing any of its eight
+links, or one steeper than `HTA_VEHICLE_MAX_SLOPE`), by relaxing from the
+neighbours until nothing changes. A car keeps to `clear >=
+hta_nav_car_clear(coll_radius)` -- Warthog and Ghost 2 cells, Scorpion 5
+-- pays extra for its last two cells of room, and may cross narrower
+ground only within 10 wu of either end (it has to get out from where it
+parked). Roam goals, the fight line check and smoothing all use the same
+width. Stored in the node's padding; `NAV_VERSION` 3.
+
+**The search was over budget.** CTF drivers had no path half the time:
+car searches from base to base ran past 100k expansions (walkers 64k)
+against a 60k budget. There was no closed set, so a node pushed twice was
+expanded twice; with it, and the car's distance-to-go counted double,
+base to base is 0.2-0.4 ms. Walkers' searches got cheaper too.
+
+**The test that lied about the map.** The new test_ride check (a bot drives
+the Scorpion out from home) found no path at all: its grid was built over
+the collision mesh's bounds, which reach a lid at z 50, and the grid took
+the lid's top for a floor -- 161k nodes instead of 75k, the map in two
+regions. Built over the render BSP's bounds, as the game does, it passes;
+on the old code it fails (4 wu in 20 s, 5.2 s held).
+
+Also: nobody boards a car another bot abandoned jammed until it has gone
+home (`JAM_SKIP` was per bot, so the next bot took the car off the rock
+and jammed it again); fights take a path when the straight line is not
+open ground; a failed plan retries in 0.45 s instead of every frame;
+`htamatch --shots 0` no longer writes a frame into the working directory.
+
+Results, 8 matches each, blocked share of wheel time: team 21.2 -> 10.1%,
+CTF 13.0 -> 9.5%, free-for-all 15.9 -> 15.1% (fights: straight at a man
+whenever the line is open, into whatever he runs behind).
+
 ## Dead under the Ghost (2026-09-23, late morning)
 
 The owner: "if I died and respawn and get in a ghost, it plays an

@@ -1,4 +1,5 @@
 #include "nav.h"
+#include "../engine/vehicle.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -17,6 +18,13 @@ static const int DIAG_B[8] = { -1, -1, -1, -1, 1, 2, 3, 0 };
 #define NAV_STEP 0.18f
 /* Rays at knee and chest height between neighbours. */
 #define NAV_KNEE 0.25f
+/* World units of path at either end a car may spend on ground too narrow
+ * for it: it has to get out from where it was parked. */
+#define NAV_ESCAPE 10.0f
+/* The search's stamp bit for a node already expanded. */
+#define NAV_CLOSED 0x80000000u
+/* How much a car's path search overweights the distance still to go. */
+#define NAV_CAR_GREED 2.0f
 
 void hta_nav_free(hta_nav *n)
 {
@@ -47,6 +55,56 @@ static uint32_t column(const hta_nav *n, int cx, int cy)
     return (uint32_t)cy * n->nx + (uint32_t)cx;
 }
 
+/* Is the link from a in direction d open ground for a car: there, and no
+ * steeper than a vehicle climbs. A car has no step: HTA_VEHICLE_MAX_SLOPE
+ * is the whole allowance, with a centimetre for the grid's own noise. */
+static bool car_link(const hta_nav *n, const hta_nav_node *a, int d)
+{
+    uint32_t j = a->link[d];
+    if (j == HTA_NAV_NONE) return false;
+    float dist = n->cell * (d >= 4 ? 1.41421356f : 1.0f);
+    return fabsf(n->nodes[j].z - a->z) <= dist * tanf(HTA_VEHICLE_MAX_SLOPE) + 0.01f;
+}
+
+/* `clear` for every node: 0 where a car cannot go on in every direction,
+ * else one more than the least of its neighbours, up to HTA_NAV_CLEAR_MAX.
+ * An open node has all eight links, so pulling from them until nothing
+ * changes needs no reverse index. */
+static void car_clearance(hta_nav *n)
+{
+    for (uint32_t i = 0; i < n->node_count; i++) {
+        hta_nav_node *a = &n->nodes[i];
+        bool open = !(a->flags & HTA_NAV_NEAR_WALL);
+        for (int d = 0; d < 8 && open; d++) open = car_link(n, a, d);
+        a->clear = open ? (uint8_t)HTA_NAV_CLEAR_MAX : 0u;
+    }
+    for (uint32_t pass = 0; pass < 4u * HTA_NAV_CLEAR_MAX; pass++) {
+        bool changed = false;
+        for (uint32_t i = 0; i < n->node_count; i++) {
+            hta_nav_node *a = &n->nodes[i];
+            if (!a->clear) continue;
+            uint32_t c = HTA_NAV_CLEAR_MAX;
+            for (int d = 0; d < 8; d++) {
+                uint32_t v = n->nodes[a->link[d]].clear + 1u;
+                if (v < c) c = v;
+            }
+            if (c != a->clear) { a->clear = (uint8_t)c; changed = true; }
+        }
+        if (!changed) break;
+    }
+}
+
+uint8_t hta_nav_car_clear(float radius)
+{
+    /* A node on the limit is itself about a biped radius off the wall; the
+     * car's centre wants its own radius, less that, in cells. The collision
+     * radius is a bounding sphere, longer than the car is wide: 0.8 of it. */
+    float c = ceilf((radius * 0.8f - 0.2f) / HTA_NAV_CELL);
+    if (c < 1.0f) c = 1.0f;
+    if (c > (float)HTA_NAV_CLEAR_MAX) c = (float)HTA_NAV_CLEAR_MAX;
+    return (uint8_t)c;
+}
+
 bool hta_nav_build(hta_nav *n, const hta_collision *col_in,
                    const float bmin[3], const float bmax[3],
                    const hta_nav_params *p, char *err, size_t errlen)
@@ -59,6 +117,8 @@ bool hta_nav_build(hta_nav *n, const hta_collision *col_in,
     /* Only the static world: a parked Warthog is not a wall forever. */
     hta_collision col = *col_in;
     col.extra = NULL;
+    col.instances = NULL;
+    col.instance_count = 0;
 
     n->cell = HTA_NAV_CELL;
     n->min[0] = bmin[0];
@@ -158,6 +218,8 @@ bool hta_nav_build(hta_nav *n, const hta_collision *col_in,
         }
     }
 
+    car_clearance(n);
+
     /* Regions: which nodes can reach which, links taken both ways. */
     uint32_t *stack = (uint32_t *)malloc((size_t)(n->node_count + 1u) * sizeof(uint32_t));
     uint32_t sizes[256];
@@ -234,6 +296,11 @@ void hta_nav_pos(const hta_nav *n, uint32_t node, float out[3])
 
 uint32_t hta_nav_nearest(const hta_nav *n, const float feet[3], float reach)
 {
+    return hta_nav_nearest_wide(n, feet, reach, 0);
+}
+
+uint32_t hta_nav_nearest_wide(const hta_nav *n, const float feet[3], float reach, uint8_t clear)
+{
     if (!n || !n->built) return HTA_NAV_NONE;
     int cx = (int)floorf((feet[0] - n->min[0]) / n->cell);
     int cy = (int)floorf((feet[1] - n->min[1]) / n->cell);
@@ -249,7 +316,7 @@ uint32_t hta_nav_nearest(const hta_nav *n, const float feet[3], float reach)
             if (ci == HTA_NAV_NONE) continue;
             for (uint32_t j = n->col_start[ci]; j < n->col_start[ci + 1u]; j++) {
                 const hta_nav_node *nd = &n->nodes[j];
-                if (!nd->region) continue;
+                if (!nd->region || nd->clear < clear) continue;
                 float dz = feet[2] - nd->z;
                 /* Standing on it, or a little above it in a jump; never a
                  * floor overhead. */
@@ -296,8 +363,25 @@ static uint32_t heap_pop(heap_t *h, uint32_t *arr)
     return top;
 }
 
+/* The cost of one step, as the search prices it: climbing is dear,
+ * dropping cheap, and hugging a wall dearer still. */
+static float step_cost(const hta_nav *n, const hta_nav_node *a, const hta_nav_node *b, int d)
+{
+    float step = n->cell * (d >= 4 ? 1.41421356f : 1.0f);
+    float dz = b->z - a->z;
+    float cost = step + (dz > 0.0f ? dz * 2.0f : -dz * 0.5f);
+    if (b->flags & HTA_NAV_NEAR_WALL) cost *= 1.6f;
+    return cost;
+}
+
 uint32_t hta_nav_path(hta_nav *n, uint32_t from, uint32_t to,
                       uint32_t *out, uint32_t max, uint32_t budget)
+{
+    return hta_nav_path_wide(n, from, to, out, max, budget, 0);
+}
+
+uint32_t hta_nav_path_wide(hta_nav *n, uint32_t from, uint32_t to,
+                           uint32_t *out, uint32_t max, uint32_t budget, uint8_t clear)
 {
     if (!n || !n->built || from >= n->node_count || to >= n->node_count || !max)
         return 0;
@@ -305,7 +389,12 @@ uint32_t hta_nav_path(hta_nav *n, uint32_t from, uint32_t to,
     if (from == to) { out[0] = from; return 1; }
 
     float *fbuf = n->f;
-    if (++n->generation == 0u) {
+    /* A car's steps cost a good deal more than their length (room, climb),
+     * so a plain distance-to-go leaves the search flooding half the map.
+     * Overweighting it finds a path near enough to the best, in a fraction
+     * of the expansions. */
+    const float greed = clear ? NAV_CAR_GREED : 1.0f;
+    if (++n->generation >= NAV_CLOSED) {
         memset(n->stamp, 0, (size_t)n->node_count * sizeof(uint32_t));
         n->generation = 1u;
     }
@@ -328,17 +417,31 @@ uint32_t hta_nav_path(hta_nav *n, uint32_t from, uint32_t to,
     while (h.size) {
         uint32_t cur = heap_pop(&h, n->heap);
         if (cur == to) { found = true; break; }
+        /* A node pushed again with a better cost is popped more than once;
+         * only the first counts. */
+        if (n->stamp[cur] == (gen | NAV_CLOSED)) continue;
+        n->stamp[cur] = gen | NAV_CLOSED;
         if (++expanded > budget) break;
         const hta_nav_node *a = &n->nodes[cur];
         for (int d = 0; d < 8; d++) {
             uint32_t nb = a->link[d];
             if (nb == HTA_NAV_NONE) continue;
             const hta_nav_node *b = &n->nodes[nb];
-            float step = n->cell * (d >= 4 ? 1.41421356f : 1.0f);
-            float dz = b->z - a->z;
-            float cost = step + (dz > 0.0f ? dz * 2.0f : -dz * 0.5f);
-            if (b->flags & HTA_NAV_NEAR_WALL) cost *= 1.6f;
+            float cost = step_cost(n, a, b, d);
+            if (b->clear < clear) {
+                /* Too narrow: only on the way out from where the car is
+                 * or in to where it is going, dearly. */
+                float p[3];
+                hta_nav_pos(n, nb, p);
+                float hx = p[0]-goal[0], hy = p[1]-goal[1];
+                if (n->g[cur] > NAV_ESCAPE && hx*hx + hy*hy > NAV_ESCAPE * NAV_ESCAPE) continue;
+                cost *= 2.0f + (float)(clear - b->clear);
+            } else if (clear && b->clear < clear + 2u) {
+                /* A car pays for its last two cells of room. */
+                cost *= 1.0f + 0.5f * (float)(clear + 2u - b->clear);
+            }
             float ng = n->g[cur] + cost;
+            if (n->stamp[nb] == (gen | NAV_CLOSED)) continue;
             if (n->stamp[nb] == gen && ng >= n->g[nb]) continue;
             n->stamp[nb] = gen;
             n->g[nb] = ng;
@@ -346,7 +449,7 @@ uint32_t hta_nav_path(hta_nav *n, uint32_t from, uint32_t to,
             float p[3];
             hta_nav_pos(n, nb, p);
             float hx = p[0]-goal[0], hy = p[1]-goal[1], hz = p[2]-goal[2];
-            fbuf[nb] = ng + sqrtf(hx*hx + hy*hy + hz*hz);
+            fbuf[nb] = ng + sqrtf(hx*hx + hy*hy + hz*hz) * greed;
             if (h.size < n->node_count) heap_push(&h, n->heap, nb);
         }
     }
@@ -362,23 +465,12 @@ uint32_t hta_nav_path(hta_nav *n, uint32_t from, uint32_t to,
     return w;
 }
 
-/* The cost of one step, as the search prices it: climbing is dear,
- * dropping cheap, and hugging a wall dearer still. */
-static float step_cost(const hta_nav *n, const hta_nav_node *a, const hta_nav_node *b, int d)
-{
-    float step = n->cell * (d >= 4 ? 1.41421356f : 1.0f);
-    float dz = b->z - a->z;
-    float cost = step + (dz > 0.0f ? dz * 2.0f : -dz * 0.5f);
-    if (b->flags & HTA_NAV_NEAR_WALL) cost *= 1.6f;
-    return cost;
-}
-
 uint32_t hta_nav_field(hta_nav *n, uint32_t goal, uint32_t *next)
 {
     if (!n || !n->built || !next) return 0;
     for (uint32_t i = 0; i < n->node_count; i++) next[i] = HTA_NAV_NONE;
     if (goal >= n->node_count) return 0;
-    if (++n->generation == 0u) {
+    if (++n->generation >= NAV_CLOSED) {
         memset(n->stamp, 0, (size_t)n->node_count * sizeof(uint32_t));
         n->generation = 1u;
     }
@@ -431,7 +523,7 @@ uint32_t hta_nav_field_path(const hta_nav *n, const uint32_t *next, uint32_t fro
     return len;
 }
 
-bool hta_nav_straight(const hta_nav *n, uint32_t a, uint32_t b)
+static bool straight(const hta_nav *n, uint32_t a, uint32_t b, uint8_t clear)
 {
     if (!n || !n->built) return false;
     float pa[3], pb[3];
@@ -452,7 +544,7 @@ bool hta_nav_straight(const hta_nav *n, uint32_t a, uint32_t b)
         bool ok = false;
         for (uint32_t j = n->col_start[ci]; j < n->col_start[ci + 1u]; j++) {
             const hta_nav_node *nd = &n->nodes[j];
-            if (nd->flags & HTA_NAV_NEAR_WALL) continue;
+            if ((nd->flags & HTA_NAV_NEAR_WALL) || nd->clear < clear) continue;
             if (fabsf(nd->z - z) <= 0.22f) { z = nd->z; ok = true; break; }
         }
         if (!ok) return false;
@@ -460,7 +552,22 @@ bool hta_nav_straight(const hta_nav *n, uint32_t a, uint32_t b)
     return fabsf(z - pb[2]) <= 0.25f;
 }
 
+bool hta_nav_straight(const hta_nav *n, uint32_t a, uint32_t b)
+{
+    return straight(n, a, b, 0);
+}
+
+bool hta_nav_straight_wide(const hta_nav *n, uint32_t a, uint32_t b, uint8_t clear)
+{
+    return straight(n, a, b, clear);
+}
+
 uint32_t hta_nav_smooth(const hta_nav *n, uint32_t *path, uint32_t len)
+{
+    return hta_nav_smooth_wide(n, path, len, 0);
+}
+
+uint32_t hta_nav_smooth_wide(const hta_nav *n, uint32_t *path, uint32_t len, uint8_t clear)
 {
     if (len <= 2) return len;
     uint32_t w = 1, anchor = 0;
@@ -469,7 +576,7 @@ uint32_t hta_nav_smooth(const hta_nav *n, uint32_t *path, uint32_t len)
         /* Reach as far ahead as a straight walk allows. */
         uint32_t far = i;
         for (uint32_t k = i + 1u; k < len && k < i + 40u; k++)
-            if (hta_nav_straight(n, path[anchor], path[k])) far = k;
+            if (straight(n, path[anchor], path[k], clear)) far = k;
         path[w++] = path[far];
         anchor = far;
         i = far + 1u;
@@ -480,18 +587,23 @@ uint32_t hta_nav_smooth(const hta_nav *n, uint32_t *path, uint32_t len)
 
 uint32_t hta_nav_random(const hta_nav *n, uint32_t *rng)
 {
+    return hta_nav_random_wide(n, rng, 0);
+}
+
+uint32_t hta_nav_random_wide(const hta_nav *n, uint32_t *rng, uint8_t clear)
+{
     if (!n || !n->built || !n->node_count) return HTA_NAV_NONE;
     for (int tries = 0; tries < 64; tries++) {
         *rng = *rng * 1664525u + 1013904223u;
         uint32_t i = (*rng >> 8) % n->node_count;
         if (n->nodes[i].region == n->main_region &&
-            !(n->nodes[i].flags & HTA_NAV_NEAR_WALL)) return i;
+            !(n->nodes[i].flags & HTA_NAV_NEAR_WALL) && n->nodes[i].clear >= clear) return i;
     }
     return HTA_NAV_NONE;
 }
 
 #define NAV_MAGIC   0x4E415648u   /* "HVAN" */
-#define NAV_VERSION 2u  /* 2: built without the vehicles */
+#define NAV_VERSION 3u  /* 2: built without the vehicles; 3: car clearance */
 
 typedef struct {
     uint32_t magic, version, key, node_size;

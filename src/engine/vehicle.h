@@ -190,6 +190,9 @@ typedef struct {
     float sway[2], sway_vel[2]; /* suspension pitch and roll, and their rates */
     float tumble[2];            /* pitch and roll rates while thrown in the air */
     float idle;                 /* seconds empty and away from home */
+    float blocked;              /* seconds, ever, a driven move was refused: a
+                                 * driver compares it across a second to tell
+                                 * a jam from a slow turn */
     hta_vehicle_control ctl;
     int8_t occupant[HTA_VEHICLE_SEATS];   /* unit index, -1 empty */
     hta_vehicle_point points[HTA_VEHICLE_MASS_POINTS];

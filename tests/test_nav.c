@@ -168,6 +168,71 @@ int main(int argc, char **argv)
     CHECK(end < 1.0f, "a biped on the Trial's physics walks it end to end");
     CHECK(t < 120.0f, "at running pace, not by wandering");
 
+    printf("\n[for cars]\n");
+    {
+        /* Clearance: none on a node hugging a wall, and never more than
+         * one past the least of its neighbours. */
+        uint32_t wide = 0, bad = 0;
+        for (uint32_t i = 0; i < nav.node_count; i++) {
+            const hta_nav_node *nd = &nav.nodes[i];
+            if ((nd->flags & HTA_NAV_NEAR_WALL) && nd->clear) bad++;
+            if (nd->clear >= 2u) wide++;
+            for (int d = 0; d < 8 && nd->clear; d++) {
+                uint32_t j = nd->link[d];
+                if (j == HTA_NAV_NONE || nav.nodes[j].clear + 1u < nd->clear) { bad++; break; }
+            }
+        }
+        printf("  %u of %u nodes have room for a Warthog\n", wide, nav.node_count);
+        CHECK(bad == 0, "clearance falls off one cell at a time toward every wall and edge");
+        CHECK(wide > nav.node_count / 2u, "most of Blood Gulch is open ground");
+        uint8_t hog = hta_nav_car_clear(1.12f), tank = hta_nav_car_clear(2.05f);
+        printf("  a Warthog wants %u cells of room, a Scorpion %u\n", hog, tank);
+        CHECK(hog >= 1u && tank > hog && tank <= HTA_NAV_CLEAR_MAX, "a bigger car wants more room");
+
+        /* Base to base, inside the budget a bot plans with. */
+        static uint32_t wp[4096];
+        for (int k = 0; k < 2; k++) {
+            uint8_t cl = k ? tank : hog;
+            uint32_t ca = hta_nav_nearest_wide(&nav, a, 15.0f, cl);
+            uint32_t cb = hta_nav_nearest_wide(&nav, b, 15.0f, cl);
+            t0 = now_s();
+            uint32_t wl = ca != HTA_NAV_NONE && cb != HTA_NAV_NONE
+                        ? hta_nav_path_wide(&nav, ca, cb, wp, 4096, 60000u, cl) : 0;
+            double ms = (now_s() - t0) * 1000.0;
+            /* Narrow ground only on the way out of a base and in to the
+             * other: the path's first and last 10 wu. */
+            uint32_t narrow = 0, stray = 0;
+            float pa[3], pb[3], pq[3];
+            if (wl) { hta_nav_pos(&nav, wp[0], pa); hta_nav_pos(&nav, wp[wl - 1u], pb); }
+            for (uint32_t q = 0; q < wl; q++) {
+                if (nav.nodes[wp[q]].clear >= cl) continue;
+                narrow++;
+                hta_nav_pos(&nav, wp[q], pq);
+                if (hypotf(pq[0] - pa[0], pq[1] - pa[1]) > 12.0f &&
+                    hypotf(pq[0] - pb[0], pq[1] - pb[1]) > 12.0f) stray++;
+            }
+            printf("  %s: %u grid steps in %.1f ms, %u too narrow near its ends, %u elsewhere\n",
+                   k ? "Scorpion" : "Warthog", wl, ms, narrow - stray, stray);
+            CHECK(wl > 20u, k ? "a Scorpion's path from one base to the other, inside the bots' budget"
+                              : "a Warthog's path from one base to the other, inside the bots' budget");
+            CHECK(wl && stray == 0, "on open ground between the bases");
+            /* Every leg of the taut path is open ground for it, or one
+             * grid step the search itself took. */
+            uint32_t ws = hta_nav_smooth_wide(&nav, wp, wl, cl);
+            bool straight = true;
+            for (uint32_t q = 1; q < ws; q++) {
+                const hta_nav_node *p0 = &nav.nodes[wp[q - 1u]], *p1 = &nav.nodes[wp[q]];
+                bool step = abs((int)p0->cx - (int)p1->cx) <= 1 && abs((int)p0->cy - (int)p1->cy) <= 1;
+                if (!step && !hta_nav_straight_wide(&nav, wp[q - 1u], wp[q], cl)) straight = false;
+            }
+            printf("  %u legs pulled taut\n", ws - 1u);
+            CHECK(ws > 1u && ws < wl / 4u && straight, "pulled taut without cutting across a corner too narrow for it");
+        }
+        uint32_t rng2 = 11;
+        uint32_t rr = hta_nav_random_wide(&nav, &rng2, tank);
+        CHECK(rr != HTA_NAV_NONE && nav.nodes[rr].clear >= tank, "somewhere to roam has room for a tank");
+    }
+
     printf("\n[kept on disk]\n");
     {
         const char *tmp = "test_nav_cache.bin";
@@ -178,6 +243,10 @@ int main(int argc, char **argv)
         printf("  read back in %.1f ms\n", (now_s() - t0) * 1000.0);
         CHECK(loaded && back.node_count == nav.node_count && back.main_region == nav.main_region,
               "and reads back the same");
+        bool same_room = loaded;
+        for (uint32_t i = 0; same_room && i < nav.node_count; i++)
+            same_room = back.nodes[i].clear == nav.nodes[i].clear;
+        CHECK(same_room, "room for cars included");
         static uint32_t p2[4096];
         CHECK(loaded && hta_nav_path(&back, na, nb, p2, 4096, 200000) == len,
               "and plans the same path");

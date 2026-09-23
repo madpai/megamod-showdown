@@ -4,12 +4,14 @@
  *
  *   htamatch <bloodgulch.map> [--bots N] [--skill 0-3] [--seconds S] [--mode ffa|team|ctf]
  *            [--shots N] [--every S] [--follow UNIT] [--out prefix]
- *            [--width W] [--height H] [--vehicles]
+ *            [--width W] [--height H] [--vehicles] [--seed N]
  *
  * Simulates S seconds, then keeps simulating and takes a frame every
  * `--every` seconds from a camera behind and above the followed unit.
  * `--vehicles` makes the map's vehicles live for the bots to take; every
- * getting in, getting out and wreck is printed.
+ * getting in, getting out and wreck is printed, and at the end how long
+ * bots drove and how much of it their cars spent blocked. `--seed` plays
+ * a different match of the same setup; judge a change on several.
  */
 #include "asset/cache.h"
 #include "asset/bsp.h"
@@ -50,11 +52,13 @@ int main(int argc, char **argv)
     if (argc < 2) {
         fprintf(stderr, "usage: htamatch <bloodgulch.map> [--bots N] [--skill 0-3] "
                         "[--seconds S] [--shots N] [--every S] [--follow UNIT] "
-                        "[--out prefix] [--width W] [--height H]\n");
+                        "[--out prefix] [--width W] [--height H] [--mode ffa|team|ctf] "
+                        "[--vehicles] [--seed N]\n");
         return 2;
     }
     int bots = 4, skill = 2, shots = 3, follow = 0, ride = -1;
     bool vehicles = false;
+    uint32_t seed = 0;
     hta_game_mode mode = HTA_MODE_SLAYER;
     float seconds = 20.0f, every = 0.5f, back = 1.6f;
     uint32_t W = 800, H = 450;
@@ -70,6 +74,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--back") && i + 1 < argc) back = strtof(argv[++i], NULL);
         else if (!strcmp(argv[i], "--ride") && i + 1 < argc) ride = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--vehicles")) vehicles = true;
+        else if (!strcmp(argv[i], "--seed") && i + 1 < argc) seed = (uint32_t)strtoul(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--mode") && i + 1 < argc) {
             const char *m = argv[++i];
             mode = !strcmp(m, "ctf") ? HTA_MODE_CTF : !strcmp(m, "team") ? HTA_MODE_TEAM_SLAYER
@@ -130,6 +135,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "game: %s\n", err); return 1;
     }
     printf("game           %s\n", err);
+    game.rng ^= seed * 0x9E3779B9u;
     hta_collision_set_slope(&col, game.phys.max_slope);
     double t0 = hta_time_seconds();
     hta_nav_params prm = { game.phys.radius, game.phys.coll_stand, game.phys.max_slope, 1.0f };
@@ -210,8 +216,8 @@ int main(int argc, char **argv)
     uint8_t *rgba = malloc((size_t)W * H * 4u);
     const float dt = 1.0f / 30.0f;
     float t = 0.0f, next_shot = seconds;
-    int taken = 0, kills = 0;
-    double sim_time = 0.0;
+    int taken = 0, kills = 0, entries = 0;
+    double sim_time = 0.0, driven = 0.0;
     uint32_t items_upload = 8;
     while (taken < shots || (shots == 0 && t < seconds)) {
         double s0 = hta_time_seconds();
@@ -223,6 +229,10 @@ int main(int argc, char **argv)
         }
         hta_game_update(&game, dt);
         hta_game_view_update(&view, &game, -1, dt);
+        for (uint32_t c = 0; vehicles && c < veh.count; c++) {
+            int32_t ds = hta_vehicles_driver_seat(&veh, c);
+            if (veh.cars[c].active && ds >= 0 && veh.cars[c].occupant[ds] >= 0) driven += dt;
+        }
         sim_time += hta_time_seconds() - s0;
         t += dt;
         hta_game_event e;
@@ -236,6 +246,7 @@ int main(int argc, char **argv)
                 hta_contrails_tracer(&trails, wtrail[e.weapon], e.pos, end, 300.0f);
             }
             if (e.kind == HTA_EV_ANNOUNCE && e.line != HTA_LINE_NONE) printf("  %6.1f  [%s]\n", t, e.text);
+            if (vehicles && e.kind == HTA_EV_ENTER && e.b >= 0) entries++;
             if (vehicles && (e.kind == HTA_EV_ENTER || e.kind == HTA_EV_EXIT) && e.b >= 0)
                 printf("  %6.1f  %s %s %s seat %d at %.0f,%.0f\n", t, game.units[e.a].name,
                        e.kind == HTA_EV_ENTER ? "into" : "out of",
@@ -251,7 +262,7 @@ int main(int argc, char **argv)
         }
         hta_contrails_update(&trails, &cam, dt);
         if (hta_pickups_dirty(&items)) { hta_pickups_pose(&items); items_upload = 8; }
-        if (t < next_shot) continue;
+        if (shots == 0 || t < next_shot) continue;
         next_shot += every;
 
         /* Behind and above the followed unit, looking where it looks. */
@@ -402,6 +413,15 @@ int main(int argc, char **argv)
     }
     printf("simulated      %.1f s, %d kills, %.3f ms per tick\n", t, kills,
            sim_time * 1000.0 / (t / dt));
+    if (vehicles) {
+        /* How well bots drive: seconds at a wheel, and of those, how many
+         * the physics spent refusing a move -- into a wall, a rock or
+         * another car. */
+        double held = 0.0;
+        for (uint32_t c = 0; c < veh.count; c++) held += veh.cars[c].blocked;
+        printf("driving        %d entries, %.0f s at a wheel, %.1f s blocked (%.1f%%)\n",
+               entries, driven, held, driven > 0.0 ? 100.0 * held / driven : 0.0);
+    }
     int32_t order[HTA_GAME_MAX_UNITS];
     uint32_t ns = hta_game_standings(&game, order, HTA_GAME_MAX_UNITS);
     for (uint32_t i = 0; i < ns; i++)
