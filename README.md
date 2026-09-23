@@ -63,7 +63,7 @@ says so in a public ledger of invented constants.
 | | |
 |---|---|
 | 🎮 **Game types** | Slayer, Team Slayer and Capture the Flag against 0–7 bots, with the Trial's announcer ("Red team has the flag!") |
-| 🚙 **Vehicles** | Warthog (driver, gunner, passenger), Scorpion, Ghost, Banshee: every seat and every gun; destructible hulls, momentum, blasts that throw them; bots drive the Warthog, Ghost and Scorpion and crew each other's guns |
+| 🚙 **Vehicles** | Warthog (driver, gunner, passenger), Scorpion, Ghost, Banshee: every seat and every gun; destructible hulls, momentum, blasts that throw them; bots drive the Warthog, Ghost and Scorpion on paths wide enough for each, steer round parked cars, and crew each other's guns |
 | 🔫 **Weapons** | Nine weapons (assault rifle, pistol, shotgun, sniper, rocket launcher, flamethrower, plasma rifle, plasma pistol, needler) with their first-person models, animations, sounds, HUD and tracers; grenades; powerups; dropped guns |
 | 🤖 **Bots** | They walk a navigation grid built from the map's collision, pick up weapons, fight, attack and defend flags, and chase the carrier |
 | 🌐 **Multiplayer** | LAN discovery and direct-IP play (Slayer, Team Slayer, CTF), host-authoritative over UDP |

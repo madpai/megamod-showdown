@@ -64,7 +64,7 @@ cd /home/commander/projects/halo-trial-android
 HTA_MAP=/home/commander/halo-trial-data/extract/maps/bloodgulch.map scripts/verify.sh
 ```
 
-The latest gate has 68 checks: host build and tests, real Trial map tests,
+The latest gate has 75 checks: host build and tests, real Trial map tests,
 synthetic-fixture CLI, offscreen rendering, two desktop Blood Gulch clients,
 Android build, and the APK contents and asset boundary.
 
@@ -77,7 +77,7 @@ VK_ICD_FILENAMES=$PWD/scratch/lvp/usr/share/vulkan/icd.d/lvp_icd.json \
   HTA_MAP=/home/commander/halo-trial-data/extract/maps/bloodgulch.map scripts/verify.sh
 ```
 
-The 2026-09-22 multiplayer combat build passed **68/68** with that command.
+The 2026-09-23 vehicle-paths build passed **75/75** with that command.
 The normal shareable build contains no Trial maps; `verify.sh` checks that.
 
 **`verify.sh` must be green before you publish.** If you add a module, add its
