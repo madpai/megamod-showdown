@@ -6,7 +6,7 @@ reads **your own copy** of the Trial and takes every value it can from the
 original tags: weapons, vehicles, sounds, the HUD, the menu, the announcer.
 
 **This repository contains no Halo files, and never will.** You need your own
-copy of the Trial installer, `HaloTrialSetup.exe`.
+copy of the Trial installer (`HaloTrialSetup.exe` / `lotrialsetup1.exe`).
 
 ## What it plays
 
@@ -26,12 +26,19 @@ See [`docs/HANDOFF.md`](docs/HANDOFF.md) for the full state.
 ## Play it
 
 You need an ARM64 Android phone with Vulkan (Android 8.0+) and a PC to
-unpack the Trial.
+unpack the Trial installer.
 
-1. **Get the Trial's maps.** Install `HaloTrialSetup.exe` (on Windows, or on
-   Linux under Wine: `wine HaloTrialSetup.exe`). The files you need are in
-   the installed game's `maps` folder:
-   `bloodgulch.map`, `bitmaps.map`, `sounds.map` and `ui.map`.
+1. **Get the Trial's maps.** The installer (`HaloTrialSetup.exe`, sometimes
+   named `lotrialsetup1.exe`) is a cabinet archive, so you don't need to install
+   anything. Extract the four maps with [7-Zip](https://www.7-zip.org/):
+
+   ```sh
+   7z e lotrialsetup1.exe maps/bloodgulch.map maps/bitmaps.map maps/sounds.map maps/ui.map
+   ```
+
+   On Windows, open the installer in 7-Zip and drag those four files out of
+   its `maps` folder. (Installing the Trial works too: the same files are in
+   the installed game's `maps` folder.)
 2. **Copy those four files to your phone**, for example into `Download`.
 3. **Install the APK.** Download `halo-trial-guest.apk` from this
    repository's Releases page, or build it yourself (below). It contains no

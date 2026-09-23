@@ -42,6 +42,10 @@ git bundle create "$DEST/halo-trial-android.bundle" --all 2>/dev/null
 
 # 3. The owner's own Trial copy. Never deleted from the backup.
 [ -d "$DATA" ] && rsync -a "$DATA/" "$DEST/halo-trial-data/"
+#    And the installer it came from, wherever the owner keeps it.
+for f in "$DATA"/*[Tt]rial[Ss]etup*.exe "$HOME"/projects/*[Tt]rial[Ss]etup*.exe; do
+  [ -f "$f" ] && rsync -a "$f" "$DEST/halo-trial-data/installer/"
+done
 
 # 4. The published APKs, once per distinct build.
 if [ -f "$SERVE/halo-trial-poc.apk" ]; then
@@ -70,7 +74,7 @@ map-bundled personal APK; never share or upload this folder).
 
 project/                   the working tree as of the last backup
 halo-trial-android.bundle  every branch: git clone halo-trial-android.bundle
-halo-trial-data/           the owner's own Trial files
+halo-trial-data/           the owner's own Trial files (installer/ too)
 apks/latest/               the newest build: halo-trial-personal.apk
                            (maps inside) and halo-trial-guest.apk
 apks/INDEX                 every archived build: date, commit, hash, title
