@@ -158,7 +158,7 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Vehicle-paths build** at `http://100.89.1.14:8731/`. Host-verified
+> **Vehicle-paths + Ghost-strafe build (5d51b76)** at `http://100.89.1.14:8731/`. Host-verified
 > (verify.sh 75/75, test_nav 30, test_ride 92); not yet on a phone. The
 > bots-drive and playtest-fixes lists below are still unreported too --
 > one SINGLEPLAYER TEAM SLAYER game with 7 bots covers most of it.
@@ -177,6 +177,8 @@ the section below, and update it every time.
 >    driven round to; one in the open is still driven straight at.
 > D. **A stuck car is left alone** until it goes home (60 s empty):
 >    nobody climbs into a Warthog someone just abandoned on a rock.
+> E. **Ghost fights** (build 5d51b76, v0.2.2): a bot Ghost circling you
+>    near rocks or a base wall strafes away from them, not into them.
 >
 > **From the bots-drive build (still unreported):**
 >

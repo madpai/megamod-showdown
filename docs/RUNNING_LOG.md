@@ -51,3 +51,29 @@ regress, strip the temporary `dbg_mode` counters (brain.c before
 team 10.1% -> 7.4% (kills 20.1 -> 23.8), ctf 9.5% (same), ffa 15.1% -> 8.7%.
 verify.sh 75/75. Counters stripped. HANDOFF numbers/objective updated.
 Not yet published as an APK (next step: publish + release v0.2.2).
+
+## ~11:05 — published 5d51b76, release v0.2.2 (guest APK, no maps)
+
+HANDOFF testing objective item E added.
+
+### Where to pick up (next agent)
+
+Objective 2 ("driving in a fight") is PARTLY done. Remaining blocked time
+per FFA match (8 seeds, `scripts/drivebench.sh ffa`, 8.7% total):
+- ~34 s chasing an enemy along a path (`drive()` in brain.c: `to == fight`
+  and `open_line` false -> `plan_drive` every time the target moves 3 wu).
+  Idea: when the target is on foot and not reachable on open ground
+  (behind a rock/in a base), stop chasing: hold at range and let the gun
+  work, or roam; a Warthog without a gunner cannot hurt him there anyway.
+- ~26 s going straight at a man across "open" ground: `open_line` checks
+  only the nav line; the Warthog's run-over lead point (`tof` up to 1.5 s)
+  can sit against a rock. Idea: pull `goal` back onto the nearest wide
+  node (`hta_nav_nearest_wide`) before `open_line`.
+- ~24 s tank/Ghost holding at range (`hold`): the tank squares its hull
+  by turning in place into posts; the jam test now backs it out, but it
+  keeps trying. Idea: in hold, skip the hull turn when `blocked` rose in
+  the last second.
+To measure by mode, re-add the temporary counters described at ~10:25
+(accumulate `car->blocked` deltas per mode in drive(); print in htamatch).
+Keep only changes that lower team/ctf/ffa together; verify.sh; commit;
+push; publish; release.
