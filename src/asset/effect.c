@@ -4,6 +4,7 @@
 #include <stdio.h>
 
 #include <string.h>
+#include <math.h>
 
 /* Effect (64) */
 #define EFF_LOCATIONS       40u
@@ -414,6 +415,51 @@ bool hta_effect_damage(const hta_cache *c, uint32_t effect_tag_id,
         }
     }
     return false;
+}
+
+bool hta_damage_shake_read(const hta_cache *c, uint32_t jpt, hta_damage_shake *o)
+{
+    if (!o) return false;
+    memset(o, 0, sizeof(*o));
+    if (!c || !jpt || jpt == 0xFFFFFFFFu) return false;
+    int32_t di = hta_cache_find_tag_by_id(c, jpt);
+    hta_tag_entry dt;
+    uint32_t db;
+    if (di < 0 || !hta_cache_tag(c, (uint32_t)di, &dt) ||
+        dt.primary_class != HTA_FOURCC('j','p','t','!') ||
+        !hta_cache_ptr_to_offset(c, dt.tag_data_ptr, &db)) return false;
+    float f[9] = {0};
+    static const uint32_t at[9] = { 0u, 4u, 152u, 160u, 164u, 204u, 212u, 216u, 0u };
+    for (int k = 0; k < 8; k++) {
+        hta_rd_f32(c, db + at[k], &f[k]);
+        if (!isfinite(f[k]) || f[k] < 0.0f) f[k] = 0.0f;
+    }
+    o->radius[0] = f[0]; o->radius[1] = f[1] > f[0] ? f[1] : f[0];
+    o->impulse_time = f[2]; o->impulse_rot = f[3]; o->impulse_push = f[4];
+    o->shake_time = f[5]; o->shake_move = f[6]; o->shake_rot = f[7];
+    return (o->impulse_time > 0.0f && (o->impulse_rot > 0.0f || o->impulse_push > 0.0f)) ||
+           (o->shake_time > 0.0f && (o->shake_move > 0.0f || o->shake_rot > 0.0f));
+}
+
+uint32_t hta_effect_shakes(const hta_cache *c, uint32_t effect_tag_id,
+                           hta_damage_shake *out, uint32_t max)
+{
+    uint32_t n = 0, ev_off = 0, ev_count = 0, base = 0;
+    if (!c || !effect_tag_id || !out || !max) return 0;
+    if (!events_of(c, effect_tag_id, &ev_off, &ev_count, &base)) return 0;
+    for (uint32_t e = 0; e < ev_count && n < max; e++) {
+        uint32_t pc = 0, pp = 0, po = 0;
+        if (!hta_read_reflexive(c, ev_off + e * EFFEVENT_SIZE + EFFEVENT_PARTS, &pc, &pp) ||
+            !pc || !hta_cache_ptr_to_offset(c, pp, &po)) continue;
+        for (uint32_t k = 0; k < pc && n < max; k++) {
+            uint32_t pk = po + k * EFFPART_SIZE, cls = 0, id = 0;
+            hta_rd_u32(c, pk + EFFPART_TYPE_CLASS, &cls);
+            if (cls != HTA_FOURCC('j','p','t','!')) continue;
+            if (!hta_rd_u32(c, pk + EFFPART_TYPE + 12u, &id)) continue;
+            if (hta_damage_shake_read(c, id, &out[n])) n++;
+        }
+    }
+    return n;
 }
 
 uint32_t hta_effect_first_sound(const hta_cache *c, uint32_t effect_tag_id)

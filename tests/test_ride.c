@@ -30,7 +30,7 @@ static uint8_t *slurp(const char *p, size_t *n)
 
 static hta_game g;
 static hta_vehicles v;
-static int kills, enters, exits, fires, detonations;
+static int kills, enters, exits, fires, detonations, wrecks;
 static int32_t last_victim = -1, last_killer = -1, last_weapon = -1;
 static char last_text[96];
 
@@ -49,6 +49,7 @@ static void step(float seconds)
             if (e.kind == HTA_EV_EXIT) exits++;
             if (e.kind == HTA_EV_FIRE) fires++;
             if (e.kind == HTA_EV_DETONATE) detonations++;
+            if (e.kind == HTA_EV_WRECK) wrecks++;
         }
     }
 }
@@ -268,7 +269,13 @@ int main(int argc, char **argv)
         (void)cam;
         detonations = 0;
         fires = 0;
+        float tank_at[2] = { v.cars[tank].pos[0], v.cars[tank].pos[1] };
+        float kicked = 0.0f, nose = 0.0f;
         for (int i = 0; i < 90; i++) {
+            if (i == 8) {
+                kicked = hypotf(v.cars[tank].pos[0]-tank_at[0], v.cars[tank].pos[1]-tank_at[1]);
+                nose = v.cars[tank].sway[0];
+            }
             look_at(a, tgt);
             g.units[a].in.move.fire = i < 3 || (i > 30 && i < 33);
             step(1.0f / 60.0f);
@@ -278,6 +285,8 @@ int main(int argc, char **argv)
         step(1.0f);
         printf("  %d shell(s), %d detonation(s)\n", shells, detonations);
         CHECK(shells == 1, "one shell per pull, then the chamber");
+        printf("  recoil moved it %.3f wu, nose %.3f rad\n", kicked, nose);
+        CHECK(kicked > 0.01f && nose < -0.005f, "the cannon kicks the tank back, nose up");
         CHECK(detonations >= 1, "and the shell goes off down range");
         g.units[a].in.fire2 = true;
         fires = 0;
@@ -375,6 +384,70 @@ int main(int argc, char **argv)
         g.units[t].body.crouch_t = 0.0f;
         g.units[t].body.pos[0] = 60 + HTA_MOTION_RANGE + 1;
         CHECK(hta_game_sensor(&g, a, con, 8) == 0, "out of range, nothing");
+    }
+
+    printf("\n[hulls]\n");
+    {
+        int32_t hog = car_at_placement(1);
+        hta_vehicles_reset(&v, (uint32_t)hog);
+        v.cars[hog].active = true;
+        hta_vehicles_sync(&v);
+        g.vgun[hog].hull = g.vgun[hog].hull_max;
+        g.vgun[hog].wreck = 0;
+        put(a, 101.75f, -144.8f, .53f, 3.14f);
+        CHECK(hta_game_seat(&g, a, hog, 0), "a driver in the Warthog");
+        put(t, v.cars[hog].pos[0] + 12, v.cars[hog].pos[1], v.cars[hog].pos[2], 3.14f);
+        step(0.1f);
+        float full = hta_game_hull(&g, hog);
+        uint32_t ar = g.weapons[g.start_weapon[0]].impact_jpt;
+        float mid[3] = { v.cars[hog].pos[0], v.cars[hog].pos[1], v.cars[hog].pos[2] + 0.3f };
+        CHECK(hta_game_car_at(&g, mid, 0.05f) == hog, "a point on its hull is the Warthog's");
+        float away[3] = { mid[0] + 4, mid[1], mid[2] };
+        CHECK(hta_game_car_at(&g, away, 0.05f) < 0, "a point four units off is not");
+        hta_game_hurt_car_jpt(&g, hog, t, ar, 10, mid);
+        float after = hta_game_hull(&g, hog);
+        printf("  hull %.3f -> %.3f after ten rifle rounds\n", full, after);
+        CHECK(full == 1.0f && fabsf((full - after) * g.vgun[hog].hull_max - 25.0f) < 0.1f,
+              "a rifle round does a quarter of its 10 to metal");
+        float before_x = v.cars[hog].pos[0];
+        wrecks = 0; kills = 0; last_victim = -1;
+        float beside[3] = { mid[0] + 1.0f, mid[1], mid[2] };
+        hta_game_blast(&g, t, beside, 80.0f, 0.6f, 2.0f);
+        step(0.3f);
+        CHECK(wrecks == 0 && hta_game_hull(&g, hog) < after, "a rocket beside it dents it");
+        CHECK(fabsf(v.cars[hog].pos[0] - before_x) > 0.05f, "and shoves it away from the blast");
+        for (int i = 0; i < 4 && !wrecks; i++) {
+            float here[3] = { v.cars[hog].pos[0], v.cars[hog].pos[1], v.cars[hog].pos[2] + 0.3f };
+            hta_game_blast(&g, t, here, 80.0f, 0.6f, 2.0f);
+            step(0.05f);
+        }
+        CHECK(wrecks == 1 && !v.cars[hog].active, "enough rockets and the Warthog blows up");
+        CHECK(!g.units[a].alive && last_victim == a && last_killer == t,
+              "its driver dies with it, killed by whoever blew it up");
+        CHECK(g.units[t].alive, "the shooter twelve units away is fine");
+        step(HTA_VEHICLE_WRECK_TIME + 0.5f);
+        CHECK(v.cars[hog].active && hta_game_hull(&g, hog) == 1.0f, "a while later it is back home, whole");
+    }
+
+    printf("\n[autoaim]\n");
+    {
+        put(a, 60, -120, 1, 0);
+        put(t, 70, -120, 1, 0);
+        int32_t ar = g.start_weapon[0];
+        float eye[3] = { g.units[a].eye.pos[0], g.units[a].eye.pos[1], g.units[a].eye.pos[2] };
+        float chest[3];
+        hta_game_centre(&g, t, chest);
+        float dx = chest[0]-eye[0], dz = chest[2]-eye[2];
+        float pitch = atan2f(dz, dx);
+        float near[3] = { cosf(pitch)*cosf(0.08f), cosf(pitch)*sinf(0.08f), sinf(pitch) };
+        float far_[3] = { cosf(pitch)*cosf(0.4f), cosf(pitch)*sinf(0.4f), sinf(pitch) };
+        float pt[3];
+        CHECK(hta_game_aim_target(&g, a, ar, eye, near, pt) == t,
+              "the rifle's autoaim finds an enemy just off the crosshair");
+        CHECK(hta_game_aim_target(&g, a, ar, eye, far_, pt) < 0, "but not one well off it");
+        g.units[t].body.pos[0] = 60 + 30;
+        CHECK(hta_game_aim_target(&g, a, ar, eye, near, pt) < 0,
+              "nor one past the weapon's 25 wu autoaim range");
     }
 
     printf("\n[leaving]\n");

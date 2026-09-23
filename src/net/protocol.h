@@ -135,7 +135,8 @@ typedef struct {
     char text[96];
 } hta_net_kill;
 
-enum { HTA_NET_FX_FIRE=1, HTA_NET_FX_IMPACT, HTA_NET_FX_DETONATE };
+/* HTA_NET_FX_WRECK: a vehicle blew up; `weapon` is the car. */
+enum { HTA_NET_FX_FIRE=1, HTA_NET_FX_IMPACT, HTA_NET_FX_DETONATE, HTA_NET_FX_WRECK };
 typedef struct {
     uint8_t kind, entity, weapon, material; /* weapon: roster or pool index */
     float pos[3], dir[3];

@@ -78,6 +78,8 @@ static void load_trigger(const hta_cache *c, uint32_t weap, hta_weapon_def *def,
     def->single_shot = !(a > 0.1f) && !(b > 0.1f);
     def->rounds_per_shot      = rdi16(c, arr + HTA_TRIG_ROUNDS_SHOT);
     def->projectiles_per_shot = rdi16(c, arr + HTA_TRIG_PROJ_SHOT);
+    def->between_contrails    = rdi16(c, arr + HTA_TRIG_BETWEEN_CONT);
+    if (def->between_contrails < 0) def->between_contrails = 0;
     def->error_angle[0] = rdf(c, arr + HTA_TRIG_ERROR_ANGLE);
     def->error_angle[1] = rdf(c, arr + HTA_TRIG_ERROR_ANGLE + 4u);
     def->error_accel    = rdf(c, arr + HTA_TRIG_ERROR_ACCEL);

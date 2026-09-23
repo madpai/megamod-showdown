@@ -84,6 +84,27 @@ enum {
 /* An empty vehicle away from where the map put it goes home after this
  * long. A gametype setting in Halo; not in any map. Ours. */
 #define HTA_VEHICLE_RESPAWN 60.0f
+/* Momentum. The tags' `deceleration` is how hard a vehicle BRAKES (the
+ * Warthog's 9.9 wu/s^2 stops it from full speed in under a second, and the
+ * Banshee's 14.4 in half of one); let go of the stick and Halo's vehicles
+ * roll and glide on. Coasting slows at this fraction of it. Ours. */
+#define HTA_VEHICLE_COAST_JEEP    0.15f
+#define HTA_VEHICLE_COAST_TANK    0.45f
+#define HTA_VEHICLE_COAST_HOVER   0.30f
+#define HTA_VEHICLE_COAST_FLYER   0.20f
+/* A Ghost and a Banshee slide: the hull turns under the velocity, and
+ * velocity across the hull is corrected separately from velocity along it,
+ * at this fraction of the acceleration -- so a hard turn at speed carries
+ * you wide before it bites. Ours. */
+#define HTA_VEHICLE_DRIFT_GRIP    1.0f
+/* Suspension: the body pitches under acceleration and rolls out of a turn,
+ * radians per wu/s^2, on a spring of this stiffness and damping. Ours. */
+#define HTA_VEHICLE_SWAY_JEEP     0.018f
+#define HTA_VEHICLE_SWAY_TANK     0.008f
+#define HTA_VEHICLE_SWAY_HOVER    0.014f
+#define HTA_VEHICLE_SWAY_MAX      0.14f
+#define HTA_VEHICLE_SWAY_SPRING   45.0f
+#define HTA_VEHICLE_SWAY_DAMP     7.0f
 /* How fast the Warthog's chaingun barrels spin while firing, rad/s. Ours. */
 #define HTA_VEHICLE_BARREL_SPIN 30.0f
 
@@ -166,6 +187,8 @@ typedef struct {
     float aim_world[2];         /* what the gunner wants, world yaw/pitch */
     bool  aiming;
     float bank;                 /* the Banshee's visual roll into a turn */
+    float sway[2], sway_vel[2]; /* suspension pitch and roll, and their rates */
+    float tumble[2];            /* pitch and roll rates while thrown in the air */
     float idle;                 /* seconds empty and away from home */
     hta_vehicle_control ctl;
     int8_t occupant[HTA_VEHICLE_SEATS];   /* unit index, -1 empty */
@@ -250,6 +273,11 @@ bool hta_vehicles_trigger(const hta_vehicles *v, uint32_t car, uint32_t trigger,
 /* One physics step for every active car, each by its own `ctl`. */
 void hta_vehicles_update(hta_vehicles *v, const hta_collision *world,
     float gravity, float dt);
+/* Throw a car: `vel` wu/s added to its motion (up lifts it off the
+ * ground), `spin` rad/s of tumble while it is in the air, `kick` radians
+ * of suspension jolt along the push. A blast, a cannon's recoil. */
+void hta_vehicles_push(hta_vehicles *v, uint32_t car, const float vel[3], float spin,
+                       float kick);
 /* Aim a car's turret toward a world yaw/pitch, within its seat's range. */
 void hta_vehicles_aim(hta_vehicles *v, uint32_t car, float yaw, float pitch, float dt);
 /* Keep `instances` matching the cars' poses. Cheap: matrices only. */

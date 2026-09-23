@@ -29,6 +29,13 @@
  * long, the tag's own states stretched to fit. Ours. */
 #define HTA_CONT_MIN_LIFE 0.06f
 
+/* ...but a tracer head runs at 300 wu/s, so 0.06 s of points is an 18 wu
+ * (55 m) line, and a rifle's fifteen rounds a second joined into solid
+ * yellow beams (owner playtest, 2026-09-23). Halo's own streak is its
+ * round's travel in a frame or two: a tracer's ribbon is cut this far
+ * behind its head. Ours. */
+#define HTA_TRACER_TAIL 1.2f
+
 static float rdf(const hta_cache *c, uint32_t off) { float f = 0; hta_rd_f32(c, off, &f); return isfinite(f) ? f : 0.0f; }
 
 void hta_contrails_init(hta_contrails *c)
@@ -352,7 +359,18 @@ void hta_contrails_update(hta_contrails *c, const hta_camera *cam, float dt)
             along[0] = 0.0f;
             for (uint32_t k = 1; k < n; k++) {
                 float d[3] = { pos[k][0]-pos[k-1][0], pos[k][1]-pos[k-1][1], pos[k][2]-pos[k-1][2] };
-                total += sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+                float seg = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+                if (tr->tracer && total + seg > HTA_TRACER_TAIL) {
+                    /* Cut the streak at its tail length. */
+                    float f = seg > 1e-6f ? (HTA_TRACER_TAIL - total) / seg : 0.0f;
+                    for (int m = 0; m < 3; m++) pos[k][m] = pos[k-1][m] + d[m] * f;
+                    age[k] = age[k-1] + (age[k] - age[k-1]) * f;
+                    total = HTA_TRACER_TAIL;
+                    along[k] = total;
+                    n = k + 1u;
+                    break;
+                }
+                total += seg;
                 along[k] = total;
             }
             uint32_t q = 0;

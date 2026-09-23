@@ -258,7 +258,7 @@ bool hta_net_kill_unpack(const uint8_t *src, size_t len, hta_net_kill *k)
 bool hta_net_fx_pack(uint8_t *dst, size_t cap, const hta_net_fx *fx)
 {
     if (!dst || !fx || cap<HTA_NET_FX_BYTES ||
-        fx->kind<HTA_NET_FX_FIRE || fx->kind>HTA_NET_FX_DETONATE ||
+        fx->kind<HTA_NET_FX_FIRE || fx->kind>HTA_NET_FX_WRECK ||
         (fx->entity!=255 && fx->entity>=HTA_NET_MAX_ENTITIES) ||
         fx->weapon>=HTA_NET_MAX_WEAPONS) return false;
     dst[0]=fx->kind; dst[1]=fx->entity;

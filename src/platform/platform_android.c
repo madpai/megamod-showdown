@@ -25,6 +25,7 @@
 #include "../engine/bot.h"
 #include "../engine/vehicle.h"
 #include "../engine/contrail.h"
+#include "../engine/shake.h"
 #include <stdatomic.h>
 #include "../engine/ammo.h"
 #include "../engine/hud.h"
@@ -159,6 +160,11 @@ typedef struct {
     hta_contrails trails;
     hta_gfx_mesh *gpu_trails;
     uint32_t      wtrail[HTA_GAME_MAX_WEAPONS], ptrail[HTA_GAME_MAX_POOLS];
+    /* Rounds each shooter has fired since its last tracer (the trigger's
+     * `projectiles between contrails`); the last slot is ours on foot. */
+    uint8_t       since_tracer[HTA_GAME_MAX_UNITS + 1];
+    /* The view thrown about by blasts and by our own gun's kick. */
+    hta_shake     shake;
     uint32_t      local_trail;     /* the held weapon's flying round */
 
     /* Sound. One bank entry per snd! tag actually asked for, decoded once and
@@ -273,6 +279,9 @@ typedef struct {
     hta_gfx_mesh *gpu_held[HTA_GAME_MAX_WEAPONS];
     hta_gfx_mesh *gpu_pools[HTA_GAME_MAX_POOLS];
     uint32_t      pool_recipe[HTA_GAME_MAX_POOLS];
+    /* A vehicle going up, and sparks off a hull that is nearly gone. */
+    uint32_t      wreck_recipe, wreck_snd, spark_recipe;
+    float         spark_clock;
     uint32_t      unit_fire_snd[HTA_GAME_MAX_WEAPONS];
     uint8_t       unit_fire_known[HTA_GAME_MAX_WEAPONS];
     uint32_t      line_snd[HTA_LINE_COUNT];
@@ -1095,6 +1104,24 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
                 s->vfire_recipe[w] = hta_particles_add(&s->parts, &s->cache, pbm,
                                                        s->game.weapons[w].def.firing_fx_id);
         }
+        /* A wreck: the tank shell's explosion, thrown twice over. And the
+         * sparks a hull on its last legs gives off: the chaingun's own
+         * impact on thick metal. */
+        s->wreck_recipe = s->spark_recipe = HTA_PART_NO_RECIPE;
+        s->wreck_snd = 0;
+        if (s->game_on && s->game.wreck_effect) {
+            s->wreck_recipe = hta_particles_add(&s->parts, &s->cache, pbm, s->game.wreck_effect);
+            float r;
+            uint32_t deca;
+            hta_effect_detonation(&s->cache, s->game.wreck_effect, &s->wreck_snd, &r, &deca);
+            if (s->wreck_snd) bank_get(s, s->wreck_snd);
+            uint32_t sparks = 0;
+            for (uint32_t w = 0; w < s->game.weapon_count && !sparks; w++)
+                if (s->game.weapons[w].vehicle && !s->game.weapons[w].travels)
+                    sparks = hta_projectile_response_effect(&s->cache,
+                        s->game.weapons[w].def.projectile_id, HTA_HULL_MATERIAL);
+            if (sparks) s->spark_recipe = hta_particles_add(&s->parts, &s->cache, pbm, sparks);
+        }
         /* And whatever the bots' rounds throw when they go off. */
         for (uint32_t p = 0; p < HTA_GAME_MAX_POOLS; p++) {
             s->pool_recipe[p] = HTA_PART_NO_RECIPE;
@@ -1882,15 +1909,66 @@ static void game_gpu_free(hta_android *s)
 
 /* A hitscan round's tracer, from where it left to the first thing in its
  * way, if its projectile carries a contrail. */
-static void tracer(hta_android *s, int32_t weapon, const float from[3], const float dir[3])
+/* Halo draws one round in (between + 1) as a tracer: the rifle's trigger
+ * says 3. `shooter` keeps count per unit; true when this round is one. */
+static bool tracer_due(hta_android *s, int32_t shooter, int between)
+{
+    uint32_t k = shooter >= 0 && shooter < HTA_GAME_MAX_UNITS ? (uint32_t)shooter
+                                                              : HTA_GAME_MAX_UNITS;
+    if (s->since_tracer[k] < (uint8_t)between) { s->since_tracer[k]++; return false; }
+    s->since_tracer[k] = 0;
+    return true;
+}
+
+static void tracer(hta_android *s, int32_t shooter, int32_t weapon, const float from[3], const float dir[3])
 {
     if (!s->trails.loaded || weapon < 0 || weapon >= (int32_t)s->game.weapon_count) return;
     uint32_t type = s->wtrail[weapon];
     if (type == HTA_CONT_NONE || s->game.weapons[weapon].travels) return;
+    if (!tracer_due(s, shooter, s->game.weapons[weapon].def.between_contrails)) return;
     float t = 100.0f, end[3];
     if (s->col.built) hta_collision_ray(&s->col, from, dir, 100.0f, &t, NULL, NULL);
     for (int k = 0; k < 3; k++) end[k] = from[k] + dir[k] * t;
     hta_contrails_tracer(&s->trails, type, from, end, 300.0f);
+}
+
+/* Every blast near the camera shakes it, by the effect's own damage
+ * effects: a tank shell kicks the view within 3.25 wu and shakes it out
+ * to 8. */
+static void shake_effect(hta_android *s, uint32_t effect, const float at[3])
+{
+    if (!effect || !at) return;
+    hta_damage_shake d[4];
+    uint32_t n = hta_effect_shakes(&s->cache, effect, d, 4);
+    for (uint32_t i = 0; i < n; i++) hta_shake_add(&s->shake, &d[i], &s->cam, at);
+}
+
+/* A trigger's firing damage effect is felt by whoever pulled it. */
+static void shake_fire(hta_android *s, uint32_t jpt)
+{
+    hta_damage_shake d;
+    if (jpt && hta_damage_shake_read(&s->cache, jpt, &d))
+        hta_shake_add(&s->shake, &d, &s->cam, NULL);
+}
+
+/* A vehicle blowing up: the shell's fireball twice, a ring of it around
+ * the hull, its bang, the shake, the scorch. */
+static void wreck_fx(hta_android *s, const float at[3])
+{
+    float up[3] = { 0, 0, 1 };
+    if (s->wreck_recipe != HTA_PART_NO_RECIPE) {
+        hta_particles_burst(&s->parts, s->wreck_recipe, at, up);
+        for (int i = 0; i < 3; i++) {
+            float a = (float)i * 2.094f;
+            float p[3] = { at[0] + cosf(a) * 0.5f, at[1] + sinf(a) * 0.5f, at[2] + 0.2f };
+            float d[3] = { cosf(a) * 0.5f, sinf(a) * 0.5f, 0.85f };
+            hta_particles_burst(&s->parts, s->wreck_recipe, p, d);
+        }
+    }
+    if (s->wreck_snd) play_tag_at(s, s->wreck_snd, at, 1.0f);
+    shake_effect(s, s->game.wreck_effect, at);
+    float down[3] = { 0, 0, 1 };
+    hta_gun_add_mark(&s->gun, at, down, 1.5f);
 }
 
 /* The Trial's own words for what you just picked up: `hud_item_messages`
@@ -1946,7 +2024,9 @@ static void game_events(hta_android *s)
         switch (e.kind) {
         case HTA_EV_FIRE:
             if (e.weapon < 0 || e.weapon >= HTA_GAME_MAX_WEAPONS) break;
-            if (e.a != s->me || s->game.weapons[e.weapon].vehicle) tracer(s, e.weapon, e.pos, e.dir);
+            if (e.a == s->me && s->game.weapons[e.weapon].vehicle)
+                shake_fire(s, s->game.weapons[e.weapon].def.firing_damage_id);
+            if (e.a != s->me || s->game.weapons[e.weapon].vehicle) tracer(s, e.a, e.weapon, e.pos, e.dir);
             /* Our own rifle speaks for itself; a vehicle gun is the game's. */
             if (e.a == s->me && !s->game.weapons[e.weapon].vehicle) break;
             if (s->game.weapons[e.weapon].vehicle &&
@@ -1978,11 +2058,22 @@ static void game_events(hta_android *s)
             if (e.pool >= 0 && (uint32_t)e.pool < s->game.pool_count) {
                 const hta_projectiles *pl = &s->game.pools[e.pool];
                 if (pl->detonation_snd) play_tag_at(s, pl->detonation_snd, e.pos, 1.0f);
+                shake_effect(s, pl->det_effect, e.pos);
                 if (s->pool_recipe[e.pool] != HTA_PART_NO_RECIPE)
                     hta_particles_burst(&s->parts, s->pool_recipe[e.pool], e.pos, e.dir);
                 if (pl->blast_radius > 0.0f)
                     hta_gun_add_mark(&s->gun, e.pos, e.dir, pl->blast_radius);
             }
+            break;
+        case HTA_EV_WRECK:
+            if (s->net_hosting) {
+                hta_net_fx fx = { .kind = HTA_NET_FX_WRECK,
+                                  .entity = e.a >= 0 && e.a < HTA_GAME_MAX_UNITS ? (uint8_t)e.a : 255,
+                                  .weapon = (uint8_t)(e.b & 31), .material = 0 };
+                for (int k = 0; k < 3; k++) { fx.pos[k] = e.pos[k]; fx.dir[k] = e.dir[k]; }
+                hta_net_server_fx(&s->host_server, &fx);
+            }
+            wreck_fx(s, e.pos);
             break;
         case HTA_EV_PICKUP:
             if (e.a != s->me) {
@@ -3511,7 +3602,7 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
             !(fx.kind==HTA_NET_FX_FIRE && fx.weapon<s->game.weapon_count &&
               s->game.weapons[fx.weapon].vehicle)) continue;
         if (fx.kind==HTA_NET_FX_FIRE && fx.weapon<s->game.weapon_count) {
-            tracer(s,fx.weapon,fx.pos,fx.dir);
+            tracer(s,fx.entity==255 ? -1 : (int32_t)fx.entity,fx.weapon,fx.pos,fx.dir);
             if (!s->unit_fire_known[fx.weapon]) {
                 s->unit_fire_known[fx.weapon]=1;
                 s->unit_fire_snd[fx.weapon]=hta_effect_first_sound(&s->cache,
@@ -3527,10 +3618,13 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
             uint32_t sound=hta_projectile_impact_sound(&s->cache,proj,fx.material);
             if (sound) play_tag_at(s,sound,fx.pos,0.8f);
             hta_gun_add_mark(&s->gun,fx.pos,fx.dir,HTA_MARK_SIZE);
+        } else if (fx.kind==HTA_NET_FX_WRECK) {
+            wreck_fx(s,fx.pos);
         } else if (fx.kind==HTA_NET_FX_DETONATE && fx.weapon<s->game.pool_count) {
             const hta_projectiles *pool=&s->game.pools[fx.weapon];
             if (pool->detonation_snd)
                 play_tag_at(s,pool->detonation_snd,fx.pos,1.0f);
+            shake_effect(s,pool->det_effect,fx.pos);
             if (s->pool_recipe[fx.weapon]!=HTA_PART_NO_RECIPE)
                 hta_particles_burst(&s->parts,s->pool_recipe[fx.weapon],fx.pos,fx.dir);
             if (pool->blast_radius>0.0f)
@@ -4313,6 +4407,23 @@ void android_main(struct android_app *app)
                 blips[i].size = con[i].vehicle ? 1.8f : 1.0f;
             }
             hta_hud_set_blips(&state.hud, blips, nc);
+            /* The red reticle: an enemy under the crosshair, or inside the
+             * weapon's own autoaim cone and range. A gunner's is the
+             * vehicle gun's. */
+            int32_t aimw = held_roster(&state);
+            if (state.my_car >= 0 && (uint32_t)state.my_car < state.vehicles.count) {
+                const hta_vehicle_seat *st = hta_vehicles_seat(&state.vehicles,
+                    (uint32_t)state.my_car, (uint32_t)state.my_seat);
+                uint16_t ty = state.vehicles.cars[state.my_car].type;
+                aimw = st && (st->flags & HTA_SEAT_GUNNER) && ty < HTA_VEHICLE_TYPES
+                     ? state.game.vweapon[ty][0]
+                     : (st && (st->flags & HTA_SEAT_ALLOWS_WEAPONS) ? aimw : -1);
+            }
+            float fwd[3];
+            hta_camera_forward(&state.cam, fwd);
+            bool on = !state.dead && aimw >= 0 &&
+                hta_game_aim_target(&state.game, state.me, aimw, state.cam.pos, fwd, NULL) >= 0;
+            if (on != state.hud.cross_on_target) hta_hud_set_on_target(&state.hud, on);
         }
         if (state.vit->loaded) {
             hta_hud_set_shield(&state.hud, hta_vitals_shield_fraction(state.vit));
@@ -4764,11 +4875,27 @@ void android_main(struct android_app *app)
         }
         if (in.fire && !swinging && hta_gun_ready(&state.gun)) {
             if (hta_ammo_shoot(&state.ammo)) {
+                shake_fire(&state, state.weap.firing_damage_id);
+                /* Autoaim: the weapon's own cone bends the round toward an
+                 * enemy near the crosshair (leading one that moves, for a
+                 * round that flies). */
+                hta_camera aimcam = state.cam;
+                if (state.game_on && state.me >= 0) {
+                    float fwd[3], pt[3];
+                    hta_camera_forward(&state.cam, fwd);
+                    if (hta_game_aim_target(&state.game, state.me, held_roster(&state),
+                                            state.cam.pos, fwd, pt) >= 0) {
+                        float d[3] = { pt[0]-state.cam.pos[0], pt[1]-state.cam.pos[1],
+                                       pt[2]-state.cam.pos[2] };
+                        aimcam.yaw = atan2f(d[1], d[0]);
+                        aimcam.pitch = atan2f(d[2], hypotf(d[0], d[1]));
+                    }
+                }
                 if (state.proj.loaded) {
                     /* An object round does its own collision on the way, so
                      * there is no hitscan to trace and no impact yet. */
                     float dir[3];
-                    if (hta_gun_launch(&state.gun, &state.cam, dir)) {
+                    if (hta_gun_launch(&state.gun, &aimcam, dir)) {
                         float muzzle[3];
                         for (int k = 0; k < 3; k++)
                             muzzle[k] = state.cam.pos[k] + dir[k] * 0.35f;
@@ -4779,7 +4906,7 @@ void android_main(struct android_app *app)
                      * wall does: aim picks the direction out of the error
                      * cone, then whatever is nearest takes it. */
                     float dir[3];
-                    if (hta_gun_aim(&state.gun, &state.cam, dir)) {
+                    if (hta_gun_aim(&state.gun, &aimcam, dir)) {
                         float bt = -1.0f, bhit[3];
                         int32_t who = -1;
                         bool onbot;
@@ -4802,7 +4929,8 @@ void android_main(struct android_app *app)
                          * where the barrel is, toward what we hit. */
                         int32_t mine_w = held_roster(&state);
                         if (state.trails.loaded && mine_w >= 0 &&
-                            state.wtrail[mine_w] != HTA_CONT_NONE) {
+                            state.wtrail[mine_w] != HTA_CONT_NONE &&
+                            tracer_due(&state, -1, state.weap.between_contrails)) {
                             float fwd[3], right[3], up[3], from[3], end[3];
                             hta_camera_forward(&state.cam, fwd);
                             hta_camera_right(&state.cam, right);
@@ -5017,6 +5145,7 @@ void android_main(struct android_app *app)
                                  state.nades.blast_radius);
                 if (state.nade_snd)
                     play_tag_at(&state, state.nade_snd, state.nades.hit, 1.0f);
+                shake_effect(&state, state.nades.det_effect, state.nades.hit);
                 if (state.nade_recipe != HTA_PART_NO_RECIPE)
                     hta_particles_burst(&state.parts, state.nade_recipe,
                                         state.nades.hit, state.nades.hit_normal);
@@ -5147,6 +5276,7 @@ void android_main(struct android_app *app)
                 /* Thrown out along the surface it hit. */
                 hta_particles_burst(&state.parts, state.det_recipe,
                                     state.proj.hit, state.proj.hit_normal);
+                shake_effect(&state, state.proj.det_effect, state.proj.hit);
 
                 /* And it can catch you. A rocket is 80 at the centre,
                  * full inside 0.6 world units and gone by 2.0 -- which is
@@ -5246,6 +5376,27 @@ void android_main(struct android_app *app)
                     hta_contrails_feed(&state.trails, lt, 1000u + k, state.proj.live[k].pos,
                                        state.proj.live[k].age);
             hta_contrails_update(&state.trails, &state.cam, dt);
+        }
+        hta_shake_update(&state.shake, dt);
+        /* A hull on its last third throws sparks, faster as it goes. */
+        if (state.game_on && state.spark_recipe != HTA_PART_NO_RECIPE &&
+            state.game.simulate_vehicles && state.vehicles.loaded) {
+            state.spark_clock += dt;
+            if (state.spark_clock >= 0.12f) {
+                state.spark_clock = 0.0f;
+                for (uint32_t i = 0; i < state.vehicles.count && i < HTA_VEHICLE_MAX; i++) {
+                    const hta_vehicle *c = &state.vehicles.cars[i];
+                    float hull = hta_game_hull(&state.game, (int32_t)i);
+                    if (!c->active || hull > 0.35f) continue;
+                    if ((float)(rand() % 100) / 100.0f > 0.35f + (0.35f - hull) * 2.0f) continue;
+                    float a = (float)(rand() % 628) / 100.0f;
+                    float at[3] = { c->pos[0] + cosf(a) * c->body_radius * 0.4f,
+                                    c->pos[1] + sinf(a) * c->body_radius * 0.4f,
+                                    c->pos[2] + 0.35f };
+                    float up[3] = { cosf(a) * 0.3f, sinf(a) * 0.3f, 0.9f };
+                    hta_particles_burst(&state.parts, state.spark_recipe, at, up);
+                }
+            }
         }
 
         if (state.gun.dirty && state.gfx) {
@@ -5360,7 +5511,9 @@ void android_main(struct android_app *app)
             dyncount = game_draw(&state, dynlist, dyncount);
             vehicles_draw(&state);
             hta_gfx_set_instances(state.gfx, g_inst, g_inst_count);
-            if (!hta_gfx_draw(state.gfx, &state.cam, &state.scene, state.gpu_mesh,
+            hta_camera drawcam = state.cam;
+            hta_shake_apply(&state.shake, &drawcam);
+            if (!hta_gfx_draw(state.gfx, &drawcam, &state.scene, state.gpu_mesh,
                               state.gpu_sky, state.gpu_fx,
                               dynlist, dyncount,
                               vmdraw.mesh ? &vmdraw : NULL,
@@ -5379,8 +5532,12 @@ void android_main(struct android_app *app)
                 const hta_game_vgun *gun = &state.game.vgun[state.my_car];
                 bool loading = (!state.net_enabled || state.net_hosting) &&
                                (gun->chamber[0] > 0.0f || gun->chamber[1] > 0.0f);
-                snprintf(g_ammo_text, sizeof(g_ammo_text), "%.0f km/h%s", kmh,
-                         loading ? "  LOADING" : "");
+                float hull = hta_game_hull(&state.game, state.my_car);
+                char hulls[16] = "";
+                if (hull < 0.995f && (!state.net_enabled || state.net_hosting))
+                    snprintf(hulls, sizeof(hulls), "  HULL %d%%", (int)(hull * 100.0f + 0.5f));
+                snprintf(g_ammo_text, sizeof(g_ammo_text), "%.0f km/h%s%s", kmh,
+                         loading ? "  LOADING" : "", hulls);
             }
             else if (state.ammo.phase == HTA_AMMO_RELOADING)
                 snprintf(g_ammo_text, sizeof(g_ammo_text), "-- / %d", state.ammo.reserve);

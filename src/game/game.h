@@ -161,7 +161,36 @@ typedef struct {
     bool    was_down[2];      /* for a gun that fires once per pull */
     int32_t last_driver;      /* for the kill when an empty car rolls on */
     float   since_driven;
+    /* The hull. Halo CE's multiplayer vehicles are indestructible -- every
+     * one's `coll` says 0 vitality -- so the numbers are ours; what a hit
+     * DOES is the tag's own `jpt!` against thick metal (bullets a quarter,
+     * explosives in full, the sniper nothing). */
+    float   hull, hull_max;
+    int32_t last_hit_by;      /* attacker, for the kill when it goes up */
+    float   since_hit;
+    float   wreck;            /* seconds until a destroyed car comes back */
 } hta_game_vgun;
+
+/* Hull strength per kind, in `jpt!` damage points: a rocket or tank shell
+ * is 80 at its centre, a rifle round 2.5 against metal. INVENTED (Halo
+ * CE's are indestructible; Halo 2 made them breakable): a Warthog takes
+ * three rockets, a Ghost two, a Banshee three, a Scorpion six. Ledgered. */
+#define HTA_HULL_JEEP      240.0f
+#define HTA_HULL_TANK      480.0f
+#define HTA_HULL_SCOUT     160.0f
+#define HTA_HULL_FIGHTER   220.0f
+#define HTA_HULL_TURRET    200.0f
+/* A wreck is gone this long before the vehicle is back home. Ours. */
+#define HTA_VEHICLE_WRECK_TIME 20.0f
+/* The material a hull is made of for `jpt!` multipliers: metal thick. */
+#define HTA_HULL_MATERIAL  7u
+/* How hard a blast throws a vehicle: wu/s of kick per point of damage,
+ * divided by the hull's mass in `phys` units over this. Ours. */
+#define HTA_BLAST_PUSH     0.03f
+/* A gun whose round explodes kicks its vehicle back: wu/s per point of the
+ * round's blast damage per 20000 mass (a Scorpion's), capped. Ours. */
+#define HTA_RECOIL_PUSH    0.01f
+#define HTA_RECOIL_MAX     1.0f
 
 /* ---- A body in the game --------------------------------------------- */
 typedef enum {
@@ -253,7 +282,8 @@ typedef enum {
     HTA_EV_SWAP,          /* a, weapon */
     HTA_EV_ENTER,         /* a: unit, b: car, pool: seat */
     HTA_EV_EXIT,          /* a: unit, b: car, pool: seat */
-    HTA_EV_FLAG           /* a: unit (-1 none), b: flag's team, pool: hta_flag_event */
+    HTA_EV_FLAG,          /* a: unit (-1 none), b: flag's team, pool: hta_flag_event */
+    HTA_EV_WRECK          /* a: who did it (-1), b: car, pos: where it blew up */
 } hta_event_kind;
 
 /* The announcer, by line. The Trial's `sound\dialog\multiplayer1\...`. */
@@ -310,6 +340,10 @@ typedef struct hta_game {
     int32_t         vweapon[HTA_VEHICLE_TYPES][2];
     hta_game_vgun   vgun[HTA_VEHICLE_MAX];
     uint32_t        splatter_jpt;   /* globals\vehicle_collision */
+    /* What a hull going up looks and hurts like: the Scorpion shell's own
+     * explosion, the biggest bang in the Trial. */
+    uint32_t        wreck_effect;
+    float           wreck_damage, wreck_core, wreck_radius;
     float           gravity;        /* the biped's, for vehicle physics */
     /* True where this device runs vehicle physics (solo, a host). A
      * client copies the host's cars and only reads seats. */
@@ -441,6 +475,29 @@ void hta_game_unseat(hta_game *g, int32_t unit);
 bool hta_game_enclosed(const hta_game *g, int32_t unit);
 /* Where a seated unit's body is: its root in the world. */
 bool hta_game_seat_root(const hta_game *g, int32_t unit, hta_transform *out);
+
+/* ---- Hulls ---------------------------------------------------------- */
+/* The car whose hull `pos` is on (within `pad` of its collision box), or
+ * -1. How a round that hit "the world" finds out it hit a Warthog. */
+int32_t hta_game_car_at(const hta_game *g, const float pos[3], float pad);
+/* Damage a hull. At zero it blows up: riders die (the attacker's kill),
+ * everything near takes the blast, and the car is gone for a while. */
+void hta_game_hurt_car(hta_game *g, int32_t car, int32_t attacker, float damage,
+                       const float at[3]);
+/* A round's `jpt!` against a hull. */
+void hta_game_hurt_car_jpt(hta_game *g, int32_t car, int32_t attacker, uint32_t jpt,
+                           int count, const float at[3]);
+/* 0..1 of the hull left; 1 for a car nobody has shot. */
+float hta_game_hull(const hta_game *g, int32_t car);
+
+/* ---- Aim ------------------------------------------------------------ */
+/* The enemy `unit`'s crosshair is on, or near enough for the weapon's own
+ * autoaim (Weapon +996 angle, +1000 range): the red reticle, and where an
+ * assisted round goes. `dir` is the look; out_point (may be NULL) is where
+ * to aim -- for a round that flies, where the target will be. -1 for none.
+ * An enemy-crewed vehicle counts, aimed at its hull. */
+int32_t hta_game_aim_target(const hta_game *g, int32_t unit, int32_t weapon,
+                            const float eye[3], const float dir[3], float out_point[3]);
 
 /* ---- The motion tracker -------------------------------------------- */
 /* Retail Halo's tracker reaches 25 m; the Trial's `motion sensor range`

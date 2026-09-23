@@ -172,7 +172,10 @@ static void synthetic(void)
         "reverse frees a jeep whose collision proxies already overlap another jeep");
     rig(&v);v.count=2;v.cars[1]=v.cars[0];v.cars[1].pos[0]=2.5f;other_driven(&v,1,false);
     run(&v,&col,1,0,false,120,1.f/60);
-    CHECK(v.cars[0].pos[0]<1 && v.cars[1].pos[0]>2.52f,
+    printf("      jeeps at %.2f and %.2f\n",v.cars[0].pos[0],v.cars[1].pos[0]);
+    /* The struck jeep rolls on (coasting keeps momentum); the striker
+     * stays behind it. */
+    CHECK(v.cars[0].pos[0]<v.cars[1].pos[0]-1.0f && v.cars[1].pos[0]>2.52f,
         "vehicle impulse transfers motion without letting jeeps pass through");
     /* Composite grids must choose nearest hits and retain material when the
      * extra grid misses; this guards moving vehicles and all existing shots. */
@@ -245,6 +248,39 @@ static void synthetic(void)
     other_driven(&v,0,false);
     run(&v,&col,0,0,false,400,1.f/60);
     CHECK(v.cars[0].grounded && v.cars[0].pos[2]<.5f,"empty banshee comes down and lands");
+
+    /* Momentum: let go and a Warthog rolls on; brake and it stops. */
+    rig(&v);v.cars[0].forward=8.25f;v.cars[0].accel=2.52f;v.cars[0].decel=9.9f;
+    run(&v,&col,1,0,false,240,1.f/60);
+    float top=v.cars[0].speed;
+    { float pitch_seen=0;
+      rig(&v);v.cars[0].forward=8.25f;v.cars[0].accel=2.52f;v.cars[0].decel=9.9f;
+      for(int i=0;i<30;i++){run(&v,&col,1,0,false,1,1.f/60);pitch_seen=fminf(pitch_seen,v.cars[0].sway[0]);}
+      CHECK(pitch_seen<-.01f,"the body squats nose-up as the throttle opens");
+      run(&v,&col,1,0,false,210,1.f/60); }
+    run(&v,&col,0,0,false,60,1.f/60);
+    printf("      coasting: %.2f -> %.2f wu/s after a second\n",top,v.cars[0].speed);
+    CHECK(v.cars[0].speed>top*0.7f,"let go of the stick and the Warthog rolls on");
+    run(&v,&col,0,0,true,60,1.f/60);
+    CHECK(v.cars[0].speed<.01f,"the brake still stops it inside a second");
+    /* A Ghost carries its speed wide through a hard turn. */
+    rig(&v);v.cars[0].kind=HTA_VK_SCOUT;v.cars[0].forward=6.75f;v.cars[0].reverse=3.375f;
+    v.cars[0].accel=4.5f;v.cars[0].decel=4.5f;v.cars[0].turn_rate=80*0.0174533f;
+    v.cars[0].ctl.yaw=0;run(&v,&col,1,0,false,120,1.f/60);
+    v.cars[0].ctl.yaw=1.5f;run(&v,&col,1,0,false,40,1.f/60);
+    { float vx=cosf(v.cars[0].yaw)*v.cars[0].speed+v.cars[0].lateral_vel[0];
+      float vy=sinf(v.cars[0].yaw)*v.cars[0].speed+v.cars[0].lateral_vel[1];
+      float slip=fabsf(hta_angle_wrap(atan2f(vy,vx)-v.cars[0].yaw));
+      printf("      ghost slides %.2f rad off its nose\n",slip);
+      CHECK(slip>.15f,"a Ghost slides wide through a hard turn"); }
+    /* A blast throws a Warthog into the air, turning, and it comes down. */
+    rig(&v);other_driven(&v,0,false);run(&v,&col,0,0,false,30,1.f/60);
+    { float kick[3]={2.0f,0,2.5f};hta_vehicles_push(&v,0,kick,3.0f,.1f);
+      bool left=false;float tipped=0;
+      for(int i=0;i<240;i++){run(&v,&col,0,0,false,1,1.f/60);
+          if(!v.cars[0].grounded)left=true;tipped=fmaxf(tipped,fabsf(v.cars[0].pitch));}
+      CHECK(left && tipped>.2f,"a blast lifts a Warthog off the ground and tips it");
+      CHECK(v.cars[0].grounded && v.cars[0].pos[0]>1,"and it lands further along"); }
     hta_collision_free(&col);hta_bsp_free(&m);
 }
 static unsigned char *slurp(const char *path,size_t *n)

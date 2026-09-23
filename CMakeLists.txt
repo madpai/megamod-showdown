@@ -18,6 +18,7 @@ if(ANDROID)
         src/engine/projectile.c
         src/engine/particle.c
         src/engine/contrail.c
+        src/engine/shake.c
         src/engine/vitals.c
         src/engine/actor.c
         src/engine/pickup.c
@@ -68,6 +69,7 @@ else()
         src/engine/projectile.c
         src/engine/particle.c
         src/engine/contrail.c
+        src/engine/shake.c
         src/engine/vitals.c
         src/engine/actor.c
         src/engine/pickup.c
@@ -198,6 +200,10 @@ else()
     add_executable(test_contrail tests/test_contrail.c)
     target_link_libraries(test_contrail PRIVATE hta_engine m)
     add_test(NAME contrail COMMAND test_contrail)
+
+    add_executable(test_shake tests/test_shake.c)
+    target_link_libraries(test_shake PRIVATE hta_engine m)
+    add_test(NAME shake COMMAND test_shake)
 
     add_executable(test_ride tests/test_ride.c)
     target_link_libraries(test_ride PRIVATE hta_engine m)

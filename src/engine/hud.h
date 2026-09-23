@@ -84,6 +84,8 @@ typedef struct {
     /* crosshair */
     bool     have_cross;
     uint32_t cross_elem;
+    float    cross_tint[4];     /* the tag's own colour, to go back to */
+    bool     cross_on_target;
     float    cross_px;          /* native size on the 640x480 canvas */
 
     /* unit HUD: shield and health, from `unhi`. */
@@ -164,6 +166,14 @@ void hta_hud_set_number(hta_hud *h, int value);
 /* Which zoom level the weapon is at, 0 for unzoomed. Shows that level's
  * scope furniture and hides every other level's. */
 void hta_hud_set_zoom(hta_hud *h, int level);
+/* Halo CE's crosshair goes red while it is on an enemy within the weapon's
+ * autoaim range. No tag carries that red (the reticle overlay has a
+ * default, a flashing and a disabled colour, none of them for a target),
+ * so HTA_HUD_TARGET_COLOR is ours. */
+#define HTA_HUD_TARGET_R 1.0f
+#define HTA_HUD_TARGET_G 0.12f
+#define HTA_HUD_TARGET_B 0.08f
+void hta_hud_set_on_target(hta_hud *h, bool on);
 
 /* Black over the whole screen at `alpha`, 0 for none. Halo fades out as you
  * die and back in as you respawn. */

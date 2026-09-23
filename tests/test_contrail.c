@@ -82,6 +82,16 @@ int main(int argc,char**argv)
     CHECK(area(&cc,ar)>0.01f,"a rifle tracer draws at once");
     float head=cc.trail[ar][0].head[0];
     CHECK(head>4 && head<7,"and its head moves at the round's speed");
+    /* A streak, not a beam: however long it has flown, the ribbon is a
+     * short run behind its head. */
+    for(int i=0;i<3;i++)hta_contrails_update(&cc,&cam,1.f/60);
+    {   float lo=1e9f,hi=-1e9f;uint32_t per=HTA_CONT_TRAILS*HTA_CONT_POINTS;
+        for(uint32_t q=ar*per*4;q<(ar+1)*per*4;q++){const hta_vertex*vv=&cc.mesh.vertices[q];
+            if(vv->pos[0]==0&&vv->pos[1]==0&&vv->pos[2]==0)continue;
+            if(vv->pos[0]<lo)lo=vv->pos[0];if(vv->pos[0]>hi)hi=vv->pos[0];}
+        printf("      tracer ribbon spans %.2f wu\n",hi-lo);
+        CHECK(hi>lo && hi-lo<1.5f,"a rifle tracer is a short streak, not a line to the muzzle");
+    }
     for(int i=0;i<30;i++)hta_contrails_update(&cc,&cam,1.f/60);
     CHECK(hta_contrails_live(&cc)==0,"and is gone a moment after it lands");
     /* Colour per vertex, alpha fading with age. */

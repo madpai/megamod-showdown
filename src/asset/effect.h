@@ -161,6 +161,25 @@ bool hta_effect_damage(const hta_cache *c, uint32_t effect_tag_id,
 bool hta_damage_effect(const hta_cache *c, uint32_t jpt_tag_id,
                        float *out_radius, float *out_core, float *out_damage);
 
+/* How a `jpt!` moves the camera of whoever it reaches. Halo puts two
+ * motions in every damage effect: a TEMPORARY IMPULSE (a kick of the view
+ * that springs back: +152 duration, +160 rotation, +164 pushback) and a
+ * SHAKE (+204 duration, +212 random translation, +216 random rotation).
+ * `radius` is the effect's own bounds (+0): full strength inside the first,
+ * nothing past the second; both zero means only the one it is applied to
+ * (a trigger's firing damage, felt by the shooter). DamageEffect 672. */
+typedef struct {
+    float radius[2];
+    float impulse_time, impulse_rot, impulse_push;
+    float shake_time, shake_move, shake_rot;
+} hta_damage_shake;
+
+bool hta_damage_shake_read(const hta_cache *c, uint32_t jpt_tag_id, hta_damage_shake *out);
+/* Every shaking `jpt!` among an effect's parts (an explosion carries the
+ * blast and a shock wave). Returns how many were written. */
+uint32_t hta_effect_shakes(const hta_cache *c, uint32_t effect_tag_id,
+                           hta_damage_shake *out, uint32_t max);
+
 /* Halo's MaterialType for a Spartan's armour and for its energy shield.
  * A `jpt!` carries a multiplier per material, and those two are how much of
  * a hit a player actually takes. */

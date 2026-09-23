@@ -87,8 +87,8 @@ static void car_quat(const hta_vehicle *v, float q[4])
     hta_transform a, b, c, ab, abc;
     hta_xf_identity(&a); hta_xf_identity(&b); hta_xf_identity(&c);
     axis_quat(a.q, 0, 0, 1, v->yaw);
-    axis_quat(b.q, 0, 1, 0, v->pitch);
-    axis_quat(c.q, 1, 0, 0, v->roll + v->bank);
+    axis_quat(b.q, 0, 1, 0, v->pitch + v->sway[0]);
+    axis_quat(c.q, 1, 0, 0, v->roll + v->bank + v->sway[1]);
     hta_xf_mul(&ab, &a, &b);
     hta_xf_mul(&abc, &ab, &c);
     memcpy(q, abc.q, sizeof(abc.q));
@@ -491,6 +491,8 @@ void hta_vehicles_reset(hta_vehicles *v, uint32_t i)
     hta_vehicle *car=&v->cars[i];
     memcpy(car->pos,car->home_pos,sizeof(car->pos));
     car->yaw=car->home_yaw;car->pitch=car->home_pitch;car->roll=car->home_roll;car->bank=0;
+    car->sway[0]=car->sway[1]=car->sway_vel[0]=car->sway_vel[1]=0;
+    car->tumble[0]=car->tumble[1]=0;
     car->speed=car->steering=car->fall_speed=car->rise_speed=0;
     car->lateral_vel[0]=car->lateral_vel[1]=car->yaw_rate=0;
     car->wheel_speed=car->barrel_speed=0;
@@ -1103,7 +1105,8 @@ static void drive_jeep(hta_vehicle *car, float h)
     bool brake=car->ctl.brake;
     float target=gas>=0?gas*car->forward:gas*car->reverse;
     float rate=car->accel;
-    if(!driven || brake || fabsf(gas)<0.01f || gas*car->speed<0){rate=car->decel;target=0;}
+    if(brake || gas*car->speed<0){rate=car->decel;target=0;}
+    else if(!driven || fabsf(gas)<0.01f){rate=car->decel*HTA_VEHICLE_COAST_JEEP;target=0;}
     if(car->grounded || car->traction)car->speed=approach(car->speed,target,rate*h);
     float lateral=hypotf(car->lateral_vel[0],car->lateral_vel[1]);
     if(lateral>0 && (car->grounded || car->traction)){
@@ -1126,7 +1129,8 @@ static void drive_tank(hta_vehicle *car, float h)
     float turn=driven?clamp(car->ctl.strafe,-1,1):0;
     float target=gas>=0?gas*car->forward:gas*car->reverse;
     float rate=car->accel;
-    if(!driven || car->ctl.brake || fabsf(gas)<0.01f || gas*car->speed<0){rate=car->decel;target=0;}
+    if(car->ctl.brake || gas*car->speed<0){rate=car->decel;target=0;}
+    else if(!driven || fabsf(gas)<0.01f){rate=car->decel*HTA_VEHICLE_COAST_TANK;target=0;}
     if(car->grounded || car->traction)car->speed=approach(car->speed,target,rate*h);
     float lateral=hypotf(car->lateral_vel[0],car->lateral_vel[1]);
     if(lateral>0 && (car->grounded || car->traction)){
@@ -1144,18 +1148,22 @@ static void drive_tank(hta_vehicle *car, float h)
 static void drive_scout(hta_vehicle *car, float h)
 {
     bool driven=car->ctl.driven;
+    /* The world velocity, before the hull turns under it. */
+    float now[2];planar_velocity(car,now);
     if(driven)car->yaw=approach_angle(car->yaw,car->ctl.yaw,car->turn_rate*h);
     float f=driven?clamp(car->ctl.throttle,-1,1):0,s=driven?clamp(car->ctl.strafe,-1,1):0;
     float fwd=f>=0 ? f*car->forward : f*car->reverse;
     float side=s*car->forward*HTA_SCOUT_STRAFE_FRACTION;
     float cy=cosf(car->yaw),sy=sinf(car->yaw);
-    float want[2]={cy*fwd+sy*side,sy*fwd-cy*side},now[2];
-    planar_velocity(car,now);
-    float dx=want[0]-now[0],dy=want[1]-now[1],d=hypotf(dx,dy);
+    float want[2]={cy*fwd+sy*side,sy*fwd-cy*side};
     bool pushing=fabsf(f)>.01f || fabsf(s)>.01f;
-    float rate=(pushing?car->accel:car->decel)*h;
-    if(d>rate){dx*=rate/d;dy*=rate/d;}
-    now[0]+=dx;now[1]+=dy;
+    /* Along the hull it answers the stick; across it, it slides. */
+    float rate=(pushing?car->accel:car->decel*HTA_VEHICLE_COAST_HOVER)*h;
+    float along=(want[0]-now[0])*cy+(want[1]-now[1])*sy;
+    float across=(want[0]-now[0])*sy-(want[1]-now[1])*cy;
+    float grip=rate*(pushing?HTA_VEHICLE_DRIFT_GRIP:1.0f);
+    along=clamp(along,-rate,rate);across=clamp(across,-grip,grip);
+    now[0]+=cy*along+sy*across;now[1]+=sy*along-cy*across;
     set_planar_velocity(car,now);
     car->yaw_rate*=expf(-HTA_VEHICLE_YAW_DAMP*h);
     if(fabsf(car->yaw_rate)<.001f)car->yaw_rate=0;
@@ -1167,6 +1175,7 @@ static void drive_fighter(hta_vehicle *car, float h)
 {
     bool driven=car->ctl.driven;
     float old_yaw=car->yaw;
+    float held[2];planar_velocity(car,held);
     if(driven){
         car->yaw=approach_angle(car->yaw,car->ctl.yaw,car->turn_rate*h);
         float want_pitch=-clamp(car->ctl.pitch,-HTA_FIGHTER_MAX_PITCH,HTA_FIGHTER_MAX_PITCH);
@@ -1179,13 +1188,18 @@ static void drive_fighter(hta_vehicle *car, float h)
     /* Flight is along the nose, pitch included. */
     float cp=cosf(-car->pitch),sp=sinf(-car->pitch),cy=cosf(car->yaw),sy=sinf(car->yaw);
     float want[3]={cy*cp*speed+sy*side,sy*cp*speed-cy*side,sp*speed};
-    float now[3];planar_velocity(car,now);now[2]=car->fall_speed;
+    float now[3]={held[0],held[1],car->fall_speed};
     if(!driven)want[2]=now[2];   /* nobody flying it: gravity has the say */
-    float dx=want[0]-now[0],dy=want[1]-now[1],dz=want[2]-now[2];
-    float d=sqrtf(dx*dx+dy*dy+dz*dz);
     bool pushing=fabsf(f)>.01f || fabsf(s)>.01f;
-    float rate=(pushing?car->accel:car->decel)*h;
-    if(d>rate){dx*=rate/d;dy*=rate/d;dz*=rate/d;}
+    float rate=(pushing?car->accel:car->decel*HTA_VEHICLE_COAST_FLYER)*h;
+    /* Along the nose it answers the stick; across it, it slides. */
+    float dx=want[0]-now[0],dy=want[1]-now[1],dz=want[2]-now[2];
+    float along=dx*cy+dy*sy,across=dx*sy-dy*cy;
+    float grip=rate*(pushing?HTA_VEHICLE_DRIFT_GRIP:1.0f);
+    along=clamp(along,-rate,rate);across=clamp(across,-grip,grip);
+    /* Height holds: a pilot who lets go hangs where they are. */
+    float lift=(pushing?car->accel:car->decel)*h;dz=clamp(dz,-lift,lift);
+    dx=cy*along+sy*across;dy=sy*along-cy*across;
     now[0]+=dx;now[1]+=dy;now[2]+=dz;
     set_planar_velocity(car,now);car->fall_speed=now[2];
     float turn=hta_angle_wrap(car->yaw-old_yaw)/h;
@@ -1194,11 +1208,65 @@ static void drive_fighter(hta_vehicle *car, float h)
     if(fabsf(car->yaw_rate)<.001f)car->yaw_rate=0;
 }
 
+/* The body on its springs: nose up under throttle, down under the brakes,
+ * rolled out of a turn. Visual and small; it rides in the pose. */
+static void sway(hta_vehicle *car,const hta_vehicle *old,float h)
+{
+    float k=car->kind==HTA_VK_JEEP ? HTA_VEHICLE_SWAY_JEEP
+          : car->kind==HTA_VK_TANK ? HTA_VEHICLE_SWAY_TANK
+          : car->kind==HTA_VK_SCOUT ? HTA_VEHICLE_SWAY_HOVER : 0;
+    float want[2]={0,0};
+    if(k>0 && car->grounded && h>0){
+        float a=(car->speed-old->speed)/h;
+        float turn=hta_angle_wrap(car->yaw-old->yaw)/h;
+        want[0]=clamp(-a*k,-HTA_VEHICLE_SWAY_MAX,HTA_VEHICLE_SWAY_MAX);
+        want[1]=clamp(car->speed*turn*k,-HTA_VEHICLE_SWAY_MAX,HTA_VEHICLE_SWAY_MAX);
+    }
+    for(int i=0;i<2;i++){
+        float acc=(want[i]-car->sway[i])*HTA_VEHICLE_SWAY_SPRING-car->sway_vel[i]*HTA_VEHICLE_SWAY_DAMP;
+        car->sway_vel[i]+=acc*h;
+        car->sway[i]=clamp(car->sway[i]+car->sway_vel[i]*h,-2*HTA_VEHICLE_SWAY_MAX,2*HTA_VEHICLE_SWAY_MAX);
+        if(fabsf(car->sway[i])<1e-5f && fabsf(car->sway_vel[i])<1e-4f && want[i]==0)
+            car->sway[i]=car->sway_vel[i]=0;
+    }
+}
+
+void hta_vehicles_push(hta_vehicles *v, uint32_t ci, const float vel[3], float spin, float kick)
+{
+    if(!v || ci>=v->count || !vel)return;
+    hta_vehicle *car=&v->cars[ci];
+    if(!car->active || car->kind==HTA_VK_TURRET)return;
+    float p[2];planar_velocity(car,p);
+    p[0]+=vel[0];p[1]+=vel[1];
+    set_planar_velocity(car,p);
+    if(vel[2]>0.3f && car->kind!=HTA_VK_FIGHTER){
+        /* Off the ground: gravity has it now. */
+        car->fall_speed=fmaxf(car->fall_speed,0)+vel[2];
+        car->rise_speed=car->fall_speed;
+        car->grounded=false;car->traction=false;
+    } else car->fall_speed+=vel[2];
+    /* Tumble about the axis across the push. */
+    float hx=vel[0],hy=vel[1],hl=hypotf(hx,hy);
+    if(hl>1e-4f && spin>0){
+        float fwd=(hx*cosf(car->yaw)+hy*sinf(car->yaw))/hl;
+        float side=(hx*sinf(car->yaw)-hy*cosf(car->yaw))/hl;
+        car->tumble[0]+=-fwd*spin;car->tumble[1]+=side*spin;
+    }
+    if(hl>1e-4f && kick!=0){
+        float fwd=(hx*cosf(car->yaw)+hy*sinf(car->yaw))/hl;
+        float side=(hx*sinf(car->yaw)-hy*cosf(car->yaw))/hl;
+        car->sway_vel[0]+=fwd*kick*HTA_VEHICLE_SWAY_SPRING*0.25f;
+        car->sway_vel[1]+=side*kick*HTA_VEHICLE_SWAY_SPRING*0.25f;
+    }
+    car->rest_time=0;
+}
+
 static bool asleep(const hta_vehicle *car)
 {
     return !car->ctl.driven && car->grounded && car->speed==0 &&
         car->lateral_vel[0]==0 && car->lateral_vel[1]==0 && car->yaw_rate==0 &&
-        car->barrel_speed==0 && car->rest_time>=HTA_VEHICLE_SETTLE_TIME;
+        car->barrel_speed==0 && car->sway[0]==0 && car->sway[1]==0 &&
+        car->rest_time>=HTA_VEHICLE_SETTLE_TIME;
 }
 
 void hta_vehicles_update(hta_vehicles *v,const hta_collision *world,float gravity,float dt)
@@ -1229,8 +1297,15 @@ void hta_vehicles_update(hta_vehicles *v,const hta_collision *world,float gravit
         car->yaw+=car->yaw_rate*h;
         car->pos[0]+=(cosf(car->yaw)*car->speed+car->lateral_vel[0])*h;
         car->pos[1]+=(sinf(car->yaw)*car->speed+car->lateral_vel[1])*h;
+        if(!car->grounded && (car->tumble[0]!=0 || car->tumble[1]!=0)){
+            /* Thrown: it turns over in the air until it lands. */
+            car->pitch=clamp(car->pitch+car->tumble[0]*h,-1.3f,1.3f);
+            car->roll=clamp(car->roll+car->tumble[1]*h,-1.3f,1.3f);
+        }
         if(flying)fly_support(car,&terrain,h);
         else support(car,&terrain,gravity,h);
+        if(car->grounded){car->tumble[0]=car->tumble[1]=0;}
+        sway(car,&old,h);
         hta_vehicle_hit hit={.other=-1};
         if(blocked(v,i,car,&old,&terrain,&hit)) {
             hta_vehicle attempted=*car;

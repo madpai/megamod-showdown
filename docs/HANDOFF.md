@@ -629,6 +629,18 @@ wrong, this list is the first place to look — they are all one constant.
 | CTF roles | every third on a side defends | `hta_game_ctf_goal` |
 | `PUSH_STOP` (brain.c) | 5 wu | an attacker stops to duel only this close |
 | `CLOTH_RIPPLE` (view.c) | 0.035 wu | the still cloth's baked ripple; Halo simulates it |
+| `HTA_TRACER_TAIL` | 1.2 wu | a hitscan tracer's streak is cut this far behind its head (the tag's 0.01 s point life, stretched to 0.06 s to be drawable, made 18 wu beams) |
+| `HTA_PART_TYPES` / `_RECIPES` / `_MAX` | 64 / 40 / 1536 | particle table sizes; at 24/16/768 every explosion was silently dropped once vehicles were on |
+| `HTA_HULL_*` | jeep 240, tank 480, Ghost 160, Banshee 220, turret 200 | vehicle hull strength in `jpt!` points (the tags say 0: Halo CE MP vehicles are indestructible). Damage per hit is the tag's `jpt!` vs thick metal (material 7) |
+| `HTA_VEHICLE_WRECK_TIME` | 20 s | a destroyed vehicle is gone this long, then back home |
+| wreck blast | the Scorpion shell explosion's own effect and damage | what a hull going up looks like and does |
+| `HTA_BLAST_PUSH` | 0.03 wu/s per damage point x 5000/mass | how hard a blast throws a vehicle (plus tumble) |
+| `HTA_RECOIL_PUSH` / `_MAX` | 0.01 per blast point x 20000/mass, max 1 wu/s | a cannon's kick back on its vehicle |
+| `HTA_VEHICLE_COAST_*` | jeep 0.15, tank 0.45, Ghost 0.30, Banshee 0.20 of the tag's decel | slowdown with the stick released; the tag decel is now braking only |
+| `HTA_VEHICLE_DRIFT_GRIP` | 1.0 of accel | Ghost/Banshee: velocity across the hull corrected separately, so turns slide |
+| `HTA_VEHICLE_SWAY_*` | jeep 0.018, tank 0.008, Ghost 0.014 rad per wu/s^2; max 0.14; spring 45, damping 7 | visual suspension pitch/roll |
+| `HTA_HUD_TARGET_R/G/B` | 1.0, 0.12, 0.08 | the red reticle (no tag carries it) |
+| spark threshold | hull below 35% | a failing hull throws the chaingun's metal-impact sparks |
 
 ---
 

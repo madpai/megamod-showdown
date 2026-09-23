@@ -50,6 +50,7 @@
 #define HTA_TRIG_ROF          4u    /* two floats: initial, final shots/sec */
 #define HTA_TRIG_ROUNDS_SHOT  34u   /* int16 */
 #define HTA_TRIG_PROJ_SHOT    110u  /* int16 */
+#define HTA_TRIG_BETWEEN_CONT 38u   /* int16: projectiles between contrails */
 #define HTA_TRIG_ERROR_ACCEL  56u   /* float, seconds to bloom to the max cone */
 #define HTA_TRIG_ERROR_DECEL  60u   /* float, seconds to settle back */
 #define HTA_TRIG_MIN_ERROR    120u  /* Angle */
@@ -90,6 +91,9 @@ typedef struct {
     float    min_error;      /* radians */
     int      rounds_per_shot;
     int      projectiles_per_shot;
+    /* Trigger +38 `projectiles between contrails`: the rifle's 3 means one
+     * round in four draws its tracer. 0 means every round does. */
+    int      between_contrails;
     uint32_t projectile_id;
     uint32_t firing_fx_id, empty_fx_id, firing_damage_id;
 

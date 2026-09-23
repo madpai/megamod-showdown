@@ -43,8 +43,8 @@
  *
  * type[t].first_slot / type[t].slots is where a type's particles live.
  * Nothing may assume a uniform stride. */
-#define HTA_PART_TYPES    24u
-#define HTA_PART_MAX     768u   /* geometry ceiling, rarely reached */
+#define HTA_PART_TYPES    64u
+#define HTA_PART_MAX    1536u   /* geometry ceiling, rarely reached */
 #define HTA_PART_PER_TYPE 64u   /* the deepest any one type can be */
 #define HTA_PART_PER_TYPE_MIN 2u
 /* Square world units of live quad across every type.
@@ -63,7 +63,7 @@
  * worth. Four times a second is about as fast as anything in the Trial
  * throws the same effect twice. */
 #define HTA_PART_RECUR  0.25f
-#define HTA_PART_RECIPES  16u   /* a detonation, the jet, one per material */
+#define HTA_PART_RECIPES  40u   /* a detonation, the jet, one per material, every vehicle gun and pool */
 #define HTA_PART_EMITS     8u   /* particle entries in one effect */
 
 typedef struct {

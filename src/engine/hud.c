@@ -327,6 +327,7 @@ static void load_crosshair(hta_hud *h, const hta_cache *c,
                           ax, ay, HTA_HUD_ANCHOR_CENTER, tint, -1.0f);
         if (ei < 0) continue;
         h->cross_elem = (uint32_t)ei;
+        memcpy(h->cross_tint, tint, sizeof(h->cross_tint));
         h->cross_px = h->elem[ei].w_px > h->elem[ei].h_px
                     ? h->elem[ei].w_px : h->elem[ei].h_px;
         h->have_cross = true;
@@ -915,6 +916,18 @@ void hta_hud_set_health(hta_hud *h, float fraction)
 {
     if (!h) return;
     set_meter(h, h->health_meter, fraction, h->health_min, h->health_max);
+}
+
+void hta_hud_set_on_target(hta_hud *h, bool on)
+{
+    if (!h || !h->have_cross || h->cross_elem >= h->elem_count) return;
+    h->cross_on_target = on;
+    hta_submesh *sm = &h->mesh.submeshes[h->elem[h->cross_elem].submesh];
+    if (on) {
+        sm->tint[0] = HTA_HUD_TARGET_R; sm->tint[1] = HTA_HUD_TARGET_G;
+        sm->tint[2] = HTA_HUD_TARGET_B;
+        sm->tint[3] = h->cross_tint[3] > 0.0f ? h->cross_tint[3] : 1.0f;
+    } else memcpy(sm->tint, h->cross_tint, sizeof(h->cross_tint));
 }
 
 void hta_hud_set_ammo(hta_hud *h, float fraction)
