@@ -21,6 +21,7 @@ if ./build-host/test_cache  >/dev/null 2>&1; then ok "cache parser tests";  else
 if ./build-host/test_vehicle >/dev/null 2>&1; then ok "vehicle driving and collision tests"; else bad "vehicle driving and collision tests"; fi
 if ./build-host/test_model >/dev/null 2>&1; then ok "model UV and lighting tests"; else bad "model UV and lighting tests"; fi
 if ./build-host/test_bsp    >/dev/null 2>&1; then ok "bsp extraction tests"; else bad "bsp extraction tests"; fi
+if ./build-host/test_external_map >/dev/null 2>&1; then ok "external map package loader and collision"; else bad "external map package loader and collision"; fi
 if ./build-host/test_camera >/dev/null 2>&1; then ok "camera/projection tests"; else bad "camera/projection tests"; fi
 if ./build-host/test_player >/dev/null 2>&1; then ok "player/collision tests"; else bad "player/collision tests"; fi
 if ./build-host/test_bitmap >/dev/null 2>&1; then ok "bitmap decode tests"; else bad "bitmap decode tests"; fi

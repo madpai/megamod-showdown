@@ -34,6 +34,7 @@ if(ANDROID)
         src/game/menu.c
         src/asset/cache.c
         src/asset/bsp.c
+        src/asset/external_map.c
         src/asset/bitmap.c
         src/asset/sound.c
         src/asset/ogg.c
@@ -79,12 +80,15 @@ else()
         src/game/brain.c
         src/game/view.c
         src/game/menu.c
-        src/asset/cache.c src/asset/bsp.c src/asset/bitmap.c src/asset/sound.c src/asset/ogg.c src/asset/effect.c src/asset/dialogue.c src/asset/strings.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
+        src/asset/cache.c src/asset/bsp.c src/asset/external_map.c src/asset/bitmap.c src/asset/sound.c src/asset/ogg.c src/asset/effect.c src/asset/dialogue.c src/asset/strings.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
         src/asset/anim.c src/asset/model.c src/asset/font.c)
     target_include_directories(hta_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(hta_engine PRIVATE -Wall -Wextra)
 
     enable_testing()
+    add_executable(test_external_map tests/test_external_map.c)
+    target_link_libraries(test_external_map PRIVATE hta_engine m)
+    add_test(NAME external_map COMMAND test_external_map)
     add_executable(test_net tests/test_net.c)
     target_link_libraries(test_net PRIVATE hta_net m)
     add_test(NAME net COMMAND test_net)
@@ -120,6 +124,9 @@ else()
         add_executable(htamatch src/tools/htamatch.c)
         target_link_libraries(htamatch PRIVATE hta_engine hta_gfx_host m)
         target_compile_options(htamatch PRIVATE -Wall -Wextra)
+
+        add_executable(open-halo-map-test src/tools/open_halo_map_test.c)
+        target_link_libraries(open-halo-map-test PRIVATE hta_engine hta_gfx_host m)
 
         add_executable(htaview src/tools/htaview.c)
         target_link_libraries(htaview PRIVATE hta_engine hta_gfx_host m)

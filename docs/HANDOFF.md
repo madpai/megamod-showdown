@@ -158,6 +158,19 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+> **Open Asset Lab host integration (2026-09-23):** no new Android APK was
+> published for this work. Open Halo now has an external `.oalmap` host loader
+> and `open-halo-map-test`; its existing Trial game path is unchanged. The
+> companion Asset Lab service is at `http://100.89.1.14:8762` on Tailscale.
+> On the S24+, first open that page, sign in with the private token from
+> `python -m assetlab access` in the Asset Lab repo, submit a registered map,
+> disconnect and reconnect, then inspect its staged preview/report. A failure
+> is inability to load the page, submit, or see the completed job. This tests
+> the remote workflow only; walking in an imported map needs a later Android
+> exploration mode. Continue the Trial vehicle-path test below on the current
+> APK.
+
+
 > **Vehicle-paths + Ghost-strafe build (5d51b76)** at `http://100.89.1.14:8731/`. Host-verified
 > (verify.sh 75/75, test_nav 30, test_ride 92); not yet on a phone. The
 > bots-drive and playtest-fixes lists below are still unreported too --
