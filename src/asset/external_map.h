@@ -25,8 +25,8 @@ typedef struct {
 void hta_external_map_collision_view(const hta_bsp_mesh *render, const hta_external_map *m,
                                      hta_bsp_mesh *view);
 
-/* Spawn team_index: Source terrorists play red, counter-terrorists blue;
- * any other start is shared by both teams. */
+/* Spawn team_index from the manifest's "team": 0 red, 1 blue; a start
+ * with no team is shared by both teams. */
 #define HTA_EXTERNAL_TEAM_ANY 0xFFFFu
 
 bool hta_external_map_load(const char *path, hta_external_map *out, char *err, size_t errlen);

@@ -28,7 +28,9 @@ bool hta_collision_build(hta_collision *c, const hta_bsp_mesh *mesh)
 
 bool hta_collision_build_cells(hta_collision *c, const hta_bsp_mesh *mesh, uint32_t across)
 {
-    if (across < 1u || across > MAX_GRID_DIM) across = GRID_TARGET_CELLS;
+    /* `across` cells of span/across fit in across+1 columns; keep that
+     * within MAX_GRID_DIM or the clamp below drops the far edge's strip. */
+    if (across < 1u || across > MAX_GRID_DIM - 1u) across = GRID_TARGET_CELLS;
     if (!c || !mesh || !mesh->vertices || !mesh->indices || mesh->index_count < 3) return false;
     memset(c, 0, sizeof(*c));
 

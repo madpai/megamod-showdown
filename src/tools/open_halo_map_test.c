@@ -2,6 +2,7 @@
 #include "asset/external_map.h"
 #include "engine/player.h"
 #include "engine/camera.h"
+#include "game/external_world.h"
 #include "gfx/gfx.h"
 #include <math.h>
 #include <stdio.h>
@@ -32,15 +33,31 @@ int main(int argc,char **argv)
     printf("collision: %u of %u triangles solid\n",solid.index_count/3,mesh->index_count/3);
     if(!hta_collision_build_cells(&col,&solid,HTA_COLLISION_CELLS_IMPORTED)){fprintf(stderr,"collision grid build failed\n");hta_external_map_free(&map);return 1;}
     printf("collision: %u triangles, %ux%u cells, %.2f ms\n",col.tri_count,col.nx,col.ny,(now()-tc)*1000.0);
-    unsigned usable=0;
+    /* Each start as the game uses it: snapped from HTA_EXTERNAL_SPAWN_LIFT,
+     * then a body stands 5 s and walks forward 5 s. Usable means the floor
+     * is right under it and the body is still in the map afterwards. */
+    unsigned usable=0,fell=0;
+    hta_player_physics ph;hta_player_physics_defaults(&ph);hta_collision_set_slope(&col,ph.max_slope);
     for(unsigned i=0;i<map.spawn_count;i++){
         float *p=map.spawns[i].position,ground=0;
-        int hit=hta_collision_ground(&col,p[0],p[1],p[2]+1.0f,&ground);
-        int good=hit && fabsf(p[2]-ground)<1.5f;
+        int hit=hta_collision_ground(&col,p[0],p[1],p[2]+HTA_EXTERNAL_SPAWN_LIFT,&ground);
+        int good=hit && fabsf(p[2]-ground)<0.25f;
+        hta_player body;hta_camera eye;hta_player_init(&body);hta_player_apply_physics(&body,&ph);hta_camera_init(&eye);
+        hta_player_spawn(&body,&map.spawns[i]);if(hit)body.pos[2]=ground;eye.yaw=map.spawns[i].facing;
+        hta_player_input in;memset(&in,0,sizeof(in));
+        for(int t=0;t<600;t++){in.move_forward=t>=300?1.0f:0.0f;hta_player_update(&body,&eye,&col,&in,1.0f/60.0f);}
+        /* Out of the map: nothing solid under the body any more, or below
+         * the whole world. A drop to a lower floor is not a failure. */
+        float under=0;
+        int lost=!hta_collision_ground(&col,body.pos[0],body.pos[1],body.pos[2]+HTA_EXTERNAL_SPAWN_LIFT,&under) ||
+                 body.pos[2]<mesh->bounds_min[2]-0.5f;
+        fell+=lost;good=good&&!lost;
         usable+=good;
-        printf("spawn %u: %.3f %.3f %.3f yaw %.1f deg; ground %s %.3f; %s\n",i,p[0],p[1],p[2],map.spawns[i].facing*57.29578f,hit?"at":"missing",ground,good?"usable":"unverified");
+        printf("spawn %u: %.3f %.3f %.3f yaw %.1f deg; ground %s %.3f; walked to %.2f %.2f %.2f; %s\n",i,p[0],p[1],p[2],
+               map.spawns[i].facing*57.29578f,hit?"at":"missing",ground,body.pos[0],body.pos[1],body.pos[2],
+               lost?"FELL OUT":good?"usable":"unverified");
     }
-    printf("usable spawns: %u/%u\n",usable,map.spawn_count);
+    printf("usable spawns: %u/%u; bodies that fell out of the map: %u\n",usable,map.spawn_count,fell);
     if(!usable){fprintf(stderr,"no usable spawn over collision\n");hta_collision_free(&col);hta_external_map_free(&map);return 1;}
     const unsigned W=960,H=540;
     hta_gfx *gfx=hta_gfx_create_offscreen(W,H,err,sizeof(err));

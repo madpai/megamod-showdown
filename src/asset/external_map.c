@@ -21,33 +21,30 @@ void hta_external_map_collision_view(const hta_bsp_mesh *render, const hta_exter
     memcpy(view->bounds_max,render->bounds_max,sizeof(view->bounds_max));
 }
 
-/* The manifest is JSON written by Asset Lab; its spawn_points are in the
- * same order as the binary spawn records. Only their classnames matter. */
-static uint16_t team_of(const char *cls, size_t n)
-{
-    static const char ct[]="info_player_counterterrorist", t[]="info_player_terrorist";
-    if(n==sizeof(ct)-1 && !memcmp(cls,ct,n)) return 1;
-    if(n==sizeof(t)-1 && !memcmp(cls,t,n)) return 0;
-    return HTA_EXTERNAL_TEAM_ANY;
-}
+/* The manifest is JSON written by Asset Lab; its spawn_points are objects
+ * in the same order as the binary spawn records, each with a "team": 0
+ * (red), 1 (blue) or null (either). Which Source class plays which team is
+ * Asset Lab's translation registry's business, not the engine's. */
 static void spawn_teams(const unsigned char *m, size_t ml, hta_spawn_point *sp, uint32_t sc)
 {
     for(uint32_t i=0;i<sc;i++) sp[i].team_index=HTA_EXTERNAL_TEAM_ANY;
-    static const char key[]="\"spawn_points\"", cls[]="\"classname\"";
+    static const char key[]="\"spawn_points\":[", team[]="\"team\":";
     const unsigned char *end=m+ml, *at=NULL;
     for(const unsigned char *p=m;p+sizeof(key)-1<=end;p++)
         if(!memcmp(p,key,sizeof(key)-1)){at=p+sizeof(key)-1;break;}
-    for(uint32_t i=0;at && i<sc;i++){
-        const unsigned char *hit=NULL;
-        for(const unsigned char *p=at;p+sizeof(cls)-1<=end;p++)
-            if(!memcmp(p,cls,sizeof(cls)-1)){hit=p+sizeof(cls)-1;break;}
-        if(!hit) return;
-        while(hit<end && (*hit==' '||*hit==':')) hit++;
-        if(hit>=end || *hit!='"') return;
-        const unsigned char *q=++hit;
-        while(q<end && *q!='"') q++;
-        sp[i].team_index=team_of((const char *)hit,(size_t)(q-hit));
-        at=q;
+    for(uint32_t i=0;at && at<end && i<sc;i++){
+        while(at<end && *at!='{' && *at!=']') at++;
+        if(at>=end || *at!='{') return;
+        const unsigned char *close=at;
+        while(close<end && *close!='}') close++;   /* spawn objects hold no nested objects */
+        if(close>=end) return;
+        for(const unsigned char *p=at;p+sizeof(team)-1<=close;p++)
+            if(!memcmp(p,team,sizeof(team)-1)){
+                unsigned char v=p[sizeof(team)-1];
+                if(v=='0'||v=='1') sp[i].team_index=(uint16_t)(v-'0');
+                break;
+            }
+        at=close+1;
     }
 }
 

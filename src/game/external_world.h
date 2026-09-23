@@ -19,11 +19,24 @@
 #include "nav.h"
 #include "../engine/pickup.h"
 
-/* `count` points on the nav grid's main region, each as far as it can be
- * from the ones before it and from `seed` (may be NULL). Deterministic, so
- * every phone in a match puts things in the same places. Returns how many
- * were found. */
-uint32_t hta_nav_spread(const hta_nav *n, const float (*seed)[3], uint32_t seeds,
+/* An imported map's starts are already on the floor (Asset Lab grounds
+ * them); snapping from higher can land on a ceiling's top (cs_office) or a
+ * roof (de_dust2). A step's height is enough. Ours. */
+#define HTA_EXTERNAL_SPAWN_LIFT 0.1f
+
+/* The nodes a body can walk to from a start in the main region AND walk
+ * back from, following links as they go (a drop is one-way). Regions are undirected, so a
+ * region can hold ledges you drop into and never leave; farthest-point
+ * placement finds exactly those. One byte per node, malloc'd; free it.
+ * NULL on failure. `out_count` (may be NULL) gets how many are playable. */
+uint8_t *hta_nav_playable(const hta_nav *n, const hta_spawn_point *spawns, uint32_t count,
+                          uint32_t *out_count);
+
+/* `count` points on the playable nodes (`mask`; NULL means the main
+ * region), each as far as it can be from the ones before it and from
+ * `seed` (may be NULL). Deterministic, so every phone in a match puts
+ * things in the same places. Returns how many were found. */
+uint32_t hta_nav_spread(const hta_nav *n, const uint8_t *mask, const float (*seed)[3], uint32_t seeds,
                         float (*out)[3], uint32_t count);
 
 /* The largest connected piece of an imported map can be its rooftops
@@ -33,12 +46,12 @@ bool hta_nav_main_from_spawns(hta_nav *n, const hta_spawn_point *spawns, uint32_
 
 /* Move the scenario's equipment onto the nav grid. Call before
  * hta_pickups_build: the geometry is built where the items stand. */
-void hta_pickups_relocate(hta_pickups *p, const hta_nav *n);
+void hta_pickups_relocate(hta_pickups *p, const hta_nav *n, const uint8_t *mask);
 
 /* The imported map's starts replace the scenario's, and each team's flag
  * stands at the walkable spot nearest its starts' middle. CTF stays
  * unavailable when the map names no team starts. */
 void hta_game_use_external(hta_game *g, const hta_spawn_point *spawns, uint32_t count,
-                           const hta_nav *n);
+                           const hta_nav *n, const uint8_t *mask);
 
 #endif

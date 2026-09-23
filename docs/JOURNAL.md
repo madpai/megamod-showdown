@@ -10,6 +10,26 @@ and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
 
+
+## 2026-09-23 (night) -- generalization audit (branch halo-sandbox)
+
+The owner asked to prove the import is general, not fitted to de_dust2.
+Eight maps (CS:S v19 and v20, TF2, GMod, Black Mesa) through one
+importer command, then this engine's host test and bot matches. The
+importer side is in Asset Lab's `docs/GENERALIZATION_AUDIT.md`. What the
+engine had fitted to dust2:
+- Team by Source class name in `external_map.c` -> manifest `"team"`.
+- Spawn re-grounding from 1 wu: cs_office's ceilings are 1.06 wu, so 15
+  of 40 bodies stood on the ceiling tiles and walked into the void. The
+  old host test passed it (1.5 wu tolerance). Now 0.1 wu and a walking
+  body in the host test.
+- Items/flags per undirected region: cs_office and de_inferno scored 0
+  kills -- every item sat on a drop-only ledge, every path failed.
+  `hta_nav_playable` (directed, both ways) -> 6-24 kills.
+- A stray start over aztec's river seeded the gorge as "playable";
+  seeds are now main-region starts only, and Asset Lab rejects
+  floorless starts.
+
 ## 2026-09-23 (evening) -- de_dust2 becomes a playable map (branch halo-sandbox)
 
 Owner's direction: matches on imported maps, chosen from a MAP row, the

@@ -386,6 +386,10 @@ typedef struct hta_game {
     int             score_limit;
     float           time_limit;  /* seconds; 0 plays to the score */
     float           respawn_time;
+    /* How far above a start to look down for its floor: 1 wu for the
+     * scenario's starts; an imported map's are already on the floor and
+     * may be under a low ceiling (hta_game_use_external). */
+    float           spawn_lift;
     bool            teams;
     bool            over;
     int32_t         winner;

@@ -132,6 +132,7 @@ typedef struct {
      * for the game; everything else of Halo's still comes from the Trial. */
     char      world[48];
     hta_external_map world_ext;
+    uint8_t  *world_playable;   /* nav nodes reachable from a start and back */
     bool      world_loaded;
     char      status[256];
     /* What was mapped, for unmapping: an APK asset maps from a page
@@ -901,9 +902,8 @@ static int32_t held_roster(hta_android *s);
 
 /* How far above a start to look down for its floor. Blood Gulch's starts
  * are in the open and some sit a little under the ground, so 8 wu; an
- * imported map's are under arches and beside roofs, where 8 wu finds the
- * roof. The package already puts its starts on the ground. Ours. */
-static float spawn_lift(const hta_android *s) { return s->world_loaded ? 1.0f : 8.0f; }
+ * imported map's are already on the floor, under arches and ceilings. */
+static float spawn_lift(const hta_android *s) { return s->world_loaded ? HTA_EXTERNAL_SPAWN_LIFT : 8.0f; }
 
 static void respawn(hta_android *s)
 {
@@ -1412,6 +1412,10 @@ static void world_nav(hta_android *s)
     }
     if (!hta_nav_main_from_spawns(&s->nav, s->world_ext.spawns, s->world_ext.spawn_count))
         hta_log("[world] no start stands on the nav grid");
+    uint32_t playable = 0;
+    free(s->world_playable);
+    s->world_playable = hta_nav_playable(&s->nav, s->world_ext.spawns, s->world_ext.spawn_count, &playable);
+    hta_log("[world] %u of %u nav nodes reachable from a start and back", playable, s->nav.node_count);
     hta_log("[world] nav: %u nodes in %.0f ms", s->nav.node_count,
             (hta_time_seconds() - t0) * 1000.0);
 }
@@ -1540,7 +1544,7 @@ static bool load_map(hta_android *s)
      * and weighted choice is the scenario's own -- on an imported map, all
      * but the position. */
     if (hta_pickups_load(&s->items, &s->cache)) {
-        if (s->world_loaded) hta_pickups_relocate(&s->items, &s->nav);
+        if (s->world_loaded) hta_pickups_relocate(&s->items, &s->nav, s->world_playable);
         char ierr[HTA_ERRLEN];
         if (hta_pickups_build(&s->items, &s->cache,
                               s->bitmaps_rm.data ? &s->bitmaps_rm : NULL,
@@ -1938,7 +1942,7 @@ static void start_game(hta_android *s)
     hta_log("[game] %s", err);
     if (s->world_loaded) {
         hta_game_use_external(&s->game, s->world_ext.spawns, s->world_ext.spawn_count,
-                              s->nav.built ? &s->nav : NULL);
+                              s->nav.built ? &s->nav : NULL, s->world_playable);
         if (s->nav.built) s->game.nav = &s->nav;
         hta_log("[world] %u starts; flags %s", s->game.spawn_count,
                 s->game.flags[0].present && s->game.flags[1].present ? "at the team starts" : "none");
@@ -5989,6 +5993,7 @@ done:
     hta_game_free(&state.game);
     hta_nav_free(&state.nav);
     hta_external_map_free(&state.world_ext);
+    free(state.world_playable);
     hta_collision_free(&state.col);
     hta_vehicles_free(&state.vehicles);
     hta_contrails_free(&state.trails);

@@ -48,11 +48,11 @@ typedef struct hta_collision {
 } hta_collision;
 
 bool hta_collision_build(hta_collision *c, const hta_bsp_mesh *mesh);
-/* The same with `across` cells along the longer side (at most 256). An
+/* The same with `across` cells along the longer side (at most 255). An
  * imported map packs dense prop models into a small area: the default 64
  * leaves hundreds of triangles in a cell there. */
 bool hta_collision_build_cells(hta_collision *c, const hta_bsp_mesh *mesh, uint32_t across);
-#define HTA_COLLISION_CELLS_IMPORTED 256u
+#define HTA_COLLISION_CELLS_IMPORTED 255u
 
 /* Point the grid at the biped tag's own slope limit. Without this the grid
  * keeps its 60-degree default, so a host test simulates different physics

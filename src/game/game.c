@@ -148,6 +148,7 @@ bool hta_game_load(hta_game *g, const hta_cache *c, const hta_resource_map *bitm
     for (uint32_t t = 0; t < HTA_VEHICLE_TYPES; t++) g->vweapon[t][0] = g->vweapon[t][1] = -1;
     g->score_limit = HTA_SLAYER_SCORE_LIMIT;
     g->respawn_time = HTA_SLAYER_RESPAWN;
+    g->spawn_lift = 1.0f;
     g->rng = 0xC0FFEEu;
 
     char perr[HTA_ERRLEN];
@@ -533,7 +534,7 @@ void hta_game_pick_spawn(hta_game *g, int32_t idx, float out_pos[3], float *out_
     out_pos[1] = sp->position[1];
     out_pos[2] = sp->position[2];
     float gz;
-    if (g->col && hta_collision_ground(g->col, out_pos[0], out_pos[1], out_pos[2] + 1.0f, &gz))
+    if (g->col && hta_collision_ground(g->col, out_pos[0], out_pos[1], out_pos[2] + g->spawn_lift, &gz))
         out_pos[2] = gz;
     if (out_facing) *out_facing = sp->facing;
 }

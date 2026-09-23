@@ -168,13 +168,17 @@ int main(int argc, char **argv)
         hta_game_attach_vehicles(&game, &veh, bmp);
     }
     game.nav = &nav;
+    uint8_t *playable = NULL;
     if (oalmap) {
         if (!hta_nav_main_from_spawns(&nav, ext.spawns, ext.spawn_count))
             printf("nav            no start on the grid\n");
-        hta_game_use_external(&game, ext.spawns, ext.spawn_count, &nav);
+        uint32_t np = 0;
+        playable = hta_nav_playable(&nav, ext.spawns, ext.spawn_count, &np);
+        printf("playable       %u of %u nodes reachable from a start and back\n", np, nav.node_count);
+        hta_game_use_external(&game, ext.spawns, ext.spawn_count, &nav, playable);
     }
     if (hta_pickups_load(&items, &cache)) {
-        if (oalmap) hta_pickups_relocate(&items, &nav);
+        if (oalmap) hta_pickups_relocate(&items, &nav, playable);
         hta_pickups_build(&items, &cache, bmp, err, sizeof(err));
         game.items = &items;
     }
@@ -448,9 +452,11 @@ int main(int argc, char **argv)
                        items.spawn[i].position[2], items.slot[i].present);
         if (getenv("HTA_DEBUG_UNITS"))
             for (int i = 0; i < bots; i++)
-                printf("    unit %d team %d %s at %.1f %.1f %.1f alive %d\n", i, game.units[i].team,
-                       game.units[i].name, game.units[i].body.pos[0], game.units[i].body.pos[1],
-                       game.units[i].body.pos[2], game.units[i].alive);
+                printf("    unit %d team %d %s at %.1f %.1f %.1f alive %d; brain: target %d item %d path %u/%u wait %.1f\n",
+                       i, game.units[i].team, game.units[i].name, game.units[i].body.pos[0],
+                       game.units[i].body.pos[1], game.units[i].body.pos[2], game.units[i].alive,
+                       game.brains[i].target, game.brains[i].goal_item, game.brains[i].path_i,
+                       game.brains[i].path_len, game.brains[i].plan_wait);
         taken++;
     }
     printf("simulated      %.1f s, %d kills, %.3f ms per tick\n", t, kills,
@@ -483,6 +489,7 @@ int main(int argc, char **argv)
     hta_nav_free(&nav);
     hta_collision_free(&col);
     hta_bsp_free(&cm); hta_bsp_free(&sky); hta_bsp_free(&mesh);
+    free(playable);
     hta_external_map_free(&ext);
     free(bm_data); free(map_data);
     return 0;

@@ -31,10 +31,10 @@ int main(void)
     assert(hta_collision_ground(&col,.2f,.2f,.1f,&z)&&z==0);
     assert(m.spawns[0].team_index==HTA_EXTERNAL_TEAM_ANY);
     hta_collision_free(&col);hta_external_map_free(&m);
-    /* The manifest names each start's Source class: T plays red, CT blue. */
+    /* The manifest's own "team" decides, not the Source class name. */
     {
-        static const char man[]="{\"entities\":[{\"classname\":\"info_player_terrorist\"}],"
-            "\"spawn_points\":[{\"classname\":\"info_player_counterterrorist\",\"position\":[0,0,0]}]}";
+        static const char man[]="{\"entities\":[{\"classname\":\"info_player_terrorist\",\"team\":0}],"
+            "\"spawn_points\":[{\"classname\":\"anything\",\"position\":[0,0,0],\"team\":1}]}";
         size_t ml=sizeof(man)-1;unsigned char *w=malloc(n+ml);assert(w);
         memcpy(w,b,64);memcpy(w+64,man,ml);memcpy(w+64+ml,b+64,n-64);u32(w+8,(uint32_t)ml);
         assert(hta_external_map_load_memory(w,n+ml,&m,err,sizeof(err)));

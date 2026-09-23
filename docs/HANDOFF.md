@@ -29,8 +29,12 @@ de_dust2 matches on the phone; props, spawn and bot fixes)
 **Start of next session, in order:**
 1. `git branch --show-current` -- be on the right branch for the task.
 2. `ls -lt scratch/uploads/ | head` -- screenshots from the latest build.
-3. Sandbox: the owner still has to confirm the **roof-spawn fix**
-   (`bd20c08`) on the phone. Then they want to **try another map**. Read Asset Lab's
+3. Sandbox: the owner still has to confirm on the phone the
+   **audited-importer build** (dust2 rebuilt; teams now come from the
+   package) and the roof-spawn fix. Then another map -- the importer was
+   audited against eight (Asset Lab `docs/GENERALIZATION_AUDIT.md`).
+   Owner preferences: keep the **Halo sky** on imported maps; the
+   **Garry's Mod Workshop** is the long-term goal but is NOT started. Read Asset Lab's
    `docs/MAP_IMPORT_PLAYBOOK.md` (`~/projects/open-asset-lab`) -- the
    whole pipeline, every bug de_dust2 hit, and a dry run of all stock
    CS:S maps. Best next: **de_dust**. Then the IMPORTED MAPS section here.
@@ -174,6 +178,13 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+> **Audited-importer build:** dust2 was rebuilt by the generalized
+> importer (teams now read from the package; 9 physics props such as
+> barrels now appear; vertices shared). Play TEAM SLAYER and CTF on
+> DE_DUST2: red at the T end, blue at the CT end, both flags present,
+> nobody spawns on a roof or falls out. Also a quick BLOOD GULCH match --
+> spawning code changed for imported maps only.
+>
 > **Spawn fix build:** you no longer respawn on roofs outside de_dust2
 > (22 of 40 starts did). Die a dozen times in TEAM SLAYER on both teams.
 >
@@ -307,6 +318,24 @@ the section below, and update it every time.
   `publish_apk.sh --with-assets` copies `$HTA_IMPORTED/*.oalmap`
   (default `~/assetlab-private/bundle`) into the personal APK, stored
   uncompressed. verify.sh fails if any `.oalmap` reaches the shareable APK.
+- **Generalization audit (2026-09-23)** -- see Asset Lab's
+  `docs/GENERALIZATION_AUDIT.md` for the eight maps it was proved on:
+  - **Teams** come from the manifest's `"team"` per start (Asset Lab's
+    registry); the engine knows no Source class names.
+  - **Spawn lift**: packages put starts on the floor, so imported maps
+    re-ground from `HTA_EXTERNAL_SPAWN_LIFT` (0.1 wu, `hta_game.spawn_lift`
+    and `spawn_lift()`); 1 wu found cs_office's ceiling tiles, 8 wu
+    dust2's roofs. Blood Gulch keeps 1 wu (game) and 8 wu (platform).
+  - **Playable nodes**: `hta_nav_playable` -- reachable from a
+    main-region start and back, following one-way links. Items and flags
+    go only there (`world_playable` on the state); region-only placement
+    put items on drop-only ledges and bots stood still.
+  - **Collision grid** for imported maps is 255 across (256 computed 257
+    and clamped).
+  - **Host gate**: `open-halo-map-test` snaps every start with the
+    runtime lift, then a body stands 5 s and walks 5 s; it reports
+    "bodies that fell out of the map". `htamatch` prints playable nodes;
+    `HTA_DEBUG_UNITS=1` adds each bot's target, item and path.
 - **Non-solid props**: group flag bit 0 (`HTA_EXTERNAL_GROUP_NO_COLLISION`)
   leaves a group out of `solid_indices`; collision is built from
   `hta_external_map_collision_view` on a 256-across grid
@@ -743,7 +772,8 @@ wrong, this list is the first place to look — they are all one constant.
 | imported-map daylight | dir (0.35,0.4,0.85), ambient 0.7 | packages carry no lightmaps |
 | bot item give-up | 1.5 s / 25 s, off 30 s | `brain.c`, unreachable items |
 | failed-path retry wait | 1 s per goal node | `brain.c` `plan_wait` |
-| imported collision grid | 256 cells across | `HTA_COLLISION_CELLS_IMPORTED` |
+| imported spawn lift | 0.1 wu | `HTA_EXTERNAL_SPAWN_LIFT`: packages ground starts |
+| imported collision grid | 255 cells across | `HTA_COLLISION_CELLS_IMPORTED` |
 | imported-map flags | nearest node to team starts' middle | no flag data in a Source map |
 | `HTA_HUD_PHONE_SCALE` | 1.75 | HUD size on a phone |
 | `HTA_HUD_WEAPON_SCALE` | 0.5 | the weapon block |
