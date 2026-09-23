@@ -9,6 +9,40 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## GitHub, backups, a README anyone can follow (2026-09-23, later)
+
+**The history had Trial music in it.** `in_p0-6.wav` -- the title theme's
+permutations decoded while building the menu -- were committed at the repo
+root in the main-menu commit and tracked ever since. Found by auditing the
+history before the first push. Removed from every commit with
+`filter-branch`; all hashes from that commit on changed (`b01467b` is now
+`63e8832`). `*.wav` and `*.ogg` are now ignored. The pre-rewrite repo is in
+`~/halo-trial-android-prerewrite.bundle` -- it still holds the music, so it
+stays local; delete it once nobody needs it.
+
+**GitHub.** `origin` = `madpai/open-halo-project` (public). `gh` lives in
+`~/.local/bin`. *Trap:* `gh auth login` hangs forever with no output under
+Claude Code, even in a pty: it sends an OSC 11 query (terminal background
+colour) and waits for the reply. The login that worked was GitHub's device
+flow driven directly (`POST /login/device/code` with gh's public client id,
+poll `/login/oauth/access_token`, pipe the token into
+`gh auth login --with-token`); the owner approved from their phone over SSH.
+*Trap:* the releases API's inline `assets` list came back empty while the
+files were there; ask `assets_url` instead.
+
+**Anyone can build and play it.** A fresh clone builds (host and APK) with
+nothing outside the repo; a Gradle wrapper now fetches Gradle 8.9. The
+installer is a cabinet: `7z e lotrialsetup1.exe maps/...` gives maps
+byte-identical to the ones played all along -- no install, no Wine. The
+setup screen gained a `ui.map` picker, so guests get the menu. v0.2.0 on
+GitHub carries the guest APK; the README (screenshots on the `media`
+release) says how. The README had claimed eleven weapons: it is nine.
+LICENSE (GPLv3) was missing and now exists.
+
+**Local backup.** `scripts/backup_local.sh` → `/mnt/media/backups/
+halo-trial-android` (8 TB drive): project mirror, git bundle, Trial data
+and installer, both APKs per build. Publish runs it.
+
 ## Team Slayer, Capture the Flag, team colours (2026-09-23)
 
 No device feedback had arrived on the vehicles build, so the session took

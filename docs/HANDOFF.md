@@ -4,9 +4,21 @@
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-23 (Team Slayer, CTF, team colours)
+**Date of this revision:** 2026-09-23 (Team Slayer, CTF, team colours;
+then GitHub, local backups, README)
 **Repo:** `/home/commander/projects/halo-trial-android`
-**Branch / HEAD:** `fp-animated-guns`; all work committed.
+**Branch / HEAD:** `fp-animated-guns`, tracking `origin/main` on GitHub; all
+work committed and pushed. Last published build: `c50fbe9` (the CTF build
+plus a `ui.map` picker), on the sideload page and archived on the backup
+drive.
+
+**Start of next session, in order:**
+1. `ls -lt scratch/uploads/ | head` -- has the owner sent phone screenshots
+   of the CTF / Team Slayer build? They decide what comes first.
+2. If not, take NEXT ENGINEERING OBJECTIVES item 2 (team modes over LAN)
+   or item 3 (red reticle on target) -- ask the owner which.
+3. After any published build: it is already backed up; push to GitHub
+   when the owner asks (they have asked for it to be kept current).
 
 ---
 
@@ -621,6 +633,15 @@ wrong, this list is the first place to look — they are all one constant.
 ---
 
 ## Tools
+
+**README screenshots** live on the GitHub pre-release `media`, never in
+git. To refresh one, render it (e.g. `htamenu ui.map --width 1600 --height
+900 --time 6`, `htaview ... --fp idle --eye X Y Z --yaw D`, `htamatch
+--mode ctf|team ... --width 1600 --height 900`), convert with
+`magick X.ppm -quality 86 -strip name.jpg`, and
+`gh release upload media name.jpg --clobber`. The README links
+`releases/download/media/<name>.jpg`; headless Firefox
+(`firefox --headless --screenshot out.png <url>`) shows whether it renders.
 
 **If host Vulkan fails** (`VK_ERROR_INCOMPATIBLE_DRIVER`: NVIDIA userspace
 newer than the loaded kernel module until a reboot), use the unpacked Mesa
