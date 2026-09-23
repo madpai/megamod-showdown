@@ -28,7 +28,9 @@ int main(int argc,char **argv)
     printf("package: vertices %u, triangles %u, materials %u, textures %u, spawns %u\n",
       mesh->vertex_count,mesh->index_count/3,mesh->submesh_count,mesh->texture_count,map.spawn_count);
     hta_collision col;double tc=now();
-    if(!hta_collision_build(&col,mesh)){fprintf(stderr,"collision grid build failed\n");hta_external_map_free(&map);return 1;}
+    hta_bsp_mesh solid;hta_external_map_collision_view(mesh,&map,&solid);
+    printf("collision: %u of %u triangles solid\n",solid.index_count/3,mesh->index_count/3);
+    if(!hta_collision_build_cells(&col,&solid,HTA_COLLISION_CELLS_IMPORTED)){fprintf(stderr,"collision grid build failed\n");hta_external_map_free(&map);return 1;}
     printf("collision: %u triangles, %ux%u cells, %.2f ms\n",col.tri_count,col.nx,col.ny,(now()-tc)*1000.0);
     unsigned usable=0;
     for(unsigned i=0;i<map.spawn_count;i++){

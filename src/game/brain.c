@@ -201,15 +201,19 @@ static void feet_for_blast(const hta_game *g, int32_t them, const hta_game_weapo
 
 static void plan_to(hta_game *g, int32_t me, hta_brain *b, const float to[3])
 {
+    /* A search that fails has spent its whole budget -- a goal down a
+     * one-way drop shares the region but not a way back. Once a second is
+     * plenty; every frame was most of a match's CPU on de_dust2. Ours. */
     b->path_len = b->path_i = 0;
     if (!g->nav || !g->nav->built) return;
     const hta_unit *u = &g->units[me];
     uint32_t from = hta_nav_nearest(g->nav, u->body.pos, 1.5f);
     uint32_t goal = hta_nav_nearest(g->nav, to, 2.0f);
     if (from == HTA_NAV_NONE || goal == HTA_NAV_NONE) return;
+    if (b->plan_wait > 0.0f && goal == b->plan_fail) return;
     b->goal = goal;
     uint32_t n = hta_nav_path(g->nav, from, goal, b->path, HTA_BRAIN_PATH, PATH_BUDGET);
-    if (!n) { b->goal = HTA_NAV_NONE; return; }
+    if (!n) { b->goal = HTA_NAV_NONE; b->plan_wait = 1.0f; b->plan_fail = goal; return; }
     b->path_len = hta_nav_smooth(g->nav, b->path, n);
     b->path_i = b->path_len > 1 ? 1 : 0;
 }
@@ -874,6 +878,7 @@ static void drive(struct hta_game *g, int32_t me, hta_brain *b, float dt)
 void hta_brain_think(struct hta_game *g, int32_t me, hta_brain *b, float dt)
 {
     if (b->skip_time > 0.0f) b->skip_time -= dt;
+    if (b->plan_wait > 0.0f) b->plan_wait -= dt;
     if (g->units[me].vehicle >= 0 && g->vehicles) {
         const hta_vehicle_seat *st = hta_vehicles_seat(g->vehicles, (uint32_t)g->units[me].vehicle,
                                                        (uint32_t)g->units[me].seat);

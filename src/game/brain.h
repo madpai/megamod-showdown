@@ -36,6 +36,8 @@ typedef struct {
     float    goal_pos[3];     /* where the game's objective was last planned to */
     bool     goal_game;       /* the path leads to the objective */
     float    replan;          /* seconds until the path is worked out again */
+    float    plan_wait;       /* after a search that found no way: seconds before */
+    uint32_t plan_fail;       /* ...that goal node is searched for again */
 
     float    look_timer;      /* seconds until the next look around */
     float    ride_alone;      /* seconds on a gun with nobody driving */

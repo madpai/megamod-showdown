@@ -9,7 +9,17 @@ static uint32_t u32(const unsigned char *p) { return (uint32_t)p[0]|((uint32_t)p
 static float f32(const unsigned char *p) { uint32_t v=u32(p); float f; memcpy(&f,&v,4); return f; }
 static bool take(size_t *at, size_t n, size_t size) { if (n>size-*at) return false; *at+=n; return true; }
 static bool fail(char *err,size_t n,const char *s) { if(err && n) snprintf(err,n,"%s",s); return false; }
-void hta_external_map_free(hta_external_map *m) { if(!m)return; hta_bsp_free(&m->mesh); free(m->spawns); memset(m,0,sizeof(*m)); }
+void hta_external_map_free(hta_external_map *m) { if(!m)return; hta_bsp_free(&m->mesh); free(m->spawns); free(m->solid_indices); memset(m,0,sizeof(*m)); }
+
+void hta_external_map_collision_view(const hta_bsp_mesh *render, const hta_external_map *m,
+                                     hta_bsp_mesh *view)
+{
+    memset(view,0,sizeof(*view));
+    view->vertices=render->vertices; view->vertex_count=render->vertex_count;
+    view->indices=m->solid_indices; view->index_count=m->solid_index_count;
+    memcpy(view->bounds_min,render->bounds_min,sizeof(view->bounds_min));
+    memcpy(view->bounds_max,render->bounds_max,sizeof(view->bounds_max));
+}
 
 /* The manifest is JSON written by Asset Lab; its spawn_points are in the
  * same order as the binary spawn records. Only their classnames matter. */
@@ -101,14 +111,21 @@ bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external
     if(!out->mesh.submeshes){fail(err,errlen,"out of memory");goto done;}
     out->mesh.submesh_count=gc;
     uint32_t end=0;
+    out->solid_indices=malloc((size_t)ic*4);
+    if(!out->solid_indices){fail(err,errlen,"out of memory");goto done;}
     for(uint32_t i=0;i<gc;i++){
         const unsigned char *p=data+at+i*16;
-        uint32_t first=u32(p),count=u32(p+4),tex=u32(p+8);
+        uint32_t first=u32(p),count=u32(p+4),tex=u32(p+8),flags=u32(p+12);
         if(first!=end||count==0||count%3||count>ic-first||tex>=tc){fail(err,errlen,"invalid material group");goto done;}
         hta_submesh *s=&out->mesh.submeshes[i];hta_submesh_init(s);
         s->first_index=first;s->index_count=count;s->albedo_tex=tex;
+        if(!(flags&HTA_EXTERNAL_GROUP_NO_COLLISION)){
+            memcpy(out->solid_indices+out->solid_index_count,out->mesh.indices+first,(size_t)count*4);
+            out->solid_index_count+=count;
+        }
         end=first+count;
     }
+    if(out->solid_index_count<3){fail(err,errlen,"no solid geometry");goto done;}
     if(end!=ic){fail(err,errlen,"material groups do not cover indices");goto done;}
     at+=(size_t)gc*16;
     out->mesh.textures=calloc(tc,sizeof(hta_bsp_texture));

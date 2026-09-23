@@ -138,7 +138,9 @@ int main(int argc, char **argv)
     hta_sky_load(&sky, &cache, bmp, err, sizeof(err));
     hta_collision col = {0};
     if (oalmap) {
-        if (!hta_collision_build(&col, &mesh)) { fprintf(stderr, "collision failed\n"); return 1; }
+        hta_bsp_mesh solid;
+        hta_external_map_collision_view(&mesh, &ext, &solid);
+        if (!hta_collision_build_cells(&col, &solid, HTA_COLLISION_CELLS_IMPORTED)) { fprintf(stderr, "collision failed\n"); return 1; }
     } else if (!hta_bsp_load_collision(&cache, &cm, err, sizeof(err)) ||
         !hta_scenario_add_collision_excluding(&cm, &cache, veh.skip, sizeof(veh.skip), err, sizeof(err)) ||
         !hta_collision_build(&col, &cm)) {

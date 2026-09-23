@@ -159,7 +159,13 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Imported-map matches (this build):** reinstall the personal APK from
+> **Props build:** de_dust2 now has its static props (windows, crates,
+> domes, palms, trims): the holes to the sky in window recesses should be
+> gone. Check the window you reported near -16.4 1.0, that crates block
+> you and palm fronds/window frames do not, and frame rate. Package is
+> 130 MB now (94k triangles).
+>
+> **Imported-map matches (previous build):** reinstall the personal APK from
 > `http://100.89.1.14:8731/`. SINGLEPLAYER now starts with **MAP:** --
 > tap it to cycle BLOOD GULCH / DE_DUST2 (bundled) / IMPORTED MAP (the one
 > picked in Settings, if any). Play TEAM SLAYER on DE_DUST2 with 7 bots:
@@ -283,6 +289,14 @@ the section below, and update it every time.
   `publish_apk.sh --with-assets` copies `$HTA_IMPORTED/*.oalmap`
   (default `~/assetlab-private/bundle`) into the personal APK, stored
   uncompressed. verify.sh fails if any `.oalmap` reaches the shareable APK.
+- **Non-solid props**: group flag bit 0 (`HTA_EXTERNAL_GROUP_NO_COLLISION`)
+  leaves a group out of `solid_indices`; collision is built from
+  `hta_external_map_collision_view` on a 256-across grid
+  (`hta_collision_build_cells`), Blood Gulch keeps 64.
+- **Failed searches**: `plan_to` does not search again for a goal node
+  whose search just failed for 1 s (`plan_wait`/`plan_fail`). One-way
+  drops make "same region, no way" common on imported maps, and each
+  failure spends the whole A* budget: that was 3.5x the tick on de_dust2.
 - **Bots**: `brain.c` gives up an item it cannot reach (1.5 s at the end of
   its path, or 25 s in all) for 30 s -- imported maps lack clip brushes, so
   the grid can reach ledges the body cannot.
@@ -705,6 +719,8 @@ wrong, this list is the first place to look — they are all one constant.
 |---|---|---|
 | imported-map daylight | dir (0.35,0.4,0.85), ambient 0.7 | packages carry no lightmaps |
 | bot item give-up | 1.5 s / 25 s, off 30 s | `brain.c`, unreachable items |
+| failed-path retry wait | 1 s per goal node | `brain.c` `plan_wait` |
+| imported collision grid | 256 cells across | `HTA_COLLISION_CELLS_IMPORTED` |
 | imported-map flags | nearest node to team starts' middle | no flag data in a Source map |
 | `HTA_HUD_PHONE_SCALE` | 1.75 | HUD size on a phone |
 | `HTA_HUD_WEAPON_SCALE` | 0.5 | the weapon block |

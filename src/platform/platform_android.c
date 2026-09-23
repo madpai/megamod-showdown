@@ -1283,13 +1283,19 @@ static bool load_external_map(hta_android *s)
         snprintf(s->status, sizeof(s->status), "external map: %s", err);
         return false;
     }
-    if (!hta_collision_build(&s->col, &external.mesh)) {
+    hta_bsp_mesh solid;
+    hta_external_map_collision_view(&external.mesh, &external, &solid);
+    if (!hta_collision_build_cells(&s->col, &solid, HTA_COLLISION_CELLS_IMPORTED)) {
         hta_external_map_free(&external);
         snprintf(s->status, sizeof(s->status), "external map collision failed");
         return false;
     }
     s->mesh = external.mesh;
     memset(&external.mesh, 0, sizeof(external.mesh));
+    /* The collision grid points into the solid list: keep it with the state. */
+    s->world_ext.solid_indices = external.solid_indices;
+    s->world_ext.solid_index_count = external.solid_index_count;
+    external.solid_indices = NULL;
     s->have_mesh = s->map_loaded = true;
     hta_player_init(&s->player);
     hta_camera_init(&s->cam);
@@ -1503,6 +1509,15 @@ static bool load_map(hta_android *s)
             hta_log("[assets] collision BSP %u verts / %u tris, grid %ux%u",
                     s->coll_mesh.vertex_count, s->coll_mesh.index_count / 3,
                     s->col.nx, s->col.ny);
+    } else if (s->world_loaded) {
+        /* The package's solid triangles: its non-solid props are only drawn. */
+        hta_bsp_mesh solid;
+        hta_external_map_collision_view(&s->mesh, &s->world_ext, &solid);
+        if (!hta_collision_build_cells(&s->col, &solid, HTA_COLLISION_CELLS_IMPORTED))
+            hta_log("[world] collision grid failed to build; player will free-fly");
+        else
+            hta_log("[world] collision %u of %u triangles solid", solid.index_count / 3,
+                    s->mesh.index_count / 3);
     } else {
         hta_log("[assets] collision BSP: %s — using render mesh", err);
         if (!hta_collision_build(&s->col, &s->mesh))
@@ -1553,7 +1568,7 @@ static bool load_map(hta_android *s)
             s->vehicles.skip, HTA_VEHICLE_PLACEMENTS, err, sizeof(err)))
         hta_log("[assets] %s  (now %u verts / %u submeshes)", err,
                 s->mesh.vertex_count, s->mesh.submesh_count);
-    if (!s->have_coll)
+    if (!s->have_coll && !s->world_loaded)
         hta_collision_rebind(&s->col, s->mesh.vertices, s->mesh.indices);
 
     /* Vehicles are placed rigid grids: everything that asks the world a

@@ -23,6 +23,12 @@ void hta_collision_set_slope(hta_collision *c, float max_slope_radians)
 
 bool hta_collision_build(hta_collision *c, const hta_bsp_mesh *mesh)
 {
+    return hta_collision_build_cells(c, mesh, GRID_TARGET_CELLS);
+}
+
+bool hta_collision_build_cells(hta_collision *c, const hta_bsp_mesh *mesh, uint32_t across)
+{
+    if (across < 1u || across > MAX_GRID_DIM) across = GRID_TARGET_CELLS;
     if (!c || !mesh || !mesh->vertices || !mesh->indices || mesh->index_count < 3) return false;
     memset(c, 0, sizeof(*c));
 
@@ -37,7 +43,7 @@ bool hta_collision_build(hta_collision *c, const hta_bsp_mesh *mesh)
     if (!(ex > 0.0f) || !(ey > 0.0f)) return false;
 
     float span = ex > ey ? ex : ey;
-    c->cell = span / (float)GRID_TARGET_CELLS;
+    c->cell = span / (float)across;
     if (c->cell <= 1e-4f) c->cell = 1.0f;
 
     c->min[0] = mesh->bounds_min[0];

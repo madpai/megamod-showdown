@@ -11,7 +11,19 @@ typedef struct {
     hta_spawn_point *spawns;
     uint32_t spawn_count;
     uint32_t key;          /* FNV-1a of the manifest: tells two packages apart */
+    /* The triangles that collide: every group but those flagged
+     * HTA_EXTERNAL_GROUP_NO_COLLISION (Source's non-solid props). */
+    uint32_t *solid_indices;
+    uint32_t solid_index_count;
 } hta_external_map;
+
+#define HTA_EXTERNAL_GROUP_NO_COLLISION 1u
+
+/* A mesh to build collision from: `render`'s vertices (which may have been
+ * moved out of the package) with only the solid triangles. Borrows both;
+ * never free it. */
+void hta_external_map_collision_view(const hta_bsp_mesh *render, const hta_external_map *m,
+                                     hta_bsp_mesh *view);
 
 /* Spawn team_index: Source terrorists play red, counter-terrorists blue;
  * any other start is shared by both teams. */
