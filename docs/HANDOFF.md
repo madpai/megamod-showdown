@@ -9,8 +9,11 @@ explosions, hulls, red reticle, momentum; LAN team modes; bots on guns;
 flag waypoints)
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Branch / HEAD:** `fp-animated-guns`, tracking `origin/main` on GitHub.
-Last published build: see the sideload page (it names the revision) and
-`apks/INDEX` on the backup drive.
+Last published build: `069267f` (playtest fixes + LAN team modes + bots on
+guns + flag waypoints), verify.sh 75/75, on the sideload page, archived in
+`apks/INDEX` on the backup drive, pushed to GitHub `main`. No device report
+on it yet. Network protocol is now **v4**: every phone in a LAN game needs
+a build from `bb4efce` on.
 
 **Start of next session, in order:**
 1. `ls -lt scratch/uploads/ | head` -- screenshots from this build? The
@@ -282,7 +285,14 @@ vehicle hulls/wrecks, momentum. Remaining, in order:
    good enough.
 2. **Bots driving:** a bot takes an empty vehicle's wheel (nav grid paths,
    throttle/steer toward the next waypoint), and a bot gunner rides with a
-   bot driver. The gunner half is done (`brain.c` `ride`).
+   bot driver. The gunner half is done (`brain.c` `ride`, `ride_offer`;
+   `hta_brain_think` hands any seated bot to `ride`). Starting points: the
+   nav grid is built for the biped's radius, so a Warthog path needs
+   clearance (sample the grid with the car's `body_radius`, or keep to
+   nodes far from walls); a driver's input is `u->in.move` forward/right
+   plus `eye.yaw` (Ghost/Banshee steer by yaw, Warthog/Scorpion by
+   `move_right`); `test_ride` [a bot on the gun] shows how to set up a team
+   game with an unbuilt nav for tests.
 3. **CTF polish:** the cloth moving (the `flag cloth` point physics);
    bots that capture against a defence; carriers as passengers (check
    Halo PC first).
