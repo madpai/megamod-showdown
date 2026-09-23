@@ -328,11 +328,11 @@ steer round other vehicles, and a jam is the physics refusing a move
 
 1. **Device feedback** on this build and the ones before it (see CURRENT
    TESTING OBJECTIVE).
-2. **Driving in a fight.** Free-for-all barely moved (15.9% -> 15.1%
-   blocked): a car goes straight at an enemy whenever the line is open
-   ground, and chases hard into whatever he runs behind. The Ghosts'
-   scrapes against rocks are most of what is left. `scripts/drivebench.sh
-   ffa` measures it.
+2. **Driving in a fight** (in progress, see `docs/RUNNING_LOG.md`). The
+   Ghost's blind strafing was most of it: now it strafes only toward open
+   ground, FFA 15.1% -> 8.7% blocked. What is left per match: chasing on
+   a path ~34 s, straight at a man ~26 s, tank/Ghost holding at range
+   ~24 s. `scripts/drivebench.sh ffa` measures it.
 3. **Banshee pilots.** `drivable()` leaves the Banshee to people. Flying
    needs no path, only height and a target.
 4. **CTF polish:** the cloth moving; carriers as passengers (check Halo PC
@@ -727,6 +727,7 @@ wrong, this list is the first place to look — they are all one constant.
 | | `STUCK_LIMIT` 3 jams, `JAM_SKIP` `HTA_VEHICLE_RESPAWN` + 5 s, `ROAM_MIN/MAX` 30/70 wu, `BEHIND` 1.9 rad | a jam backs out 1.2 s; three and it walks, and no bot takes that car until it has gone home; roam goals the path search can reach; a goal behind a Warthog is backed round to |
 | | `JAM_HELD` 0.3 s | a second in which the physics refused the car this long, with the stick or wheel pushed and under 0.5 wu moved, is a jam |
 | | `AVOID_AHEAD` 8 wu, `AVOID_GAP` 0.8 wu | another car on the line ahead this near is passed beside, bodies this far apart (the grid has no vehicles in it); an enemy's car is rammed |
+| | `STRAFE_LOOK` 3 wu | a Ghost strafes only toward a side with open car ground this far off |
 | | `DRIVE_FROM` 6 wu, `DRIVE_TO` 15 wu | how far round itself / its goal a car looks for open ground |
 | car clearance (`src/game/nav.c`) | `hta_nav_car_clear`: 0.8 x the collision radius, less 0.2 wu, in 0.35 wu cells | room a car keeps from walls: Warthog and Ghost 2 cells, Scorpion 5. A node is open ground when it is not near a wall and all 8 neighbours are there within `HTA_VEHICLE_MAX_SLOPE` |
 | | `NAV_ESCAPE` 10 wu | a car path may cross narrower ground only this near its ends, at 2 + the shortfall times the cost |
@@ -777,8 +778,8 @@ second (verify.sh is still the real gate).
 ./build-host/htamatch $HTA_MAP --bots 8 --mode team --seconds 300 --shots 0 --vehicles --seed 3
 # ...but one match is chaos. Judge driving changes on eight, side by side:
 scripts/drivebench.sh team        # or ctf / ffa
-# Baseline (vehicle-aware paths): team 10.1% blocked, ctf 9.5%, ffa 15.1%
-# (the commit before: 21.2 / 13.0 / 15.9).
+# Baseline (Ghost strafes toward open ground): team 7.4% blocked, ctf 9.5%,
+# ffa 8.7% (before vehicle-aware paths: 21.2 / 13.0 / 15.9).
 
 # tags and sounds
 ./build-host/htainfo  $HTA_MAP

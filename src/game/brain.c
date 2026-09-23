@@ -44,6 +44,7 @@ static const float AIM_SETTLE[4]   = { 0.8f, 1.2f, 1.8f, 2.6f };      /* /s */
 #define STUCK_LIMIT    3u      /* jams in a row before a bot walks */
 #define AVOID_AHEAD    8.0f    /* wu: a car nearer than this on the way is steered round */
 #define AVOID_GAP      0.8f    /* wu kept between the bodies passing it */
+#define STRAFE_LOOK    3.0f    /* wu: a Ghost strafes only toward open ground this far aside */
 #define JAM_HELD       0.3f    /* s of a second the physics refused a move: a jam */
 #define JAM_SKIP      (HTA_VEHICLE_RESPAWN + 5.0f)  /* s: a car it jammed stays left until it goes home */
 #define ROAM_MIN      30.0f    /* wu: a drive with nothing to do goes this far... */
@@ -234,6 +235,18 @@ static bool open_line(const hta_game *g, const float a[3], const float b[3], uin
     uint32_t nb = hta_nav_nearest_wide(g->nav, b, 1.0f, clear);
     if (na == HTA_NAV_NONE || nb == HTA_NAV_NONE) return false;
     return hta_nav_straight_wide(g->nav, na, nb, clear);
+}
+
+/* Is there open ground for this car STRAFE_LOOK wu to one side? */
+static bool side_open(const hta_game *g, const float here[3], const float right[2],
+                      float sign, uint8_t clear)
+{
+    if (!g->nav || !g->nav->built) return true;
+    float at[3] = { here[0] + right[0] * sign * STRAFE_LOOK,
+                    here[1] + right[1] * sign * STRAFE_LOOK, here[2] + 0.5f };
+    uint32_t na = hta_nav_nearest_wide(g->nav, here, 1.0f, clear);
+    uint32_t nb = hta_nav_nearest_wide(g->nav, at, 0.7f, clear);
+    return na != HTA_NAV_NONE && nb != HTA_NAV_NONE && hta_nav_straight_wide(g->nav, na, nb, clear);
 }
 
 /* At the wheel: a path over ground wide enough for this car, from where
@@ -837,7 +850,15 @@ static void drive(struct hta_game *g, int32_t me, hta_brain *b, float dt)
                 b->strafe = frand(&b->rng) < 0.5f ? -1.0f : 1.0f;
                 b->strafe_timer = 0.8f + frand(&b->rng) * 1.2f;
             }
-            mv[0] += r[0] * b->strafe; mv[1] += r[1] * b->strafe;
+            /* Only toward open ground: the other way if that side is a
+             * rock, and not at all if both are. */
+            if (!side_open(g, here, r, b->strafe, clear)) {
+                b->strafe = -b->strafe;
+                if (!side_open(g, here, r, b->strafe, clear)) b->strafe_timer = 0.0f;
+            }
+            if (side_open(g, here, r, b->strafe, clear)) {
+                mv[0] += r[0] * b->strafe; mv[1] += r[1] * b->strafe;
+            }
         }
         gas = mv[0]*f[0] + mv[1]*f[1];
         steer = mv[0]*r[0] + mv[1]*r[1];
