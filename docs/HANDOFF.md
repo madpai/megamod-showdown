@@ -376,10 +376,8 @@ remain a rendering gap; phone confirmation of this fix is pending.
 
 ### Not started
 
-- **Vehicles beyond the driver's seat.** The Warthog now drives (see below).
-  The driver is not visible in it. Passengers, the turret, vehicle damage and
-  flipping, and the Scorpion, Ghost and Banshee are all still untouched.
-  Online vehicle entry is disabled. This is the next engineering objective.
+- **Bots driving vehicles.** Every vehicle, seat and gun works for people
+  (solo and LAN), and bots ride guns behind a person; bots never drive.
 - **Multiplayer beyond on-foot Slayer.** Android hosts now simulate remote
   movement, bots, damage, death, pickups, scoring and respawn; clients receive
   the match state. Vehicles and other game modes remain absent online. See
@@ -389,8 +387,8 @@ remain a rendering gap; phone confirmation of this fix is pending.
   create/join, LAN discovery and Internet direct IPv4 join. These are custom
   screens, not a `DeLa` interpreter. Profiles remains inactive; SETTINGS is
   the Java setup screen. The II button pauses the game.
-- **Other game types.** CTF, Oddball, King of the Hill and Race lines and
-  the flag/ball weapons are in the map; only Slayer runs.
+- **Other game types.** Slayer, Team Slayer and CTF run (solo and LAN);
+  Oddball, King of the Hill and Race do not.
 - **Music.** There is none in Blood Gulch, and that is correct — Halo CE
   multiplayer maps carry no score. The campaign map has it.
 
