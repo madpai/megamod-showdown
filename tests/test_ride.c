@@ -7,6 +7,7 @@
 #include "asset/cache.h"
 #include "asset/bsp.h"
 #include "asset/model.h"
+#include "game/nav.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +29,7 @@ static uint8_t *slurp(const char *p, size_t *n)
     fclose(f); *n = (size_t)sz; return b;
 }
 
+#define RIDE_TEST_WAIT 3.0f
 static hta_game g;
 static hta_vehicles v;
 static int kills, enters, exits, fires, detonations, wrecks;
@@ -448,6 +450,61 @@ int main(int argc, char **argv)
         g.units[t].body.pos[0] = 60 + 30;
         CHECK(hta_game_aim_target(&g, a, ar, eye, near, pt) < 0,
               "nor one past the weapon's 25 wu autoaim range");
+    }
+
+    printf("\n[a bot on the gun]\n");
+    {
+        /* A team game: a person drives, a teammate bot rides the chaingun.
+         * An unbuilt grid is enough to let bots think; the walk to the
+         * door is straight. */
+        static hta_nav flat;
+        memset(&flat, 0, sizeof(flat));
+        g.nav = &flat;
+        hta_game_set_mode(&g, HTA_MODE_TEAM_SLAYER);
+        int32_t mate = hta_game_add(&g, HTA_UNIT_BOT, "Mate", HTA_TEAM_RED);
+        g.units[a].team = HTA_TEAM_RED; g.units[mate].team = HTA_TEAM_RED;
+        g.units[t].team = HTA_TEAM_BLUE;
+        if (b >= 0) { hta_game_unseat(&g, b); g.units[b].alive = false; g.units[b].respawn = 1e9f; }
+        int32_t hog = car_at_placement(1);
+        hta_vehicles_reset(&v, (uint32_t)hog);
+        v.cars[hog].active = true;
+        g.vgun[hog].wreck = 0; g.vgun[hog].hull = g.vgun[hog].hull_max;
+        hta_vehicles_sync(&v);
+        put(a, 101.75f, -144.8f, .53f, 3.14f);
+        CHECK(hta_game_seat(&g, a, hog, 0), "a person at the wheel");
+        hta_transform w;
+        hta_vehicles_world(&v, (uint32_t)hog, &w);
+        float behind[3] = { -3.5f, 0.0f, 0.0f }, at[3];
+        hta_xf_point(at, &w, behind);
+        put(mate, at[0], at[1], at[2], 0);
+        g.units[mate].vitals.health = g.units[mate].vitals.max_health;
+        put(t, 200, 200, 30, 0);   /* the enemy, well out of the way for now */
+        int32_t gs = hta_vehicles_gunner_seat(&v, (uint32_t)hog);
+        bool on = false;
+        for (int i = 0; i < 400 && !on; i++) {
+            step(1.0f / 60.0f);
+            on = g.units[mate].vehicle == hog && g.units[mate].seat == gs;
+        }
+        CHECK(on, "a teammate bot walks to the gun and climbs on");
+        hta_vehicles_world(&v, (uint32_t)hog, &w);
+        float ahead[3] = { 6.0f, 0.0f, 0.0f };
+        hta_xf_point(at, &w, ahead);
+        put(t, at[0], at[1], at[2], 3.14f);
+        fires = 0;
+        float was = g.units[t].vitals.health + g.units[t].vitals.shield;
+        step(3.0f);
+        printf("  gunner fired %d round(s); enemy %.0f -> %.0f\n", fires, was,
+               g.units[t].alive ? g.units[t].vitals.health + g.units[t].vitals.shield : 0.0f);
+        CHECK(fires > 5 && (!g.units[t].alive ||
+              g.units[t].vitals.health + g.units[t].vitals.shield < was),
+              "it swings the gun onto an enemy and hits him");
+        hta_game_unseat(&g, a);
+        put(a, 90, -150, 1, 0);
+        step(RIDE_TEST_WAIT);
+        CHECK(g.units[mate].vehicle < 0, "and gets off when the driver does");
+        hta_game_set_mode(&g, HTA_MODE_SLAYER);
+        g.nav = NULL;
+        g.units[mate].kind = HTA_UNIT_NONE; g.units[mate].alive = false;
     }
 
     printf("\n[leaving]\n");

@@ -546,6 +546,9 @@ public class GameActivity extends NativeActivity {
         private final Paint board = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint boardBg = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint damage = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint waypoint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint waypointText = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.Path marker = new android.graphics.Path();
 
         private float stickCx, stickCy, stickR, stickTx, stickTy;
         private float fireCx, fireCy, fireR;
@@ -913,6 +916,7 @@ public class GameActivity extends NativeActivity {
                 c.drawText(part[4], w * 0.5f, h * 0.64f, banner);
                 banner.setTextSize(saved);
             }
+            if (part.length > 5 && !part[5].isEmpty()) drawWaypoints(c, part[5], w, h);
             if (part.length > 3 && !part[3].isEmpty()) {
                 String[] rows = part[3].split("\n");
                 float rowH = board.getTextSize() * 1.45f;
@@ -928,6 +932,39 @@ public class GameActivity extends NativeActivity {
                     for (int k = 0; k < f.length && k < col.length; k++) c.drawText(f[k], col[k], y, board);
                     y += rowH;
                 }
+            }
+        }
+
+        /* A flag's waypoint: a downward chevron in its team's colour over
+         * where it is, the distance under it; off screen, pinned to the
+         * edge. "x,y,team,metres,onscreen,state;" per flag. */
+        private void drawWaypoints(Canvas c, String spec, int w, int h) {
+            float size = Math.min(w, h) * 0.028f;
+            waypointText.setTextAlign(Paint.Align.CENTER);
+            waypointText.setTextSize(size * 1.05f);
+            waypointText.setFakeBoldText(true);
+            for (String one : spec.split(";")) {
+                String[] f = one.split(",");
+                if (f.length < 6) continue;
+                float x, y; int team, state; String metres;
+                try {
+                    x = Float.parseFloat(f[0]) * w; y = Float.parseFloat(f[1]) * h;
+                    team = Integer.parseInt(f[2]); state = Integer.parseInt(f[5]);
+                    metres = f[3];
+                } catch (NumberFormatException e) { continue; }
+                int colour = team == 0 ? 0xFFE0402E : 0xFF3E7BFF;
+                // A flag away from home blinks: somebody has it or it is lying out.
+                int alpha = state == 0 ? 0xD0 : ((System.currentTimeMillis() / 300) % 2 == 0 ? 0xFF : 0x90);
+                waypoint.setColor((colour & 0x00FFFFFF) | (alpha << 24));
+                waypoint.setStyle(Paint.Style.FILL);
+                marker.reset();
+                marker.moveTo(x - size, y - size * 1.2f);
+                marker.lineTo(x + size, y - size * 1.2f);
+                marker.lineTo(x, y);
+                marker.close();
+                c.drawPath(marker, waypoint);
+                waypointText.setColor(0xE0FFFFFF);
+                c.drawText(metres + "m", x, y + size * 1.3f, waypointText);
             }
         }
 

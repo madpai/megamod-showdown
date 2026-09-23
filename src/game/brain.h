@@ -34,6 +34,7 @@ typedef struct {
     float    replan;          /* seconds until the path is worked out again */
 
     float    look_timer;      /* seconds until the next look around */
+    float    ride_alone;      /* seconds on a gun with nobody driving */
     float    react;           /* seconds before a newly seen target is fired on */
     float    aim_err[2];      /* yaw, pitch offset the aim is carrying */
     float    strafe, strafe_timer;

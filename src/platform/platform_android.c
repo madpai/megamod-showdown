@@ -106,7 +106,7 @@ bool hta_probe_fixed_map(uint64_t addr, size_t len)
  * in and out, one impact per material the map contains, the projectile's
  * detonation, the grenade's, and a footstep per material: Blood Gulch asks
  * for around thirty of these, and 24 was not enough to hold them. */
-#define HTA_SND_MAX_BANK  128u
+#define HTA_SND_MAX_BANK  192u
 #define HTA_SND_MAX_PERMS   8u
 
 typedef struct {
@@ -1123,6 +1123,13 @@ static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
                         s->game.weapons[w].def.projectile_id, HTA_HULL_MATERIAL);
             if (sparks) s->spark_recipe = hta_particles_add(&s->parts, &s->cache, pbm, sparks);
         }
+        /* Rounds into bodies: decoded now rather than on the first hit. */
+        for (uint32_t w = 0; s->game_on && w < s->game.weapon_count; w++)
+            for (uint8_t m = HTA_MATERIAL_CYBORG_ARMOR; m <= HTA_MATERIAL_CYBORG_SHIELD; m++) {
+                uint32_t snd = s->game.weapons[w].def.projectile_id
+                    ? hta_projectile_impact_sound(&s->cache, s->game.weapons[w].def.projectile_id, m) : 0;
+                if (snd) bank_get(s, snd);
+            }
         /* And whatever the bots' rounds throw when they go off. */
         for (uint32_t p = 0; p < HTA_GAME_MAX_POOLS; p++) {
             s->pool_recipe[p] = HTA_PART_NO_RECIPE;
@@ -2066,6 +2073,34 @@ static void game_events(hta_android *s)
                     hta_gun_add_mark(&s->gun, e.pos, e.dir, pl->blast_radius);
             }
             break;
+        case HTA_EV_HIT_UNIT: {
+            /* The body answers the round: the weapon's own impact on a
+             * cyborg's shield while it holds, on armour after. Heard near
+             * enough to matter. */
+            if (e.a < 0 || e.a >= (int32_t)s->game.unit_count || e.a == s->me) break;
+            const hta_unit *v = &s->game.units[e.a];
+            int32_t w = -1;
+            if (e.b >= 0 && e.b < (int32_t)s->game.unit_count) {
+                const hta_unit *k = &s->game.units[e.b];
+                const hta_game_weapon *hw = hta_game_held(&s->game, e.b);
+                w = hw ? (int32_t)(hw - s->game.weapons) : -1;
+                if (k->vehicle >= 0 && (uint32_t)k->vehicle < s->vehicles.count) {
+                    uint16_t ty = s->vehicles.cars[k->vehicle].type;
+                    const hta_vehicle_seat *st = hta_vehicles_seat(&s->vehicles,
+                        (uint32_t)k->vehicle, (uint32_t)k->seat);
+                    if (st && (st->flags & HTA_SEAT_GUNNER) && ty < HTA_VEHICLE_TYPES)
+                        w = s->game.vweapon[ty][0];
+                }
+            }
+            if (w < 0 || w >= (int32_t)s->game.weapon_count ||
+                !s->game.weapons[w].def.projectile_id) break;
+            uint8_t mat = v->vitals.shield > 0.0f ? HTA_MATERIAL_CYBORG_SHIELD
+                                                   : HTA_MATERIAL_CYBORG_ARMOR;
+            uint32_t snd = hta_projectile_impact_sound(&s->cache,
+                s->game.weapons[w].def.projectile_id, mat);
+            if (snd) play_tag_at(s, snd, e.pos, e.b == s->me ? 1.0f : 0.7f);
+            break;
+        }
         case HTA_EV_WRECK:
             if (s->net_hosting) {
                 hta_net_fx fx = { .kind = HTA_NET_FX_WRECK,
@@ -2182,6 +2217,47 @@ static void game_text(hta_android *s, float dt)
     if (n < sizeof(g_game_text))
         n += (size_t)snprintf(g_game_text + n, sizeof(g_game_text) - n, "\x1e%s",
                               s->item_msg_age < 2.5f ? s->item_msg : "");
+    /* Waypoints: where each flag is, as screen fractions, its team, how far
+     * in metres, and whether it is on screen (else pinned to the edge). */
+    if (n < sizeof(g_game_text))
+        n += (size_t)snprintf(g_game_text + n, sizeof(g_game_text) - n, "\x1e");
+    if (s->game.mode == HTA_MODE_CTF && s->me >= 0 && !s->dead && !s->game.over) {
+        hta_mat4 vp = hta_camera_view_proj(&s->cam);
+        for (int t = 0; t < 2 && n < sizeof(g_game_text); t++) {
+            const hta_game_flag *f = &s->game.flags[t];
+            if (!f->present) continue;
+            if (f->state == HTA_FLAG_CARRIED && f->carrier == s->me) continue;
+            float at[4] = { f->pos[0], f->pos[1], f->pos[2] + 0.9f, 1.0f };
+            if (f->state == HTA_FLAG_CARRIED && f->carrier >= 0 &&
+                f->carrier < (int32_t)s->game.unit_count) {
+                const hta_unit *cu = &s->game.units[f->carrier];
+                at[0] = cu->body.pos[0]; at[1] = cu->body.pos[1]; at[2] = cu->body.pos[2] + 1.0f;
+            }
+            float clip[4];
+            hta_mat4_transform(&vp, at, clip);
+            float dx = at[0]-s->cam.pos[0], dy = at[1]-s->cam.pos[1], dz = at[2]-s->cam.pos[2];
+            float metres = sqrtf(dx*dx + dy*dy + dz*dz) * 3.048f;
+            float x, y;
+            bool on = clip[3] > 0.05f;
+            if (on) {
+                x = 0.5f + 0.5f * clip[0] / clip[3];
+                y = 0.5f + 0.5f * clip[1] / clip[3];
+                on = x > 0.04f && x < 0.96f && y > 0.08f && y < 0.90f;
+            } else {
+                /* Behind: along the bottom, on the side it lies. */
+                float right[3];
+                hta_camera_right(&s->cam, right);
+                x = dx*right[0] + dy*right[1] > 0.0f ? 0.96f : 0.04f;
+                y = 0.90f;
+            }
+            if (x < 0.04f) x = 0.04f;
+            if (x > 0.96f) x = 0.96f;
+            if (y < 0.08f) y = 0.08f;
+            if (y > 0.90f) y = 0.90f;
+            n += (size_t)snprintf(g_game_text + n, sizeof(g_game_text) - n, "%.3f,%.3f,%d,%.0f,%d,%d;",
+                                  x, y, t, metres, on ? 1 : 0, (int)f->state);
+        }
+    }
 }
 
 JNIEXPORT jstring JNICALL
