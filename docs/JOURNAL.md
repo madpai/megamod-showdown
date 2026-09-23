@@ -9,6 +9,18 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## Dead under the Ghost (2026-09-23, late morning)
+
+The owner: "if I died and respawn and get in a ghost, it plays an
+animation like I died but I'm not dead ... getting out fixes it". Their
+screenshots show the body slumped behind the Ghost's seat. `view.c` starts
+a seated clip only when its name differs from `base_clip[i]`; a death
+played `h-kill ...` without clearing that name, and on foot the local
+body is skipped (first person) so nothing else changed it. Same seat
+again, same name, no new clip -- the death kept running. Getting out
+worked because the on-foot name differs. The death now clears it; the
+new test reproduced `h-kill front gut` under the Ghost before the fix.
+
 ## Bots drive; shells stop hitting nothing (2026-09-23, morning)
 
 No device report on the playtest-fixes build, so the next objective:

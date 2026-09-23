@@ -8,6 +8,7 @@
 #include "asset/bsp.h"
 #include "asset/model.h"
 #include "game/nav.h"
+#include "game/view.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -680,6 +681,41 @@ int main(int argc, char **argv)
             last_struck = -1; detonations = 0;
             step(1.0f);
             CHECK(detonations >= 1 && last_struck == t, "it stops in him and goes off");
+        }
+    }
+
+    printf("\n[back in the seat you died in]\n");
+    {
+        /* The owner's report: die, respawn, take a Ghost again and the body
+         * under it plays a death. On foot the local body is skipped (first
+         * person), so the view never saw the respawn. */
+        static hta_game_view view;
+        int32_t ghost = car_at_placement(2);
+        bool loaded = ghost >= 0 && hta_game_view_load(&view, &g, NULL, g.unit_count, err, sizeof(err));
+        CHECK(loaded, "bodies load");
+        if (loaded) {
+            hta_vehicles_reset(&v, (uint32_t)ghost);
+            v.cars[ghost].active = true;
+            hta_vehicles_sync(&v);
+            put(a, v.cars[ghost].pos[0] + 3, v.cars[ghost].pos[1], v.cars[ghost].pos[2], 0);
+            hta_game_seat(&g, a, ghost, 0);
+            for (int i = 0; i < 10; i++) { step(1.0f / 60.0f); hta_game_view_update(&view, &g, -1, 1.0f / 60.0f); }
+            const hta_actor *ac = &view.actor[a];
+            char seated[32];
+            snprintf(seated, sizeof(seated), "%s", ac->clip >= 0 ? ac->graph.anims[ac->clip].name : "");
+            printf("  seated: %s\n", seated);
+            hta_game_hurt(&g, a, t, 1000, NULL);
+            for (int i = 0; i < 30; i++) { step(1.0f / 60.0f); hta_game_view_update(&view, &g, -1, 1.0f / 60.0f); }
+            printf("  dead: %s\n", ac->clip >= 0 ? ac->graph.anims[ac->clip].name : "");
+            put(a, v.cars[ghost].pos[0] + 3, v.cars[ghost].pos[1], v.cars[ghost].pos[2], 0);
+            for (int i = 0; i < 10; i++) { step(1.0f / 60.0f); hta_game_view_update(&view, &g, a, 1.0f / 60.0f); }
+            CHECK(hta_game_seat(&g, a, ghost, 0), "back in the Ghost");
+            for (int i = 0; i < 10; i++) { step(1.0f / 60.0f); hta_game_view_update(&view, &g, -1, 1.0f / 60.0f); }
+            const char *now = ac->clip >= 0 ? ac->graph.anims[ac->clip].name : "";
+            printf("  seated again: %s\n", now);
+            CHECK(seated[0] && !strcmp(now, seated), "the body sits in the seat's clip, not the death");
+            hta_game_unseat(&g, a);
+            hta_game_view_free(&view);
         }
     }
 

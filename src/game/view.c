@@ -223,6 +223,10 @@ void hta_game_view_update(hta_game_view *v, const hta_game *g, int32_t skip, flo
                 v->dying[i] = true;
                 hta_actor_play_death(a, &v->rng);
                 a->yaw = u->death_yaw;
+                /* Forget the clip it was in: back in the same seat after a
+                 * respawn, an unchanged name would leave the death playing. */
+                v->base_clip[i][0] = 0;
+                v->action_left[i] = 0.0f;
             }
             hta_actor_update(a, dt);
             hta_actor_place(a, NULL, a->yaw);

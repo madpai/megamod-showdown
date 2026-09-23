@@ -179,6 +179,9 @@ the section below, and update it every time.
 >    ~5 s, with the HUD position.
 > 5. **CTF:** attackers drive toward the enemy base and get out ~10 wu from
 >    the flag.
+> 0. **Fixed from your report:** die, respawn, get back in a Ghost -- your
+>    body under it no longer plays a death animation (it did until you got
+>    out). Check the same with the Warthog seats.
 > 6. **Your own shots:** tank shells and fuel rods used to fly through a
 >    man and burst far behind him. A direct hit now stops in him. Check it
 >    feels right from the Scorpion.
@@ -576,6 +579,10 @@ the full story.
   and above a Warthog, sometimes inside a hillside. Line of sight for a
   seated bot comes from its body (`eye_of` in `brain.c`); AIM angles stay
   from `eye.pos`, because `vfire` converges on the camera's crosshair ray.
+- **A death must clear the body's remembered clip** (`base_clip` in
+  `view.c`). The local body is skipped on foot, so back in the same seat
+  after a respawn the name matched and the death kept playing under the
+  Ghost. test_ride "back in the seat you died in".
 - **A fast round hits along its path, not at its point.** A tank shell
   moves 1.3+ wu an update; the body is 0.35 wu wide. `fly` sweeps
   `hta_game_ray` from last position to this one (test_ride "a shell does
