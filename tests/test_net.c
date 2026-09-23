@@ -340,6 +340,14 @@ static void discovery(void)
     wire[8]=7; assert(!hta_net_info_unpack(wire,sizeof(wire),&out)); wire[8]='B';
     wire[4]=5; assert(!hta_net_info_unpack(wire,sizeof(wire),&out)); wire[4]=1;
     assert(!hta_net_info_unpack(wire,sizeof(wire)-1,&out));
+    /* v5: the host's world travels with the answer. */
+    assert(!out.map[0]);
+    snprintf(in.map,sizeof(in.map),"de_dust2");
+    assert(hta_net_info_pack(wire,sizeof(wire),&in));
+    assert(hta_net_info_unpack(wire,sizeof(wire),&out) && !strcmp(out.map,"de_dust2"));
+    wire[8+HTA_NET_NAME]='/'; assert(!hta_net_info_unpack(wire,sizeof(wire),&out));
+    snprintf(in.map,sizeof(in.map),"../x"); assert(!hta_net_info_pack(wire,sizeof(wire),&in));
+    in.map[0]=0; assert(hta_net_info_pack(wire,sizeof(wire),&in));
 
     hta_net_server s; hta_net_client a,b; hta_net_scan scan;
     assert(hta_net_server_open(&s,0));

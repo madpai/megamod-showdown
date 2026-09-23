@@ -193,7 +193,7 @@ public class GameActivity extends NativeActivity {
     static native int[] nativeShellArt(int which);
     static native void nativeShellScreen(int screen);
     static native void nativeShellSound(int which);
-    static native void nativeStartMatch(int[] config, String host, String name);
+    static native void nativeStartMatch(int[] config, String host, String name, String map);
     static native String nativeLanScan(String targets, int port, int milliseconds);
 
     public void openSolo() { runOnUiThread(() -> { shell.open(2); if (hud != null) hud.invalidate(); }); }
@@ -235,6 +235,11 @@ public class GameActivity extends NativeActivity {
         private int vehicles = 2;
         private static final String[] VEHICLE_SETS = { "NONE", "DEFAULT", "ALL",
                 "WARTHOGS", "GHOSTS", "SCORPIONS", "ROCKET WARTHOGS", "BANSHEES" };
+        /* Worlds to play in: Blood Gulch, every imported map built into
+         * this APK (assets/maps/<name>.oalmap), and the one picked in
+         * Settings ("imported"). The native side loads by these names. */
+        private final List<String> maps = new ArrayList<>();
+        private int map = 0;
         private int maxPlayers = 8, port = 32270;
         private String serverName = "Halo", address = "";
         private String[] lanGames = new String[0];
@@ -249,7 +254,25 @@ public class GameActivity extends NativeActivity {
             title.setTextAlign(Paint.Align.CENTER);
             text.setColor(0xFFFFFFFF);
             text.setTextAlign(Paint.Align.CENTER);
+            maps.add("bloodgulch");
+            try {
+                String[] bundled = owner.getAssets().list("maps");
+                if (bundled != null) for (String f : bundled)
+                    if (f.endsWith(".oalmap")) maps.add(f.substring(0, f.length() - 7));
+            } catch (java.io.IOException ignored) { }
+            java.io.File dir = owner.getExternalFilesDir(null);
+            if (dir == null) dir = owner.getFilesDir();
+            java.io.File picked = new java.io.File(dir, "external.oalmap");
+            if (picked.isFile() && picked.length() > 1024) maps.add("imported");
         }
+
+        private String mapName(String id) {
+            if (id.equals("bloodgulch")) return "BLOOD GULCH";
+            if (id.equals("imported")) return "IMPORTED MAP";
+            return id.toUpperCase(java.util.Locale.ROOT);
+        }
+
+        private void cycleMap() { map = (map + 1) % maps.size(); }
 
         void open(int next) {
             screen = next;
@@ -291,7 +314,8 @@ public class GameActivity extends NativeActivity {
         private String[] rows() {
             switch (screen) {
             case 1: return new String[] { word(1, "CREATE GAME"), word(0, "JOIN GAME"), word(18, "BACK") };
-            case 2: return new String[] { "GAME: " + GAMETYPES[gametype],
+            case 2: return new String[] { "MAP: " + mapName(maps.get(map)),
+                    "GAME: " + GAMETYPES[gametype],
                     "BOTS: " + bots, "BOT SKILL: " + skillName(),
                     gametype == 2 ? "CAPTURES TO WIN: " + (captures == 0 ? "NONE" : captures)
                                   : word(21, "KILLS TO WIN") + " " + (kills == 0 ? "NONE" : kills),
@@ -301,6 +325,7 @@ public class GameActivity extends NativeActivity {
                     word(12, "START GAME"), word(18, "BACK") };
             case 3: return new String[] { word(10, "SERVER NAME") + ": " + serverName,
                     word(11, "MAX PLAYERS") + ": " + maxPlayers,
+                    "MAP: " + mapName(maps.get(map)),
                     "GAME: " + GAMETYPES[gametype],
                     "BOTS: " + bots, "BOT SKILL: " + skillName(),
                     gametype == 2 ? "CAPTURES TO WIN: " + (captures == 0 ? "NONE" : captures)
@@ -316,6 +341,7 @@ public class GameActivity extends NativeActivity {
                 for (int i = 0; i < count; i++) {
                     String[] f = lanGames[i].split("\t", -1);
                     r[i] = f.length >= 5 ? f[2] + "  " + f[3] + "/" + f[4] +
+                            (f.length >= 8 ? "  " + mapName(f[7]) : "") +
                             (gameFull(f) ? "  FULL" : "  " + f[0]) : lanGames[i];
                 }
                 r[count] = scanning ? "SCANNING..." : word(30, "REFRESH");
@@ -390,32 +416,34 @@ public class GameActivity extends NativeActivity {
                 if (i == 0) open(3); else if (i == 1) open(4); else back();
                 break;
             case 2:
-                if (i == 0) gametype = (gametype + 1) % GAMETYPES.length;
-                else if (i == 1) bots = (bots + 1) % 8;
-                else if (i == 2) skill = (skill + 1) % 4;
-                else if (i == 3) {
+                if (i == 0) cycleMap();
+                else if (i == 1) gametype = (gametype + 1) % GAMETYPES.length;
+                else if (i == 2) bots = (bots + 1) % 8;
+                else if (i == 3) skill = (skill + 1) % 4;
+                else if (i == 4) {
                     if (gametype == 2) captures = next(captures, new int[] { 1, 3, 5, 10, 0 });
                     else kills = next(kills, new int[] { 0, 10, 25, 50, 100 });
                 }
-                else if (i == 4) minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 });
-                else if (i == 5) respawn = next(respawn, new int[] { 2, 5, 10, 15 });
-                else if (i == 6) vehicles = (vehicles + 1) % VEHICLE_SETS.length;
-                else if (i == 7) start(0, ""); else back();
+                else if (i == 5) minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 });
+                else if (i == 6) respawn = next(respawn, new int[] { 2, 5, 10, 15 });
+                else if (i == 7) vehicles = (vehicles + 1) % VEHICLE_SETS.length;
+                else if (i == 8) start(0, "", maps.get(map)); else back();
                 break;
             case 3:
                 if (i == 0) edit(false);
                 else if (i == 1) maxPlayers = maxPlayers == 8 ? 2 : maxPlayers + 1;
-                else if (i == 2) gametype = (gametype + 1) % GAMETYPES.length;
-                else if (i == 3) bots = (bots + 1) % 8;
-                else if (i == 4) skill = (skill + 1) % 4;
-                else if (i == 5) {
+                else if (i == 2) cycleMap();
+                else if (i == 3) gametype = (gametype + 1) % GAMETYPES.length;
+                else if (i == 4) bots = (bots + 1) % 8;
+                else if (i == 5) skill = (skill + 1) % 4;
+                else if (i == 6) {
                     if (gametype == 2) captures = next(captures, new int[] { 1, 3, 5, 10, 0 });
                     else kills = next(kills, new int[] { 0, 10, 25, 50, 100 });
                 }
-                else if (i == 6) minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 });
-                else if (i == 7) respawn = next(respawn, new int[] { 2, 5, 10, 15 });
-                else if (i == 8) vehicles = (vehicles + 1) % VEHICLE_SETS.length;
-                else if (i == 9) start(1, "127.0.0.1"); else back();
+                else if (i == 7) minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 });
+                else if (i == 8) respawn = next(respawn, new int[] { 2, 5, 10, 15 });
+                else if (i == 9) vehicles = (vehicles + 1) % VEHICLE_SETS.length;
+                else if (i == 10) start(1, "127.0.0.1", maps.get(map)); else back();
                 break;
             case 4:
                 if (i == 0) open(5); else if (i == 1) open(6); else back();
@@ -430,14 +458,14 @@ public class GameActivity extends NativeActivity {
                             break;
                         }
                         try { port = Integer.parseInt(f[1]); } catch (NumberFormatException ignored) { port = 32270; }
-                        start(2, f[0]);
+                        joinOn(f[0], f.length >= 8 ? f[7] : "bloodgulch");
                     }
                 } else if (i == r.length - 2) scan(); else back();
                 break;
             case 6:
                 if (i == 0) edit(true);
                 else if (i == 1) {
-                    if (validIPv4(address)) start(2, address);
+                    if (validIPv4(address)) askAndJoin(address);
                     else new AlertDialog.Builder(owner).setMessage("Enter a valid server IPv4 address.")
                             .setPositiveButton("OK", null).show();
                 }
@@ -472,12 +500,36 @@ public class GameActivity extends NativeActivity {
             return true;
         }
 
-        private void start(int mode, String host) {
+        private void start(int mode, String host, String world) {
             // A joiner plays whatever the host chose; the host's GAME says.
             int type = mode == 2 ? 0 : gametype;
             nativeStartMatch(new int[] { mode, bots, skill, type == 2 ? captures : kills, minutes, respawn,
-                    maxPlayers, port, vehicles, type }, host, serverName);
+                    maxPlayers, port, vehicles, type }, host, serverName, world);
             screen = 0;
+        }
+
+        /* A joiner stands in the host's world, so it must have it too. */
+        private void joinOn(String host, String world) {
+            if (!maps.contains(world)) {
+                new AlertDialog.Builder(owner).setMessage("This game is on " + mapName(world) +
+                        ", which this APK does not have.").setPositiveButton("OK", null).show();
+                return;
+            }
+            start(2, host, world);
+        }
+
+        /* A typed address: ask that host which world it is playing first. */
+        private void askAndJoin(String host) {
+            new Thread(() -> {
+                String result = nativeLanScan(host, port, 1200);
+                String world = "bloodgulch";
+                if (result != null) for (String line : result.split("\n")) {
+                    String[] f = line.split("\t", -1);
+                    if (f.length >= 8 && f[0].equals(host)) world = f[7];
+                }
+                String w = world;
+                owner.runOnUiThread(() -> joinOn(host, w));
+            }, "halo-ask-host").start();
         }
 
         private void back() {

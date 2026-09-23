@@ -4,7 +4,7 @@
  *
  *   htamatch <bloodgulch.map> [--bots N] [--skill 0-3] [--seconds S] [--mode ffa|team|ctf]
  *            [--shots N] [--every S] [--follow UNIT] [--out prefix]
- *            [--width W] [--height H] [--vehicles] [--seed N]
+ *            [--width W] [--height H] [--vehicles] [--seed N] [--oalmap PACKAGE]
  *
  * Simulates S seconds, then keeps simulating and takes a frame every
  * `--every` seconds from a camera behind and above the followed unit.
@@ -12,6 +12,8 @@
  * getting in, getting out and wreck is printed, and at the end how long
  * bots drove and how much of it their cars spent blocked. `--seed` plays
  * a different match of the same setup; judge a change on several.
+ * `--oalmap` plays on an imported map instead: its world and starts, Blood
+ * Gulch's weapons spread over it, no vehicles.
  */
 #include "asset/cache.h"
 #include "asset/bsp.h"
@@ -22,6 +24,8 @@
 #include "game/view.h"
 #include "engine/contrail.h"
 #include "game/nav.h"
+#include "game/external_world.h"
+#include "asset/external_map.h"
 #include "gfx/gfx.h"
 #include "platform/platform.h"
 #include <math.h>
@@ -63,6 +67,7 @@ int main(int argc, char **argv)
     float seconds = 20.0f, every = 0.5f, back = 1.6f;
     uint32_t W = 800, H = 450;
     const char *prefix = "match";
+    const char *oalmap = NULL;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--bots") && i + 1 < argc) bots = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--skill") && i + 1 < argc) skill = atoi(argv[++i]);
@@ -74,6 +79,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--back") && i + 1 < argc) back = strtof(argv[++i], NULL);
         else if (!strcmp(argv[i], "--ride") && i + 1 < argc) ride = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--vehicles")) vehicles = true;
+        else if (!strcmp(argv[i], "--oalmap") && i + 1 < argc) oalmap = argv[++i];
         else if (!strcmp(argv[i], "--seed") && i + 1 < argc) seed = (uint32_t)strtoul(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--mode") && i + 1 < argc) {
             const char *m = argv[++i];
@@ -106,7 +112,16 @@ int main(int argc, char **argv)
     const hta_resource_map *bmp = bm.data ? &bm : NULL;
 
     hta_bsp_mesh mesh = {0}, sky = {0}, cm = {0};
-    if (!hta_bsp_load_first(&cache, &mesh, err, sizeof(err)) ||
+    static hta_external_map ext;
+    if (oalmap) {
+        if (!hta_external_map_load(oalmap, &ext, err, sizeof(err))) {
+            fprintf(stderr, "oalmap: %s\n", err); return 1;
+        }
+        mesh = ext.mesh;
+        memset(&ext.mesh, 0, sizeof(ext.mesh));
+        vehicles = false; ride = -1;
+        printf("oalmap         %u triangles, %u starts\n", mesh.index_count / 3, ext.spawn_count);
+    } else if (!hta_bsp_load_first(&cache, &mesh, err, sizeof(err)) ||
         !hta_bsp_load_textures(&cache, bmp, &mesh, err, sizeof(err))) {
         fprintf(stderr, "BSP: %s\n", err); return 1;
     }
@@ -118,10 +133,13 @@ int main(int argc, char **argv)
     if ((ride >= 0 || vehicles) && !hta_vehicles_load(&veh, &cache, bmp, err, sizeof(err))) {
         fprintf(stderr, "vehicles: %s\n", err); return 1;
     }
-    hta_scenario_add_objects_excluding(&mesh, &cache, bmp, veh.skip, sizeof(veh.skip), err, sizeof(err));
+    if (!oalmap)
+        hta_scenario_add_objects_excluding(&mesh, &cache, bmp, veh.skip, sizeof(veh.skip), err, sizeof(err));
     hta_sky_load(&sky, &cache, bmp, err, sizeof(err));
     hta_collision col = {0};
-    if (!hta_bsp_load_collision(&cache, &cm, err, sizeof(err)) ||
+    if (oalmap) {
+        if (!hta_collision_build(&col, &mesh)) { fprintf(stderr, "collision failed\n"); return 1; }
+    } else if (!hta_bsp_load_collision(&cache, &cm, err, sizeof(err)) ||
         !hta_scenario_add_collision_excluding(&cm, &cache, veh.skip, sizeof(veh.skip), err, sizeof(err)) ||
         !hta_collision_build(&col, &cm)) {
         fprintf(stderr, "collision: %s\n", err); return 1;
@@ -148,7 +166,13 @@ int main(int argc, char **argv)
         hta_game_attach_vehicles(&game, &veh, bmp);
     }
     game.nav = &nav;
+    if (oalmap) {
+        if (!hta_nav_main_from_spawns(&nav, ext.spawns, ext.spawn_count))
+            printf("nav            no start on the grid\n");
+        hta_game_use_external(&game, ext.spawns, ext.spawn_count, &nav);
+    }
     if (hta_pickups_load(&items, &cache)) {
+        if (oalmap) hta_pickups_relocate(&items, &nav);
         hta_pickups_build(&items, &cache, bmp, err, sizeof(err));
         game.items = &items;
     }
@@ -211,6 +235,10 @@ int main(int argc, char **argv)
     cam.zfar = (bmax[0] - bmin[0]) * 6.0f;
     hta_scene scene = {0};
     hta_scene_light_from_bsp(&mesh, scene.light_dir, scene.light_color, scene.ambient);
+    if (oalmap) {   /* no lightmaps: the explorer's even daylight */
+        scene.light_dir[0] = 0.35f; scene.light_dir[1] = 0.4f; scene.light_dir[2] = 0.85f;
+        for (int k = 0; k < 3; k++) { scene.light_color[k] = 1.0f; scene.ambient[k] = 0.7f; }
+    }
     scene.clear[0] = 0.42f; scene.clear[1] = 0.55f; scene.clear[2] = 0.72f;
 
     uint8_t *rgba = malloc((size_t)W * H * 4u);
@@ -246,6 +274,7 @@ int main(int argc, char **argv)
                 hta_contrails_tracer(&trails, wtrail[e.weapon], e.pos, end, 300.0f);
             }
             if (e.kind == HTA_EV_ANNOUNCE && e.line != HTA_LINE_NONE) printf("  %6.1f  [%s]\n", t, e.text);
+            if (e.kind == HTA_EV_FLAG) printf("  %6.1f  flag: %s\n", t, e.text);
             if (vehicles && e.kind == HTA_EV_ENTER && e.b >= 0) entries++;
             if (vehicles && (e.kind == HTA_EV_ENTER || e.kind == HTA_EV_EXIT) && e.b >= 0)
                 printf("  %6.1f  %s %s %s seat %d at %.0f,%.0f\n", t, game.units[e.a].name,
@@ -409,6 +438,17 @@ int main(int argc, char **argv)
                u->name, base, u->body.pos[0], u->body.pos[1], u->body.pos[2],
                hta_game_held(&game, follow % bots) ? hta_game_held(&game, follow % bots)->label : "-",
                (int)ni);
+        if (getenv("HTA_DEBUG_UNITS") && taken == 0)
+            for (uint32_t i = 0; i < items.count; i++)
+                printf("    item %u %s at %.2f %.2f %.2f present %d\n", i,
+                       items.spawn[i].choice_count ? items.spawn[i].choice[0].path : "-",
+                       items.spawn[i].position[0], items.spawn[i].position[1],
+                       items.spawn[i].position[2], items.slot[i].present);
+        if (getenv("HTA_DEBUG_UNITS"))
+            for (int i = 0; i < bots; i++)
+                printf("    unit %d team %d %s at %.1f %.1f %.1f alive %d\n", i, game.units[i].team,
+                       game.units[i].name, game.units[i].body.pos[0], game.units[i].body.pos[1],
+                       game.units[i].body.pos[2], game.units[i].alive);
         taken++;
     }
     printf("simulated      %.1f s, %d kills, %.3f ms per tick\n", t, kills,
@@ -441,6 +481,7 @@ int main(int argc, char **argv)
     hta_nav_free(&nav);
     hta_collision_free(&col);
     hta_bsp_free(&cm); hta_bsp_free(&sky); hta_bsp_free(&mesh);
+    hta_external_map_free(&ext);
     free(bm_data); free(map_data);
     return 0;
 }

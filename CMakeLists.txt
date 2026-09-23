@@ -28,6 +28,7 @@ if(ANDROID)
         src/engine/ammo.c
         src/engine/hud.c
         src/game/nav.c
+        src/game/external_world.c
         src/game/game.c
         src/game/brain.c
         src/game/view.c
@@ -76,6 +77,7 @@ else()
         src/engine/pickup.c
         src/engine/bot.c src/engine/viewmodel.c src/engine/audio.c src/engine/ammo.c src/engine/hud.c
         src/game/nav.c
+        src/game/external_world.c
         src/game/game.c
         src/game/brain.c
         src/game/view.c
@@ -196,6 +198,9 @@ else()
     target_link_libraries(test_pickup PRIVATE hta_engine m)
     add_test(NAME pickup COMMAND test_pickup)
 
+    add_executable(test_external_world tests/test_external_world.c)
+    target_link_libraries(test_external_world PRIVATE hta_engine m)
+    add_test(NAME external_world COMMAND test_external_world)
     add_executable(test_nav tests/test_nav.c)
     target_link_libraries(test_nav PRIVATE hta_engine m)
     add_test(NAME nav COMMAND test_nav)

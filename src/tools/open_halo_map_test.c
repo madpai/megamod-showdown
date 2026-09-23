@@ -65,6 +65,11 @@ int main(int argc,char **argv)
             const hta_spawn_point *sp=&map.spawns[target];
             memcpy(cam.pos,sp->position,sizeof(cam.pos));cam.pos[2]+=0.55f;
             cam.yaw=sp->facing;cam.pitch=0;cam.znear=0.02f;
+            /* OALMAP_CAMERA="x y z yaw_deg [pitch_deg]" reproduces a device report's eye position. */
+            const char *view=getenv("OALMAP_CAMERA");float v[5]={0};
+            if(view&&sscanf(view,"%f %f %f %f %f",&v[0],&v[1],&v[2],&v[3],&v[4])>=4){
+                memcpy(cam.pos,v,sizeof(cam.pos));cam.yaw=v[3]/57.29578f;cam.pitch=v[4]/57.29578f;
+            }
         }
         if(!hta_gfx_draw(gfx,&cam,&scene,gm,NULL,NULL,NULL,0,NULL,NULL)||!hta_gfx_readback(gfx,pixels,(size_t)W*H*4)){fprintf(stderr,"draw/readback failed\n");good=0;break;}
         char path[1024];snprintf(path,sizeof(path),"%s_%s.ppm",prefix,shot?"spawn":"overview");

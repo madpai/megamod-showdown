@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define HTA_NET_MAGIC 0x31415448u /* "HTA1" on the wire */
-#define HTA_NET_VERSION 4u
+#define HTA_NET_VERSION 5u
 #define HTA_NET_HEADER 20u
 #define HTA_NET_MAX_PACKET 1200u
 #define HTA_NET_MAX_PLAYERS 8u
@@ -68,13 +68,17 @@ typedef struct {
 
 /* What a server says about itself in answer to DISCOVER. */
 #define HTA_NET_NAME 24u
-#define HTA_NET_INFO_BYTES (8u + HTA_NET_NAME)
+/* v5: the world being played -- "" for Blood Gulch, else an imported
+ * map's name ([a-z0-9_-]), so a joiner loads the same one. */
+#define HTA_NET_MAP 24u
+#define HTA_NET_INFO_BYTES (8u + HTA_NET_NAME + HTA_NET_MAP)
 typedef struct {
     uint32_t nonce;           /* echoes the DISCOVER's */
     uint8_t players, max_players;
     uint8_t score_limit;      /* kills to win */
     uint8_t time_limit;       /* minutes, 0 for none */
     char name[HTA_NET_NAME];  /* printable ASCII, NUL-terminated */
+    char map[HTA_NET_MAP];    /* [a-z0-9_-], NUL-terminated; "" Blood Gulch */
 } hta_net_info;
 
 /* The host's match state. Slots are stable for a round, including dead

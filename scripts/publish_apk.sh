@@ -31,6 +31,10 @@ fi
 BUILD=1
 WITH_ASSETS=0
 HTA_DATA=${HTA_DATA:-$HOME/halo-trial-data/extract/maps}
+# Imported maps (Open Asset Lab .oalmap packages) for the personal build.
+# Converted from the owner's own game files: never committed, never in the
+# guest APK or a GitHub release.
+HTA_IMPORTED=${HTA_IMPORTED:-$HOME/assetlab-private/bundle}
 TITLE=""
 NOTES_FILE=""
 NOTES_TEXT=""
@@ -55,6 +59,11 @@ if [ "$BUILD" = 1 ]; then
     for f in bloodgulch.map bitmaps.map sounds.map ui.map; do
       [ -f "$HTA_DATA/$f" ] || { echo "missing $HTA_DATA/$f" >&2; exit 1; }
       ln "$HTA_DATA/$f" "$STAGE/maps/$f" 2>/dev/null || cp "$HTA_DATA/$f" "$STAGE/maps/$f"
+    done
+    for f in "$HTA_IMPORTED"/*.oalmap; do
+      [ -f "$f" ] || continue
+      ln "$f" "$STAGE/maps/" 2>/dev/null || cp "$f" "$STAGE/maps/"
+      echo "bundling imported map $(basename "$f" .oalmap)"
     done
     PROPS="$PROPS -PhtaAssetsDir=$STAGE"
     echo "bundling the owner's Trial data from $HTA_DATA (personal build)"

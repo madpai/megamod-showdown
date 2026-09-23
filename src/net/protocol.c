@@ -95,11 +95,19 @@ bool hta_net_info_pack(uint8_t *dst, size_t cap, const hta_net_info *i)
         char ch=i->name[k];
         dst[8+k]=(uint8_t)(ch>=32 && ch<127 ? ch : '?');
     }
+    uint8_t *m=dst+8+HTA_NET_NAME;
+    memset(m,0,HTA_NET_MAP);
+    for (unsigned k=0; k<HTA_NET_MAP-1 && i->map[k]; k++) {
+        char ch=i->map[k];
+        if (!((ch>='a' && ch<='z') || (ch>='0' && ch<='9') || ch=='_' || ch=='-')) return false;
+        m[k]=(uint8_t)ch;
+    }
     return true;
 }
 bool hta_net_info_unpack(const uint8_t *src, size_t len, hta_net_info *i)
 {
-    if (!src || !i || len != HTA_NET_INFO_BYTES || src[8+HTA_NET_NAME-1]) return false;
+    if (!src || !i || len != HTA_NET_INFO_BYTES || src[8+HTA_NET_NAME-1] ||
+        src[8+HTA_NET_NAME+HTA_NET_MAP-1]) return false;
     hta_net_info tmp={0};
     tmp.nonce=hta_net_u32_read(src);
     tmp.players=src[4]; tmp.max_players=src[5]; tmp.score_limit=src[6]; tmp.time_limit=src[7];
@@ -109,6 +117,8 @@ bool hta_net_info_unpack(const uint8_t *src, size_t len, hta_net_info *i)
         if (ch<32 || ch>126) return false;
         tmp.name[k]=(char)ch;
     }
+    for (unsigned k=0; k<HTA_NET_MAP && src[8+HTA_NET_NAME+k]; k++)
+        tmp.map[k]=(char)src[8+HTA_NET_NAME+k];
     uint8_t check[HTA_NET_INFO_BYTES];
     if (!hta_net_info_pack(check,sizeof(check),&tmp)) return false;
     *i=tmp; return true;

@@ -29,7 +29,20 @@ int main(void)
     assert(m.mesh.vertex_count==3&&m.mesh.index_count==3&&m.spawn_count==1);
     hta_collision col;assert(hta_collision_build(&col,&m.mesh));float z;
     assert(hta_collision_ground(&col,.2f,.2f,.1f,&z)&&z==0);
+    assert(m.spawns[0].team_index==HTA_EXTERNAL_TEAM_ANY);
     hta_collision_free(&col);hta_external_map_free(&m);
+    /* The manifest names each start's Source class: T plays red, CT blue. */
+    {
+        static const char man[]="{\"entities\":[{\"classname\":\"info_player_terrorist\"}],"
+            "\"spawn_points\":[{\"classname\":\"info_player_counterterrorist\",\"position\":[0,0,0]}]}";
+        size_t ml=sizeof(man)-1;unsigned char *w=malloc(n+ml);assert(w);
+        memcpy(w,b,64);memcpy(w+64,man,ml);memcpy(w+64+ml,b+64,n-64);u32(w+8,(uint32_t)ml);
+        assert(hta_external_map_load_memory(w,n+ml,&m,err,sizeof(err)));
+        assert(m.spawn_count==1&&m.spawns[0].team_index==1&&m.key);
+        uint32_t key=m.key;hta_external_map_free(&m);
+        w[64+ml-40]^=1;assert(hta_external_map_load_memory(w,n+ml,&m,err,sizeof(err))&&m.key!=key);
+        hta_external_map_free(&m);free(w);
+    }
     f=fopen(path,"r+b");assert(f);fseek(f,4,SEEK_SET);unsigned char bad[4]={2,0,0,0};assert(fwrite(bad,1,4,f)==4);fclose(f);
     assert(!hta_external_map_load(path,&m,err,sizeof(err)));
     f=fopen(path,"r+b");assert(f);fseek(f,4,SEEK_SET);unsigned char good_version[4]={1,0,0,0};assert(fwrite(good_version,1,4,f)==4);fseek(f,64+120,SEEK_SET);unsigned char bad_index[4]={99,0,0,0};assert(fwrite(bad_index,1,4,f)==4);fclose(f);

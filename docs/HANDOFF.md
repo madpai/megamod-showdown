@@ -4,14 +4,15 @@
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-23, morning (bots drive vehicles; fast
-rounds no longer pass through people)
+**Date of this revision:** 2026-09-23, evening (matches on imported maps:
+de_dust2 in the personal APK, a MAP row in SINGLEPLAYER and CREATE GAME)
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Branch / HEAD:** `fp-animated-guns`, tracking `origin/main` on GitHub.
 Last published build: bots-drive build (see `git log -1`), verify.sh
 75/75, on the sideload page, archived in `apks/INDEX` on the backup drive,
 pushed to GitHub `main`. No device report on it, nor on the playtest-fixes
-build before it. Network protocol is still **v4**.
+build before it. Network protocol is now **v5** (the LAN answer names the
+host's map; a v4 build cannot join).
 
 **Start of next session, in order:**
 1. `ls -lt scratch/uploads/ | head` -- screenshots from this build? The
@@ -158,6 +159,19 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+> **Imported-map matches (this build):** reinstall the personal APK from
+> `http://100.89.1.14:8731/`. SINGLEPLAYER now starts with **MAP:** --
+> tap it to cycle BLOOD GULCH / DE_DUST2 (bundled) / IMPORTED MAP (the one
+> picked in Settings, if any). Play TEAM SLAYER on DE_DUST2 with 7 bots:
+> red spawns at the Terrorist end, blue at the CT end; the sky is Blood
+> Gulch's. Report: holes or slivers in the sand (the displacement fix),
+> bots stuck standing still > 10 s (with the HUD position), weapons you
+> cannot reach, frame rate, and load time. CTF works too: each flag
+> stands among its team's starts. Also CREATE GAME has MAP; a joining
+> phone takes the host's map from the LAN list (it must have it too).
+> Host-verified: 8-bot team slayer 18 kills / 2 min, FFA 87 / 3 min, CTF
+> flags taken; no vehicles on imported maps.
+
 > **de_dust2 imported map:** Install the latest personal APK from the private
 > sideload page at `http://100.89.1.14:8731/`. In the Halo menu, open
 > Settings, download the staged `de_dust2` `package.oalmap` from Open Asset
@@ -244,6 +258,38 @@ the section below, and update it every time.
 >    shoots at blue. Get out and it gets off.
 > 8. **CTF waypoints:** a red and a blue chevron with metres over each flag,
 >    pinned to the screen edge when off screen, blinking while away.
+
+## IMPORTED MAPS (done 2026-09-23) — how they work
+
+- **Packages** are Open Asset Lab `.oalmap` v1 (`src/asset/external_map.c`):
+  world triangles, RGBA textures, starts. `hta_external_map_load_memory`
+  reads one straight out of an mmapped APK asset; the manifest's
+  `spawn_points[].classname` gives teams (T red, CT blue, else
+  `HTA_EXTERNAL_TEAM_ANY`); `key` is FNV-1a of the manifest.
+- **What still comes from Blood Gulch**: every tag -- bipeds, weapons,
+  sounds, the sky, the scenario's netgame equipment. No vehicles and no
+  scenery on an imported map.
+- **Placement** (`src/game/external_world.c`): the nav grid is built in
+  `load_map` (`world_nav`, cached as `nav-<key>.bin` with the package key
+  folded in). `hta_nav_main_from_spawns` makes the region holding most
+  starts the map -- de_dust2's rooftops are its biggest region.
+  `hta_pickups_relocate` spreads the 37 items by farthest-point sampling
+  (deterministic: host and joiner agree). `hta_game_use_external` replaces
+  the starts and puts each flag at the walkable node nearest its team's
+  starts' middle.
+- **Android**: `s->world` ("" Blood Gulch, "imported", or a bundled name)
+  from `nativeStartMatch(..., map)`; `load_world_package` replaces the BSP;
+  map CRC for LAN is `cache.crc32 ^ world_ext.key`. Bundling:
+  `publish_apk.sh --with-assets` copies `$HTA_IMPORTED/*.oalmap`
+  (default `~/assetlab-private/bundle`) into the personal APK, stored
+  uncompressed. verify.sh fails if any `.oalmap` reaches the shareable APK.
+- **Bots**: `brain.c` gives up an item it cannot reach (1.5 s at the end of
+  its path, or 25 s in all) for 30 s -- imported maps lack clip brushes, so
+  the grid can reach ledges the body cannot.
+- Tools: `htamatch bloodgulch.map --oalmap pkg.oalmap --mode team|ctf|ffa`
+  (`HTA_DEBUG_UNITS=1` prints units and item placements);
+  `OALMAP_CAMERA="x y z yaw pitch" open-halo-map-test pkg out` renders a
+  reported position. Test: `test_external_world`.
 
 ## GAME TYPES (done 2026-09-23) — how they work
 
@@ -652,6 +698,9 @@ wrong, this list is the first place to look — they are all one constant.
 
 | constant | value | what it is |
 |---|---|---|
+| imported-map daylight | dir (0.35,0.4,0.85), ambient 0.7 | packages carry no lightmaps |
+| bot item give-up | 1.5 s / 25 s, off 30 s | `brain.c`, unreachable items |
+| imported-map flags | nearest node to team starts' middle | no flag data in a Source map |
 | `HTA_HUD_PHONE_SCALE` | 1.75 | HUD size on a phone |
 | `HTA_HUD_WEAPON_SCALE` | 0.5 | the weapon block |
 | `HTA_SOUND_NEAR` / `_FAR` | 3 / 60 wu | distance attenuation |

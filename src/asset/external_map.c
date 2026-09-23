@@ -11,6 +11,36 @@ static bool take(size_t *at, size_t n, size_t size) { if (n>size-*at) return fal
 static bool fail(char *err,size_t n,const char *s) { if(err && n) snprintf(err,n,"%s",s); return false; }
 void hta_external_map_free(hta_external_map *m) { if(!m)return; hta_bsp_free(&m->mesh); free(m->spawns); memset(m,0,sizeof(*m)); }
 
+/* The manifest is JSON written by Asset Lab; its spawn_points are in the
+ * same order as the binary spawn records. Only their classnames matter. */
+static uint16_t team_of(const char *cls, size_t n)
+{
+    static const char ct[]="info_player_counterterrorist", t[]="info_player_terrorist";
+    if(n==sizeof(ct)-1 && !memcmp(cls,ct,n)) return 1;
+    if(n==sizeof(t)-1 && !memcmp(cls,t,n)) return 0;
+    return HTA_EXTERNAL_TEAM_ANY;
+}
+static void spawn_teams(const unsigned char *m, size_t ml, hta_spawn_point *sp, uint32_t sc)
+{
+    for(uint32_t i=0;i<sc;i++) sp[i].team_index=HTA_EXTERNAL_TEAM_ANY;
+    static const char key[]="\"spawn_points\"", cls[]="\"classname\"";
+    const unsigned char *end=m+ml, *at=NULL;
+    for(const unsigned char *p=m;p+sizeof(key)-1<=end;p++)
+        if(!memcmp(p,key,sizeof(key)-1)){at=p+sizeof(key)-1;break;}
+    for(uint32_t i=0;at && i<sc;i++){
+        const unsigned char *hit=NULL;
+        for(const unsigned char *p=at;p+sizeof(cls)-1<=end;p++)
+            if(!memcmp(p,cls,sizeof(cls)-1)){hit=p+sizeof(cls)-1;break;}
+        if(!hit) return;
+        while(hit<end && (*hit==' '||*hit==':')) hit++;
+        if(hit>=end || *hit!='"') return;
+        const unsigned char *q=++hit;
+        while(q<end && *q!='"') q++;
+        sp[i].team_index=team_of((const char *)hit,(size_t)(q-hit));
+        at=q;
+    }
+}
+
 bool hta_external_map_load(const char *path, hta_external_map *out, char *err, size_t errlen)
 {
     if(!path||!out)return fail(err,errlen,"invalid arguments");
@@ -25,7 +55,18 @@ bool hta_external_map_load(const char *path, hta_external_map *out, char *err, s
     if(!data){fclose(f);return fail(err,errlen,"out of memory");}
     if(fread(data,1,(size_t)len,f)!=(size_t)len){fclose(f);free(data);return fail(err,errlen,"truncated package read");}
     fclose(f);
-    size_t size=(size_t)len,at=64;
+    bool ok=hta_external_map_load_memory(data,(size_t)len,out,err,errlen);
+    free(data);
+    return ok;
+}
+
+bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external_map *out,
+                                  char *err, size_t errlen)
+{
+    if(!data||!out)return fail(err,errlen,"invalid arguments");
+    memset(out,0,sizeof(*out));
+    if(size<64||size>FILE_MAX)return fail(err,errlen,"package size out of range");
+    size_t at=64;
     bool ok=false;
     if(memcmp(data,"OALM",4)||u32(data+4)!=1){fail(err,errlen,"unsupported OALMAP package version");goto done;}
     uint32_t ml=u32(data+8),vc=u32(data+12),ic=u32(data+16),gc=u32(data+20),tc=u32(data+24),sc=u32(data+28);
@@ -92,11 +133,13 @@ bool hta_external_map_load(const char *path, hta_external_map *out, char *err, s
         if(!isfinite(out->spawns[i].position[0])||!isfinite(out->spawns[i].position[1])||!isfinite(out->spawns[i].position[2])||!isfinite(out->spawns[i].facing)){fail(err,errlen,"non-finite spawn");goto done;}
     }
     at+=(size_t)sc*16;
+    spawn_teams(data+64,ml,out->spawns,sc);
+    out->key=2166136261u;
+    for(uint32_t i=0;i<ml;i++) out->key=(out->key^data[64+i])*16777619u;
     if(at!=size){fail(err,errlen,"unexpected trailing package bytes");goto done;}
     out->mesh.ambient[0]=out->mesh.ambient[1]=out->mesh.ambient[2]=0.8f;
     ok=true;
 done:
-    free(data);
     if(!ok)hta_external_map_free(out);
     return ok;
 }

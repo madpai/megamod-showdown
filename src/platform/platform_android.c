@@ -50,6 +50,7 @@
 #include "../asset/items.h"
 #include "../asset/strings.h"
 #include "../asset/external_map.h"
+#include "../game/external_world.h"
 
 #include <android/log.h>
 #include <android/input.h>
@@ -125,6 +126,13 @@ typedef struct {
     size_t    sounds_size;
     bool      map_loaded;
     bool      explore_external;
+    /* The match's world: "" is Blood Gulch; otherwise an imported map --
+     * "imported" is the package picked in Settings, any other name one
+     * built into the APK as assets/maps/<name>.oalmap. Its starts are kept
+     * for the game; everything else of Halo's still comes from the Trial. */
+    char      world[48];
+    hta_external_map world_ext;
+    bool      world_loaded;
     char      status[256];
     /* What was mapped, for unmapping: an APK asset maps from a page
      * boundary before its data, so the pointer handed out is not the base. */
@@ -1320,6 +1328,82 @@ static bool load_external_map(hta_android *s)
 }
 static void game_gpu_free(hta_android *s);
 
+/* The match's imported world, in place of Blood Gulch's BSP. A package in
+ * the APK is mapped, read and unmapped: everything kept is copied out. */
+static bool load_world_package(hta_android *s, char *err, size_t errlen)
+{
+    for (const char *c = s->world; *c; c++)
+        if (!((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_' || *c == '-')) {
+            snprintf(err, errlen, "bad map name");
+            return false;
+        }
+    bool ok = false;
+    if (!strcmp(s->world, "imported")) {
+        const char *dir = s->app->activity->externalDataPath;
+        if (!dir) dir = s->app->activity->internalDataPath;
+        char path[600];
+        snprintf(path, sizeof(path), "%s/external.oalmap", dir ? dir : ".");
+        ok = hta_external_map_load(path, &s->world_ext, err, errlen);
+    } else {
+        char name[96];
+        snprintf(name, sizeof(name), "maps/%s.oalmap", s->world);
+        AAssetManager *am = s->app->activity->assetManager;
+        AAsset *a = am ? AAssetManager_open(am, name, AASSET_MODE_UNKNOWN) : NULL;
+        if (!a) { snprintf(err, errlen, "%s is not in this APK", name); return false; }
+        off64_t start = 0, len = 0;
+        int fd = AAsset_openFileDescriptor64(a, &start, &len);
+        AAsset_close(a);
+        if (fd < 0) { snprintf(err, errlen, "%s is compressed in the APK", name); return false; }
+        long page = sysconf(_SC_PAGESIZE);
+        off64_t aligned = start - (start % page);
+        size_t maplen = (size_t)(len + (start - aligned));
+        void *p = mmap(NULL, maplen, PROT_READ, MAP_PRIVATE, fd, aligned);
+        close(fd);
+        if (p == MAP_FAILED) { snprintf(err, errlen, "cannot map %s", name); return false; }
+        ok = hta_external_map_load_memory((const uint8_t *)p + (start - aligned), (size_t)len,
+                                          &s->world_ext, err, errlen);
+        munmap(p, maplen);
+    }
+    if (!ok) return false;
+    s->mesh = s->world_ext.mesh;
+    memset(&s->world_ext.mesh, 0, sizeof(s->world_ext.mesh));
+    s->world_loaded = true;
+    hta_log("[world] %s: %u triangles, %u textures, %u starts", s->world,
+            s->mesh.index_count / 3, s->mesh.texture_count, s->world_ext.spawn_count);
+    return true;
+}
+
+/* The imported world's walkable grid, built once and kept in app storage
+ * like Blood Gulch's. The region the starts stand in is the map. */
+static void world_nav(hta_android *s)
+{
+    hta_player_physics phys;
+    char err[HTA_ERRLEN];
+    hta_player_physics_defaults(&phys);
+    hta_player_physics_load(&phys, &s->cache, err, sizeof(err));
+    hta_collision_set_slope(&s->col, phys.max_slope);
+    hta_nav_params prm = { phys.radius, phys.coll_stand, phys.max_slope, 1.0f };
+    uint32_t key = s->cache.crc32 ^ s->world_ext.key ^ (uint32_t)(prm.radius * 1e4f) ^
+                   ((uint32_t)(prm.height * 1e4f) << 8) ^ ((uint32_t)(prm.max_slope * 1e4f) << 16);
+    char navpath[600] = "";
+    const char *ext = s->app->activity->externalDataPath;
+    if (ext) snprintf(navpath, sizeof(navpath), "%s/nav-%08x.bin", ext, key);
+    double t0 = hta_time_seconds();
+    if (!(navpath[0] && hta_nav_load(&s->nav, navpath, key))) {
+        if (!hta_nav_build(&s->nav, &s->col, s->mesh.bounds_min, s->mesh.bounds_max,
+                           &prm, err, sizeof(err))) {
+            hta_log("[world] nav failed (%s): no items, bots stand still", err);
+            return;
+        }
+        if (navpath[0] && !hta_nav_save(&s->nav, navpath, key))
+            hta_log("[world] could not keep the nav grid at %s", navpath);
+    }
+    if (!hta_nav_main_from_spawns(&s->nav, s->world_ext.spawns, s->world_ext.spawn_count))
+        hta_log("[world] no start stands on the nav grid");
+    hta_log("[world] nav: %u nodes in %.0f ms", s->nav.node_count,
+            (hta_time_seconds() - t0) * 1000.0);
+}
+
 static bool load_map(hta_android *s)
 {
     if (!find_map(s)) return false;
@@ -1342,7 +1426,13 @@ static bool load_map(hta_android *s)
             s->cache.name, s->cache.engine, hta_engine_name(s->cache.engine),
             s->cache.tag_count, s->cache.is_demo_layout ? "Trial" : "retail");
 
-    if (!hta_bsp_load_first(&s->cache, &s->mesh, err, sizeof(err))) {
+    if (s->world[0]) {
+        if (!load_world_package(s, err, sizeof(err))) {
+            hta_log("[world] %s: %s", s->world, err);
+            snprintf(s->status, sizeof(s->status), "%s: %s", s->world, err);
+            return false;
+        }
+    } else if (!hta_bsp_load_first(&s->cache, &s->mesh, err, sizeof(err))) {
         hta_log("[assets] BSP extraction failed: %s", err);
         snprintf(s->status, sizeof(s->status), "bsp: %s", err);
         return false;
@@ -1389,16 +1479,20 @@ static bool load_map(hta_android *s)
     } else {
         hta_log("[assets] no bitmaps.map — world will stay untextured. Copy it next to bloodgulch.map");
     }
-    if (!hta_bsp_load_textures(&s->cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL, &s->mesh, err, sizeof(err)))
+    if (s->world_loaded)
+        hta_log("[world] %u textures from the package", s->mesh.texture_count);
+    else if (!hta_bsp_load_textures(&s->cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL, &s->mesh, err, sizeof(err)))
         hta_log("[assets] texture load: %s", err);
     else
         hta_log("[assets] textures: %u unique (albedos+lightmaps)", s->mesh.texture_count);
 
-    if (hta_vehicles_load(&s->vehicles, &s->cache,
+    /* Blood Gulch's vehicles are parked in Blood Gulch; an imported map
+     * has none. */
+    if (!s->world_loaded && hta_vehicles_load(&s->vehicles, &s->cache,
             s->bitmaps_rm.data ? &s->bitmaps_rm : NULL, err, sizeof(err)))
         hta_log("[vehicles] %s", err);
 
-    if (hta_bsp_load_collision(&s->cache, &s->coll_mesh, err, sizeof(err))) {
+    if (!s->world_loaded && hta_bsp_load_collision(&s->cache, &s->coll_mesh, err, sizeof(err))) {
         s->have_coll = true;
         if (hta_scenario_add_collision_excluding(&s->coll_mesh, &s->cache,
                 s->vehicles.skip, HTA_VEHICLE_PLACEMENTS, err, sizeof(err)))
@@ -1417,9 +1511,15 @@ static bool load_map(hta_android *s)
             hta_log("[assets] collision grid %ux%u cells (render mesh)", s->col.nx, s->col.ny);
     }
 
+    /* An imported world needs its walkable grid now, before the items: they
+     * are spread over it. */
+    if (s->world_loaded) world_nav(s);
+
     /* What the map leaves lying about. Every position, facing, respawn time
-     * and weighted choice is the scenario's own. */
+     * and weighted choice is the scenario's own -- on an imported map, all
+     * but the position. */
     if (hta_pickups_load(&s->items, &s->cache)) {
+        if (s->world_loaded) hta_pickups_relocate(&s->items, &s->nav);
         char ierr[HTA_ERRLEN];
         if (hta_pickups_build(&s->items, &s->cache,
                               s->bitmaps_rm.data ? &s->bitmaps_rm : NULL,
@@ -1448,7 +1548,8 @@ static bool load_map(hta_android *s)
         hta_log("[assets] %u material(s) in this map", s->map_material_count);
     }
 
-    if (hta_scenario_add_objects_excluding(&s->mesh, &s->cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL,
+    if (!s->world_loaded &&
+        hta_scenario_add_objects_excluding(&s->mesh, &s->cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL,
             s->vehicles.skip, HTA_VEHICLE_PLACEMENTS, err, sizeof(err)))
         hta_log("[assets] %s  (now %u verts / %u submeshes)", err,
                 s->mesh.vertex_count, s->mesh.submesh_count);
@@ -1501,6 +1602,10 @@ static bool load_map(hta_android *s)
      * dying means coming back at another one. */
     hta_spawn_point *sp = s->spawn;
     uint32_t nsp = hta_scenario_spawns(&s->cache, sp, 64);
+    if (s->world_loaded) {
+        nsp = s->world_ext.spawn_count < 64 ? s->world_ext.spawn_count : 64;
+        memcpy(sp, s->world_ext.spawns, nsp * sizeof(*sp));
+    }
     s->spawn_count = nsp;
     s->spawn_rng = 0x9E3779B9u;
     hta_player_init(&s->player);
@@ -1742,6 +1847,11 @@ static bool load_map(hta_android *s)
 
     hta_scene_light_from_bsp(&s->mesh, s->scene.light_dir, s->scene.light_color, s->scene.ambient);
     s->scene.clear[0] = 0.42f; s->scene.clear[1] = 0.55f; s->scene.clear[2] = 0.72f;  /* sky-ish */
+    if (s->world_loaded) {
+        /* No lightmaps in a package: the explorer's even daylight. Ours. */
+        s->scene.light_dir[0] = 0.35f; s->scene.light_dir[1] = 0.4f; s->scene.light_dir[2] = 0.85f;
+        for (int k = 0; k < 3; k++) { s->scene.light_color[k] = 1.0f; s->scene.ambient[k] = 0.7f; }
+    }
 
     s->have_mesh = true;
     s->map_loaded = true;
@@ -1805,6 +1915,13 @@ static void start_game(hta_android *s)
         return;
     }
     hta_log("[game] %s", err);
+    if (s->world_loaded) {
+        hta_game_use_external(&s->game, s->world_ext.spawns, s->world_ext.spawn_count,
+                              s->nav.built ? &s->nav : NULL);
+        if (s->nav.built) s->game.nav = &s->nav;
+        hta_log("[world] %u starts; flags %s", s->game.spawn_count,
+                s->game.flags[0].present && s->game.flags[1].present ? "at the team starts" : "none");
+    }
     if (s->vehicles.loaded) {
         uint32_t before = s->game.weapon_count;
         hta_game_attach_vehicles(&s->game, &s->vehicles, bm);
@@ -1840,7 +1957,7 @@ static void start_game(hta_android *s)
     s->game.time_limit = (float)s->time_limit_min * 60.0f;
     s->game.respawn_time = s->respawn_delay;
     int bots = s->net_enabled && !s->net_hosting ? 0 : s->bot_count;
-    if (bots > 0) {
+    if (bots > 0 && !s->nav.built) {
         double t0 = hta_time_seconds();
         /* The walkable grid is the ground, not the vehicles parked on it:
          * they move, and bots walk round them as they find them. */
@@ -1921,8 +2038,10 @@ static void start_game(hta_android *s)
         if (s->game.pools[p].detonation_snd) bank_get(s, s->game.pools[p].detonation_snd);
     s->game_on = true;
     if (s->net_enabled) {
-        s->net.map_crc=s->cache.crc32;
-        if (s->net_hosting) s->host_server.map_crc=s->cache.crc32;
+        /* Both phones must stand in the same world, not only the same Trial. */
+        uint32_t crc = s->cache.crc32 ^ (s->world_loaded ? s->world_ext.key : 0u);
+        s->net.map_crc=crc;
+        if (s->net_hosting) s->host_server.map_crc=crc;
     }
     hta_game_start(&s->game);
     s->world_round = 1;
@@ -2649,13 +2768,14 @@ typedef struct {
     int  gametype;           /* hta_game_mode; solo only for now */
     char host[64];
     char name[HTA_NET_NAME];
+    char map[HTA_NET_MAP];   /* "" Blood Gulch, else an imported map's name */
 } match_setup;
 static match_setup g_match;
 static _Atomic int g_match_ready;
 
 JNIEXPORT void JNICALL
 Java_net_hta_halotrial_GameActivity_nativeStartMatch(JNIEnv *env, jclass cls, jintArray cfg,
-                                                     jstring host, jstring name)
+                                                     jstring host, jstring name, jstring map)
 {
     (void)cls;
     if (atomic_load(&g_match_ready)) return;     /* one is already on its way */
@@ -2677,6 +2797,10 @@ Java_net_hta_halotrial_GameActivity_nativeStartMatch(JNIEnv *env, jclass cls, ji
     if (name && (u = (*env)->GetStringUTFChars(env, name, NULL))) {
         snprintf(m.name, sizeof(m.name), "%s", u);
         (*env)->ReleaseStringUTFChars(env, name, u);
+    }
+    if (map && (u = (*env)->GetStringUTFChars(env, map, NULL))) {
+        if (strcmp(u, "bloodgulch")) snprintf(m.map, sizeof(m.map), "%s", u);
+        (*env)->ReleaseStringUTFChars(env, map, u);
     }
     g_match = m;
     atomic_store(&g_match_ready, 1);             /* publishes g_match */
@@ -2721,9 +2845,10 @@ Java_net_hta_halotrial_GameActivity_nativeLanScan(JNIEnv *env, jclass cls, jstri
             for (int i = 0; i < nseen; i++) dup |= !strcmp(seen[i], ip);
             if (dup || nseen >= 16) continue;
             snprintf(seen[nseen++], 16, "%s", ip);
-            int w = snprintf(out + len, sizeof(out) - len, "%s\t%u\t%s\t%u\t%u\t%u\t%u\n",
+            int w = snprintf(out + len, sizeof(out) - len, "%s\t%u\t%s\t%u\t%u\t%u\t%u\t%s\n",
                              ip, from, info.name, info.players, info.max_players,
-                             info.score_limit, info.time_limit);
+                             info.score_limit, info.time_limit,
+                             info.map[0] ? info.map : "bloodgulch");
             if (w > 0 && (size_t)w < sizeof(out) - len) len += (size_t)w;
         }
         struct timespec nap = { 0, 20 * 1000 * 1000 };
@@ -2778,6 +2903,7 @@ static void match_take(hta_android *s)
     /* A host chooses the game; a joiner learns it from the host's GAME. */
     s->game_mode = m.mode != 2 && m.gametype > 0 && m.gametype < HTA_MODE_COUNT
                  ? m.gametype : HTA_MODE_SLAYER;
+    snprintf(s->world, sizeof(s->world), "%s", m.map);
     uint16_t port = (uint16_t)(m.port > 0 && m.port < 65536 ? m.port : 32270);
     if (m.mode == 1) {
         hta_net_info info;
@@ -2787,12 +2913,13 @@ static void match_take(hta_android *s)
         info.score_limit = (uint8_t)(s->score_limit ? s->score_limit : HTA_SLAYER_SCORE_LIMIT);
         info.time_limit = (uint8_t)s->time_limit_min;
         snprintf(info.name, sizeof(info.name), "%s", m.name[0] ? m.name : "Halo");
+        snprintf(info.map, sizeof(info.map), "%s", m.map);
         net_begin(s, "127.0.0.1", true, port, &info);
     } else if (m.mode == 2) {
         net_begin(s, m.host, false, port, NULL);
     }
-    hta_log("[menu] match: mode %d, game %d, %d bot(s) skill %d, %d to win, %d min, respawn %.0f s",
-            m.mode, s->game_mode, s->bot_count, s->bot_skill, s->score_limit, s->time_limit_min,
+    hta_log("[menu] match on %s: mode %d, game %d, %d bot(s) skill %d, %d to win, %d min, respawn %.0f s",
+            s->world[0] ? s->world : "bloodgulch", m.mode, s->game_mode, s->bot_count, s->bot_skill, s->score_limit, s->time_limit_min,
             s->respawn_delay);
     atomic_store(&g_match_ready, 0);
     atomic_store(&g_shell_screen, 0);
@@ -5840,6 +5967,7 @@ done:
     hta_game_view_free(&state.gview);
     hta_game_free(&state.game);
     hta_nav_free(&state.nav);
+    hta_external_map_free(&state.world_ext);
     hta_collision_free(&state.col);
     hta_vehicles_free(&state.vehicles);
     hta_contrails_free(&state.trails);

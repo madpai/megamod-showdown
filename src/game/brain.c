@@ -69,6 +69,8 @@ void hta_brain_reset(hta_brain *b)
     b->path_len = b->path_i = 0;
     b->goal = HTA_NAV_NONE;
     b->goal_item = -1;
+    b->item_skip = -1;
+    b->item_skip_time = b->item_time = b->item_there = 0.0f;
     b->goal_game = false;
     b->replan = 0.0f;
     b->react = 0.0f;
@@ -287,7 +289,7 @@ static bool follow(hta_game *g, int32_t me, hta_brain *b, float out[2])
 
 /* Something worth walking to: a better weapon, health when hurt, a
  * powerup. The nearest worthwhile item that is on the ground now. */
-static int32_t pick_item(hta_game *g, int32_t me)
+static int32_t pick_item(hta_game *g, int32_t me, int32_t skip)
 {
     hta_pickups *it = g->items;
     if (!it || !it->loaded) return -1;
@@ -301,7 +303,7 @@ static int32_t pick_item(hta_game *g, int32_t me)
     int32_t best = -1;
     float best_score = 0.0f;
     for (uint32_t i = 0; i < it->count; i++) {
-        if (!it->slot[i].present) continue;
+        if (!it->slot[i].present || (int32_t)i == skip) continue;
         const hta_item_choice *c = hta_pickups_item(it, (int32_t)i);
         if (!c) continue;
         float value = 0.0f;
@@ -1052,7 +1054,23 @@ void hta_brain_think(struct hta_game *g, int32_t me, hta_brain *b, float dt)
             }
         } else {
             b->goal_game = false;
-            int32_t item = pick_item(g, me);
+            /* An item the grid reaches but the body cannot -- on a ledge an
+             * imported map's clip brushes would have kept it off, say -- is
+             * given up for a while instead of stood under forever. Ours:
+             * 1.5 s at the end of the path, 25 s in all, 30 s off. */
+            if (b->item_skip_time > 0.0f && (b->item_skip_time -= dt) <= 0.0f) b->item_skip = -1;
+            if (b->goal_item >= 0) {
+                b->item_time += dt;
+                b->item_there = b->path_i >= b->path_len ? b->item_there + dt : 0.0f;
+                if (b->item_time >= 25.0f || b->item_there >= 1.5f) {
+                    b->item_skip = b->goal_item;
+                    b->item_skip_time = 30.0f;
+                    b->goal_item = -1;
+                    b->path_len = b->path_i = 0;
+                }
+            }
+            int32_t item = pick_item(g, me, b->item_skip);
+            if (item != b->goal_item) b->item_time = b->item_there = 0.0f;
             if (item != b->goal_item || b->replan <= 0.0f ||
                 b->path_i >= b->path_len) {
                 b->goal_item = item;
