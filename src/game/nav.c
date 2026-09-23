@@ -362,6 +362,75 @@ uint32_t hta_nav_path(hta_nav *n, uint32_t from, uint32_t to,
     return w;
 }
 
+/* The cost of one step, as the search prices it: climbing is dear,
+ * dropping cheap, and hugging a wall dearer still. */
+static float step_cost(const hta_nav *n, const hta_nav_node *a, const hta_nav_node *b, int d)
+{
+    float step = n->cell * (d >= 4 ? 1.41421356f : 1.0f);
+    float dz = b->z - a->z;
+    float cost = step + (dz > 0.0f ? dz * 2.0f : -dz * 0.5f);
+    if (b->flags & HTA_NAV_NEAR_WALL) cost *= 1.6f;
+    return cost;
+}
+
+uint32_t hta_nav_field(hta_nav *n, uint32_t goal, uint32_t *next)
+{
+    if (!n || !n->built || !next) return 0;
+    for (uint32_t i = 0; i < n->node_count; i++) next[i] = HTA_NAV_NONE;
+    if (goal >= n->node_count) return 0;
+    if (++n->generation == 0u) {
+        memset(n->stamp, 0, (size_t)n->node_count * sizeof(uint32_t));
+        n->generation = 1u;
+    }
+    const uint32_t gen = n->generation;
+    /* Dijkstra outward from the goal, over links walked backwards: a node
+     * is priced by the step FROM it onto the one nearer the goal, and only
+     * where that step is a real link -- a drop can be walked off, not up. */
+    heap_t h = { n, n->f, 0 };
+    n->stamp[goal] = gen;
+    n->f[goal] = 0.0f;
+    heap_push(&h, n->heap, goal);
+    uint32_t reached = 0;
+    while (h.size) {
+        uint32_t cur = heap_pop(&h, n->heap);
+        reached++;
+        const hta_nav_node *c = &n->nodes[cur];
+        for (int d = 0; d < 8; d++) {
+            uint32_t nb = c->link[d];
+            if (nb == HTA_NAV_NONE) continue;
+            const hta_nav_node *b = &n->nodes[nb];
+            int back = -1;
+            for (int k = 0; k < 8; k++) if (b->link[k] == cur) { back = k; break; }
+            if (back < 0) continue;
+            float cost = n->f[cur] + step_cost(n, b, c, back);
+            if (n->stamp[nb] == gen && cost >= n->f[nb]) continue;
+            /* Already settled nodes never improve in Dijkstra; a stamped
+             * one that does is still in the heap, and gets a second entry
+             * that pops first. The stale one pops later and relaxes
+             * nothing. */
+            n->stamp[nb] = gen;
+            n->f[nb] = cost;
+            next[nb] = cur;
+            if (h.size < n->node_count) heap_push(&h, n->heap, nb);
+        }
+    }
+    return reached;
+}
+
+uint32_t hta_nav_field_path(const hta_nav *n, const uint32_t *next, uint32_t from,
+                            uint32_t *out, uint32_t max)
+{
+    if (!n || !n->built || !next || from >= n->node_count || !max) return 0;
+    uint32_t len = 0;
+    out[len++] = from;
+    uint32_t c = from;
+    while (len < max && next[c] != HTA_NAV_NONE) {
+        c = next[c];
+        out[len++] = c;
+    }
+    return len;
+}
+
 bool hta_nav_straight(const hta_nav *n, uint32_t a, uint32_t b)
 {
     if (!n || !n->built) return false;

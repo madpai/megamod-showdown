@@ -30,6 +30,19 @@
 /* The overshield: the platform's HTA_OVERSHIELD_MULT, which is invented. */
 #define GAME_OVERSHIELD   3.0f
 
+/* Scenario (1456): netgame flags at +888, 148 bytes each -- the block just
+ * before the netgame equipment at +900, so it reconciles. Type 0 is a CTF
+ * flag's stand; its `usage id` is the team. */
+#define SCN_NETGAME_FLAGS   888u
+#define NETFLAG_SIZE        148u
+#define NETFLAG_FACING       12u
+#define NETFLAG_TYPE         16u
+#define NETFLAG_USAGE        18u
+#define NETFLAG_CTF           0u
+
+static uint32_t find_tag_path(const hta_cache *c, uint32_t cls, const char *path);
+static void drop_flag(hta_game *g, int32_t idx, bool thrown);
+
 static void emit(hta_game *g, const hta_game_event *e)
 {
     if (g->event_count >= HTA_GAME_MAX_EVENTS) {
@@ -127,6 +140,8 @@ bool hta_game_load(hta_game *g, const hta_cache *c, const hta_resource_map *bitm
     g->winner = HTA_GAME_NONE;
     g->leader = HTA_GAME_NONE;
     g->grenade_pool = -1;
+    g->flag_weapon = -1;
+    g->winner_team = -1;
     g->simulate_vehicles = true;
     g->simulate_drops = true;
     for (uint32_t t = 0; t < HTA_VEHICLE_TYPES; t++) g->vweapon[t][0] = g->vweapon[t][1] = -1;
@@ -209,7 +224,58 @@ bool hta_game_load(hta_game *g, const hta_cache *c, const hta_resource_map *bitm
         }
         g->weapon_count++;
     }
+    /* The flag: a weapon Halo puts in your hands, never one you pick off a
+     * rack. It has no trigger, so the playable list leaves it out; it
+     * joins the roster here for its models and its swing. */
+    uint32_t flag_tag = find_tag_path(c, HTA_TAG_WEAP, "weapons\\flag\\flag");
+    if (flag_tag && g->weapon_count < HTA_GAME_MAX_WEAPONS) {
+        hta_game_weapon *w = &g->weapons[g->weapon_count];
+        memset(w, 0, sizeof(*w));
+        if (hta_weapon_load_id(c, NULL, flag_tag, &w->def, NULL, perr, sizeof(perr))) {
+            w->tag = flag_tag;
+            w->pool = -1;
+            int32_t ti = hta_cache_find_tag_by_id(c, flag_tag);
+            hta_tag_entry t;
+            uint32_t base = 0;
+            if (ti >= 0 && hta_cache_tag(c, (uint32_t)ti, &t) &&
+                hta_cache_ptr_to_offset(c, t.tag_data_ptr, &base)) {
+                read_label(c, base, w->label);
+                hta_rd_u32(c, base + WEAP_MELEE_DAMAGE + 12u, &w->melee_jpt);
+                uint32_t m = 0;
+                hta_rd_u32(c, base + OBJ_MODEL + 12u, &m);
+                w->model = (m && m != 0xFFFFFFFFu) ? m : 0u;
+            }
+            if (w->melee_jpt == 0xFFFFFFFFu) w->melee_jpt = 0;
+            w->melee_damage = hta_damage_vs(c, w->melee_jpt, HTA_MATERIAL_CYBORG_ARMOR);
+            anim_class(have_graph ? &graph : NULL, w->label, w->anim_class, &w->z_prefix);
+            g->flag_weapon = (int32_t)g->weapon_count++;
+        }
+    }
     if (have_graph) hta_anim_free(&graph);
+
+    /* The flags' stands. */
+    {
+        int32_t si = hta_cache_find_tag_by_id(c, c->scenario_tag_id);
+        hta_tag_entry st;
+        uint32_t base = 0, count = 0, ptr = 0, off = 0;
+        if (si >= 0 && hta_cache_tag(c, (uint32_t)si, &st) &&
+            hta_cache_ptr_to_offset(c, st.tag_data_ptr, &base) &&
+            hta_read_reflexive(c, base + SCN_NETGAME_FLAGS, &count, &ptr) && count &&
+            hta_cache_ptr_to_offset(c, ptr, &off)) {
+            for (uint32_t i = 0; i < count && i < 1024u; i++) {
+                uint32_t e = off + i * NETFLAG_SIZE;
+                uint16_t type = 0xFFFFu, usage = 0xFFFFu;
+                hta_rd_u16(c, e + NETFLAG_TYPE, &type);
+                hta_rd_u16(c, e + NETFLAG_USAGE, &usage);
+                if (type != NETFLAG_CTF || usage > 1u || g->flags[usage].present) continue;
+                hta_game_flag *f = &g->flags[usage];
+                for (int k = 0; k < 3; k++) hta_rd_f32(c, e + 4u * (uint32_t)k, &f->home[k]);
+                hta_rd_f32(c, e + NETFLAG_FACING, &f->home_yaw);
+                f->present = true;
+                f->carrier = HTA_GAME_NONE;
+            }
+        }
+    }
 
     /* What everybody spawns with. */
     g->start_weapon[0] = g->start_weapon[1] = -1;
@@ -246,9 +312,10 @@ bool hta_game_load(hta_game *g, const hta_cache *c, const hta_resource_map *bitm
     g->loaded = g->weapon_count > 0 && g->spawn_count > 0;
     if (err && errlen)
         snprintf(err, errlen, "%u weapons, %u projectile pools, %u spawns, "
-                 "grenades %d of %d%s",
+                 "grenades %d of %d, flags %d%d%s",
                  g->weapon_count, g->pool_count, g->spawn_count,
                  g->start_grenades, g->max_grenades,
+                 g->flags[0].present, g->flags[1].present,
                  g->loaded ? "" : " -- NOT playable");
     return g->loaded;
 }
@@ -257,6 +324,8 @@ void hta_game_free(hta_game *g)
 {
     if (!g) return;
     for (uint32_t i = 0; i < g->pool_count; i++) hta_projectiles_free(&g->pools[i]);
+    free(g->stand_field[0]);
+    free(g->stand_field[1]);
     memset(g, 0, sizeof(*g));
     g->local = HTA_GAME_NONE;
 }
@@ -274,6 +343,7 @@ const hta_game_weapon *hta_game_held(const hta_game *g, int32_t u)
 {
     if (!g || u < 0 || u >= (int32_t)g->unit_count) return NULL;
     const hta_unit *un = &g->units[u];
+    if (un->flag >= 0 && g->flag_weapon >= 0) return &g->weapons[g->flag_weapon];
     int32_t w = un->carry[un->slot & 1u].weapon;
     return (w >= 0 && (uint32_t)w < g->weapon_count) ? &g->weapons[w] : NULL;
 }
@@ -307,8 +377,17 @@ int32_t hta_game_add(hta_game *g, hta_unit_kind kind, const char *name, uint8_t 
     }
     hta_unit *u = &g->units[idx];
     memset(u, 0, sizeof(*u));
+    if (team == HTA_TEAM_AUTO) {
+        /* The smaller side; red when they are even. */
+        int n[2] = { 0, 0 };
+        for (uint32_t i = 0; i < g->unit_count; i++)
+            if ((int32_t)i != idx && g->units[i].kind != HTA_UNIT_NONE)
+                n[g->units[i].team & 1u]++;
+        team = g->teams ? (n[1] < n[0] ? HTA_TEAM_BLUE : HTA_TEAM_RED) : HTA_TEAM_RED;
+    }
     u->kind = kind;
     u->team = team;
+    u->flag = -1;
     u->vehicle = -1;
     u->seat = -1;
     u->rng = 0x9E3779B9u * (uint32_t)(idx + 1);
@@ -348,6 +427,7 @@ void hta_game_remove(hta_game *g, int32_t idx)
     if (!g || idx < 0 || idx >= (int32_t)g->unit_count) return;
     /* Leave the slot, empty: indices are how kills are credited. */
     hta_game_unseat(g, idx);
+    drop_flag(g, idx, false);
     g->units[idx].kind = HTA_UNIT_NONE;
     g->units[idx].alive = false;
     if (g->local == idx) g->local = HTA_GAME_NONE;
@@ -375,6 +455,35 @@ static void finish(hta_game *g, int32_t winner)
     emit(g, &o);
 }
 
+/* A team game ends: `team` takes it, or nobody (-1) in a draw. */
+static void finish_team(hta_game *g, int32_t team)
+{
+    char buf[96];
+    g->over = true;
+    g->winner_team = team;
+    g->winner = HTA_GAME_NONE;
+    /* The team's best player, for anyone who asks who won. */
+    for (uint32_t i = 0; team >= 0 && i < g->unit_count; i++) {
+        const hta_unit *u = &g->units[i];
+        if (u->kind == HTA_UNIT_NONE || u->team != team) continue;
+        if (g->winner < 0 || u->score > g->units[g->winner].score) g->winner = (int32_t)i;
+    }
+    hta_game_event o = { .kind = HTA_EV_GAME_OVER, .a = g->winner, .b = team,
+                         .line = HTA_LINE_GAME_OVER, .for_local = true };
+    bool mine = g->local >= 0 && g->units[g->local].team == team;
+    if (team < 0) text(g, 55, buf, sizeof(buf), "Game ends in a draw");
+    else text(g, mine ? 58 : 56, buf, sizeof(buf), mine ? "Your team won" : "Your team lost");
+    snprintf(o.text, sizeof(o.text), "%s", buf);
+    emit(g, &o);
+}
+
+/* A team's score has moved: is that the game? */
+static void team_scored(hta_game *g, int team)
+{
+    if (!g->over && g->score_limit > 0 && g->team_score[team & 1] >= g->score_limit)
+        finish_team(g, team & 1);
+}
+
 static bool enemies(const hta_game *g, int32_t a, int32_t b)
 {
     if (a == b) return false;
@@ -393,7 +502,18 @@ void hta_game_pick_spawn(hta_game *g, int32_t idx, float out_pos[3], float *out_
      * start by its nearest living enemy, and take one of the best few so
      * the same corner does not come up every time. */
     float score[64];
+    /* A team plays from its own end: the scenario gives every start a
+     * team. Free for all uses the lot. */
+    bool own_only = false;
+    if (g->teams) {
+        for (uint32_t s = 0; s < g->spawn_count; s++)
+            if (g->spawns[s].team_index == g->units[idx].team) own_only = true;
+    }
     for (uint32_t s = 0; s < g->spawn_count; s++) {
+        if (own_only && g->spawns[s].team_index != g->units[idx].team) {
+            score[s] = -1e9f;
+            continue;
+        }
         float nearest = 1e9f;
         for (uint32_t k = 0; k < g->unit_count; k++) {
             const hta_unit *o = &g->units[k];
@@ -435,6 +555,7 @@ static void spawn_unit(hta_game *g, int32_t idx)
     u->vitals = g->vitals_template;
     hta_vitals_reset(&u->vitals);
     arm(g, u);
+    u->flag = -1;
     u->alive = true;
     u->spree = 0;
     u->last_attacker = HTA_GAME_NONE;
@@ -462,10 +583,42 @@ void hta_game_revive(hta_game *g, int32_t idx)
     hta_unit *u = &g->units[idx];
     hta_game_unseat(g, idx);
     u->alive = true;
+    u->flag = -1;
     u->spree = 0;
     u->last_attacker = HTA_GAME_NONE;
     memset(u->attackers, 0, sizeof(u->attackers));
     arm(g, u);
+}
+
+bool hta_game_set_mode(hta_game *g, hta_game_mode mode)
+{
+    if (!g) return false;
+    bool ok = true;
+    if (mode == HTA_MODE_CTF &&
+        (!g->flags[0].present || !g->flags[1].present || g->flag_weapon < 0)) {
+        mode = HTA_MODE_SLAYER;
+        ok = false;
+    }
+    if (mode >= HTA_MODE_COUNT) { mode = HTA_MODE_SLAYER; ok = false; }
+    g->mode = mode;
+    g->teams = mode != HTA_MODE_SLAYER;
+    /* The mode's own limit; the caller may set another after. */
+    g->score_limit = mode == HTA_MODE_CTF ? HTA_CTF_SCORE_LIMIT : HTA_SLAYER_SCORE_LIMIT;
+    return ok;
+}
+
+static void flags_home(hta_game *g)
+{
+    for (int t = 0; t < 2; t++) {
+        hta_game_flag *f = &g->flags[t];
+        for (int k = 0; k < 3; k++) { f->pos[k] = f->home[k]; f->vel[k] = 0.0f; }
+        f->yaw = f->home_yaw;
+        f->state = HTA_FLAG_HOME;
+        f->carrier = HTA_GAME_NONE;
+        f->idle = 0.0f;
+        f->rest = true;
+    }
+    for (uint32_t i = 0; i < g->unit_count; i++) g->units[i].flag = -1;
 }
 
 void hta_game_start(hta_game *g)
@@ -473,9 +626,22 @@ void hta_game_start(hta_game *g)
     if (!g) return;
     g->over = false;
     g->winner = HTA_GAME_NONE;
+    g->winner_team = -1;
     g->leader = HTA_GAME_NONE;
     g->time = 0.0f;
     g->event_count = 0;
+    g->team_score[0] = g->team_score[1] = 0;
+    flags_home(g);
+    if (g->mode == HTA_MODE_CTF && g->nav && g->nav->built) {
+        for (int t = 0; t < 2; t++) {
+            if (!g->stand_field[t])
+                g->stand_field[t] = malloc((size_t)g->nav->node_count * sizeof(uint32_t));
+            g->stand_node[t] = hta_nav_nearest(g->nav, g->flags[t].home, 2.0f);
+            if (g->stand_field[t] && g->stand_node[t] != HTA_NAV_NONE)
+                hta_nav_field(g->nav, g->stand_node[t], g->stand_field[t]);
+            else { free(g->stand_field[t]); g->stand_field[t] = NULL; }
+        }
+    }
     for (uint32_t i = 0; i < g->unit_count; i++) {
         hta_unit *u = &g->units[i];
         if (u->kind == HTA_UNIT_NONE) continue;
@@ -495,9 +661,23 @@ void hta_game_start(hta_game *g)
     for (uint32_t i = 0; i < HTA_VEHICLE_MAX; i++) g->vgun[i].last_driver = -1;
     char buf[96];
     hta_game_event e = { .kind = HTA_EV_ANNOUNCE, .a = -1, .b = -1,
-                         .line = g->teams ? HTA_LINE_NONE : HTA_LINE_SLAYER,
-                         .for_local = true };
-    snprintf(e.text, sizeof(e.text), "%s", text(g, 4, buf, sizeof(buf), "Slayer"));
+                         .line = HTA_LINE_SLAYER, .for_local = true };
+    if (g->mode == HTA_MODE_CTF) {
+        e.line = HTA_LINE_CTF;
+        text(g, 3, buf, sizeof(buf), "Capture the Flag");
+    } else {
+        if (g->mode == HTA_MODE_TEAM_SLAYER) e.line = HTA_LINE_TEAM_SLAYER;
+        text(g, 4, buf, sizeof(buf), "Slayer");
+    }
+    /* "Red Team" or "Blue Team": which side you are on. */
+    if (g->teams && g->local >= 0) {
+        char side[32];
+        text(g, 17u + (g->units[g->local].team & 1u), side, sizeof(side),
+             g->units[g->local].team ? "Blue Team" : "Red Team");
+        snprintf(e.text, sizeof(e.text), "%.60s - %.30s", buf, side);
+    } else {
+        snprintf(e.text, sizeof(e.text), "%s", buf);
+    }
     emit(g, &e);
 }
 
@@ -635,6 +815,10 @@ void hta_game_hurt(hta_game *g, int32_t victim, int32_t attacker, float amount,
     hta_unit *v = &g->units[victim];
     /* Nobody gets hurt in the postgame. */
     if (!v->alive || g->over) return;
+    /* Nor by their own side. Ours: a gametype says, and bots do not check
+     * their line of fire, so a team game would be a betrayal a minute. */
+    if (g->teams && attacker >= 0 && attacker != victim &&
+        attacker < (int32_t)g->unit_count && g->units[attacker].team == v->team) return;
     hta_vitals_damage(&v->vitals, amount);
     v->hurt = true;
     if (attacker >= 0 && attacker < (int32_t)g->unit_count) {
@@ -717,6 +901,8 @@ static void die(hta_game *g, int32_t idx)
     bool by_vehicle = v->splattered;
     v->splattered = false;
     hta_game_unseat(g, idx);
+    /* A flag goes down where its carrier does. */
+    drop_flag(g, idx, false);
     /* The dead drop what they held, as it was. */
     if (g->simulate_drops) {
         hta_carried *c = &v->carry[v->slot & 1u];
@@ -744,13 +930,17 @@ static void die(hta_game *g, int32_t idx)
             if (type < HTA_VEHICLE_TYPES && g->vweapon[type][0] >= 0) e.weapon = g->vweapon[type][0];
         }
         bool betrayal = g->teams && k->team == v->team;
+        /* Kills are the score in Slayer; in CTF only captures are. */
+        bool slaying = g->mode != HTA_MODE_CTF;
         if (betrayal) {
             k->betrayals++;
-            k->score--;
+            if (slaying) k->score--;
+            if (g->mode == HTA_MODE_TEAM_SLAYER) g->team_score[k->team & 1u]--;
             text(g, 79, fmt, sizeof(fmt), "%s was betrayed by %s");
         } else {
             k->kills++;
-            k->score++;
+            if (slaying) k->score++;
+            if (g->mode == HTA_MODE_TEAM_SLAYER) g->team_score[k->team & 1u]++;
             k->spree++;
             k->multi = k->multi_timer > 0.0f ? k->multi + 1 : 1;
             k->multi_timer = HTA_MULTIKILL_WINDOW;
@@ -785,7 +975,8 @@ static void die(hta_game *g, int32_t idx)
         /* Nobody to blame: a suicide if it was your own doing, else a
          * plain death. Halo's Slayer takes a point for both. */
         v->suicides++;
-        v->score--;
+        if (g->mode != HTA_MODE_CTF) v->score--;
+        if (g->mode == HTA_MODE_TEAM_SLAYER) g->team_score[v->team & 1u]--;
         if (killer == idx) text(g, 81, fmt, sizeof(fmt), "%s committed suicide");
         else if (by_vehicle) text(g, 77, fmt, sizeof(fmt), "%s was killed by a vehicle");
         else text(g, 75, fmt, sizeof(fmt), "%s died");
@@ -796,8 +987,10 @@ static void die(hta_game *g, int32_t idx)
     v->multi = 0;
 
     /* The game is over when somebody reaches the limit. */
-    if (!g->over && g->score_limit > 0 && killer >= 0 &&
-        g->units[killer].score >= g->score_limit)
+    if (g->mode == HTA_MODE_TEAM_SLAYER && killer >= 0)
+        team_scored(g, g->units[killer].team);
+    else if (g->mode == HTA_MODE_SLAYER && !g->over && g->score_limit > 0 && killer >= 0 &&
+             g->units[killer].score >= g->score_limit)
         finish(g, killer);
 }
 
@@ -1148,6 +1341,39 @@ bool hta_game_take_drop(hta_game *g, int32_t drop, int32_t *weapon, hta_ammo *am
 }
 
 /* Weapons fall where they are put and lie still once they land. */
+/* Something let go of: it falls, glances off walls and comes to rest on
+ * the first floor it meets. False once it has fallen out of the world. */
+static bool fall(const hta_game *g, float pos[3], float vel[3], bool *rest, float dt)
+{
+    if (*rest || !g->col) return true;
+    vel[2] -= g->gravity * dt;
+    float step[3] = { vel[0] * dt, vel[1] * dt, vel[2] * dt };
+    float len = sqrtf(step[0]*step[0] + step[1]*step[1] + step[2]*step[2]);
+    float t;
+    if (len > 1e-5f) {
+        float dir[3] = { step[0]/len, step[1]/len, step[2]/len };
+        float nrm[3];
+        if (hta_collision_ray(g->col, pos, dir, len + 0.03f, &t, NULL, nrm)) {
+            for (int k = 0; k < 3; k++) pos[k] += dir[k] * fmaxf(0.0f, t - 0.03f);
+            if (nrm[2] > 0.6f) { *rest = true; memset(vel, 0, 3 * sizeof(float)); }
+            else {
+                float vn = vel[0]*nrm[0] + vel[1]*nrm[1] + vel[2]*nrm[2];
+                for (int k = 0; k < 3; k++) vel[k] = (vel[k] - 2.0f * vn * nrm[k]) * 0.3f;
+            }
+            return true;
+        }
+        for (int k = 0; k < 3; k++) pos[k] += step[k];
+    }
+    float gz;
+    if (hta_collision_ground(g->col, pos[0], pos[1], pos[2] + 0.05f, &gz) &&
+        pos[2] <= gz + 0.02f) {
+        pos[2] = gz + 0.02f;
+        *rest = true;
+        memset(vel, 0, 3 * sizeof(float));
+    }
+    return pos[2] >= -200.0f;
+}
+
 static void drops_update(hta_game *g, float dt)
 {
     for (int32_t i = 0; i < HTA_GAME_MAX_DROPS; i++) {
@@ -1155,34 +1381,223 @@ static void drops_update(hta_game *g, float dt)
         if (!d->live) continue;
         d->age += dt;
         if (d->age >= HTA_DROP_LIFE) { d->live = false; continue; }
-        if (d->rest || !g->col) continue;
-        d->vel[2] -= g->gravity * dt;
-        float step[3] = { d->vel[0] * dt, d->vel[1] * dt, d->vel[2] * dt };
-        float len = sqrtf(step[0]*step[0] + step[1]*step[1] + step[2]*step[2]);
-        float t;
-        if (len > 1e-5f) {
-            float dir[3] = { step[0]/len, step[1]/len, step[2]/len };
-            float nrm[3];
-            if (hta_collision_ray(g->col, d->pos, dir, len + 0.03f, &t, NULL, nrm)) {
-                for (int k = 0; k < 3; k++) d->pos[k] += dir[k] * fmaxf(0.0f, t - 0.03f);
-                if (nrm[2] > 0.6f) { d->rest = true; memset(d->vel, 0, sizeof(d->vel)); }
-                else {
-                    float vn = d->vel[0]*nrm[0] + d->vel[1]*nrm[1] + d->vel[2]*nrm[2];
-                    for (int k = 0; k < 3; k++) d->vel[k] = (d->vel[k] - 2.0f * vn * nrm[k]) * 0.3f;
-                }
+        if (!fall(g, d->pos, d->vel, &d->rest, dt)) d->live = false;
+    }
+}
+
+/* ---------------------------------------------------------------- the flag */
+
+/* Tell everyone, in the words the Trial uses for this device's player. */
+static void flag_event(hta_game *g, int32_t unit, int team, hta_flag_event what)
+{
+    team &= 1;
+    hta_game_event e = { .kind = HTA_EV_FLAG, .a = unit, .b = team, .pool = (int32_t)what,
+                         .for_local = true };
+    for (int k = 0; k < 3; k++) e.pos[k] = g->flags[team].pos[k];
+    int mine = g->local >= 0 ? g->units[g->local].team : -1;
+    bool me = unit >= 0 && unit == g->local;
+    bool ally = unit >= 0 && g->units[unit].team == mine;
+    const char *who = unit >= 0 ? g->units[unit].name : "";
+    char fmt[96];
+    fmt[0] = 0;
+    switch (what) {
+    case HTA_FLAG_TAKEN:
+        /* Named for the side that now holds it. */
+        e.line = team == HTA_TEAM_BLUE ? HTA_LINE_RED_HAS_FLAG : HTA_LINE_BLUE_HAS_FLAG;
+        if (!me) text(g, team == mine ? 145 : 147, fmt, sizeof(fmt),
+                      team == mine ? "The enemy has your flag." : "Your ally has the flag.");
+        break;
+    case HTA_FLAG_RETURN:
+        e.line = team == HTA_TEAM_RED ? HTA_LINE_RED_RETURNED : HTA_LINE_BLUE_RETURNED;
+        if (unit < 0)
+            text(g, team == mine ? 149 : 150, fmt, sizeof(fmt),
+                 team == mine ? "Your flag was returned." : "The enemy's flag was returned.");
+        else if (me) text(g, 144, fmt, sizeof(fmt), "You returned the flag.");
+        else text(g, ally ? 148 : 146, fmt, sizeof(fmt),
+                  ally ? "Your ally returned the flag." : "The enemy returned the flag.");
+        break;
+    case HTA_FLAG_CAPTURE:
+        e.line = team == HTA_TEAM_BLUE ? HTA_LINE_RED_SCORE : HTA_LINE_BLUE_SCORE;
+        if (me) text(g, 167, fmt, sizeof(fmt), "You scored a flag!");
+        else text(g, ally ? 168 : 169, fmt, sizeof(fmt),
+                  ally ? "Ally %s scored a flag!" : "Enemy %s scored a flag!");
+        break;
+    default:
+        e.line = HTA_LINE_NONE;
+        break;
+    }
+    snprintf(e.text, sizeof(e.text), fmt, who);
+    emit(g, &e);
+}
+
+static void flag_home(hta_game *g, int team)
+{
+    hta_game_flag *f = &g->flags[team & 1];
+    if (f->state == HTA_FLAG_CARRIED && f->carrier >= 0 && f->carrier < (int32_t)g->unit_count)
+        g->units[f->carrier].flag = -1;
+    for (int k = 0; k < 3; k++) { f->pos[k] = f->home[k]; f->vel[k] = 0.0f; }
+    f->yaw = f->home_yaw;
+    f->state = HTA_FLAG_HOME;
+    f->carrier = HTA_GAME_NONE;
+    f->idle = 0.0f;
+    f->rest = true;
+}
+
+static void drop_flag(hta_game *g, int32_t idx, bool thrown)
+{
+    hta_unit *u = &g->units[idx];
+    if (u->flag < 0) return;
+    hta_game_flag *f = &g->flags[u->flag & 1];
+    int team = u->flag & 1;
+    u->flag = -1;
+    u->flag_wait = HTA_FLAG_REGRAB;
+    f->state = HTA_FLAG_DROPPED;
+    f->carrier = HTA_GAME_NONE;
+    f->idle = 0.0f;
+    f->rest = false;
+    f->yaw = u->eye.yaw;
+    f->pos[0] = u->body.pos[0];
+    f->pos[1] = u->body.pos[1];
+    f->pos[2] = u->body.pos[2] + 0.3f;
+    if (thrown) {
+        /* Put down in front, not under your feet where you would take it
+         * straight back. */
+        f->vel[0] = cosf(u->eye.yaw) * 1.2f;
+        f->vel[1] = sinf(u->eye.yaw) * 1.2f;
+        f->vel[2] = 0.8f;
+    } else {
+        f->vel[0] = u->body.velocity[0] * 0.5f;
+        f->vel[1] = u->body.velocity[1] * 0.5f;
+        f->vel[2] = 0.5f;
+    }
+    flag_event(g, idx, team, HTA_FLAG_DROP);
+}
+
+void hta_game_team_color(int team, float out[3])
+{
+    static const float C[2][3] = { { 0.78f, 0.10f, 0.08f }, { 0.12f, 0.24f, 0.85f } };
+    for (int k = 0; k < 3; k++) out[k] = C[team & 1][k];
+}
+
+bool hta_game_flag_model(const hta_game *g, int team, float model[16])
+{
+    if (!g || g->mode != HTA_MODE_CTF) return false;
+    const hta_game_flag *f = &g->flags[team & 1];
+    if (!f->present || f->state == HTA_FLAG_CARRIED) return false;
+    float c = cosf(f->yaw), s = sinf(f->yaw);
+    const float m[16] = { c, s, 0, 0,   -s, c, 0, 0,   0, 0, 1, 0,
+                          f->pos[0], f->pos[1], f->pos[2], 1 };
+    memcpy(model, m, sizeof(m));
+    return true;
+}
+
+bool hta_game_drop_flag(hta_game *g, int32_t unit)
+{
+    if (!g || unit < 0 || unit >= (int32_t)g->unit_count || g->units[unit].flag < 0) return false;
+    drop_flag(g, unit, true);
+    return true;
+}
+
+/* Is a point within `reach` of where this unit stands -- level with its
+ * body, not a floor above or below? */
+static bool touches(const hta_unit *u, const float p[3], float reach)
+{
+    float dz = p[2] - u->body.pos[2];
+    return hypotf(p[0] - u->body.pos[0], p[1] - u->body.pos[1]) <= reach &&
+           dz > -0.4f && dz < 0.9f;
+}
+
+static void flags_update(hta_game *g, float dt)
+{
+    for (int t = 0; t < 2; t++) {
+        hta_game_flag *f = &g->flags[t];
+        if (!f->present) continue;
+        if (f->state == HTA_FLAG_CARRIED) {
+            const hta_unit *c = f->carrier >= 0 && f->carrier < (int32_t)g->unit_count
+                              ? &g->units[f->carrier] : NULL;
+            if (!c || c->kind == HTA_UNIT_NONE || !c->alive || c->flag != t) {
+                /* Lost without a drop: back to its stand. */
+                flag_home(g, t);
+                flag_event(g, -1, t, HTA_FLAG_RETURN);
                 continue;
             }
-            for (int k = 0; k < 3; k++) d->pos[k] += step[k];
+            for (int k = 0; k < 3; k++) f->pos[k] = c->body.pos[k];
+            f->yaw = c->eye.yaw;
+        } else if (f->state == HTA_FLAG_DROPPED) {
+            f->idle += dt;
+            if (!fall(g, f->pos, f->vel, &f->rest, dt) || f->idle >= HTA_FLAG_RESET) {
+                flag_home(g, t);
+                flag_event(g, -1, t, HTA_FLAG_RETURN);
+            }
         }
-        float gz;
-        if (hta_collision_ground(g->col, d->pos[0], d->pos[1], d->pos[2] + 0.05f, &gz) &&
-            d->pos[2] <= gz + 0.02f) {
-            d->pos[2] = gz + 0.02f;
-            d->rest = true;
-            memset(d->vel, 0, sizeof(d->vel));
-        }
-        if (d->pos[2] < -200.0f) d->live = false;
     }
+    if (g->over) return;
+    for (uint32_t i = 0; i < g->unit_count; i++) {
+        hta_unit *u = &g->units[i];
+        if (u->flag_wait > 0.0f) u->flag_wait -= dt;
+        if (u->kind == HTA_UNIT_NONE || !u->alive || u->vehicle >= 0) continue;
+        for (int t = 0; t < 2; t++) {
+            hta_game_flag *f = &g->flags[t];
+            if (!f->present || f->state == HTA_FLAG_CARRIED) continue;
+            if (!touches(u, f->pos, HTA_FLAG_REACH)) continue;
+            if (u->team != t) {
+                if (u->flag >= 0 || u->flag_wait > 0.0f) continue;
+                f->state = HTA_FLAG_CARRIED;
+                f->carrier = (int32_t)i;
+                f->idle = 0.0f;
+                u->flag = (int8_t)t;
+                u->cooldown = 0.5f;
+                flag_event(g, (int32_t)i, t, HTA_FLAG_TAKEN);
+            } else if (f->state == HTA_FLAG_DROPPED) {
+                flag_home(g, t);
+                flag_event(g, (int32_t)i, t, HTA_FLAG_RETURN);
+            }
+        }
+        /* Home with theirs while ours is on its stand: a capture. */
+        if (u->flag >= 0) {
+            const hta_game_flag *own = &g->flags[u->team & 1u];
+            if (own->state == HTA_FLAG_HOME && touches(u, own->home, HTA_CAPTURE_REACH)) {
+                int taken = u->flag;
+                flag_home(g, taken);
+                u->score++;
+                g->team_score[u->team & 1u]++;
+                flag_event(g, (int32_t)i, taken, HTA_FLAG_CAPTURE);
+                team_scored(g, u->team);
+            }
+        }
+    }
+}
+
+bool hta_game_ctf_goal(const hta_game *g, int32_t unit, float out[3], int *stand)
+{
+    if (stand) *stand = -1;
+    if (!g || g->mode != HTA_MODE_CTF || unit < 0 || unit >= (int32_t)g->unit_count)
+        return false;
+    const hta_unit *u = &g->units[unit];
+    int me = u->team & 1, them = me ^ 1;
+    const hta_game_flag *mine = &g->flags[me], *theirs = &g->flags[them];
+    const float *to = NULL;
+    int at = -1;
+    if (u->flag >= 0) { to = mine->home; at = me; }             /* run it home */
+    else if (mine->state == HTA_FLAG_DROPPED) to = mine->pos;   /* take ours back */
+    else if (mine->state == HTA_FLAG_CARRIED && mine->carrier >= 0)
+        to = g->units[mine->carrier].body.pos;                   /* chase the thief */
+    else {
+        /* Every third player on a side minds the stand. Ours. */
+        int rank = 0;
+        for (int32_t i = 0; i < unit; i++)
+            if (g->units[i].kind != HTA_UNIT_NONE && g->units[i].team == u->team) rank++;
+        if (rank % 3 == 2) { to = mine->home; at = me; }
+        else if (theirs->state == HTA_FLAG_CARRIED && theirs->carrier >= 0)
+            to = g->units[theirs->carrier].body.pos;             /* see the carrier home */
+        else {
+            to = theirs->pos;                                    /* go and get it */
+            if (theirs->state == HTA_FLAG_HOME) at = them;
+        }
+    }
+    for (int k = 0; k < 3; k++) out[k] = to[k];
+    if (stand) *stand = at;
+    return true;
 }
 
 /* ---------------------------------------------------------------- vehicles */
@@ -1310,7 +1725,8 @@ int32_t hta_game_seat_near(const hta_game *g, int32_t unit, int32_t *out_seat)
     if (out_seat) *out_seat = -1;
     if (!g || !g->vehicles || unit < 0 || unit >= (int32_t)g->unit_count) return -1;
     const hta_unit *u = &g->units[unit];
-    if (!u->alive || u->vehicle >= 0) return -1;
+    /* The flag is carried on foot. Ours. */
+    if (!u->alive || u->vehicle >= 0 || u->flag >= 0) return -1;
     int32_t seat = -1;
     int32_t car = hta_vehicles_near(g->vehicles, g->col, u->body.pos, &seat);
     if (car < 0 || hostile_car(g, unit, (uint32_t)car)) return -1;
@@ -1709,7 +2125,9 @@ static void simulate(hta_game *g, int32_t idx, float dt)
 
     if (in->swap) {
         in->swap = false;
-        if (u->carry[u->slot ^ 1u].weapon >= 0) {
+        /* With the flag in hand the swap button puts it down. */
+        if (u->flag >= 0) drop_flag(g, idx, true);
+        else if (u->carry[u->slot ^ 1u].weapon >= 0) {
             u->slot ^= 1u;
             u->cooldown = 0.5f;
             hta_game_event e = { .kind = HTA_EV_SWAP, .a = idx, .b = -1,
@@ -1733,7 +2151,7 @@ static void simulate(hta_game *g, int32_t idx, float dt)
     }
     if (in->grenade) {
         in->grenade = false;
-        if (u->throwing <= 0.0f && u->swing <= 0.0f && u->grenades > 0)
+        if (u->throwing <= 0.0f && u->swing <= 0.0f && u->grenades > 0 && u->flag < 0)
             u->throwing = UNIT_THROW_TIME;
     }
     if (u->throwing > 0.0f) {
@@ -1741,7 +2159,7 @@ static void simulate(hta_game *g, int32_t idx, float dt)
         if (u->throwing <= 0.0f) throw_grenade(g, idx);
     }
     if (in->move.fire && u->cooldown <= 0.0f && u->swing <= 0.0f && u->throwing <= 0.0f &&
-        c->ammo.phase == HTA_AMMO_READY)
+        c->ammo.phase == HTA_AMMO_READY && u->flag < 0)
         fire(g, idx, dt);
     take_items(g, idx);
     in->pickup = false;
@@ -1798,8 +2216,13 @@ void hta_game_update(hta_game *g, float dt)
     if (!g->over) g->time += dt;
     /* Out of time: whoever is ahead wins. */
     if (!g->over && g->time_limit > 0.0f && g->time >= g->time_limit) {
-        int32_t order[HTA_GAME_MAX_UNITS];
-        finish(g, hta_game_standings(g, order, HTA_GAME_MAX_UNITS) ? order[0] : HTA_GAME_NONE);
+        if (g->teams) {
+            int d = g->team_score[0] - g->team_score[1];
+            finish_team(g, d > 0 ? HTA_TEAM_RED : d < 0 ? HTA_TEAM_BLUE : -1);
+        } else {
+            int32_t order[HTA_GAME_MAX_UNITS];
+            finish(g, hta_game_standings(g, order, HTA_GAME_MAX_UNITS) ? order[0] : HTA_GAME_NONE);
+        }
     }
 
     vguns_tick(g, dt);
@@ -1879,6 +2302,7 @@ void hta_game_update(hta_game *g, float dt)
     }
     fly(g, dt);
     if (g->simulate_drops) drops_update(g, dt);
+    if (g->simulate_drops && g->mode == HTA_MODE_CTF) flags_update(g, dt);
 
     /* Deaths are noticed here, whatever caused them. */
     for (uint32_t i = 0; i < g->unit_count; i++) {
@@ -1920,6 +2344,25 @@ void hta_game_place_text(const hta_game *g, int32_t unit, char *out, size_t outl
     if (!out || !outlen) return;
     out[0] = 0;
     if (!g || unit < 0) return;
+    if (g->teams) {
+        /* "Red leads Blue 2 to 1 Captures". */
+        char fmt[96], a[16], b[16], unitw[24];
+        int r = g->team_score[0], bl = g->team_score[1];
+        bool ctf = g->mode == HTA_MODE_CTF;
+        text(g, ctf ? 22 : 24, unitw, sizeof(unitw), ctf ? "Captures" : "Frags");
+        if (r == bl) {
+            text(g, 62, fmt, sizeof(fmt), "Teams tied at %s %s");
+            snprintf(a, sizeof(a), "%d", r);
+            snprintf(out, outlen, fmt, a, unitw);
+            return;
+        }
+        text(g, r > bl ? 60 : 61, fmt, sizeof(fmt),
+             r > bl ? "Red leads Blue %s to %s %s" : "Blue leads Red %s to %s %s");
+        snprintf(a, sizeof(a), "%d", r > bl ? r : bl);
+        snprintf(b, sizeof(b), "%d", r > bl ? bl : r);
+        snprintf(out, outlen, fmt, a, b, unitw);
+        return;
+    }
     int32_t order[HTA_GAME_MAX_UNITS];
     uint32_t n = hta_game_standings(g, order, HTA_GAME_MAX_UNITS);
     uint32_t place = 0;

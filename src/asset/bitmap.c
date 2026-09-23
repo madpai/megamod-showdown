@@ -395,6 +395,27 @@ uint32_t hta_shader_multipurpose(const hta_cache *c, uint32_t shader_tag_id,
     return id;
 }
 
+uint32_t hta_shader_change_color(const hta_cache *c, uint32_t shader_tag_id,
+                                 uint8_t *out_source)
+{
+    if (out_source) *out_source = 0;
+    if (!c || !shader_tag_id || shader_tag_id == 0xFFFFFFFFu) return 0;
+    int32_t ti = hta_cache_find_tag_by_id(c, shader_tag_id);
+    if (ti < 0) return 0;
+    hta_tag_entry t;
+    if (!hta_cache_tag(c, (uint32_t)ti, &t) || t.primary_class != HTA_TAG_SOSO) return 0;
+    uint32_t off;
+    if (!hta_cache_ptr_to_offset(c, t.tag_data_ptr, &off)) return 0;
+    uint16_t src = 0;
+    hta_rd_u16(c, off + HTA_SOSO_CHANGE_COLOR, &src);
+    if (!src || src > 4u) return 0;           /* none, or out of range */
+    uint32_t id = 0;
+    if (!hta_rd_u32(c, off + HTA_SOSO_MULTIPURPOSE + 0x0C, &id)) return 0;
+    if (!id || id == 0xFFFFFFFFu) return 0;
+    if (out_source) *out_source = (uint8_t)src;
+    return id;
+}
+
 uint32_t hta_shader_base_bitmap(const hta_cache *c, uint32_t shader_tag_id)
 {
     if (!c || !shader_tag_id || shader_tag_id == 0xFFFFFFFFu) return 0;

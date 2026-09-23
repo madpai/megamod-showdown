@@ -28,6 +28,10 @@ typedef struct {
     /* One mesh per roster weapon, in the weapon's own space. */
     hta_bsp_mesh weapon_mesh[HTA_GAME_MAX_WEAPONS];
     bool      have_weapon[HTA_GAME_MAX_WEAPONS];
+    /* The flag's mesh is its pole, then a red cloth and a blue one: the
+     * pole's submesh count, and each cloth's submesh (0 when there is none). */
+    uint32_t  flag_pole_submeshes;
+    uint32_t  flag_cloth[2];
     uint32_t  rng;
     bool      loaded;
 } hta_game_view;
@@ -35,7 +39,13 @@ typedef struct {
 typedef struct {
     int32_t weapon;       /* roster index: which weapon_mesh */
     float   model[16];    /* column-major, weapon space to world */
+    uint32_t first_submesh, submesh_count;   /* part of it, or 0/0 for all */
 } hta_game_held_weapon;
+
+/* The parts of the flag's mesh to draw for `team`'s flag: the pole, and its
+ * cloth. Writes up to two ranges; returns how many. */
+uint32_t hta_game_view_flag_parts(const hta_game_view *v, int team,
+                                  uint32_t first[2], uint32_t count[2]);
 
 /* Loads a body for each of the first `units` slots and every roster
  * weapon's third-person model. */

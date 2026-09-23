@@ -264,6 +264,264 @@ int main(int argc, char **argv)
     CHECK(hta_game_add(&g,HTA_UNIT_REMOTE,"Rejoined",0)==b,
           "a disconnect frees its game slot for a later player");
 
+    printf("\n[capture the flag]\n");
+    static hta_game f;
+    ok = hta_game_load(&f, &c, NULL, &col, err, sizeof(err));
+    printf("  %s\n", err);
+    CHECK(ok && f.flags[0].present && f.flags[1].present &&
+          fabsf(f.flags[0].home[0] - 95.69f) < 0.05f && fabsf(f.flags[0].home[1] + 159.45f) < 0.05f &&
+          fabsf(f.flags[1].home[0] - 40.24f) < 0.05f && fabsf(f.flags[1].home[1] + 79.12f) < 0.05f,
+          "both stands are read from the scenario's netgame flags, red's at red's end");
+    {
+        /* Red's starts crowd round red's stand: that is what says usage 0 is red. */
+        float red[2] = { 0, 0 }; int nr = 0;
+        for (uint32_t i = 0; i < f.spawn_count; i++)
+            if (f.spawns[i].team_index == 0) { red[0] += f.spawns[i].position[0]; red[1] += f.spawns[i].position[1]; nr++; }
+        CHECK(nr && hypotf(red[0] / nr - f.flags[0].home[0], red[1] / nr - f.flags[0].home[1]) < 10.0f,
+              "and team 0's spawns are gathered round team 0's flag");
+    }
+    const hta_game_weapon *fw = f.flag_weapon >= 0 ? &f.weapons[f.flag_weapon] : NULL;
+    printf("  flag: label '%s', held as '%s', melee %.0f\n", fw ? fw->label : "", fw ? fw->anim_class : "",
+           fw ? fw->melee_damage : 0.0f);
+    CHECK(fw && fw->model && !fw->def.projectile_id && fw->melee_jpt,
+          "the flag joins the roster with a model and a swing, and nothing to fire");
+    CHECK(hta_game_weapon_index(&f, fw ? fw->tag : 0) == f.flag_weapon, "and can be looked up like any weapon");
+    CHECK(!hta_game_set_mode(&f, HTA_MODE_COUNT) && f.mode == HTA_MODE_SLAYER && !f.teams,
+          "a mode that does not exist plays Slayer");
+    CHECK(hta_game_set_mode(&f, HTA_MODE_CTF) && f.teams, "CTF is a team game");
+    int32_t r = hta_game_add(&f, HTA_UNIT_REMOTE, "Red", HTA_TEAM_AUTO);
+    int32_t bl = hta_game_add(&f, HTA_UNIT_REMOTE, "Blue", HTA_TEAM_AUTO);
+    int32_t r2 = hta_game_add(&f, HTA_UNIT_REMOTE, "Red2", HTA_TEAM_AUTO);
+    CHECK(f.units[r].team == 0 && f.units[bl].team == 1 && f.units[r2].team == 0,
+          "each newcomer goes to the smaller side");
+    hta_game_start(&f);
+    bool said = false;
+    while (hta_game_pop(&f, &e))
+        if (e.kind == HTA_EV_ANNOUNCE && e.line == HTA_LINE_CTF) { said = true; printf("  \"%s\"\n", e.text); }
+    CHECK(said, "the announcer says capture the flag");
+    {
+        bool own = true;
+        for (int32_t u = 0; u < 3; u++) {
+            float best = 1e9f; int team = -1;
+            for (uint32_t i = 0; i < f.spawn_count; i++) {
+                float d = hypotf(f.spawns[i].position[0] - f.units[u].body.pos[0],
+                                 f.spawns[i].position[1] - f.units[u].body.pos[1]);
+                if (d < best) { best = d; team = f.spawns[i].team_index; }
+            }
+            if (team != f.units[u].team) own = false;
+        }
+        CHECK(own, "everyone starts at their own end");
+    }
+    hta_unit *ur = &f.units[r], *ub2 = &f.units[bl];
+    float mate_before = f.units[r2].vitals.shield;
+    hta_game_hurt(&f, r2, r, 10.0f, NULL);
+    CHECK(f.units[r2].vitals.shield == mate_before, "a teammate's round does nothing");
+
+    /* Walk red onto blue's stand. */
+    #define PUT(u, p) do { (u)->body.pos[0] = (p)[0]; (u)->body.pos[1] = (p)[1]; \
+        (u)->body.pos[2] = (p)[2] + 0.05f; (u)->body.velocity[0] = (u)->body.velocity[1] = 0; } while (0)
+    PUT(ur, f.flags[1].home);
+    int took_ev = 0, fires = 0;
+    for (int i = 0; i < 5; i++) {
+        hta_game_update(&f, dt);
+        while (hta_game_pop(&f, &e)) {
+            if (e.kind == HTA_EV_FLAG && e.pool == HTA_FLAG_TAKEN && e.a == r && e.b == 1 &&
+                e.line == HTA_LINE_RED_HAS_FLAG) took_ev++;
+        }
+    }
+    CHECK(ur->flag == 1 && f.flags[1].state == HTA_FLAG_CARRIED && f.flags[1].carrier == r && took_ev == 1,
+          "red takes blue's flag off its stand, and red has the flag");
+    CHECK(hta_game_held(&f, r) == fw, "and holds it instead of a gun");
+    ur->in.move.fire = true;
+    ur->in.grenade = true;
+    int nades = ur->grenades;
+    for (int i = 0; i < 30; i++) {
+        hta_game_update(&f, dt);
+        while (hta_game_pop(&f, &e)) if (e.kind == HTA_EV_FIRE && e.a == r) fires++;
+    }
+    ur->in.move.fire = false;
+    CHECK(fires == 0 && ur->grenades == nades, "with the flag you can neither shoot nor throw");
+    CHECK(fabsf(f.flags[1].pos[0] - ur->body.pos[0]) < 1e-3f, "the flag goes where its carrier goes");
+
+    /* Blue takes red's flag too: now red cannot score. */
+    PUT(ub2, f.flags[0].home);
+    for (int i = 0; i < 3; i++) { hta_game_update(&f, dt); while (hta_game_pop(&f, &e)) {} }
+    CHECK(ub2->flag == 0, "blue takes red's");
+    PUT(ur, f.flags[0].home);
+    for (int i = 0; i < 5; i++) { hta_game_update(&f, dt); while (hta_game_pop(&f, &e)) {} }
+    CHECK(f.team_score[0] == 0 && ur->flag == 1, "no capture while your own flag is away");
+
+    /* Blue dies; red's flag lies where he fell, and a red player takes it home. */
+    for (uint32_t i = 0; i < f.spawn_count; i++)
+        if (f.spawns[i].team_index == 0 &&
+            hypotf(f.spawns[i].position[0] - f.flags[0].home[0], f.spawns[i].position[1] - f.flags[0].home[1]) > 2.0f) {
+            PUT(ub2, f.spawns[i].position);
+            break;
+        }
+    hta_game_hurt(&f, bl, r, 1000.0f, NULL);
+    int drops = 0, returns = 0, caps = 0;
+    for (int i = 0; i < 30; i++) {
+        hta_game_update(&f, dt);
+        while (hta_game_pop(&f, &e)) {
+            if (e.kind == HTA_EV_FLAG && e.pool == HTA_FLAG_DROP && e.b == 0) drops++;
+            if (e.kind == HTA_EV_FLAG && e.pool == HTA_FLAG_RETURN && e.a == r2 && e.line == HTA_LINE_RED_RETURNED) returns++;
+        }
+    }
+    CHECK(!ub2->alive && drops == 1 && f.flags[0].state == HTA_FLAG_DROPPED && f.flags[0].rest,
+          "a carrier who dies drops the flag, and it comes to rest");
+    PUT(&f.units[r2], f.flags[0].pos);
+    for (int i = 0; i < 5; i++) {
+        hta_game_update(&f, dt);
+        while (hta_game_pop(&f, &e)) {
+            if (e.kind == HTA_EV_FLAG && e.pool == HTA_FLAG_RETURN && e.a == r2 && e.line == HTA_LINE_RED_RETURNED) returns++;
+            if (e.kind == HTA_EV_FLAG && e.pool == HTA_FLAG_CAPTURE) caps++;
+        }
+    }
+    CHECK(returns == 1 && f.flags[0].state == HTA_FLAG_HOME, "a teammate's touch sends it home");
+    /* Red is still standing on red's stand with blue's flag. */
+    for (int i = 0; i < 5; i++) {
+        hta_game_update(&f, dt);
+        while (hta_game_pop(&f, &e))
+            if (e.kind == HTA_EV_FLAG && e.pool == HTA_FLAG_CAPTURE && e.a == r && e.line == HTA_LINE_RED_SCORE) {
+                caps++; printf("  \"%s\"\n", e.text);
+            }
+    }
+    char place[96];
+    hta_game_place_text(&f, r, place, sizeof(place));
+    printf("  \"%s\"\n", place);
+    CHECK(caps == 1 && f.team_score[0] == 1 && ur->score == 1 && ur->flag < 0 &&
+          f.flags[1].state == HTA_FLAG_HOME, "and with ours home, theirs on our stand is a capture");
+    CHECK(strstr(place, "1") && strstr(place, "0"), "the HUD line says red leads 1 to 0");
+
+    /* Swap puts it down; left alone it goes home by itself. */
+    PUT(ur, f.flags[1].home);
+    for (int i = 0; i < 3; i++) { hta_game_update(&f, dt); while (hta_game_pop(&f, &e)) {} }
+    ur->in.swap = true;
+    hta_game_update(&f, dt);
+    CHECK(ur->flag < 0 && f.flags[1].state == HTA_FLAG_DROPPED, "the swap button puts the flag down");
+    for (uint32_t i = 0; i < f.spawn_count; i++)
+        if (f.spawns[i].team_index == 1 &&
+            hypotf(f.spawns[i].position[0] - f.flags[1].home[0], f.spawns[i].position[1] - f.flags[1].home[1]) > 3.0f) {
+            PUT(ur, f.spawns[i].position);
+            break;
+        }
+    int timeouts_f = 0;
+    for (float t = 0; t < HTA_FLAG_RESET + 1.0f; t += dt) {
+        hta_game_update(&f, dt);
+        while (hta_game_pop(&f, &e))
+            if (e.kind == HTA_EV_FLAG && e.pool == HTA_FLAG_RETURN && e.a == -1) timeouts_f++;
+    }
+    CHECK(timeouts_f == 1 && f.flags[1].state == HTA_FLAG_HOME, "a flag left lying goes home by itself");
+
+    /* Two more and it is over. */
+    int overs = 0;
+    for (int k = 0; k < 2; k++) {
+        PUT(ur, f.flags[1].home);
+        for (int i = 0; i < 3; i++) { hta_game_update(&f, dt); while (hta_game_pop(&f, &e)) {} }
+        PUT(ur, f.flags[0].home);
+        for (int i = 0; i < 3; i++) {
+            hta_game_update(&f, dt);
+            while (hta_game_pop(&f, &e)) if (e.kind == HTA_EV_GAME_OVER) { overs++; printf("  \"%s\"\n", e.text); }
+        }
+    }
+    CHECK(f.team_score[0] == 3 && f.over && f.winner_team == 0 && overs == 1,
+          "three captures win it for the team");
+    hta_game_free(&f);
+
+    printf("\n[team slayer]\n");
+    ok = hta_game_load(&f, &c, NULL, &col, err, sizeof(err));
+    f.nav = &nav;
+    if (items.loaded) { hta_pickups_reset(&items); f.items = &items; }
+    CHECK(hta_game_set_mode(&f, HTA_MODE_TEAM_SLAYER) && f.teams && f.score_limit == HTA_SLAYER_SCORE_LIMIT,
+          "team slayer is a team game to 25");
+    f.score_limit = 15;
+    for (int i = 0; i < 6; i++) hta_game_add(&f, HTA_UNIT_BOT, NULL, HTA_TEAM_AUTO);
+    hta_game_set_skill(&f, 2);
+    hta_game_start(&f);
+    int ts_line = 0, ts_over = 0;
+    for (sim = 0.0f; sim < 20.0f * 60.0f && !f.over; sim += dt) {
+        if (items.loaded) hta_pickups_update(&items, dt);
+        hta_game_update(&f, dt);
+        while (hta_game_pop(&f, &e)) {
+            if (e.kind == HTA_EV_ANNOUNCE && e.line == HTA_LINE_TEAM_SLAYER) ts_line++;
+            if (e.kind == HTA_EV_GAME_OVER) ts_over++;
+        }
+    }
+    {
+        int sum[2] = { 0, 0 }, betray = 0;
+        for (uint32_t i = 0; i < f.unit_count; i++) {
+            sum[f.units[i].team & 1] += f.units[i].kills - f.units[i].betrayals - f.units[i].suicides;
+            betray += f.units[i].betrayals;
+        }
+        hta_game_place_text(&f, 0, place, sizeof(place));
+        printf("  %.1f minutes: red %d blue %d, %d betrayals; \"%s\"\n", sim / 60.0f,
+               f.team_score[0], f.team_score[1], betray, place);
+        CHECK(ts_line == 1, "the announcer says team slayer");
+        CHECK(sum[0] == f.team_score[0] && sum[1] == f.team_score[1],
+              "a team's score is its players' kills less their suicides");
+        CHECK(betray == 0, "nobody is betrayed with friendly fire off");
+        CHECK(f.over && ts_over == 1 && f.winner_team >= 0 && f.team_score[f.winner_team] >= 15,
+              "the first team to the limit wins");
+    }
+    hta_game_free(&f);
+
+    printf("\n[a bot runs the flag]\n");
+    ok = hta_game_load(&f, &c, NULL, &col, err, sizeof(err));
+    f.nav = &nav;
+    hta_game_set_mode(&f, HTA_MODE_CTF);
+    int32_t runner = hta_game_add(&f, HTA_UNIT_BOT, NULL, HTA_TEAM_RED);
+    hta_game_set_skill(&f, 1);
+    hta_game_start(&f);
+    double tf = now_s();
+    int run_took = 0, run_caps = 0;
+    for (sim = 0.0f; sim < 4.0f * 60.0f && !run_caps; sim += dt) {
+        hta_game_update(&f, dt);
+        while (hta_game_pop(&f, &e)) {
+            if (e.kind == HTA_EV_FLAG && e.pool == HTA_FLAG_TAKEN && e.a == runner) {
+                run_took++; printf("  %5.1f s  takes blue's flag\n", sim);
+            }
+            if (e.kind == HTA_EV_FLAG && e.pool == HTA_FLAG_CAPTURE && e.a == runner) {
+                run_caps++; printf("  %5.1f s  \"%s\"\n", sim, e.text);
+            }
+        }
+    }
+    CHECK(f.stand_field[0] && f.stand_field[1], "each stand's way home is worked out at the start");
+    CHECK(run_took == 1 && run_caps == 1 && f.team_score[0] == 1,
+          "left alone, a bot crosses the map, takes the flag and brings it home");
+    printf("  (%.2f s of host time, the fields included)\n", now_s() - tf);
+    hta_game_free(&f);
+
+    printf("\n[bots play capture the flag]\n");
+    ok = hta_game_load(&f, &c, NULL, &col, err, sizeof(err));
+    f.nav = &nav;
+    if (items.loaded) { hta_pickups_reset(&items); f.items = &items; }
+    hta_game_set_mode(&f, HTA_MODE_CTF);
+    f.score_limit = HTA_CTF_SCORE_LIMIT;
+    for (int i = 0; i < 6; i++) hta_game_add(&f, HTA_UNIT_BOT, NULL, HTA_TEAM_AUTO);
+    hta_game_set_skill(&f, 1);
+    hta_game_start(&f);
+    int takes = 0, fcaps = 0, frets = 0, fkills = 0, fover = 0;
+    for (sim = 0.0f; sim < 30.0f * 60.0f && !f.over; sim += dt) {
+        if (items.loaded) hta_pickups_update(&items, dt);
+        hta_game_update(&f, dt);
+        while (hta_game_pop(&f, &e)) {
+            if (e.kind == HTA_EV_FLAG && e.pool == HTA_FLAG_TAKEN) takes++;
+            if (e.kind == HTA_EV_FLAG && e.pool == HTA_FLAG_RETURN) frets++;
+            if (e.kind == HTA_EV_FLAG && e.pool == HTA_FLAG_CAPTURE) {
+                fcaps++; printf("  %4.0f s  %s scores for %s\n", sim, f.units[e.a].name, e.b ? "red" : "blue");
+            }
+            if (e.kind == HTA_EV_KILL) fkills++;
+            if (e.kind == HTA_EV_GAME_OVER) fover++;
+        }
+    }
+    printf("  %.1f simulated minutes: %d takes, %d returns, %d captures, %d kills; red %d blue %d\n",
+           sim / 60.0f, takes, frets, fcaps, fkills, f.team_score[0], f.team_score[1]);
+    CHECK(takes >= 3 && frets >= 1, "both sides go for the flags, and win them back");
+    CHECK(fkills > 20, "and fight over them");
+    CHECK(!f.over || (fover == 1 && f.team_score[f.winner_team] >= HTA_CTF_SCORE_LIMIT),
+          "a game that ends, ends at three");
+    hta_game_free(&f);
+
     hta_game_free(&g);
     hta_pickups_free(&items);
     hta_nav_free(&nav);

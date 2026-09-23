@@ -3,6 +3,8 @@
 #include "../asset/items.h"
 
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define PI 3.14159265f
@@ -20,6 +22,7 @@ static const float AIM_SETTLE[4]   = { 0.8f, 1.2f, 1.8f, 2.6f };      /* /s */
 #define WAYPOINT_REACH 0.30f   /* wu */
 #define GRENADE_WAIT   5.0f    /* s between throws */
 #define PATH_BUDGET    60000u  /* A* expansions */
+#define PUSH_STOP      5.0f    /* wu: closer than this, an objective waits */
 
 static uint32_t rnd(uint32_t *s) { *s = *s * 1664525u + 1013904223u; return *s >> 8; }
 static float frand(uint32_t *s) { return (float)(rnd(s) & 0xFFFFu) / 65535.0f; }
@@ -39,6 +42,7 @@ void hta_brain_reset(hta_brain *b)
     b->path_len = b->path_i = 0;
     b->goal = HTA_NAV_NONE;
     b->goal_item = -1;
+    b->goal_game = false;
     b->replan = 0.0f;
     b->react = 0.0f;
     b->aim_err[0] = b->aim_err[1] = 0.0f;
@@ -135,6 +139,21 @@ static void plan_to(hta_game *g, int32_t me, hta_brain *b, const float to[3])
     b->goal = goal;
     uint32_t n = hta_nav_path(g->nav, from, goal, b->path, HTA_BRAIN_PATH, PATH_BUDGET);
     if (!n) { b->goal = HTA_NAV_NONE; return; }
+    b->path_len = hta_nav_smooth(g->nav, b->path, n);
+    b->path_i = b->path_len > 1 ? 1 : 0;
+}
+
+/* The same, down a flag stand's field: no search, however far. */
+static void plan_field(hta_game *g, int32_t me, hta_brain *b, int stand)
+{
+    b->path_len = b->path_i = 0;
+    if (!g->nav || !g->nav->built) return;
+    uint32_t from = hta_nav_nearest(g->nav, g->units[me].body.pos, 1.5f);
+    if (from == HTA_NAV_NONE) return;
+    const uint32_t *next = g->stand_field[stand];
+    if (from != g->stand_node[stand] && next[from] == HTA_NAV_NONE) return;
+    b->goal = g->stand_node[stand];
+    uint32_t n = hta_nav_field_path(g->nav, next, from, b->path, HTA_BRAIN_PATH);
     b->path_len = hta_nav_smooth(g->nav, b->path, n);
     b->path_i = b->path_len > 1 ? 1 : 0;
 }
@@ -290,7 +309,12 @@ void hta_brain_think(struct hta_game *g, int32_t me, hta_brain *b, float dt)
 
     /* ---- where to go ---- */
     b->replan -= dt;
-    bool fighting = b->target >= 0 && b->visible;
+    /* The game's objective, if it has one: a flag to take, carry or win
+     * back. A carrier does not stop to duel; it runs. */
+    float objective[3];
+    int stand = -1;
+    bool has_objective = hta_game_ctf_goal(g, me, objective, &stand);
+    bool fighting = b->target >= 0 && b->visible && u->flag < 0;
     if (fighting) {
         /* Hold a useful distance and strafe. */
         b->strafe_timer -= dt;
@@ -305,10 +329,26 @@ void hta_brain_think(struct hta_game *g, int32_t me, hta_brain *b, float dt)
         float fwd = close > 1.5f ? 1.0f : (close < -1.5f ? -0.7f : 0.0f);
         move[0] = to[0] * fwd + side[0] * b->strafe;
         move[1] = to[1] * fwd + side[1] * b->strafe;
+        /* With a flag to take or take back, keep going and shoot on the
+         * way; only a fight at arm's length is worth stopping for. Ours. */
+        float dir[2];
+        if (has_objective && seen_dist > PUSH_STOP) {
+            if (!b->goal_game || b->replan <= 0.0f || b->path_i >= b->path_len) {
+                if (stand >= 0 && g->stand_field[stand]) plan_field(g, me, b, stand);
+                else plan_to(g, me, b, objective);
+                for (int k = 0; k < 3; k++) b->goal_pos[k] = objective[k];
+                b->goal_game = true;
+                b->replan = REPLAN;
+            }
+            if (g->nav && follow(g, me, b, dir)) {
+                move[0] = dir[0] + side[0] * b->strafe * 0.4f;
+                move[1] = dir[1] + side[1] * b->strafe * 0.4f;
+            }
+        }
         /* A jump now and then, the way people dodge. */
         if (sk >= 1 && u->body.on_ground && frand(&b->rng) < 0.25f * dt * (float)sk)
             in->move.jump = true;
-        b->path_len = 0;
+        if (!has_objective || seen_dist <= PUSH_STOP) b->path_len = 0;
         /* Too close for a gun: hit him. */
         if (seen_dist < HTA_GAME_MELEE_REACH + 0.25f && u->swing <= 0.0f) in->melee = true;
         /* A grenade at the middle distance, when the throw can reach. */
@@ -319,13 +359,34 @@ void hta_brain_think(struct hta_game *g, int32_t me, hta_brain *b, float dt)
             b->grenade_timer = GRENADE_WAIT * (0.7f + frand(&b->rng));
         }
     } else {
-        if (b->target >= 0) {
+        if (has_objective && (b->target < 0 || u->flag >= 0)) {
+            /* Replan when the objective has moved -- a carrier running --
+             * or the old path is spent. */
+            float moved = hypotf(objective[0] - b->goal_pos[0], objective[1] - b->goal_pos[1]);
+            if (!b->goal_game || b->replan <= 0.0f || moved > 1.0f ||
+                (b->path_i >= b->path_len && moved > 0.2f)) {
+                if (stand >= 0 && g->stand_field[stand]) plan_field(g, me, b, stand);
+                else plan_to(g, me, b, objective);
+                for (int k = 0; k < 3; k++) b->goal_pos[k] = objective[k];
+                b->goal_game = true;
+                b->goal_item = -1;
+                b->replan = REPLAN;
+            }
+            /* The last step onto a flag is not always on the grid. */
+            if (b->path_i >= b->path_len) {
+                float dx = objective[0] - u->body.pos[0], dy = objective[1] - u->body.pos[1];
+                float dl = hypotf(dx, dy);
+                if (dl > 0.05f && dl < 2.0f) { move[0] = dx / dl; move[1] = dy / dl; }
+            }
+        } else if (b->target >= 0) {
+            b->goal_game = false;
             /* Lost sight: go to where he was. */
             if (b->replan <= 0.0f || !b->path_len) {
                 plan_to(g, me, b, b->seen_pos);
                 b->replan = REPLAN;
             }
         } else {
+            b->goal_game = false;
             int32_t item = pick_item(g, me);
             if (item != b->goal_item || b->replan <= 0.0f ||
                 b->path_i >= b->path_len) {
@@ -350,6 +411,18 @@ void hta_brain_think(struct hta_game *g, int32_t me, hta_brain *b, float dt)
             move[1] = dir[1];
             if (b->target < 0) want_yaw = atan2f(dir[1], dir[0]) + b->wander_yaw * 0.4f;
             want_pitch = 0.0f;
+            /* A carrier under fire cannot shoot back: it weaves and jumps
+             * the way a person running a flag does. */
+            if (u->flag >= 0 && b->target >= 0 && b->visible) {
+                b->strafe_timer -= dt;
+                if (b->strafe_timer <= 0.0f) {
+                    b->strafe = frand(&b->rng) < 0.5f ? -1.0f : 1.0f;
+                    b->strafe_timer = 0.3f + frand(&b->rng) * 0.6f;
+                }
+                move[0] += dir[1] * b->strafe * 0.7f;
+                move[1] -= dir[0] * b->strafe * 0.7f;
+                if (u->body.on_ground && frand(&b->rng) < 0.6f * dt) in->move.jump = true;
+            }
         }
     }
     /* Standing on a weapon it wants more than what it holds: take it --

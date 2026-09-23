@@ -72,6 +72,50 @@
 #define HTA_DROP_LIFE            30.0f
 /* How close you must stand to take one: the map's own pickup reach. */
 #define HTA_DROP_REACH            0.5f
+
+/* ---- Game types ------------------------------------------------------ */
+typedef enum {
+    HTA_MODE_SLAYER = 0,      /* free for all */
+    HTA_MODE_TEAM_SLAYER,
+    HTA_MODE_CTF,
+    HTA_MODE_COUNT
+} hta_game_mode;
+
+/* Team 0 is red, team 1 blue: the scenario's spawns and flags are numbered
+ * that way, and red's are the ones at red's base. Pass this to
+ * hta_game_add to have the unit put on the smaller team. */
+#define HTA_TEAM_RED     0
+#define HTA_TEAM_BLUE    1
+#define HTA_TEAM_AUTO  255
+
+/* INVENTED: Halo CE's stock CTF plays to three captures. A gametype says
+ * how long an untouched flag lies before it goes home; the map does not.
+ * The reaches are ours too: a flag is taken like any weapon on the ground,
+ * and a capture counts from anywhere on the stand. All ledgered. */
+#define HTA_CTF_SCORE_LIMIT       3
+#define HTA_FLAG_RESET           30.0f
+#define HTA_FLAG_REACH            HTA_DROP_REACH
+#define HTA_CAPTURE_REACH         0.75f
+/* Put a flag down and you cannot take it straight back. Ours. */
+#define HTA_FLAG_REGRAB           1.0f
+
+typedef enum {
+    HTA_FLAG_HOME = 0,
+    HTA_FLAG_CARRIED,
+    HTA_FLAG_DROPPED
+} hta_flag_state;
+
+/* One team's flag: its stand, from the scenario's netgame flags, and where
+ * it is now. */
+typedef struct {
+    bool     present;         /* the map has a stand for this team */
+    float    home[3], home_yaw;
+    float    pos[3], vel[3], yaw;
+    uint8_t  state;           /* hta_flag_state */
+    int32_t  carrier;         /* unit, while carried */
+    float    idle;            /* seconds on the ground, while dropped */
+    bool     rest;
+} hta_game_flag;
 /* How far ahead a vehicle gun looks for what the crosshair is on. Ours. */
 #define HTA_VEHICLE_AIM_RANGE   200.0f
 
@@ -162,6 +206,8 @@ typedef struct {
 
     hta_carried carry[2];
     uint32_t slot;            /* which of the two is in hand */
+    int8_t   flag;            /* team of the flag in hand instead, or -1 */
+    float    flag_wait;       /* seconds before it may take a flag again */
     int      grenades;
     float    cooldown;        /* seconds until the trigger can fire again */
     float    error;           /* 0 settled .. 1 bloomed, per the trigger */
@@ -206,7 +252,8 @@ typedef enum {
     HTA_EV_RELOAD,        /* a */
     HTA_EV_SWAP,          /* a, weapon */
     HTA_EV_ENTER,         /* a: unit, b: car, pool: seat */
-    HTA_EV_EXIT           /* a: unit, b: car, pool: seat */
+    HTA_EV_EXIT,          /* a: unit, b: car, pool: seat */
+    HTA_EV_FLAG           /* a: unit (-1 none), b: flag's team, pool: hta_flag_event */
 } hta_event_kind;
 
 /* The announcer, by line. The Trial's `sound\dialog\multiplayer1\...`. */
@@ -219,8 +266,24 @@ typedef enum {
     HTA_LINE_KILLING_SPREE,
     HTA_LINE_RUNNING_RIOT,
     HTA_LINE_GAME_OVER,
+    HTA_LINE_TEAM_SLAYER,
+    HTA_LINE_CTF,
+    HTA_LINE_RED_HAS_FLAG,    /* red has taken blue's flag */
+    HTA_LINE_BLUE_HAS_FLAG,
+    HTA_LINE_RED_RETURNED,    /* red's own flag is home again */
+    HTA_LINE_BLUE_RETURNED,
+    HTA_LINE_RED_SCORE,
+    HTA_LINE_BLUE_SCORE,
     HTA_LINE_COUNT
 } hta_line;
+
+/* What happened to a flag, in HTA_EV_FLAG's `pool`. */
+typedef enum {
+    HTA_FLAG_TAKEN = 0,
+    HTA_FLAG_DROP,
+    HTA_FLAG_RETURN,          /* a teammate touched it (a) or it timed out (-1) */
+    HTA_FLAG_CAPTURE
+} hta_flag_event;
 
 typedef struct {
     hta_event_kind kind;
@@ -276,7 +339,16 @@ typedef struct hta_game {
     uint32_t        unit_count;
     int32_t         local;       /* the unit this device plays, or -1 */
 
-    /* Slayer. */
+    /* The rules. */
+    hta_game_mode   mode;
+    int             team_score[2];
+    int32_t         winner_team;  /* when a team game is over; -1 a draw */
+    hta_game_flag   flags[2];
+    /* Each stand's way home from anywhere on the nav grid (see
+     * hta_nav_field), built when a CTF game starts with a grid. */
+    uint32_t       *stand_field[2];
+    uint32_t        stand_node[2];
+    int32_t         flag_weapon;  /* roster index of the flag; never offered */
     int             score_limit;
     float           time_limit;  /* seconds; 0 plays to the score */
     float           respawn_time;
@@ -307,7 +379,12 @@ bool hta_game_load(hta_game *g, const hta_cache *c, const hta_resource_map *bitm
                    const hta_collision *col, char *err, size_t errlen);
 void hta_game_free(hta_game *g);
 
-/* Start a Slayer game: scores cleared, everyone respawned. */
+/* Choose the rules, and the mode's score limit with them. Call before
+ * adding units: a team game puts each HTA_TEAM_AUTO unit on the smaller team. Returns false (and plays
+ * Slayer) when the map lacks what the mode needs -- CTF without both flags. */
+bool hta_game_set_mode(hta_game *g, hta_game_mode mode);
+
+/* Start the game: scores cleared, flags home, everyone respawned. */
 void hta_game_start(hta_game *g);
 
 /* Add a unit. Returns its index, or -1. A bot with no name takes one from
@@ -392,6 +469,25 @@ int32_t hta_game_drop_near(const hta_game *g, const float feet[3], float reach);
 /* Pick one up: its weapon and ammo out, the slot freed. */
 bool hta_game_take_drop(hta_game *g, int32_t drop, int32_t *weapon, hta_ammo *ammo);
 
+/* A team's colour, for the armour of everyone on it and for its flag.
+ * INVENTED: Halo's player colours are in the executable, not the map, so
+ * these are ours -- a strong red and blue that survive the cyborg's grey
+ * base map. Ledgered. */
+void hta_game_team_color(int team, float out[3]);
+
+/* Where a flag is drawn this frame: upright on its stand, lying where it
+ * fell, or nowhere (in a hand, which the held weapons draw). False for
+ * nowhere. `model` is column-major, the flag's own space to the world. */
+bool hta_game_flag_model(const hta_game *g, int team, float model[16]);
+
+/* ---- Capture the flag ---------------------------------------------- */
+/* Let go of a carried flag where the unit stands. True if it had one. */
+bool hta_game_drop_flag(hta_game *g, int32_t unit);
+/* Where a bot playing CTF should be heading, or false for "anywhere".
+ * `stand` says whose flag stand that is (so the stand's field can lead
+ * there), or -1 for somewhere that moves. */
+bool hta_game_ctf_goal(const hta_game *g, int32_t unit, float out[3], int *stand);
+
 /* ---- Damage, from anyone ------------------------------------------- */
 /* A ray against every living unit but `ignore`. The nearest hit's unit, or
  * -1; `out_t` is the distance along the unit `dir`. */
@@ -433,7 +529,8 @@ bool hta_game_pop(hta_game *g, hta_game_event *out);
 uint32_t hta_game_standings(const hta_game *g, int32_t *out, uint32_t max);
 
 /* The line Halo's own HUD shows for the local player: "In first place with
- * 12 kills" and so on, in the Trial's words. */
+ * 12 kills", or in a team game "Red leads Blue 2 to 1 Captures", in the
+ * Trial's words. */
 void hta_game_place_text(const hta_game *g, int32_t unit, char *out, size_t outlen);
 
 /* The cyborg's animation for what a unit is doing, e.g. "stand rifle

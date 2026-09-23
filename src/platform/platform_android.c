@@ -266,6 +266,9 @@ typedef struct {
      * default), minutes of play (0 none), seconds to come back. */
     int           score_limit, time_limit_min;
     float         respawn_delay;
+    int           game_mode;       /* hta_game_mode the menu chose */
+    int8_t        carried_flag;    /* the flag this player held last frame, or -1 */
+    uint32_t      flag_take_snd;
     hta_gfx_mesh *gpu_units[HTA_GAME_MAX_UNITS];
     hta_gfx_mesh *gpu_held[HTA_GAME_MAX_WEAPONS];
     hta_gfx_mesh *gpu_pools[HTA_GAME_MAX_POOLS];
@@ -1733,6 +1736,9 @@ static void start_game(hta_android *s)
     }
     s->my_car = s->my_seat = -1;
     s->game.simulate_drops = !s->net_enabled || s->net_hosting;
+    if (!hta_game_set_mode(&s->game, (hta_game_mode)s->game_mode))
+        hta_log("[game] mode %d is not playable on this map: Slayer", s->game_mode);
+    s->carried_flag = -1;
     s->game.score_limit = s->score_limit;
     s->game.time_limit = (float)s->time_limit_min * 60.0f;
     s->game.respawn_time = s->respawn_delay;
@@ -1767,9 +1773,9 @@ static void start_game(hta_android *s)
         }
     }
     if (s->items.loaded) s->game.items = &s->items;
-    s->me = hta_game_add(&s->game, HTA_UNIT_LOCAL, "Player", 0);
+    s->me = hta_game_add(&s->game, HTA_UNIT_LOCAL, "Player", HTA_TEAM_AUTO);
     for (int i = 0; i < bots && i < HTA_GAME_MAX_UNITS - 1; i++)
-        hta_game_add(&s->game, HTA_UNIT_BOT, NULL, 0);
+        hta_game_add(&s->game, HTA_UNIT_BOT, NULL, HTA_TEAM_AUTO);
     hta_game_set_skill(&s->game, (uint8_t)s->bot_skill);
     /* The local player's health and shield move into the game, carrying
      * what the tags already gave them. */
@@ -1791,10 +1797,28 @@ static void start_game(hta_android *s)
         "sound\\dialog\\multiplayer1\\killing_spree",
         "sound\\dialog\\multiplayer1\\running_riot",
         "sound\\dialog\\multiplayer1\\game_over",
+        "sound\\dialog\\multiplayer1\\team_slayer",
+        "sound\\dialog\\multiplayer1\\capture_the_flag",
+        "sound\\dialog\\multiplayer1\\red_team_has_the_flag",
+        "sound\\dialog\\multiplayer1\\blue_team_has_the_flag",
+        "sound\\dialog\\multiplayer1\\red_team_flag_returned",
+        "sound\\dialog\\multiplayer1\\blue_team_flag_returned",
+        "sound\\dialog\\multiplayer1\\red_team_score",
+        "sound\\dialog\\multiplayer1\\blue_team_score",
     };
     for (int l = 1; l < HTA_LINE_COUNT; l++) {
         s->line_snd[l] = find_sound(&s->cache, LINES[l]);
         if (s->line_snd[l]) bank_get(s, s->line_snd[l]);
+    }
+    /* The flag's own pickup sound, for the moment you take it. */
+    s->flag_take_snd = 0;
+    if (s->game.flag_weapon >= 0) {
+        hta_weapon_def fd;
+        if (hta_weapon_load_id(&s->cache, NULL, s->game.weapons[s->game.flag_weapon].tag,
+                               &fd, NULL, NULL, 0) && fd.pickup_snd_id) {
+            s->flag_take_snd = fd.pickup_snd_id;
+            bank_get(s, s->flag_take_snd);
+        }
     }
     for (uint32_t p = 0; p < s->game.pool_count; p++)
         if (s->game.pools[p].detonation_snd) bank_get(s, s->game.pools[p].detonation_snd);
@@ -1820,8 +1844,10 @@ static void start_game(hta_android *s)
     if (hta_contrails_build(&s->trails, err, sizeof(err))) hta_log("[game] %s", err);
     /* The practice target is gone: there are real people to shoot now. */
     if (bots > 0) hta_bot_free(&s->bot);
-    hta_log("[game] Slayer: you and %d bot(s) at skill %d, first to %d, %d min, respawn %.0f s",
-            bots, s->bot_skill, s->game.score_limit, s->time_limit_min, s->respawn_delay);
+    static const char *const MODES[HTA_MODE_COUNT] = { "Slayer", "Team Slayer", "CTF" };
+    hta_log("[game] %s: you (team %d) and %d bot(s) at skill %d, first to %d, %d min, respawn %.0f s",
+            MODES[s->game.mode], s->game.units[s->me].team, bots, s->bot_skill,
+            s->game.score_limit, s->time_limit_min, s->respawn_delay);
 }
 
 static void game_gpu_upload(hta_android *s)
@@ -2003,6 +2029,16 @@ static void game_events(hta_android *s)
             if (e.line > HTA_LINE_NONE && e.line < HTA_LINE_COUNT && s->line_snd[e.line])
                 play_tag(s, s->line_snd[e.line], 1.0f);
             break;
+        case HTA_EV_FLAG:
+            if (e.text[0]) {
+                snprintf(s->banner, sizeof(s->banner), "%s", e.text);
+                s->banner_age = 0.0f;
+            }
+            if (e.line > HTA_LINE_NONE && e.line < HTA_LINE_COUNT && s->line_snd[e.line])
+                play_tag(s, s->line_snd[e.line], 1.0f);
+            if (e.pool == HTA_FLAG_TAKEN && s->flag_take_snd)
+                play_tag_at(s, s->flag_take_snd, e.pos, 1.0f);
+            break;
         case HTA_EV_ENTER:
             if (s->veh_in_snd) play_tag_at(s, s->veh_in_snd, e.pos, 1.0f);
             break;
@@ -2079,6 +2115,10 @@ static uint32_t game_draw(hta_android *s, hta_gfx_dynamic *dyn, uint32_t n)
         dyn[n].vertices = s->gview.actor[i].posed;
         dyn[n].vertex_count = s->gview.actor[i].mesh.vertex_count;
         dyn[n].lit = true;
+        if (s->game.teams) {
+            dyn[n].change = true;
+            hta_game_team_color(s->game.units[i].team, dyn[n].change_color);
+        }
         n++;
     }
     for (uint32_t p = 0; p < s->game.pool_count && n < HTA_GFX_MAX_DYNAMIC; p++) {
@@ -2097,8 +2137,24 @@ static uint32_t game_draw(hta_android *s, hta_gfx_dynamic *dyn, uint32_t n)
         hta_gfx_instance *in = &g_inst[g_inst_count++];
         in->mesh = s->gpu_held[held[k].weapon];
         memcpy(in->model, held[k].model, sizeof(in->model));
-        in->first_submesh = in->submesh_count = 0;
+        in->first_submesh = held[k].first_submesh;
+        in->submesh_count = held[k].submesh_count;
         in->lit = true;
+    }
+    /* The flags: upright on their stands, or lying where they fell. */
+    for (int t = 0; t < 2 && s->game.flag_weapon >= 0; t++) {
+        float fm[16];
+        uint32_t first[2], count[2];
+        if (!s->gpu_held[s->game.flag_weapon] || !hta_game_flag_model(&s->game, t, fm)) continue;
+        uint32_t parts = hta_game_view_flag_parts(&s->gview, t, first, count);
+        for (uint32_t p = 0; p < parts && g_inst_count < HTA_GFX_MAX_INSTANCES; p++) {
+            hta_gfx_instance *in = &g_inst[g_inst_count++];
+            in->mesh = s->gpu_held[s->game.flag_weapon];
+            memcpy(in->model, fm, sizeof(fm));
+            in->first_submesh = first[p];
+            in->submesh_count = count[p];
+            in->lit = true;
+        }
     }
     /* Weapons on the ground, lying on their side. */
     for (int i = 0; i < HTA_GAME_MAX_DROPS && g_inst_count < HTA_GFX_MAX_INSTANCES; i++) {
@@ -2360,6 +2416,7 @@ Java_net_hta_halotrial_GameActivity_nativeShellSound(JNIEnv *env, jclass cls, ji
 typedef struct {
     int  mode;               /* 0 solo, 1 host, 2 join */
     int  bots, skill, kills, minutes, respawn, max_players, port, vehicles;
+    int  gametype;           /* hta_game_mode; solo only for now */
     char host[64];
     char name[HTA_NET_NAME];
 } match_setup;
@@ -2374,13 +2431,14 @@ Java_net_hta_halotrial_GameActivity_nativeStartMatch(JNIEnv *env, jclass cls, ji
     if (atomic_load(&g_match_ready)) return;     /* one is already on its way */
     match_setup m;
     memset(&m, 0, sizeof(m));
-    jint v[9] = { 0, 3, 1, 25, 0, 5, 8, 32270, HTA_VROSTER_ALL };
+    jint v[10] = { 0, 3, 1, 25, 0, 5, 8, 32270, HTA_VROSTER_ALL, HTA_MODE_SLAYER };
     jsize n = cfg ? (*env)->GetArrayLength(env, cfg) : 0;
-    if (n > 9) n = 9;
+    if (n > 10) n = 10;
     if (n > 0) (*env)->GetIntArrayRegion(env, cfg, 0, n, v);
     m.mode = v[0]; m.bots = v[1]; m.skill = v[2]; m.kills = v[3];
     m.minutes = v[4]; m.respawn = v[5]; m.max_players = v[6]; m.port = v[7];
     m.vehicles = v[8];
+    m.gametype = v[9];
     const char *u;
     if (host && (u = (*env)->GetStringUTFChars(env, host, NULL))) {
         snprintf(m.host, sizeof(m.host), "%s", u);
@@ -2487,6 +2545,10 @@ static void match_take(hta_android *s)
     s->respawn_delay = m.respawn < HTA_RESPAWN_MIN ? HTA_RESPAWN_MIN : (float)m.respawn;
     s->vehicle_roster = m.vehicles >= 0 && m.vehicles < HTA_VROSTER_COUNT ? m.vehicles
                                                                            : HTA_VROSTER_ALL;
+    /* Team games and CTF are solo for now: the LAN snapshot does not carry
+     * teams or flags yet. */
+    s->game_mode = m.mode == 0 && m.gametype > 0 && m.gametype < HTA_MODE_COUNT
+                 ? m.gametype : HTA_MODE_SLAYER;
     uint16_t port = (uint16_t)(m.port > 0 && m.port < 65536 ? m.port : 32270);
     if (m.mode == 1) {
         hta_net_info info;
@@ -2500,8 +2562,8 @@ static void match_take(hta_android *s)
     } else if (m.mode == 2) {
         net_begin(s, m.host, false, port, NULL);
     }
-    hta_log("[menu] match: mode %d, %d bot(s) skill %d, %d kills, %d min, respawn %.0f s",
-            m.mode, s->bot_count, s->bot_skill, s->score_limit, s->time_limit_min,
+    hta_log("[menu] match: mode %d, game %d, %d bot(s) skill %d, %d to win, %d min, respawn %.0f s",
+            m.mode, s->game_mode, s->bot_count, s->bot_skill, s->score_limit, s->time_limit_min,
             s->respawn_delay);
     atomic_store(&g_match_ready, 0);
     atomic_store(&g_shell_screen, 0);
@@ -4137,6 +4199,39 @@ void android_main(struct android_app *app)
          * hta_player_update with a blank input keeps gravity and the ground
          * query -- so dying on a slope still slides you down it. */
         if (state.dead) memset(&in, 0, sizeof(in));
+
+        /* The flag: the game puts it in this player's hands, and takes it
+         * away on a capture, a death or a drop. The gun goes to the belt
+         * with what was in it, and the flag's own first-person model comes
+         * up; nothing but a swing works until it is gone, and the swap
+         * button puts it down. */
+        if (state.game_on && state.me >= 0) {
+            int8_t fl = state.game.units[state.me].flag;
+            if ((fl >= 0) != (state.carried_flag >= 0) && state.game.flag_weapon >= 0) {
+                if (fl >= 0) {
+                    state.held_ammo[state.held_slot] = state.ammo;
+                    state.held_ammo_set[state.held_slot] = true;
+                    fire_loop(&state, false);
+                    state.zoom_level = 0;
+                    apply_zoom(&state);
+                    equip_weapon(&state, state.game.weapons[state.game.flag_weapon].tag);
+                } else if (state.held_count) {
+                    equip_weapon(&state, state.held[state.held_slot]);
+                    if (state.held_ammo_set[state.held_slot]) {
+                        state.ammo = state.held_ammo[state.held_slot];
+                        hta_ammo_cancel_reload(&state.ammo);
+                    }
+                }
+            }
+            state.carried_flag = fl;
+            if (fl >= 0) {
+                if (state.hud_swap && !state.dead) hta_game_drop_flag(&state.game, state.me);
+                state.hud_swap = state.hud_zoom = false;
+                state.hud_reload = state.hud_grenade = false;
+                in.fire = false;
+            }
+        }
+
         /* Vehicles: get in when a free seat is in reach, out when seated.
          * The game decides -- on a client, the host does. */
         hta_unit *mine = state.game_on && state.me >= 0 &&
@@ -5237,6 +5332,11 @@ void android_main(struct android_app *app)
                 dynlist[dyncount].vertices = state.corpse.posed;
                 dynlist[dyncount].vertex_count = state.corpse.mesh.vertex_count;
                 dynlist[dyncount].lit = true;
+                if (state.game_on && state.game.teams && state.me >= 0) {
+                    dynlist[dyncount].change = true;
+                    hta_game_team_color(state.game.units[state.me].team,
+                                        dynlist[dyncount].change_color);
+                }
                 dyncount++;
             }
             int remote_slot=state.remote_to.weapon==1 ? 1 : 0;

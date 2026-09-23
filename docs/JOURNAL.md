@@ -9,6 +9,41 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## Team Slayer, Capture the Flag, team colours (2026-09-23)
+
+No device feedback had arrived on the vehicles build, so the session took
+the next objective: game types. Solo only -- the LAN snapshot is at 1194 of
+1200 bytes, so teams and flags need their own packet, which is the next
+slice.
+
+**Everything came from the map.** Scenario +888 is the netgame flags block
+(148 bytes, reconciles against +900); Blood Gulch has 191 entries: two CTF
+stands (type 0, usage = team), CTF vehicle spots, oddball spawns, race
+checkpoints, 16 hills worth of type 8 markers and a teleporter pair. The
+team's stand is confirmed by the spawns: team 0's 35 starts average 3 wu
+from usage-0's stand. The flag is a weapon with no trigger and no HUD --
+which is why the playable list skipped it -- and its first-person model
+and animation work unchanged through the viewmodel path. The cyborg holds
+it in the rifle stance: the graph has `stand rifle f melee`.
+
+*Trap:* bots could not path to the enemy flag from the back of their own
+base. Not the 96-node path cap (it truncates) but the A* budget: 60,000
+expansions. A flow field per stand, built once, costs 0.04 s for both and
+no search per bot. *Trap:* the dropper re-took the flag the frame it put
+it down (it lands at their feet): `HTA_FLAG_REGRAB`.
+
+**Bots and captures.** Symmetric attackers meet at midfield and duel
+forever unless they keep walking while shooting; with that, 9-11 takes in
+30 simulated minutes, but carriers die 5-18 s out of the enemy base. A lone
+bot runs the flag in ~95 s. Captures against a defence are rare; that is
+the honest state, and the test says so.
+
+**Team colours** were the prerequisite nobody listed: without them a team
+game is unplayable. ShaderModel +76 names a change-colour source; the
+multipurpose map's blue channel is where it applies. The colour rides in
+`ambient.w`, packed as an integer -- the push block is at its 128-byte
+limit.
+
 ## Every vehicle, online; contrails, drops, tracker (2026-09-22 evening)
 
 **Vehicles.** The old module was Warthog-only with one global `driver`. It

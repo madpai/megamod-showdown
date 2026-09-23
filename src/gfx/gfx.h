@@ -89,6 +89,10 @@ typedef struct {
     bool              lit;
     /* Colour per vertex: rgb in the normal, alpha in lm_uv[0]. Contrails. */
     bool              vertex_color;
+    /* The owner's colour, for surfaces whose shader takes one: a player's
+     * team. Multiplies the base map where the multipurpose map's blue is. */
+    bool              change;
+    float             change_color[3];
 } hta_gfx_dynamic;
 
 /* `dyn` is an array: projectiles in flight and the particles they throw

@@ -4,7 +4,7 @@
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-22 (evening: vehicles, contrails, drops, tracker)
+**Date of this revision:** 2026-09-23 (Team Slayer, CTF, team colours)
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Branch / HEAD:** `fp-animated-guns`; all work committed.
 
@@ -122,35 +122,75 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Vehicles + polish build:** latest at `http://100.89.1.14:8731/`
-> (Tailscale), build `42b1468` or later. Owner's personal APK with their own
-> maps; guests use the asset-free APK. Network protocol is **v3**: every
-> phone in a LAN game needs this build. No device was attached while this was
-> written; everything below is host-verified (verify.sh 72/72, offscreen
-> renders), not yet seen on a phone.
+> **Game types build:** latest at `http://100.89.1.14:8731/` (Tailscale).
+> Owner's personal APK with their own maps. SOLO ONLY for the new modes:
+> CREATE GAME still plays free-for-all Slayer, and the network protocol is
+> unchanged (v3), so a LAN game works exactly as before. Host-verified
+> (verify.sh 73/73, test_game 68/68, offscreen renders); not yet seen on a
+> phone. The vehicles build's objective below was never reported on --
+> anything from it is still welcome.
 >
-> 1. **Solo, VEHICLES: ALL.** Walk to each vehicle; the top line should read
->    e.g. `GET IN: Warthog driver` and SWAP should say GET IN. Drive a Warthog,
->    get in its gun from behind (chaingun spins up), ride as passenger (your
->    own rifle, first person). Scorpion: stick drives/pivots, turret follows
->    look, FIRE cannon (4 s reload, "LOADING" beside the km/h), ALT (the NADE
->    button) machine gun. Ghost: turns to where you look, strafes. Banshee:
->    look up and push to climb; let go to hover; ALT fuel rod; EXIT in the air
->    drops you. Run someone over. Report: seat camera placement, whether the
->    body in the seat looks right, turret following, frame rate with all 28.
-> 2. **Tracers/trails:** AR and chaingun yellow tracers, sniper vapour, plasma
->    glows, shell smoke. Report anything drawn as squares or wrong colour.
-> 3. **Drops / tracker / sounds:** kill a bot, its gun lies there; swap onto
->    it and your old gun drops. Tracker bottom-left: runners red, crouchers
->    hidden. Engines rev with speed. Pickup messages show mid-screen.
-> 4. **LAN (two phones):** host with vehicles; the joiner should see the
->    same vehicles, get in (host decides), drive with the host watching, gun
->    for the host's Warthog, see drops and tracers. Latency shows as a small
->    lag between stick and vehicle on the joiner (no prediction yet).
+> 1. **SINGLEPLAYER → GAME: TEAM SLAYER**, 5 bots. You are red with two
+>    red bots against three blue. Bots wear their team's colour on the
+>    armour plates; the tracker shows allies. Your own side's rounds do not
+>    hurt you (friendly fire is off). The HUD line reads "Red leads Blue 3
+>    to 1 Frags". Report: can you tell red from blue at a glance, at range,
+>    in shadow?
+> 2. **GAME: CAPTURE THE FLAG**, 5 bots, CAPTURES TO WIN 3. Each base has
+>    its flag on the stand (pole plus a red or blue cloth). Walk onto
+>    blue's flag: it comes up in your hands in first person (the flag's own
+>    fp model and animation), the announcer says "Red team has the flag",
+>    and you cannot fire, throw or zoom -- only swing (the flag hits for 80).
+>    SWAP puts it down. Carry it onto your own stand while yours is home:
+>    "You scored a flag!" and "Red team score". Die carrying: it falls where
+>    you died; a blue touch returns it; left alone 30 s it goes home.
+>    Report: the cloth's look, the flag in first person, whether bots feel
+>    like they are playing CTF (attack, defend, chase the carrier).
+> 3. Normal Slayer is unchanged -- a quick check that it still is.
 >
-> Not done: CTF/Oddball/KOTH, bots driving, powerups spinning, active camo
-> rendering, player colours, vehicle damage/flipping (Halo CE vehicles are
-> indestructible, so only flipping is really missing).
+> Not done: team modes over LAN (the snapshot is full; they need their own
+> packet), a waypoint to the flags, the cloth moving in the wind, Oddball,
+> King of the Hill, Race. Bots rarely capture against a defended base: a
+> lone bot runs the map in ~95 s, but three enemies hunting an unarmed
+> carrier across Blood Gulch usually win. Carriers stay on foot (ours).
+
+## GAME TYPES (done 2026-09-23) — how they work
+
+- **Rules** `src/game/game.c`: `hta_game_set_mode(g, HTA_MODE_*)` before
+  adding units (sets `teams` and the mode's default limit). `HTA_TEAM_AUTO`
+  puts a unit on the smaller side, red when even. Team spawns use the
+  scenario's `team index` (35 red, 37 blue). Team Slayer keeps
+  `team_score[]` from kills less suicides and betrayals. `finish_team`
+  speaks the Trial's "Your team won/lost", "Game ends in a draw".
+- **Flags** come from the scenario's netgame flags (**Scenario +888**, 148
+  each; type 0 is a CTF stand, `usage id` the team). The flag is
+  `weapons\flag\flag`, added to the roster (last index) though it has no
+  trigger; units carry it as `unit.flag` (team of the flag held), which
+  `hta_game_held` answers before the carry slots. `flags_update` does take /
+  return / capture / reset; `drop_flag` on death, swap, disconnect. Events
+  are `HTA_EV_FLAG` with the Trial's own words (text 144-150, 167-169) and
+  lines (`red_team_has_the_flag` ...). The cyborg holds it as a rifle
+  ("stand rifle f melee" is in the graph).
+- **Bots**: `hta_game_ctf_goal` -- carry home, take ours back, chase the
+  thief, every third player on a side defends, else attack. A cross-map A*
+  from the back of a base ran out of budget, so each stand gets a
+  **flow field** (`hta_nav_field`, Dijkstra over reversed links) built at
+  match start: 0.04 s for both on the host. Attackers keep walking while
+  they shoot (`PUSH_STOP`), carriers weave and jump.
+- **Colour**: ShaderModel `change color source` (**+76**) marks surfaces
+  that take the owner's colour where the multipurpose map's **blue** is.
+  `hta_gfx_dynamic.change/change_color`; it rides to the shader packed as
+  `0xRRGGBB+1` in `ambient.w` (the chicago path returns before that code).
+- **Cloth**: the flag object's widget (**Object +332**) is a `flag` tag
+  (Flag, 96): 16x13 vertices of 0.025 wu between the pole's `flag top` and
+  `flag bottom` markers, `flag_red` / `flags_blue` chicago shaders. Built
+  once in `view.c` as two submeshes after the pole's; `hta_game_view_flag_parts`
+  names the ranges; held-weapon instances carry submesh ranges now.
+- **Android**: the menu's GAME row (config[9]); `carried_flag` swaps the
+  first-person flag in and the gun back out with its ammo.
+- Tests: `test_game` sections `[capture the flag]`, `[team slayer]`,
+  `[a bot runs the flag]`, `[bots play capture the flag]`. Tools:
+  `htamatch --mode ctf|team`, `htaview --weapon "flag\flag" --fp idle`.
 
 ## VEHICLES (done 2026-09-22) — how they work
 
@@ -190,13 +230,18 @@ the section below, and update it every time.
 
 ## NEXT ENGINEERING OBJECTIVES
 
-1. Device feedback on the vehicles build (above).
-2. Game types: CTF, Oddball, King of the Hill, Race — the flag and ball
-   weapons and the scenario's netgame flags are in the map.
-3. Bots in vehicles (gunner seat with a human driver first, then driving).
-4. Client-side prediction for the local driver on a joining phone.
-5. Powerups spinning, active camouflage rendering, player colours (the
-   shader's change-colour channel), Warthog flipping.
+1. Device feedback on the game types build (above) and the vehicles build.
+2. Team modes over LAN: protocol v4 with a small GAME packet (mode, team
+   scores, both flags' state/carrier/position) beside WORLD -- WORLD is at
+   1194 of 1200 bytes with 16 entities -- and each entity's team in a spare
+   bit of `flags` (bit 6). Then enable GAME on CREATE GAME.
+3. Flag waypoints on the HUD; the rest of the game types (Oddball's ball
+   is `weapons\ball\ball`, hills are netgame flags type 8 by usage id,
+   Race checkpoints type 3).
+4. Bots in vehicles (gunner seat with a human driver first, then driving).
+5. Client-side prediction for the local driver on a joining phone.
+6. Powerups spinning, active camouflage rendering, free-for-all player
+   colours, Warthog flipping.
 
 ## Where things stand
 
@@ -370,7 +415,8 @@ SoundLooping 84 · Font 156 · WeaponHUDInterface 380 · Globals 428 ·
 Vehicle 1008 · GBXModel 232 · ModelCollisionGeometry 664 · DamageEffect 672 · Object 380 · Unit 752 ·
 Dialogue 4112 · Scenario 1456 · ScenarioNetgameEquipment 144 · ItemCollection
 92 · ItemCollectionPermutation 84 · ScenarioPlayerStartingProfile 104 ·
-ScenarioStartingEquipment 204 · UnitHUDInterfaceHUDSound 56 · Equipment 944
+ScenarioStartingEquipment 204 · UnitHUDInterfaceHUDSound 56 · Equipment 944 ·
+ScenarioNetgameFlags 148 (Scenario +888) · Flag 96 · FlagAttachmentPoint 52
 
 ### Offsets found by probing (the walk drifts to reach them)
 
@@ -518,6 +564,16 @@ wrong, this list is the first place to look — they are all one constant.
 | `HTA_MOTION_SPEED` / `_FIRE` | 0.5 wu/s / 1 s | shown when moving faster / after firing |
 | `HTA_HUD_SENSOR_X/Y` | 4, 4 canvas px | tracker in the bottom-left corner |
 | engine pitch | 0.85 .. 1.35 | engine loop rate from idle to full speed |
+| `HTA_CTF_SCORE_LIMIT` | 3 | CTF captures (stock Halo CE gametype) |
+| `HTA_FLAG_RESET` | 30 s | a dropped flag left alone goes home |
+| `HTA_FLAG_REACH` / `HTA_CAPTURE_REACH` | 0.5 / 0.75 wu | take a flag / score on your stand (and within -0.4..0.9 wu vertically) |
+| `HTA_FLAG_REGRAB` | 1 s | put it down and you cannot take it straight back |
+| carriers on foot | — | a flag carrier cannot board a vehicle |
+| friendly fire | off | team games: a teammate's hit does nothing |
+| `hta_game_team_color` | red 0.78,0.10,0.08 / blue 0.12,0.24,0.85 | team armour colour (Halo's colours live in the exe) |
+| CTF roles | every third on a side defends | `hta_game_ctf_goal` |
+| `PUSH_STOP` (brain.c) | 5 wu | an attacker stops to duel only this close |
+| `CLOTH_RIPPLE` (view.c) | 0.035 wu | the still cloth's baked ripple; Halo simulates it |
 
 ---
 

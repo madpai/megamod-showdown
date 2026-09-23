@@ -2,7 +2,7 @@
  * offscreen from behind one of the bots. For looking at bots, their
  * animations and their weapons without a phone.
  *
- *   htamatch <bloodgulch.map> [--bots N] [--skill 0-3] [--seconds S]
+ *   htamatch <bloodgulch.map> [--bots N] [--skill 0-3] [--seconds S] [--mode ffa|team|ctf]
  *            [--shots N] [--every S] [--follow UNIT] [--out prefix]
  *            [--width W] [--height H]
  *
@@ -52,6 +52,7 @@ int main(int argc, char **argv)
         return 2;
     }
     int bots = 4, skill = 2, shots = 3, follow = 0, ride = -1;
+    hta_game_mode mode = HTA_MODE_SLAYER;
     float seconds = 20.0f, every = 0.5f, back = 1.6f;
     uint32_t W = 800, H = 450;
     const char *prefix = "match";
@@ -65,6 +66,11 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--out") && i + 1 < argc) prefix = argv[++i];
         else if (!strcmp(argv[i], "--back") && i + 1 < argc) back = strtof(argv[++i], NULL);
         else if (!strcmp(argv[i], "--ride") && i + 1 < argc) ride = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--mode") && i + 1 < argc) {
+            const char *m = argv[++i];
+            mode = !strcmp(m, "ctf") ? HTA_MODE_CTF : !strcmp(m, "team") ? HTA_MODE_TEAM_SLAYER
+                                                                            : HTA_MODE_SLAYER;
+        }
         else if (!strcmp(argv[i], "--width") && i + 1 < argc) W = (uint32_t)atoi(argv[++i]);
         else if (!strcmp(argv[i], "--height") && i + 1 < argc) H = (uint32_t)atoi(argv[++i]);
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
@@ -136,8 +142,10 @@ int main(int argc, char **argv)
         hta_pickups_build(&items, &cache, bmp, err, sizeof(err));
         game.items = &items;
     }
+    if (!hta_game_set_mode(&game, mode)) printf("mode           not on this map: Slayer\n");
     for (int i = 0; i < bots; i++)
-        hta_game_add(&game, ride >= 0 && i < 2 ? HTA_UNIT_REMOTE : HTA_UNIT_BOT, NULL, 0);
+        hta_game_add(&game, ride >= 0 && i < 2 ? HTA_UNIT_REMOTE : HTA_UNIT_BOT, NULL,
+                     HTA_TEAM_AUTO);
     hta_game_set_skill(&game, (uint8_t)skill);
     if (!hta_game_view_load(&view, &game, bmp, (uint32_t)bots, err, sizeof(err))) {
         fprintf(stderr, "view: %s\n", err); return 1;
@@ -285,6 +293,10 @@ int main(int argc, char **argv)
             dyn[nd].vertices = view.actor[i].posed;
             dyn[nd].vertex_count = view.actor[i].mesh.vertex_count;
             dyn[nd].lit = true;
+            if (game.teams) {
+                dyn[nd].change = true;
+                hta_game_team_color(game.units[i].team, dyn[nd].change_color);
+            }
             nd++;
         }
         if (itemgpu && nd < HTA_GFX_MAX_DYNAMIC) {
@@ -327,7 +339,8 @@ int main(int argc, char **argv)
             if (!wgpu[held[k].weapon]) continue;
             inst[ni].mesh = wgpu[held[k].weapon];
             memcpy(inst[ni].model, held[k].model, sizeof(inst[ni].model));
-            inst[ni].first_submesh = inst[ni].submesh_count = 0;
+            inst[ni].first_submesh = held[k].first_submesh;
+            inst[ni].submesh_count = held[k].submesh_count;
             inst[ni].lit = true;
             ni++;
         }
@@ -343,6 +356,22 @@ int main(int argc, char **argv)
             inst[ni].lit = true;
             ni++;
         }
+        uint32_t flag_parts = 0;
+        for (int t = 0; t < 2 && game.flag_weapon >= 0; t++) {
+            float fm[16];
+            uint32_t first[2], count[2];
+            if (!wgpu[game.flag_weapon] || !hta_game_flag_model(&game, t, fm)) continue;
+            uint32_t parts = hta_game_view_flag_parts(&view, t, first, count);
+            for (uint32_t p = 0; p < parts && ni < HTA_GFX_MAX_INSTANCES; p++) {
+                inst[ni].mesh = wgpu[game.flag_weapon];
+                memcpy(inst[ni].model, fm, sizeof(fm));
+                inst[ni].first_submesh = first[p];
+                inst[ni].submesh_count = count[p];
+                inst[ni].lit = true;
+                ni++;
+                flag_parts++;
+            }
+        }
         hta_gfx_set_instances(gfx, inst, ni);
         if (!hta_gfx_draw(gfx, &cam, &scene, world, skygpu, NULL, dyn, nd, NULL, NULL) ||
             !hta_gfx_readback(gfx, rgba, (size_t)W * H * 4u)) {
@@ -353,6 +382,9 @@ int main(int argc, char **argv)
         ppm(path, rgba, W, H);
         char base[48], act[64];
         hta_game_anim(&game, follow % bots, base, sizeof(base), act, sizeof(act));
+        if (game.teams)
+            printf("  teams: red %d blue %d, %u flag parts drawn\n",
+                   game.team_score[0], game.team_score[1], flag_parts);
         printf("  %s  t=%.1f  %s (%s) at %.1f %.1f %.1f, holding %s, %d instances\n", path, t,
                u->name, base, u->body.pos[0], u->body.pos[1], u->body.pos[2],
                hta_game_held(&game, follow % bots) ? hta_game_held(&game, follow % bots)->label : "-",

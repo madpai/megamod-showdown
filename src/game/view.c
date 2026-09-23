@@ -1,5 +1,7 @@
 #include "view.h"
 #include "../asset/model.h"
+#include "../asset/bitmap.h"
+#include "../asset/bsp.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -20,6 +22,114 @@ static uint32_t find_cyborg(const hta_cache *c)
         if (hta_cache_tag_path(c, &t, p, sizeof(p)) && strstr(p, "cyborg_mp")) return t.tag_id;
     }
     return 0;
+}
+
+/* Object +332 is its widgets (32 each, the tag at +0); the flag weapon's
+ * one widget is its cloth. Flag reconciles at 96: vertices across and down
+ * at +12/+14, the cell size at +16/+20, the red and blue shaders at +24 and
+ * +68, and the attachment points at +84 (52 each, marker name at +20):
+ * "flag top" and "flag bottom" on the pole. */
+#define OBJ_WIDGETS        332u
+#define FLAG_WIDTH          12u
+#define FLAG_HEIGHT         14u
+#define FLAG_CELL_W         16u
+#define FLAG_CELL_H         20u
+#define FLAG_RED_SHADER     24u
+#define FLAG_BLUE_SHADER    68u
+/* Halo blows the cloth about with a spring model and wind. Ours is still:
+ * a gentle ripple baked in along its length, this deep, so it reads as
+ * cloth rather than a sign. */
+#define CLOTH_RIPPLE      0.035f
+
+static uint32_t tag_base(const hta_cache *c, uint32_t id)
+{
+    int32_t ti = hta_cache_find_tag_by_id(c, id);
+    hta_tag_entry t;
+    uint32_t off = 0;
+    if (ti < 0 || !hta_cache_tag(c, (uint32_t)ti, &t) ||
+        !hta_cache_ptr_to_offset(c, t.tag_data_ptr, &off)) return 0;
+    return off;
+}
+
+/* The flag's cloth for `team`, appended to the pole's mesh as one more
+ * submesh in the team's own bitmap. Returns its submesh index, 0 if none. */
+static uint32_t append_cloth(hta_bsp_mesh *m, const hta_game *g,
+                             const hta_resource_map *bitmaps, uint32_t weap, int team)
+{
+    const hta_cache *c = g->cache;
+    uint32_t wb = tag_base(c, weap), count = 0, ptr = 0, off = 0, flag = 0;
+    if (!wb || !hta_read_reflexive(c, wb + OBJ_WIDGETS, &count, &ptr) || !count ||
+        !hta_cache_ptr_to_offset(c, ptr, &off) || !hta_rd_u32(c, off + 12u, &flag)) return 0;
+    uint32_t fb = tag_base(c, flag);
+    if (!fb) return 0;
+    uint16_t nw = 0, nh = 0;
+    float cw = 0.0f, ch = 0.0f;
+    uint32_t shader = 0;
+    hta_rd_u16(c, fb + FLAG_WIDTH, &nw);
+    hta_rd_u16(c, fb + FLAG_HEIGHT, &nh);
+    hta_rd_f32(c, fb + FLAG_CELL_W, &cw);
+    hta_rd_f32(c, fb + FLAG_CELL_H, &ch);
+    hta_rd_u32(c, fb + (team ? FLAG_BLUE_SHADER : FLAG_RED_SHADER) + 12u, &shader);
+    if (nw < 2 || nh < 2 || nw > 64 || nh > 64 || !(cw > 0.0f) || !(ch > 0.0f)) return 0;
+    uint32_t bitmap = hta_shader_base_bitmap(c, shader);
+    if (!bitmap) return 0;
+
+    /* The edge it hangs from: the pole's markers, else the cloth's own
+     * height down from the model's top. */
+    float top[3] = { 0.0f, 0.0f, 0.0f }, bottom[3] = { 0.0f, 0.0f, 0.0f };
+    uint32_t model = g->weapons[g->flag_weapon].model;
+    bool have_top = hta_model_marker_position(c, model, "flag top", top);
+    bool have_bottom = hta_model_marker_position(c, model, "flag bottom", bottom);
+    if (!have_top) { top[2] = 0.8f; }
+    if (!have_bottom) { bottom[0] = top[0]; bottom[1] = top[1]; bottom[2] = top[2] - ch * (float)(nh - 1); }
+
+    uint32_t nv = (uint32_t)nw * nh, ni = (uint32_t)(nw - 1) * (nh - 1) * 12u;
+    hta_vertex *vv = realloc(m->vertices, (m->vertex_count + nv) * sizeof(hta_vertex));
+    if (!vv) return 0;
+    m->vertices = vv;
+    uint32_t *ii = realloc(m->indices, (m->index_count + ni) * sizeof(uint32_t));
+    if (!ii) return 0;
+    m->indices = ii;
+    hta_submesh *ss = realloc(m->submeshes, (m->submesh_count + 1u) * sizeof(hta_submesh));
+    if (!ss) return 0;
+    m->submeshes = ss;
+
+    /* It trails back from the pole, along the model's -x. */
+    uint32_t v0 = m->vertex_count;
+    for (uint32_t j = 0; j < nh; j++) {
+        float fj = (float)j / (float)(nh - 1);
+        for (uint32_t i = 0; i < nw; i++) {
+            float fi = (float)i / (float)(nw - 1);
+            float along = cw * (float)i;
+            float ripple = CLOTH_RIPPLE * fi * sinf(fi * 3.0f * 3.14159265f);
+            float slope = CLOTH_RIPPLE * fi * 3.0f * 3.14159265f * cosf(fi * 3.0f * 3.14159265f);
+            hta_vertex *p = &m->vertices[m->vertex_count++];
+            p->pos[0] = bottom[0] + (top[0] - bottom[0]) * fj - along;
+            p->pos[1] = bottom[1] + (top[1] - bottom[1]) * fj + ripple;
+            p->pos[2] = bottom[2] + (top[2] - bottom[2]) * fj;
+            float nl = sqrtf(1.0f + slope * slope);
+            p->normal[0] = slope / nl; p->normal[1] = 1.0f / nl; p->normal[2] = 0.0f;
+            p->uv[0] = fi;
+            p->uv[1] = 1.0f - fj;
+            p->lm_uv[0] = p->lm_uv[1] = 0.0f;
+        }
+    }
+    uint32_t first = m->index_count;
+    for (uint32_t j = 0; j + 1 < nh; j++)
+        for (uint32_t i = 0; i + 1 < nw; i++) {
+            uint32_t a = v0 + j * nw + i, b = a + 1, d = a + nw, e = d + 1;
+            /* Both faces: a cloth is seen from either side. */
+            const uint32_t q[12] = { a, b, e, a, e, d,   a, e, b, a, d, e };
+            for (int k = 0; k < 12; k++) m->indices[m->index_count++] = q[k];
+        }
+    hta_submesh *sm = &m->submeshes[m->submesh_count];
+    hta_submesh_init(sm);
+    sm->first_index = first;
+    sm->index_count = m->index_count - first;
+    sm->shader_tag_id = shader;
+    sm->albedo_tex = hta_mesh_intern_bitmap(m, c, bitmaps, bitmap, 0);
+    sm->draw_mode = HTA_DRAW_OPAQUE;
+    return m->submesh_count++;
 }
 
 bool hta_game_view_load(hta_game_view *v, const hta_game *g,
@@ -52,6 +162,11 @@ bool hta_game_view_load(hta_game_view *v, const hta_game *g,
         const float zero[3] = { 0.0f, 0.0f, 0.0f };
         if (hta_model_instance(m, g->cache, bitmaps, g->weapons[w].model, zero, zero,
                                aerr, sizeof(aerr)) && m->index_count) {
+            if ((int32_t)w == g->flag_weapon) {
+                v->flag_pole_submeshes = m->submesh_count;
+                for (int t = 0; t < 2; t++)
+                    v->flag_cloth[t] = append_cloth(m, g, bitmaps, g->weapons[w].tag, t);
+            }
             /* Lit by the scene like the bodies: these have no lightmap. */
             for (uint32_t s = 0; s < m->submesh_count; s++) m->submeshes[s].scene_lit = true;
             v->have_weapon[w] = true;
@@ -189,7 +304,7 @@ uint32_t hta_game_view_weapons(const hta_game_view *v, const hta_game *g, int32_
     for (uint32_t i = 0; i < g->unit_count && i < HTA_GAME_MAX_UNITS && n < max; i++) {
         const hta_unit *u = &g->units[i];
         if (!v->shown[i] || (int32_t)i == skip || !u->alive) continue;
-        int32_t w = u->carry[u->slot & 1u].weapon;
+        int32_t w = u->flag >= 0 ? g->flag_weapon : u->carry[u->slot & 1u].weapon;
         if (w < 0 || !v->have_weapon[w]) continue;
         if (u->vehicle >= 0 && g->vehicles) {
             const hta_vehicle_seat *st = hta_vehicles_seat(g->vehicles, (uint32_t)u->vehicle,
@@ -197,8 +312,31 @@ uint32_t hta_game_view_weapons(const hta_game_view *v, const hta_game *g, int32_
             if (!st || !(st->flags & HTA_SEAT_ALLOWS_WEAPONS)) continue;
         }
         out[n].weapon = w;
+        out[n].first_submesh = out[n].submesh_count = 0;
         hta_actor_marker_matrix(&v->actor[i], v->hand_node, v->hand_offset, out[n].model);
+        if (u->flag >= 0) {
+            /* The pole and the cloth of whichever flag it is. */
+            uint32_t first[2], count[2];
+            uint32_t parts = hta_game_view_flag_parts(v, u->flag, first, count);
+            for (uint32_t p = 0; p < parts && n < max; p++) {
+                out[n] = out[n - (p ? 1u : 0u)];
+                out[n].first_submesh = first[p];
+                out[n].submesh_count = count[p];
+                n++;
+            }
+            continue;
+        }
         n++;
     }
+    return n;
+}
+
+uint32_t hta_game_view_flag_parts(const hta_game_view *v, int team,
+                                  uint32_t first[2], uint32_t count[2])
+{
+    if (!v || !v->flag_pole_submeshes) return 0;
+    uint32_t n = 0;
+    first[n] = 0; count[n] = v->flag_pole_submeshes; n++;
+    if (v->flag_cloth[team & 1]) { first[n] = v->flag_cloth[team & 1]; count[n] = 1; n++; }
     return n;
 }

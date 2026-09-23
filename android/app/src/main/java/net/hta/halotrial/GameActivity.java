@@ -225,6 +225,10 @@ public class GameActivity extends NativeActivity {
         private String[] words;
         private int screen;
         private int bots = 3, skill = 1, kills = 25, minutes = 0, respawn = 5;
+        /* hta_game_mode: free-for-all Slayer, Team Slayer, CTF. Solo only
+         * until the LAN snapshot carries teams and flags. */
+        private int gametype = 0, captures = 3;
+        private static final String[] GAMETYPES = { "SLAYER", "TEAM SLAYER", "CAPTURE THE FLAG" };
         /* HTA_VROSTER_*: none, the map's defaults, all, or one kind. */
         private int vehicles = 2;
         private static final String[] VEHICLE_SETS = { "NONE", "DEFAULT", "ALL",
@@ -285,8 +289,10 @@ public class GameActivity extends NativeActivity {
         private String[] rows() {
             switch (screen) {
             case 1: return new String[] { word(1, "CREATE GAME"), word(0, "JOIN GAME"), word(18, "BACK") };
-            case 2: return new String[] { "BOTS: " + bots, "BOT SKILL: " + skillName(),
-                    word(21, "KILLS TO WIN") + " " + (kills == 0 ? "NONE" : kills),
+            case 2: return new String[] { "GAME: " + GAMETYPES[gametype],
+                    "BOTS: " + bots, "BOT SKILL: " + skillName(),
+                    gametype == 2 ? "CAPTURES TO WIN: " + (captures == 0 ? "NONE" : captures)
+                                  : word(21, "KILLS TO WIN") + " " + (kills == 0 ? "NONE" : kills),
                     "TIME LIMIT: " + (minutes == 0 ? "NONE" : minutes + " MIN"),
                     word(22, "RESPAWN TIME") + " " + respawn + " SEC",
                     "VEHICLES: " + VEHICLE_SETS[vehicles],
@@ -380,13 +386,17 @@ public class GameActivity extends NativeActivity {
                 if (i == 0) open(3); else if (i == 1) open(4); else back();
                 break;
             case 2:
-                if (i == 0) bots = (bots + 1) % 8;
-                else if (i == 1) skill = (skill + 1) % 4;
-                else if (i == 2) kills = next(kills, new int[] { 0, 10, 25, 50, 100 });
-                else if (i == 3) minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 });
-                else if (i == 4) respawn = next(respawn, new int[] { 2, 5, 10, 15 });
-                else if (i == 5) vehicles = (vehicles + 1) % VEHICLE_SETS.length;
-                else if (i == 6) start(0, ""); else back();
+                if (i == 0) gametype = (gametype + 1) % GAMETYPES.length;
+                else if (i == 1) bots = (bots + 1) % 8;
+                else if (i == 2) skill = (skill + 1) % 4;
+                else if (i == 3) {
+                    if (gametype == 2) captures = next(captures, new int[] { 1, 3, 5, 10, 0 });
+                    else kills = next(kills, new int[] { 0, 10, 25, 50, 100 });
+                }
+                else if (i == 4) minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 });
+                else if (i == 5) respawn = next(respawn, new int[] { 2, 5, 10, 15 });
+                else if (i == 6) vehicles = (vehicles + 1) % VEHICLE_SETS.length;
+                else if (i == 7) start(0, ""); else back();
                 break;
             case 3:
                 if (i == 0) edit(false);
@@ -455,8 +465,9 @@ public class GameActivity extends NativeActivity {
         }
 
         private void start(int mode, String host) {
-            nativeStartMatch(new int[] { mode, bots, skill, kills, minutes, respawn, maxPlayers, port, vehicles },
-                    host, serverName);
+            int type = mode == 0 ? gametype : 0;
+            nativeStartMatch(new int[] { mode, bots, skill, type == 2 ? captures : kills, minutes, respawn,
+                    maxPlayers, port, vehicles, type }, host, serverName);
             screen = 0;
         }
 

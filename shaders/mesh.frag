@@ -110,6 +110,15 @@ void main() {
 
     albedo *= det * 2.0;
 
+    /* The owner's colour -- a team's red or blue -- where the multipurpose
+     * map's blue channel marks the change-colour areas. It arrives packed
+     * as 0xRRGGBB plus one in ambient.w; 0 means none. */
+    if (push.ambient.w > 0.5) {
+        int p = int(push.ambient.w + 0.5) - 1;
+        vec3 cc = vec3(float((p >> 16) & 255), float((p >> 8) & 255), float(p & 255)) / 255.0;
+        albedo *= mix(vec3(1.0), cc, texture(u_multi, v_uv).b);
+    }
+
     /* Halo lightmaps are stored at half-bright and multiplied by 2 at
      * display. The world carries one per surface.
      *

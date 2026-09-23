@@ -29,6 +29,8 @@ typedef struct {
     uint32_t path_len, path_i;
     uint32_t goal;            /* nav node being walked to, or NONE */
     int32_t  goal_item;       /* pickup slot being fetched, -1 for none */
+    float    goal_pos[3];     /* where the game's objective was last planned to */
+    bool     goal_game;       /* the path leads to the objective */
     float    replan;          /* seconds until the path is worked out again */
 
     float    look_timer;      /* seconds until the next look around */

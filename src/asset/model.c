@@ -417,6 +417,16 @@ static bool append_mod2(hta_bsp_mesh *dst, const hta_cache *c,
                 if (mt != ~0u) { sm->multi_tex = mt; sm->detail_mask = mask; }
             }
         }
+        /* And whether it wears its owner's colour. */
+        if (!sm->chicago) {
+            uint8_t src = 0;
+            uint32_t mp = hta_shader_change_color(c, shader_id, &src);
+            if (mp) {
+                uint32_t mt = sm->multi_tex != ~0u ? sm->multi_tex
+                                                   : hta_mesh_intern_bitmap(dst, c, bitmaps, mp, 0);
+                if (mt != ~0u) { sm->multi_tex = mt; sm->change_color = src; }
+            }
+        }
 
         dst->vertex_count += vcount;
         dst->index_count += emitted;

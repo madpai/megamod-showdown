@@ -96,6 +96,10 @@ typedef struct {
      * B change colour, A reflection. 0 means no mask. */
     uint32_t multi_tex;
     uint8_t  detail_mask;
+    /* ShaderModel `change color source` at +76, 0 for none: this surface
+     * takes its owner's colour where the multipurpose map's blue says --
+     * a cyborg's armour plates. multi_tex is loaded for it. */
+    uint8_t  change_color;
     uint8_t  draw_mode;       /* HTA_DRAW_* */
     bool     scene_lit;       /* placed model: scene light, not a BSP lightmap */
     /* HUD overlays only: the tag's own colour for this element. Halo's HUD

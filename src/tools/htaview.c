@@ -290,7 +290,16 @@ int main(int argc, char **argv)
                 wok = hta_weapon_load_id(&c, rm.data ? &rm : NULL, ids[k], &wdef,
                                          NULL, err, sizeof(err));
             }
-            if (!wok) printf("weapon         no playable weapon matching '%s'\n", want_weapon);
+            /* Not one you can fire -- the flag, the ball: every weapon tag. */
+            for (uint32_t k = 0; k < c.tag_count && !wok; k++) {
+                hta_tag_entry t;
+                char tp[256];
+                if (!hta_cache_tag(&c, k, &t) || t.primary_class != HTA_TAG_WEAP ||
+                    !hta_cache_tag_path(&c, &t, tp, sizeof(tp)) || !strstr(tp, want_weapon)) continue;
+                wok = hta_weapon_load_id(&c, rm.data ? &rm : NULL, t.tag_id, &wdef,
+                                         NULL, err, sizeof(err));
+            }
+            if (!wok) printf("weapon         no weapon matching '%s'\n", want_weapon);
         } else {
             wok = hta_weapon_load_default(&c, rm.data ? &rm : NULL, &wdef, NULL,
                                           err, sizeof(err));

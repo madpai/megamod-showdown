@@ -46,6 +46,7 @@
 #define HTA_SOSO_DETAIL       220u
 #define HTA_SOSO_MULTIPURPOSE 188u
 #define HTA_SOSO_DETAIL_MASK  214u
+#define HTA_SOSO_CHANGE_COLOR  76u
 
 #define HTA_SGLA_BACKGROUND_TINT 100u
 #define HTA_SGLA_DIFFUSE         344u
@@ -106,6 +107,11 @@ uint32_t hta_shader_detail2_bitmap(const hta_cache *c, uint32_t shader_tag_id,
  * detail map (`ShaderModelDetailMask`: 0 none, then pairs of
  * inverse/straight for reflection, self-illumination, change colour and
  * auxiliary). 0 when the shader is not a model or has no mask. */
+/* A model shader's change-colour source (1..4 for A..D, 0 for none) and
+ * the multipurpose map whose blue channel says where it applies. Returns
+ * the map's tag id, 0 when the shader takes no colour. */
+uint32_t hta_shader_change_color(const hta_cache *c, uint32_t shader_tag_id,
+                                 uint8_t *out_source);
 uint32_t hta_shader_multipurpose(const hta_cache *c, uint32_t shader_tag_id,
                                  uint8_t *out_mask);
 

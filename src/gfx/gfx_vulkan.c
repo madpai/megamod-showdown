@@ -55,6 +55,7 @@ typedef struct {
     float    detail_scale;   /* 0 = this surface has no detail map */
     float    detail2_scale;
     float    detail_mask;    /* ShaderModelDetailMask; 0 = no mask */
+    bool     change;         /* takes the draw's change colour */
     uint8_t  chicago;        /* map count of a chicago layer, 0 for none */
     float    ch_scale[3][2];
     float    ch_ops[4];      /* colour fn 0, 1; alpha fn 0, 1 */
@@ -1225,6 +1226,8 @@ static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
         m->submeshes[i].detail2_scale = (d2i != ~0u && d2i < m->tex_count) ? d2scale : 0.0f;
         VkImageView mv = (mi != ~0u && mi < m->tex_count) ? m->tex[mi].view : g->tex_light.view;
         m->submeshes[i].detail_mask = (mi != ~0u && mi < m->tex_count) ? (float)dmask : 0.0f;
+        m->submeshes[i].change = mi != ~0u && mi < m->tex_count && mesh->submesh_count &&
+                                 mesh->submeshes[i].change_color;
         write_set(g, sets[i], av, lv, dv, d2v, mv);
     }
     return m;
@@ -1624,6 +1627,19 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam, const hta_scene *scene,
                             dyn[dq].vertex_color ? 3.0f : 0.0f };
                         memcpy(push + 80 + 12, &lw, sizeof(lw));
                         memcpy(push + 112, det, sizeof(det));
+                        /* The owner's colour rides in ambient.w as a packed
+                         * 0xRRGGBB plus one, exact in a float; 0 is none. */
+                        float cc = 0.0f;
+                        if (dyn[dq].change && dm->submeshes[i].change) {
+                            uint32_t rgb = 0;
+                            for (int k = 0; k < 3; k++) {
+                                float v = dyn[dq].change_color[k];
+                                v = v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v;
+                                rgb = (rgb << 8) | (uint32_t)(v * 255.0f + 0.5f);
+                            }
+                            cc = (float)(rgb + 1u);
+                        }
+                        memcpy(push + 96 + 12, &cc, sizeof(cc));
                         vkCmdPushConstants(cb, g->layout,
                             VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                             0, PUSH_SIZE, push);

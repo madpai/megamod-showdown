@@ -109,6 +109,12 @@ if [ -x ./build-host/htaview ]; then
     else
       bad "bots render with their weapons in hand"
     fi
+    OUT=$(cd "$VM" && "$OLDPWD/build-host/htamatch" "$HTA_MAP" --mode ctf --bots 4 --seconds 2 --shots 1 --out ctf --width 320 --height 240 2>&1) || true
+    if echo "$OUT" | grep -qE "teams: red 0 blue 0, 4 flag parts drawn"; then
+      ok "CTF renders both flags, pole and cloth, with the bots in team colours"
+    else
+      bad "CTF renders both flags, pole and cloth, with the bots in team colours"
+    fi
     UI_MAP="$(dirname "$HTA_MAP")/ui.map"
     if [ -f "$UI_MAP" ]; then
       OUT=$(cd "$VM" && "$OLDPWD/build-host/htamenu" "$UI_MAP" --out menu --width 320 --height 180 2>&1) || true

@@ -88,6 +88,20 @@ void hta_nav_pos(const hta_nav *n, uint32_t node, float out[3]);
 uint32_t hta_nav_path(hta_nav *n, uint32_t from, uint32_t to,
                       uint32_t *out, uint32_t max, uint32_t budget);
 
+/* Every node's way to one goal, worked out once: `next[i]` is the neighbour
+ * to step to from node i, HTA_NAV_NONE where the goal cannot be reached (or
+ * at the goal itself). For a goal that never moves -- a flag's stand -- this
+ * replaces a search per walker, which from the back of a base can outrun
+ * any budget small enough to replan with. `next` holds node_count entries.
+ * Returns how many nodes can reach the goal. */
+uint32_t hta_nav_field(hta_nav *n, uint32_t goal, uint32_t *next);
+
+/* Read a path to the field's goal out of it: up to `max` nodes from `from`,
+ * start first. A single node means `from` is the goal -- or cannot reach
+ * it, which the caller tells apart by knowing the goal. */
+uint32_t hta_nav_field_path(const hta_nav *n, const uint32_t *next, uint32_t from,
+                            uint32_t *out, uint32_t max);
+
 /* Can a biped walk straight from node a to node b over nav nodes? Used to
  * skip the staircase a grid path makes across open ground. */
 bool hta_nav_straight(const hta_nav *n, uint32_t a, uint32_t b);
