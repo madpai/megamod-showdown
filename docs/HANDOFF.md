@@ -113,6 +113,15 @@ the drive is not mounted. The owner wants this copy current at all times --
 run it by hand after work that is not published. It holds Trial data: it
 is private and never goes anywhere else.
 
+**GitHub.** `origin` is https://github.com/madpai/open-halo-project
+(public); local `fp-animated-guns` tracks its `main`. `gh` is installed in
+`~/.local/bin` and logged in as madpai (Git uses it for HTTPS). Releases
+carry the **guest APK only** -- never the personal one:
+`gh release create vX.Y.Z scratch/serve/halo-trial-guest.apk --target main`,
+then check that `unzip -Z1` of the APK lists no `assets/maps/`. v0.2.0 was
+the first (Team Slayer, CTF, every vehicle). Before any push, check that
+`git rev-list --all --objects | grep -iE '\.(map|wav|ogg)$'` prints nothing.
+
 ### 3. The owner tests on device and sends screenshots
 
 Screenshots uploaded from the phone land in `scratch/serve/uploads/` and are
