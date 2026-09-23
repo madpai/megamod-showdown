@@ -230,18 +230,38 @@ the section below, and update it every time.
 
 ## NEXT ENGINEERING OBJECTIVES
 
-1. Device feedback on the game types build (above) and the vehicles build.
-2. Team modes over LAN: protocol v4 with a small GAME packet (mode, team
-   scores, both flags' state/carrier/position) beside WORLD -- WORLD is at
-   1194 of 1200 bytes with 16 entities -- and each entity's team in a spare
-   bit of `flags` (bit 6). Then enable GAME on CREATE GAME.
-3. Flag waypoints on the HUD; the rest of the game types (Oddball's ball
-   is `weapons\ball\ball`, hills are netgame flags type 8 by usage id,
-   Race checkpoints type 3).
-4. Bots in vehicles (gunner seat with a human driver first, then driving).
-5. Client-side prediction for the local driver on a joining phone.
-6. Powerups spinning, active camouflage rendering, free-for-all player
-   colours, Warthog flipping.
+Agreed with the owner 2026-09-23, in this order. Item 1 decides what gets
+fixed first; after that, 2 is the recommended next slice.
+
+1. **Device feedback** on the game types build and the vehicles build
+   (neither seen on a phone yet). See CURRENT TESTING OBJECTIVE.
+2. **Team modes over LAN.** Protocol v4 with a small GAME packet (mode,
+   team scores, both flags' state / carrier / position) beside WORLD --
+   WORLD is at 1194 of 1200 bytes with 16 entities -- and each entity's
+   team in a spare bit of its `flags` (bit 6). Then offer GAME on CREATE
+   GAME (Java `start()` sends type 0 for anything but solo today) and let
+   `match_take` accept it for hosts.
+3. **Red reticle on target** (owner request). Halo CE turns the crosshair
+   red while it is over an enemy within the held weapon's auto-aim range.
+   The range is already read (`hta_game_weapon.autoaim_range`, Weapon
+   +1000; angle +996); a ray from the eye with `hta_game_ray` against
+   enemies (teammates excluded in team games) gives the state. Check the
+   WeaponHUDInterface crosshair entries for a tagged colour before
+   inventing one; if none, ledger the red. Vehicle guns too.
+4. **CTF polish:** HUD waypoints to both flags; the cloth moving (Halo
+   simulates it with the `flag cloth` point physics); bots that can
+   capture against a defence; decide whether a carrier may ride as a
+   passenger (Halo PC allowed Warthog flag runs -- check before changing).
+5. **Oddball, King of the Hill, Race.** Ball `weapons\ball\ball` (held as
+   a pistol, "stand pistol b melee"); oddball spawns are netgame flags type
+   2; hills type 8 grouped by usage id; race checkpoints type 3. Announcer
+   lines and texts (95, 155-166, 170-177) are in the Trial.
+6. **Bots in vehicles:** gunner behind a human driver first, then driving.
+7. **Client-side prediction** for the local driver on a joining phone.
+8. **Smaller gaps:** powerups spinning, active camouflage rendering,
+   free-for-all player colours, Warthog flipping, the tracker's sweep
+   animation, a hit sound on bodies, the Trial's remaining menu screens
+   (profiles).
 
 ## Where things stand
 
