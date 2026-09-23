@@ -9,6 +9,70 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## Playtest fixes, hulls, LAN team modes, bots on guns (2026-09-23, evening)
+
+The owner played the vehicles build and reported: tracers "almost solid
+yellow lines", vehicle guns hard to aim ("not sure if I'm even aiming at
+enemies"), vehicles never blow up, the tank's shot "has no real effects",
+the Banshee too, and "things need more momentum and physics".
+
+**Solid tracers.** `HTA_CONT_MIN_LIFE` stretches the rifle tracer's 0.01 s
+point life to 0.06 s so it can be drawn -- but the head runs at 300 wu/s,
+so every tracer was an 18 wu (55 m) line and fifteen a second fused. Two
+fixes, one from the tag: WeaponTrigger **+38 `projectiles between
+contrails`** is 3 for the rifle and the chaingun (one round in four draws
+a tracer), 2 for the Ghost and Banshee, 0 for the pistol. And the ribbon
+is cut 1.2 wu behind its head (`HTA_TRACER_TAIL`).
+
+**No explosions -- anywhere, with vehicles on.** `HTA_PART_TYPES` was 24.
+The held weapon's impacts and brass, then seven vehicle muzzle flashes,
+filled it; every pool detonation added after (tank shell, fuel rod,
+rocket, even the frag grenade in the vehicle build) came back
+`HTA_PART_NO_RECIPE` and silently drew nothing. A probe listing each
+`hta_particles_add` result found it in a minute. Now 64 types, 40 recipes,
+1536 quads.
+
+**Weight.** The tags carry it: every `jpt!` has a temporary camera impulse
+(+152..+164) and a shake (+204..+216) with its own radius. The Scorpion
+shell's explosion kicks the view ten degrees within 3.25 wu, and the frag
+shock wave it also carries shakes out to 8 wu for 1.5 s; the cannon's
+trigger fires `shell shock wave` at its own gunner. `engine/shake.c`
+applies them to a copy of the camera at draw.
+
+**Hulls.** Every multiplayer vehicle's `coll` says 0 vitality: Halo CE
+never destroyed them. The owner asked for it, so hull strength is ours
+(ledgered) but what hurts is the tags': each `jpt!` vs thick metal is
+0.25 for every bullet, 1.0 for explosives, 0 for the sniper. A round that
+hits "the world" is matched to a car by its collision box
+(`hta_game_car_at`). At zero the car goes up with the shell explosion's
+effect and damage, riders die credited to the attacker, and it is back
+home 20 s later. Blasts push and tumble vehicles through a new
+`hta_vehicles_push`; `support()` resets fall speed on a grounded car, so a
+push has to unground it first.
+
+**Momentum.** The tag's `deceleration` was being applied whenever the
+stick was released: the Warthog stopped from full speed in 0.8 s and the
+Banshee in 0.46 s. It is now braking only; coasting is a fraction of it.
+The Ghost and Banshee turned their velocity with their hull (speed is
+stored along the hull), so they could never slide; the world velocity is
+now captured before the turn. Suspension sway is visual (it rides in
+`car_quat`, not `rotate`, or the chassis height test breaks).
+
+**Aim.** Weapon +996/+1000 autoaim angle and range were read and never
+used. `hta_game_aim_target` finds the enemy in that cone (body width
+counted, line of sight past rides, a lead for flying rounds); it turns the
+crosshair red and bends a human's rounds, vehicle guns included.
+
+**LAN team modes.** Protocol v4: a GAME packet (62 bytes) beside WORLD with
+mode, scores, flags and hulls; the team in entity flag bit 6. A joiner
+runs `hta_game_mirror_rules`, which announces flag changes in the
+joiner's own words (the host's texts are perspective-bound: "The enemy has
+your flag"). A carrier's SWAP travels as a pickup.
+
+**Bots on guns.** In a team game a bot climbs onto the free gun of a
+vehicle a teammate person is driving, and gets off when they do. Its
+`sees()` ray had been stopped by its own vehicle's hull.
+
 ## GitHub, backups, a README anyone can follow (2026-09-23, later)
 
 **The history had Trial music in it.** `in_p0-6.wav` -- the title theme's

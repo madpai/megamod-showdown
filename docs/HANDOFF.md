@@ -4,21 +4,20 @@
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-23 (Team Slayer, CTF, team colours;
-then GitHub, local backups, README)
+**Date of this revision:** 2026-09-23, evening (playtest fixes: tracers,
+explosions, hulls, red reticle, momentum; LAN team modes; bots on guns;
+flag waypoints)
 **Repo:** `/home/commander/projects/halo-trial-android`
-**Branch / HEAD:** `fp-animated-guns`, tracking `origin/main` on GitHub; all
-work committed and pushed. Last published build: `c50fbe9` (the CTF build
-plus a `ui.map` picker), on the sideload page and archived on the backup
-drive.
+**Branch / HEAD:** `fp-animated-guns`, tracking `origin/main` on GitHub.
+Last published build: see the sideload page (it names the revision) and
+`apks/INDEX` on the backup drive.
 
 **Start of next session, in order:**
-1. `ls -lt scratch/uploads/ | head` -- has the owner sent phone screenshots
-   of the CTF / Team Slayer build? They decide what comes first.
-2. If not, take NEXT ENGINEERING OBJECTIVES item 2 (team modes over LAN)
-   or item 3 (red reticle on target) -- ask the owner which.
+1. `ls -lt scratch/uploads/ | head` -- screenshots from this build? The
+   owner's reports decide what comes first.
+2. Otherwise NEXT ENGINEERING OBJECTIVES, top down.
 3. After any published build: it is already backed up; push to GitHub
-   when the owner asks (they have asked for it to be kept current).
+   (the owner wants it kept current; check for Trial data first).
 
 ---
 
@@ -157,37 +156,36 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Game types build:** latest at `http://100.89.1.14:8731/` (Tailscale).
-> Owner's personal APK with their own maps. SOLO ONLY for the new modes:
-> CREATE GAME still plays free-for-all Slayer, and the network protocol is
-> unchanged (v3), so a LAN game works exactly as before. Host-verified
-> (verify.sh 73/73, test_game 68/68, offscreen renders); not yet seen on a
-> phone. The vehicles build's objective below was never reported on --
-> anything from it is still welcome.
+> **Playtest-fixes build** (and the LAN team-modes build after it) at
+> `http://100.89.1.14:8731/`. Host-verified (verify.sh 75/75); not yet on a
+> phone. Everything below answers the owner's 2026-09-23 playtest notes.
 >
-> 1. **SINGLEPLAYER → GAME: TEAM SLAYER**, 5 bots. You are red with two
->    red bots against three blue. Bots wear their team's colour on the
->    armour plates; the tracker shows allies. Your own side's rounds do not
->    hurt you (friendly fire is off). The HUD line reads "Red leads Blue 3
->    to 1 Frags". Report: can you tell red from blue at a glance, at range,
->    in shadow?
-> 2. **GAME: CAPTURE THE FLAG**, 5 bots, CAPTURES TO WIN 3. Each base has
->    its flag on the stand (pole plus a red or blue cloth). Walk onto
->    blue's flag: it comes up in your hands in first person (the flag's own
->    fp model and animation), the announcer says "Red team has the flag",
->    and you cannot fire, throw or zoom -- only swing (the flag hits for 80).
->    SWAP puts it down. Carry it onto your own stand while yours is home:
->    "You scored a flag!" and "Red team score". Die carrying: it falls where
->    you died; a blue touch returns it; left alone 30 s it goes home.
->    Report: the cloth's look, the flag in first person, whether bots feel
->    like they are playing CTF (attack, defend, chase the carrier).
-> 3. Normal Slayer is unchanged -- a quick check that it still is.
->
-> Not done: team modes over LAN (the snapshot is full; they need their own
-> packet), a waypoint to the flags, the cloth moving in the wind, Oddball,
-> King of the Hill, Race. Bots rarely capture against a defended base: a
-> lone bot runs the map in ~95 s, but three enemies hunting an unarmed
-> carrier across Blood Gulch usually win. Carriers stay on foot (ours).
+> 1. **Tracers:** fire the rifle and the Warthog chaingun. Expect short
+>    yellow streaks on about one round in four -- not solid lines.
+> 2. **Explosions:** Scorpion cannon, Banshee fuel rod, rocket, grenade.
+>    Each should now visibly blow up (fire, smoke, dirt), and a blast
+>    within ~8 wu shakes the camera; firing the cannon rattles your view
+>    and kicks the tank back nose-up. Report: too much shake? too little?
+> 3. **Aim:** the crosshair turns RED on an enemy inside the gun's autoaim
+>    cone (on foot and on vehicle guns), and rounds bend onto him; tank
+>    shells and plasma lead a moving target. Is aiming from a vehicle
+>    usable now?
+> 4. **Hulls:** shoot a Warthog: the driving readout shows HULL %; below a
+>    third it sparks; three rockets (or two tank shells and change) blow it
+>    up, killing whoever is in it -- the kill is yours. It is back home 20 s
+>    later. Blasts shove and can flip vehicles into the air.
+> 5. **Momentum:** let go of the stick at speed -- the Warthog rolls on
+>    (the brake still stops it); the Ghost and Banshee slide wide in hard
+>    turns; bodies squat and roll on their suspension. Report: too floaty?
+> 6. **LAN team games:** CREATE GAME now has GAME (Team Slayer / CTF).
+>    Needs two phones on the new build (protocol v4 -- an old build cannot
+>    join). Check team colours, scores, flags taken/returned/scored with
+>    the announcer on the joining phone, and SWAP dropping a carried flag.
+> 7. **Bots on guns:** SINGLEPLAYER, TEAM SLAYER, with bots; drive a
+>    Warthog near a red bot and stop: it climbs onto the chaingun and
+>    shoots at blue. Get out and it gets off.
+> 8. **CTF waypoints:** a red and a blue chevron with metres over each flag,
+>    pinned to the screen edge when off screen, blinking while away.
 
 ## GAME TYPES (done 2026-09-23) — how they work
 
@@ -259,44 +257,43 @@ the section below, and update it every time.
 - **Network v3**: `VEHICLES` snapshot (32 cars, 36 bytes each), `DROPS`,
   CONTROL gains `HTA_NET_ALT` and `action_count`. Clients interpolate the
   host's cars; no client-side prediction yet.
+- **Network v4** (2026-09-23): `GAME` packet (62 bytes: mode, limit, team
+  scores, winner team, both flags, 32 hulls); entity flag 64 = blue;
+  `HTA_NET_FX_WRECK`. Joiners run `hta_game_mirror_rules`.
+- **Hulls** (2026-09-23): `hta_game_vgun.hull`; `hta_game_car_at` matches
+  a hit point to a car's collision box; `hta_game_hurt_car_jpt` uses the
+  round's `jpt!` vs thick metal; `wreck()` kills riders, blasts with the
+  Scorpion shell explosion, deactivates the car for
+  `HTA_VEHICLE_WRECK_TIME`. `hta_vehicles_push` throws a car (blasts,
+  cannon recoil). Tests: `test_ride` [hulls], [autoaim], [a bot on the
+  gun]; `test_vehicle` momentum checks; `test_shake`.
 - Tests: `test_vehicle` (94), `test_ride` (59: seats, guns, splatter,
   drops, tracker), `test_contrail`, `test_net`. Tools: `htaview --drive N
   --car C`, `htamatch --ride <placement>`, `HTA_LOOK_DROP=1 htamatch`.
 
 ## NEXT ENGINEERING OBJECTIVES
 
-Agreed with the owner 2026-09-23, in this order. Item 1 decides what gets
-fixed first; after that, 2 is the recommended next slice.
+Done 2026-09-23 evening: red reticle + autoaim, team modes over LAN
+(protocol v4), bots as gunners, CTF waypoints, hit sounds on bodies,
+vehicle hulls/wrecks, momentum. Remaining, in order:
 
-1. **Device feedback** on the game types build and the vehicles build
-   (neither seen on a phone yet). See CURRENT TESTING OBJECTIVE.
-2. **Team modes over LAN.** Protocol v4 with a small GAME packet (mode,
-   team scores, both flags' state / carrier / position) beside WORLD --
-   WORLD is at 1194 of 1200 bytes with 16 entities -- and each entity's
-   team in a spare bit of its `flags` (bit 6). Then offer GAME on CREATE
-   GAME (Java `start()` sends type 0 for anything but solo today) and let
-   `match_take` accept it for hosts.
-3. **Red reticle on target** (owner request). Halo CE turns the crosshair
-   red while it is over an enemy within the held weapon's auto-aim range.
-   The range is already read (`hta_game_weapon.autoaim_range`, Weapon
-   +1000; angle +996); a ray from the eye with `hta_game_ray` against
-   enemies (teammates excluded in team games) gives the state. Check the
-   WeaponHUDInterface crosshair entries for a tagged colour before
-   inventing one; if none, ledger the red. Vehicle guns too.
-4. **CTF polish:** HUD waypoints to both flags; the cloth moving (Halo
-   simulates it with the `flag cloth` point physics); bots that can
-   capture against a defence; decide whether a carrier may ride as a
-   passenger (Halo PC allowed Warthog flag runs -- check before changing).
-5. **Oddball, King of the Hill, Race.** Ball `weapons\ball\ball` (held as
-   a pistol, "stand pistol b melee"); oddball spawns are netgame flags type
-   2; hills type 8 grouped by usage id; race checkpoints type 3. Announcer
-   lines and texts (95, 155-166, 170-177) are in the Trial.
-6. **Bots in vehicles:** gunner behind a human driver first, then driving.
-7. **Client-side prediction** for the local driver on a joining phone.
-8. **Smaller gaps:** powerups spinning, active camouflage rendering,
-   free-for-all player colours, Warthog flipping, the tracker's sweep
-   animation, a hit sound on bodies, the Trial's remaining menu screens
-   (profiles).
+1. **Device feedback** on this build (see CURRENT TESTING OBJECTIVE) --
+   especially shake strength, coasting, and whether vehicle aim is now
+   good enough.
+2. **Bots driving:** a bot takes an empty vehicle's wheel (nav grid paths,
+   throttle/steer toward the next waypoint), and a bot gunner rides with a
+   bot driver. The gunner half is done (`brain.c` `ride`).
+3. **CTF polish:** the cloth moving (the `flag cloth` point physics);
+   bots that capture against a defence; carriers as passengers (check
+   Halo PC first).
+4. **Oddball, King of the Hill, Race.** Ball `weapons\ball\ball` (held as
+   a pistol); oddball spawns are netgame flags type 2; hills type 8 by
+   usage id; race checkpoints type 3. Lines and texts (95, 155-166,
+   170-177) are in the Trial. The GAME packet has room for their state.
+5. **Client-side prediction** for the local driver on a joining phone.
+6. **Smaller gaps:** a damaged hull could darken (instances carry no tint
+   yet); powerups spinning; active camouflage rendering; free-for-all
+   player colours; the tracker's sweep; the remaining menu screens.
 
 ## Where things stand
 
@@ -424,7 +421,7 @@ remain a rendering gap; phone confirmation of this fix is pending.
 | No hit sound on the body | `weapons\*\effects\impact cyborg shield` is in the cache and is the right thing to reach for. |
 | The bot's rifle is hardcoded | Should be whatever it is carrying, once it carries anything. |
 | Vehicle collision remains planar | Wall and jeep contacts rebound, deflect and apply yaw torque, but there is no full 3-D rigid body or flip. A truly too-narrow passage can still trap the Warthog; reverse or exit if safe. |
-| Vehicles do not flip | Halo CE vehicles are indestructible, so damage is right; flipping over (and being flipped back) is not simulated. |
+| Vehicles do not roll over | A blast throws and tumbles a vehicle in the air, but on landing it levels out; lying on its roof (and being flipped back) is not simulated. Hulls ARE destructible now (ours; Halo CE's were not). |
 | Motion tracker sweep | The sweep ring art has an opaque edge; it is not drawn, so the tracker does not animate its sweep. |
 | Joiner driving lag | A joining phone sees its own vehicle respond one snapshot late; no prediction. |
 
