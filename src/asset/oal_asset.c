@@ -191,6 +191,10 @@ bool hta_oal_load_memory(const uint8_t *data, size_t size, hta_oal_asset *out, c
     out->spread_scale = json_num(j, ml, "spread_scale");
     out->magazine = (int)json_num(j, ml, "magazine");
     out->reserve = (int)json_num(j, ml, "reserve");
+    out->reload_rounds = (int)json_num(j, ml, "reload_rounds");
+    out->reload_seconds = json_num(j, ml, "reload_seconds");
+    json_str(j, ml, "crosshair", out->crosshair, sizeof(out->crosshair));
+    out->crosshair_size = json_num(j, ml, "crosshair_size");
     {
         const char *v = json_find(j, ml, "view_model_mirrored");
         out->view_mirrored = v && !strncmp(v, "true", 4);

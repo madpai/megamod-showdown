@@ -121,10 +121,13 @@ int main(void)
     CHECK(fabsf(out[0].pos[0] - 10.0f) < 1e-4f && fabsf(out[0].pos[1] - 1.0f) < 1e-4f,
           "the idle clip turns the hand's vertices 90 degrees about Z");
 
-    buf w = package("{\"base\":\"assault rifle\",\"kind\":\"weapon\",\"name\":\"gun\",\"stats\":{\"damage_scale\":1.5,\"magazine\":30}}", 2, true);
+    buf w = package("{\"base\":\"assault rifle\",\"crosshair\":\"ring+dot\",\"crosshair_size\":24,\"kind\":\"weapon\",\"name\":\"gun\","
+                    "\"stats\":{\"damage_scale\":1.5,\"magazine\":30,\"reload_rounds\":1,\"reload_seconds\":0.8}}", 2, true);
     CHECK(hta_oal_load_memory(w.d, w.n, &wp, err, sizeof(err)), "a weapon package loads");
     CHECK(!strcmp(wp.base, "assault rifle") && wp.magazine == 30 && fabsf(wp.damage_scale - 1.5f) < 1e-6f,
           "weapon numbers read from the manifest");
+    CHECK(wp.reload_rounds == 1 && fabsf(wp.reload_seconds - 0.8f) < 1e-6f && !strcmp(wp.crosshair, "ring+dot") &&
+          wp.crosshair_size == 24.0f, "a round-at-a-time reload and its own crosshair read too");
     float hold[12];
     CHECK(hta_imported_hold_matrix(m, (const float (*)[12])world, root, &wp.models[0], hold),
           "a weapon sharing the hand's bone name is bone-merged");

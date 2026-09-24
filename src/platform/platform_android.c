@@ -260,6 +260,11 @@ typedef struct {
     const char *ivm_role;       /* the clip wanted: "idle", "fire", "reload", "draw" */
     int32_t  ivm_clip;
     float    ivm_time;
+    float    ivm_rate;          /* clip seconds per real second (a reload fitted to its time) */
+    /* Sway: the view lags the look a little and bobs with the walk. */
+    float    ivm_lag[2];        /* yaw, pitch, radians */
+    float    ivm_last[2];       /* last frame's camera yaw, pitch */
+    float    ivm_bob;           /* walk phase */
     hta_vertex *ivm_posed;
     uint32_t ivm_cap;
     float    ivm_world[HTA_OAL_MAX_BONES][12];
@@ -969,7 +974,15 @@ static void vm_play(hta_android *s, hta_vm_state st)
     if (s->vm.loaded) hta_viewmodel_play(&s->vm, st);
     s->ivm_role = st == HTA_VM_FIRE ? "fire" : st == HTA_VM_RELOAD ? "reload" : "idle";
     s->ivm_clip = -2;
+    s->ivm_rate = 1.0f;
     const hta_game_weapon *w = held_imported(s);
+    /* A reload clip is played to last exactly as long as the reload does:
+     * one round's worth for a round-at-a-time weapon, replayed per round. */
+    if (w && st == HTA_VM_RELOAD && s->ammo.reload_time > 0.05f) {
+        const hta_oal_model *m = &w->asset->models[1];
+        float len = hta_oal_clip_length(m, hta_oal_clip_find(m, "reload"));
+        if (len > 0.05f) s->ivm_rate = len / s->ammo.reload_time;
+    }
     if (w && st == HTA_VM_RELOAD) {
         int k = imported_index(s, w->asset);
         if (k >= 0 && s->imp_clip[k][1] != HTA_AUDIO_NO_CLIP) hta_audio_play(&s->audio, s->imp_clip[k][1], 0.9f);
@@ -998,6 +1011,7 @@ static void ivm_update(hta_android *s, float dt)
         s->ivm_weapon = roster;
         s->ivm_role = "draw";
         s->ivm_clip = -2;
+        s->ivm_rate = 1.0f;
     }
     if (!s->ivm_posed) return;
     if (s->ivm_clip == -2) {
@@ -1005,17 +1019,50 @@ static void ivm_update(hta_android *s, float dt)
         if (s->ivm_clip < 0) s->ivm_clip = hta_oal_clip_find(m, "idle");
         s->ivm_time = 0.0f;
     } else {
-        s->ivm_time += dt;
+        s->ivm_time += dt * (s->ivm_rate > 0.0f ? s->ivm_rate : 1.0f);
     }
     if (s->ivm_clip >= 0 && !m->clips[s->ivm_clip].loop &&
         s->ivm_time > hta_oal_clip_length(m, s->ivm_clip)) {
         s->ivm_role = "idle";
         s->ivm_clip = hta_oal_clip_find(m, "idle");
         s->ivm_time = 0.0f;
+        s->ivm_rate = 1.0f;
     }
-    static const float ident[12] = { 1,0,0,0, 0,1,0,0, 0,0,1,0 };
+    /* Sway, ours (Source's own is cl_bob and a lagged view angle; these
+     * numbers are by eye): the weapon trails a turn by up to 3.5 degrees
+     * and catches up in about a sixth of a second, and bobs with the walk. */
+    float dyaw = s->cam.yaw - s->ivm_last[0], dpitch = s->cam.pitch - s->ivm_last[1];
+    while (dyaw > 3.14159265f) dyaw -= 6.2831853f;
+    while (dyaw < -3.14159265f) dyaw += 6.2831853f;
+    s->ivm_last[0] = s->cam.yaw; s->ivm_last[1] = s->cam.pitch;
+    if (fabsf(dyaw) > 0.5f || fabsf(dpitch) > 0.5f) dyaw = dpitch = 0.0f;   /* a respawn, not a turn */
+    const float LAG_MAX = 0.06f;
+    float keep = expf(-dt * 12.0f);
+    s->ivm_lag[0] = (s->ivm_lag[0] - dyaw * 0.35f) * keep;
+    /* A positive pitch lag turns the barrel down (rotation about +Y):
+     * looking up, the weapon trails below. */
+    s->ivm_lag[1] = (s->ivm_lag[1] + dpitch * 0.35f) * keep;
+    for (int k = 0; k < 2; k++) {
+        if (s->ivm_lag[k] > LAG_MAX) s->ivm_lag[k] = LAG_MAX;
+        if (s->ivm_lag[k] < -LAG_MAX) s->ivm_lag[k] = -LAG_MAX;
+    }
+    float run = s->player.phys.run_forward > 0.1f ? s->player.phys.run_forward : 2.25f;
+    float speed = hypotf(s->player.velocity[0], s->player.velocity[1]) / run;
+    if (speed > 1.0f) speed = 1.0f;
+    if (!s->player.on_ground) speed *= 0.2f;
+    s->ivm_bob += dt * 8.5f * (0.3f + 0.7f * speed);
+    if (s->ivm_bob > 62.831853f) s->ivm_bob -= 62.831853f;
+    float side = sinf(s->ivm_bob) * 0.006f * speed;
+    float up = -fabsf(cosf(s->ivm_bob)) * 0.005f * speed + sinf(s->ivm_bob * 0.5f) * 0.0006f;
+    /* View space: +X forward, +Y left, +Z up. Yaw about Z, then pitch
+     * about Y, then the bob. */
+    float cy = cosf(s->ivm_lag[0]), sy = sinf(s->ivm_lag[0]);
+    float cp = cosf(s->ivm_lag[1]), sp = sinf(s->ivm_lag[1]);
+    const float root[12] = { cy*cp, -sy, cy*sp, 0.0f,
+                             sy*cp,  cy, sy*sp, side,
+                             -sp,   0.0f, cp,   up };
     hta_oal_pose(m, s->ivm_clip, s->ivm_time, s->ivm_world);
-    hta_oal_skin(m, (const float (*)[12])s->ivm_world, ident, s->ivm_posed);
+    hta_oal_skin(m, (const float (*)[12])s->ivm_world, root, s->ivm_posed);
 }
 
 /* The class to spawn with, when the match has custom classes: the start
@@ -1146,6 +1193,18 @@ static void equip_imported(hta_android *s)
     hta_ammo_init(&s->ammo, &s->weap);
     s->ivm_role = "draw";
     s->ivm_clip = -2;
+    /* Its own crosshair, when its package names one. The HUD was just
+     * rebuilt for the base weapon; swap the reticle and upload again. */
+    const hta_oal_asset *a = w->asset;
+    unsigned shape = (strstr(a->crosshair, "arms") ? HTA_HUD_CROSS_ARMS : 0u) |
+                     (strstr(a->crosshair, "dot") ? HTA_HUD_CROSS_DOT : 0u) |
+                     (strstr(a->crosshair, "ring") ? HTA_HUD_CROSS_RING : 0u);
+    if (shape && hta_hud_custom_cross(&s->hud, shape, a->crosshair_size > 4.0f ? a->crosshair_size : 24.0f) &&
+        s->gfx) {
+        char err[HTA_ERRLEN];
+        if (s->gpu_hud) { hta_gfx_mesh_free(s->gfx, s->gpu_hud); s->gpu_hud = NULL; }
+        s->gpu_hud = hta_gfx_mesh_upload_dynamic(s->gfx, &s->hud.mesh, err, sizeof(err));
+    }
     hta_log("[imported] holding %s: %.1f rounds/s, %d-round magazine, damage x%.2f",
             w->display, w->def.rof, w->def.rounds_loaded_max, w->damage_scale);
 }
@@ -5467,7 +5526,7 @@ void android_main(struct android_app *app)
         /* A shell-at-a-time reload chains on its own, and every shell after
          * the first was being loaded silently with no animation -- which is
          * most of a shotgun reload from empty. Each one replays the clip. */
-        if (state.ammo.reload_began && state.vm.loaded)
+        if (state.ammo.reload_began && (state.vm.loaded || held_imported(&state)))
             vm_play(&state, HTA_VM_RELOAD);
         if (state.dry_cooldown > 0.0f) state.dry_cooldown -= dt;
 
@@ -6332,6 +6391,8 @@ void android_main(struct android_app *app)
             if (state.gpu_hud) {
                 uint32_t ew = 0, eh = 0;
                 hta_gfx_extent(state.gfx, &ew, &eh);
+                /* An imported weapon's own crosshair opens with the spread. */
+                if (held_imported(&state)) hta_hud_set_cross_bloom(&state.hud, state.gun.error);
                 hta_hud_layout(&state.hud, ew, eh);
                 huddraw.mesh = state.gpu_hud;
                 huddraw.vertices = state.hud.mesh.vertices;

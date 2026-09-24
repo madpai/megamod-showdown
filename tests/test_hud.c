@@ -363,6 +363,25 @@ int main(int argc, char **argv)
               "no cache is no sound");
     }
 
+    {
+        /* An imported weapon's own crosshair replaces the tag reticle. */
+        float ar_px = h.cross_px;
+        uint32_t tex_before = h.mesh.texture_count;
+        CHECK(!hta_hud_custom_cross(&h, 0u, 24.0f), "no shape, no crosshair");
+        CHECK(hta_hud_custom_cross(&h, HTA_HUD_CROSS_ARMS | HTA_HUD_CROSS_DOT, 24.0f) &&
+              h.cross_custom && h.cross_px == 24.0f && h.cross_px < ar_px &&
+              h.mesh.texture_count == tex_before + 1u &&
+              h.mesh.submeshes[h.elem[h.cross_elem].submesh].albedo_tex == tex_before,
+              "a custom crosshair is its own smaller texture in the reticle slot");
+        const hta_bsp_texture *t = &h.mesh.textures[tex_before];
+        const uint8_t *mid = t->rgba + ((size_t)(t->height / 2) * t->width + t->width / 2) * 4u;
+        const uint8_t *gap = t->rgba + ((size_t)(t->height / 2) * t->width + t->width / 2 + 6) * 4u;
+        const uint8_t *arm = t->rgba + ((size_t)(t->height / 2) * t->width + t->width - 8) * 4u;
+        CHECK(mid[3] == 255 && mid[0] == 255 && gap[3] == 0 && arm[3] == 255,
+              "a dot in the middle, a gap, then the arm");
+        hta_hud_set_cross_bloom(&h, 1.0f);
+        CHECK(h.elem[h.cross_elem].extra_scale > 1.5f, "and it opens as the spread blooms");
+    }
     hta_hud_free(&h);
     CHECK(h.mesh.vertices == NULL, "free clears the mesh");
 

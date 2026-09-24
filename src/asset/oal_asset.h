@@ -78,6 +78,15 @@ typedef struct {
     /* The view model is authored left-handed and drawn mirrored (CS:S's
      * cl_righthand): the loader mirrors it across its own Y. */
     bool     view_mirrored;
+    /* A reload that puts back `reload_rounds` at a time (TF2's rocket
+     * launcher and scattergun load one) over `reload_seconds` each; 0
+     * keeps the base weapon's. */
+    int      reload_rounds;
+    float    reload_seconds;
+    /* Its own crosshair: "arms", "dot", "ring", joined with '+', and its
+     * size on the 640x480 HUD canvas. Empty keeps the base weapon's. */
+    char     crosshair[32];
+    float    crosshair_size;
     hta_oal_model models[HTA_OAL_MAX_MODELS];   /* weapon: [0] world, [1] view */
     uint32_t model_count;
     hta_oal_sound sounds[HTA_OAL_MAX_SOUNDS];

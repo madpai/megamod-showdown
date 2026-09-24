@@ -181,7 +181,20 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **CTF_2FORT and three more weapons (this build, 2026-09-24):**
+> **Weapon polish (this build, 2026-09-24):**
+> 1. Imported weapons draw their OWN crosshair (small, with a centre dot)
+>    instead of the base Halo weapon's reticle: AK and .357 CS-style arms
+>    + dot, TF2 weapons a ring + dot (scattergun wider). It opens up while
+>    you fire (spread bloom) and still turns red on target.
+> 2. Weapon sway on imported view models: trails your turns (up to ~3.5
+>    degrees) and bobs while walking. Numbers are ours -- say if it is too
+>    much or too little.
+> 3. TF2 Rocket Launcher and Scattergun reload one rocket/shell at a time
+>    (0.8 s / 0.5 s each, TF2's own), the clip replaying per round; firing
+>    interrupts once one is in. Every imported reload clip now plays at
+>    the reload's real length (AK 2.5 s, .357 3.7 s).
+>
+> **CTF_2FORT and three more weapons (previous build, 2026-09-24):**
 > 1. MAP row: **CTF_2FORT** (TF2). Try CAPTURE THE FLAG and TEAM SLAYER.
 >    The flags stand in the intelligence rooms (from the map's
 >    item_teamflag). All sliding doors are imported OPEN (nothing opens a

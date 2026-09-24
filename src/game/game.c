@@ -2863,6 +2863,8 @@ int32_t hta_game_add_imported_weapon(hta_game *g, const hta_oal_asset *a)
     if (a->reserve > 0) { w->def.rounds_reserve_max = a->reserve; spare = a->reserve; }
     if (spare > w->def.rounds_reserve_max) spare = w->def.rounds_reserve_max;
     w->def.rounds_initial = w->def.rounds_loaded_max + spare;
+    if (a->reload_rounds > 0) w->def.rounds_reloaded = a->reload_rounds;
+    if (a->reload_seconds > 0.0f) w->def.reload_time = a->reload_seconds;
     if (a->spread_scale > 0.0f) {
         w->def.error_angle[0] *= a->spread_scale;
         w->def.error_angle[1] *= a->spread_scale;

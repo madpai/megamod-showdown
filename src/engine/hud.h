@@ -87,6 +87,7 @@ typedef struct {
     float    cross_tint[4];     /* the tag's own colour, to go back to */
     bool     cross_on_target;
     float    cross_px;          /* native size on the 640x480 canvas */
+    bool     cross_custom;      /* hta_hud_custom_cross replaced the tag's */
 
     /* unit HUD: shield and health, from `unhi`. */
     bool     have_unit;
@@ -174,6 +175,17 @@ void hta_hud_set_zoom(hta_hud *h, int level);
 #define HTA_HUD_TARGET_G 0.12f
 #define HTA_HUD_TARGET_B 0.08f
 void hta_hud_set_on_target(hta_hud *h, bool on);
+
+/* An imported weapon's own crosshair in place of its base weapon's tag
+ * reticle, drawn here rather than read: Source games draw theirs in code
+ * too. Shapes, combinable: arms with a gap (CS:S), a centre dot, a ring
+ * (TF2's circle). `size_px` is the whole reticle on the 640x480 canvas.
+ * Ours. False when the HUD has no reticle slot to put it in. */
+enum { HTA_HUD_CROSS_ARMS = 1, HTA_HUD_CROSS_DOT = 2, HTA_HUD_CROSS_RING = 4 };
+bool hta_hud_custom_cross(hta_hud *h, unsigned shape, float size_px);
+/* Opens the crosshair out while the gun's spread blooms: 0 settled, 1
+ * fully bloomed (hta_gun's `error`). Imported crosshairs only. */
+void hta_hud_set_cross_bloom(hta_hud *h, float bloom);
 
 /* Black over the whole screen at `alpha`, 0 for none. Halo fades out as you
  * die and back in as you respawn. */

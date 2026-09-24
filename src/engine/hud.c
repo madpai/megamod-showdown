@@ -1084,3 +1084,62 @@ void hta_hud_layout(hta_hud *h, uint32_t screen_w, uint32_t screen_h)
         }
     }
 }
+
+/* ---------------------------------------------------------- own reticle */
+
+#define CROSS_TEX 64
+#define CROSS_BLOOM 0.6f   /* a fully bloomed crosshair is this much wider. Ours. */
+
+bool hta_hud_custom_cross(hta_hud *h, unsigned shape, float size_px)
+{
+    if (!h || !h->have_cross || h->cross_elem >= h->elem_count || !shape || size_px < 4.0f) return false;
+    uint8_t *px = (uint8_t *)calloc(CROSS_TEX * CROSS_TEX, 4);
+    if (!px) return false;
+    hta_bsp_texture *nt = (hta_bsp_texture *)realloc(h->mesh.textures,
+        (size_t)(h->mesh.texture_count + 1u) * sizeof(hta_bsp_texture));
+    if (!nt) { free(px); return false; }
+    h->mesh.textures = nt;
+    /* White lines with a dark rim, so they read on sand and on snow; the
+     * element's tint colours the white and leaves the rim dark. Distances
+     * in texels from the centre. */
+    const float c = (CROSS_TEX - 1) * 0.5f, half_w = 1.6f, rim = 1.4f;
+    const float gap = CROSS_TEX * 0.16f, arm_end = CROSS_TEX * 0.5f - 1.0f;
+    const float dot_r = 2.2f, ring_r = CROSS_TEX * 0.5f - 3.5f;
+    for (int y = 0; y < CROSS_TEX; y++)
+    for (int x = 0; x < CROSS_TEX; x++) {
+        float dx = (float)x - c, dy = (float)y - c, r = sqrtf(dx*dx + dy*dy);
+        float d = 1e9f;                     /* distance to the nearest stroke */
+        if (shape & HTA_HUD_CROSS_ARMS) {
+            float ax = fabsf(dx), ay = fabsf(dy);
+            if (ax >= gap && ax <= arm_end) d = fminf(d, ay - half_w);
+            if (ay >= gap && ay <= arm_end) d = fminf(d, ax - half_w);
+        }
+        if (shape & HTA_HUD_CROSS_DOT) d = fminf(d, r - dot_r);
+        if (shape & HTA_HUD_CROSS_RING) d = fminf(d, fabsf(r - ring_r) - half_w);
+        uint8_t *p = px + ((size_t)y * CROSS_TEX + (size_t)x) * 4u;
+        if (d <= 0.0f) { p[0] = p[1] = p[2] = 255; p[3] = 255; }
+        else if (d <= rim) { p[0] = p[1] = p[2] = 0; p[3] = (uint8_t)(150.0f * (1.0f - d / rim)); }
+    }
+    hta_bsp_texture *t = &h->mesh.textures[h->mesh.texture_count];
+    memset(t, 0, sizeof(*t));
+    t->width = t->height = CROSS_TEX;
+    t->rgba = px;
+    t->tint = 0xFFFFFFu;
+    hta_hud_elem *e = &h->elem[h->cross_elem];
+    h->mesh.submeshes[e->submesh].albedo_tex = h->mesh.texture_count++;
+    e->uv[0] = e->uv[1] = 0.0f;
+    e->uv[2] = e->uv[3] = 1.0f;
+    e->w_px = e->h_px = size_px;
+    e->offset[0] = e->offset[1] = 0.0f;
+    h->cross_px = size_px;
+    h->cross_custom = true;
+    return true;
+}
+
+void hta_hud_set_cross_bloom(hta_hud *h, float bloom)
+{
+    if (!h || !h->cross_custom || h->cross_elem >= h->elem_count) return;
+    if (bloom < 0.0f) bloom = 0.0f;
+    if (bloom > 1.0f) bloom = 1.0f;
+    h->elem[h->cross_elem].extra_scale = 1.0f + CROSS_BLOOM * bloom;
+}
