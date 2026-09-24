@@ -38,6 +38,9 @@ import java.net.InetAddress;
  * bars back transiently, then they hide again.
  */
 public class GameActivity extends NativeActivity {
+    /* Where the cover ends in res/drawable-nodpi/megamod_menu.jpg (2376 wide,
+     * the art 118..1313). */
+    private static final float MENU_ART_RIGHT = 0.553f;
     static {
         System.loadLibrary("hta_native");
     }
@@ -48,6 +51,23 @@ public class GameActivity extends NativeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // MEGAMOD SHOWDOWN's title art, handed to the native menu before its
+        // thread starts (NativeActivity starts it in super.onCreate).
+        try {
+            System.loadLibrary("hta_native");
+            android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+            o.inScaled = false;
+            android.graphics.Bitmap art = android.graphics.BitmapFactory.decodeResource(getResources(),
+                    R.drawable.megamod_menu, o);
+            if (art != null) {
+                int[] px = new int[art.getWidth() * art.getHeight()];
+                art.getPixels(px, 0, art.getWidth(), 0, 0, art.getWidth(), art.getHeight());
+                nativeSetMenuArt(px, art.getWidth(), art.getHeight(), MENU_ART_RIGHT);
+                art.recycle();
+            }
+        } catch (Throwable t) {
+            android.util.Log.w("hta", "menu art: " + t);
+        }
         super.onCreate(savedInstanceState);
         exploreExternal = getIntent().getIntExtra("explore_external", 0) != 0;
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -174,6 +194,11 @@ public class GameActivity extends NativeActivity {
     static native int nativeDamageFlash();
     /* Damage you dealt, floating up: x, y (0..1 of the view), amount, opacity. */
     static native float[] nativeDamageNumbers();
+    /* The main menu's title art (ARGB) and where the art ends (fraction of
+     * its width); the menu words sit in the band to its right. */
+    static native void nativeSetMenuArt(int[] argb, int w, int h, float artRight);
+    /* The first menu slot over title art: x0 y0 x1 y1 (0..1), selected; null without art. */
+    static native float[] nativeMenuSoloRect();
     /* The killcam's still frame: "name<TAB>weapon<TAB>health%", "" when none. */
     static native String nativeKillcam();
     static native int nativeNetStatus();
@@ -237,6 +262,7 @@ public class GameActivity extends NativeActivity {
         private final Paint row = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint title = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint soloWord = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Bitmap[] art = new Bitmap[16];
         private final boolean[] artRead = new boolean[16];
         private String[] words;
@@ -287,6 +313,10 @@ public class GameActivity extends NativeActivity {
             title.setTextAlign(Paint.Align.CENTER);
             text.setColor(0xFFFFFFFF);
             text.setTextAlign(Paint.Align.CENTER);
+            soloWord.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+            soloWord.setTextAlign(Paint.Align.CENTER);
+            soloWord.setTextScaleX(1.25f);
+            soloWord.setLetterSpacing(0.08f);
         }
 
         /* Built on first use, not in the constructor: this object is a field
@@ -557,6 +587,19 @@ public class GameActivity extends NativeActivity {
         void drawMainSolo(Canvas c, int w, int h) {
             // The Trial calls this slot CAMPAIGN. Until campaign maps work,
             // its action is a configurable solo Slayer match.
+            float[] r = nativeMenuSoloRect();
+            if (r != null && r.length >= 5) {
+                // Over MEGAMOD's title art: the word in the menu's own
+                // style -- wide caps, cream, fire-orange when selected.
+                float cx = (r[0] + r[2]) * 0.5f * w, cy = (r[1] + r[3]) * 0.5f * h;
+                soloWord.setTextSize((r[3] - r[1]) * h * 0.62f);
+                boolean sel = r[4] > 0.5f;
+                soloWord.setColor(sel ? 0xFFFF851A : 0xE6FFEBCC);
+                soloWord.setShadowLayer(sel ? soloWord.getTextSize() * 0.35f : 0f, 0, 0, 0xCCFF6A00);
+                Paint.FontMetrics fm = soloWord.getFontMetrics();
+                c.drawText("SINGLEPLAYER", cx, cy - (fm.ascent + fm.descent) * 0.5f, soloWord);
+                return;
+            }
             row.setColor(0xE0193457);
             c.drawRoundRect(w * 0.35f, h * 0.515f, w * 0.65f, h * 0.583f,
                     8, 8, row);

@@ -58,6 +58,11 @@ typedef struct {
     float        item_rect[HTA_MENU_ITEMS][4];  /* x0 y0 x1 y1, pixels */
     int32_t      backdrop_quad;
     bool         have_scene;
+    /* A game's own title art in place of the ring and the HALO logo
+     * (hta_menu_set_art before loading): it fills the screen without
+     * stretching, and the words move to the band at its right. */
+    bool         art;
+    uint32_t     art_w, art_h;
 
     int          selected;      /* which glows */
     bool         shell;         /* a submenu is up: logo and words hide */
@@ -74,6 +79,11 @@ typedef struct {
 bool hta_menu_load(hta_menu *m, const hta_cache *ui, const hta_resource_map *bitmaps,
                    char *err, size_t errlen);
 void hta_menu_free(hta_menu *m);
+
+/* Title art for every menu loaded after this: RGBA8, copied. `art_right`
+ * is where the art proper ends, as a fraction of its width; the words sit
+ * centred in the band beyond it. NULL puts the ring back. */
+void hta_menu_set_art(const uint8_t *rgba, uint32_t w, uint32_t h, float art_right);
 
 /* Position the overlay for a screen of this size. Cheap; call every frame. */
 void hta_menu_layout(hta_menu *m, uint32_t w, uint32_t h);

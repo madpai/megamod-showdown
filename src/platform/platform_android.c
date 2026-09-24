@@ -3431,6 +3431,21 @@ static void menu_activate(hta_android *s, int item)
 
 /* From the Java overlay: 0 down, 1 move, 2 up; x and y are 0..1 of the
  * screen. The HUD owns the touches, so the menu hears them through here. */
+/* Where the first menu slot is, for the Java side to label it SINGLEPLAYER
+ * over title art: x0 y0 x1 y1 (0..1 of the screen), selected, 0 none. */
+static float g_solo_rect[5];
+static _Atomic int g_solo_rect_ok;
+
+JNIEXPORT jfloatArray JNICALL
+Java_net_hta_halotrial_GameActivity_nativeMenuSoloRect(JNIEnv *env, jclass cls)
+{
+    (void)cls;
+    if (!atomic_load(&g_solo_rect_ok)) return NULL;
+    jfloatArray out = (*env)->NewFloatArray(env, 5);
+    if (out) (*env)->SetFloatArrayRegion(env, out, 0, 5, g_solo_rect);
+    return out;
+}
+
 static _Atomic int g_menu_touch_action = -1;
 static _Atomic int g_menu_touch_x, g_menu_touch_y;   /* x 10000ths */
 
@@ -3703,6 +3718,32 @@ static void match_take(hta_android *s)
     s->menu_go = true;
 }
 
+/* MEGAMOD SHOWDOWN's title art for the main menu, from the Java side
+ * (decoded from its resources before the native thread starts): ARGB
+ * pixels, and where the art ends and the menu's band begins. */
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeSetMenuArt(JNIEnv *env, jclass cls, jintArray argb,
+                                                     jint w, jint h, jfloat art_right)
+{
+    (void)cls;
+    if (!argb || w <= 0 || h <= 0 || (*env)->GetArrayLength(env, argb) < w * h) {
+        hta_menu_set_art(NULL, 0, 0, 0.0f);
+        return;
+    }
+    jint *px = (*env)->GetIntArrayElements(env, argb, NULL);
+    uint8_t *rgba = px ? (uint8_t *)malloc((size_t)w * (size_t)h * 4u) : NULL;
+    if (rgba) {
+        for (size_t i = 0; i < (size_t)w * (size_t)h; i++) {
+            uint32_t v = (uint32_t)px[i];
+            rgba[i * 4 + 0] = (uint8_t)(v >> 16); rgba[i * 4 + 1] = (uint8_t)(v >> 8);
+            rgba[i * 4 + 2] = (uint8_t)v;         rgba[i * 4 + 3] = (uint8_t)(v >> 24);
+        }
+        hta_menu_set_art(rgba, (uint32_t)w, (uint32_t)h, art_right);
+        free(rgba);
+    }
+    if (px) (*env)->ReleaseIntArrayElements(env, argb, px, JNI_ABORT);
+}
+
 /* One menu frame: the camera drifts, the words answer the finger, the
  * music plays. */
 static void menu_frame(hta_android *s, float dt)
@@ -3753,12 +3794,23 @@ static void menu_frame(hta_android *s, float dt)
     uint32_t w = 0, h = 0;
     hta_gfx_extent(s->gfx, &w, &h);
     hta_menu_layout(&s->menu, w, h);
+    if (s->menu.art && w && h && s->menu.item_rect[HTA_MENU_CAMPAIGN][2] > 0.0f) {
+        const float *r = s->menu.item_rect[HTA_MENU_CAMPAIGN];
+        g_solo_rect[0] = r[0] / (float)w; g_solo_rect[1] = r[1] / (float)h;
+        g_solo_rect[2] = r[2] / (float)w; g_solo_rect[3] = r[3] / (float)h;
+        g_solo_rect[4] = s->menu.selected == HTA_MENU_CAMPAIGN ? 1.0f : 0.0f;
+        atomic_store(&g_solo_rect_ok, 1);
+    } else {
+        atomic_store(&g_solo_rect_ok, 0);
+    }
     hta_camera cam;
     hta_menu_camera(&s->menu, &cam, h ? (float)w / (float)h : 1.777f);
     hta_scene sc = s->menu.light;
     hta_gfx_overlay ov = { s->gpu_menu_ui, s->menu.overlay.vertices, s->menu.overlay.vertex_count,
                            s->menu.overlay.submeshes, s->menu.overlay.submesh_count };
-    if (!hta_gfx_draw(s->gfx, &cam, &sc, s->gpu_menu_scene, s->gpu_menu_sky, NULL, NULL, 0,
+    /* Over title art the ring is not drawn: the art is the whole scene. */
+    if (!hta_gfx_draw(s->gfx, &cam, &sc, s->menu.art ? NULL : s->gpu_menu_scene,
+                      s->menu.art ? NULL : s->gpu_menu_sky, NULL, NULL, 0,
                       NULL, s->gpu_menu_ui ? &ov : NULL)) {
         stop_gfx(s);
         if (s->app->window) start_gfx(s);

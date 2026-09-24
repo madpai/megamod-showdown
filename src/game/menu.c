@@ -43,6 +43,24 @@ static const char *const ITEM_BITMAP[HTA_MENU_ITEMS] = {
 static const float ITEM_TINT[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 static const float ITEM_OFF[4]  = { 1.0f, 1.0f, 1.0f, 1.0f };
 
+/* MEGAMOD SHOWDOWN: the title art, and its words in the art's colours --
+ * a warm cream, glowing fire-orange when selected. Ours. */
+static struct { uint8_t *rgba; uint32_t w, h; float right; } g_art;
+static const float ART_ITEM_OFF[4] = { 1.00f, 0.92f, 0.80f, 0.90f };
+static const float ART_ITEM_ON[4]  = { 1.00f, 0.52f, 0.10f, 1.00f };
+
+void hta_menu_set_art(const uint8_t *rgba, uint32_t w, uint32_t h, float art_right)
+{
+    free(g_art.rgba);
+    memset(&g_art, 0, sizeof(g_art));
+    if (!rgba || !w || !h || (uint64_t)w * h > 16u * 1024u * 1024u) return;
+    g_art.rgba = (uint8_t *)malloc((size_t)w * h * 4u);
+    if (!g_art.rgba) return;
+    memcpy(g_art.rgba, rgba, (size_t)w * h * 4u);
+    g_art.w = w; g_art.h = h;
+    g_art.right = art_right > 0.1f && art_right < 0.95f ? art_right : 0.55f;
+}
+
 static uint32_t find_tag(const hta_cache *c, uint32_t cls, const char *path)
 {
     for (uint32_t i = 0; i < c->tag_count; i++) {
@@ -183,7 +201,20 @@ bool hta_menu_load(hta_menu *m, const hta_cache *c, const hta_resource_map *bm,
     if (!m->overlay.textures) { if (err) snprintf(err, errlen, "out of memory"); return false; }
     hta_bitmap b;
     const float white[4] = { 1, 1, 1, 1 };
-    if (!m->have_scene && decode(c, bm, "ui\\shell\\bitmaps\\background", 0, &b)) {
+    if (g_art.rgba) {
+        /* The game's own title art, first so everything draws over it. */
+        hta_bitmap a;
+        memset(&a, 0, sizeof(a));
+        a.width = g_art.w; a.height = g_art.h;
+        a.rgba = (uint8_t *)malloc((size_t)g_art.w * g_art.h * 4u);
+        if (a.rgba) {
+            memcpy(a.rgba, g_art.rgba, (size_t)g_art.w * g_art.h * 4u);
+            m->backdrop_quad = add_quad(&m->overlay, intern(&m->overlay, &a), white);
+            m->art = m->backdrop_quad >= 0;
+            m->art_w = g_art.w; m->art_h = g_art.h;
+        }
+    }
+    if (!m->art && !m->have_scene && decode(c, bm, "ui\\shell\\bitmaps\\background", 0, &b)) {
         /* No ring to fly past: the shell's own still of it. Its alpha is
          * not meant for blending, so make it opaque. */
         for (size_t p = 0; p < (size_t)b.width * b.height; p++) b.rgba[p * 4 + 3] = 255;
@@ -200,7 +231,11 @@ bool hta_menu_load(hta_menu *m, const hta_cache *c, const hta_resource_map *bm,
         for (int f = 0; f < 2; f++) {
             if (!decode(c, bm, ITEM_BITMAP[i], (uint32_t)f, &b)) continue;
             m->item_quad[i][f] = add_quad(&m->overlay, intern(&m->overlay, &b),
-                                          f ? ITEM_TINT : ITEM_OFF);
+                                          m->art ? (f ? ART_ITEM_ON : ART_ITEM_OFF) : f ? ITEM_TINT : ITEM_OFF);
+            /* Over the title art the words take its colours: drawn as
+             * shapes in the tint, not in Halo's blue. */
+            if (m->art && m->item_quad[i][f] >= 0)
+                m->overlay.submeshes[(uint32_t)m->item_quad[i][f] / 4u].mask = 1.0f;
         }
     }
     /* What works yet. Profiles is there, as in the Trial, but dimmed
@@ -245,7 +280,22 @@ void hta_menu_layout(hta_menu *m, uint32_t w, uint32_t h)
     float fh = (float)h, cw = fh * 16.0f / 9.0f;
     if (cw > (float)w) cw = (float)w;
     float cx = (float)w * 0.5f;
-    if (m->backdrop_quad >= 0) place(&m->overlay, m->backdrop_quad, 0, 0, (float)w, fh, w, h);
+    /* Title art covers the screen, cropped rather than stretched. */
+    float band_l = 0.0f, band_r = (float)w;
+    if (m->art && m->backdrop_quad >= 0) {
+        float sw = (float)w / (float)m->art_w, sh = fh / (float)m->art_h;
+        float sc = sw > sh ? sw : sh;
+        float u = ((float)m->art_w - (float)w / sc) * 0.5f / (float)m->art_w;
+        float v = ((float)m->art_h - fh / sc) * 0.5f / (float)m->art_h;
+        hta_vertex *q = &m->overlay.vertices[m->backdrop_quad];
+        q[0].uv[0] = u;        q[0].uv[1] = v;
+        q[1].uv[0] = 1.0f - u; q[1].uv[1] = v;
+        q[2].uv[0] = 1.0f - u; q[2].uv[1] = 1.0f - v;
+        q[3].uv[0] = u;        q[3].uv[1] = 1.0f - v;
+        place(&m->overlay, m->backdrop_quad, 0, 0, (float)w, fh, w, h);
+        band_l = (float)w * 0.5f + (g_art.right - 0.5f) * (float)m->art_w * sc;
+        if (band_l > (float)w * 0.8f) band_l = (float)w * 0.8f;
+    } else if (m->backdrop_quad >= 0) place(&m->overlay, m->backdrop_quad, 0, 0, (float)w, fh, w, h);
     if (m->shell) {
         /* A submenu owns the screen; only the ring stays. */
         hide(&m->overlay, (int32_t)m->logo_quad);
@@ -258,18 +308,35 @@ void hta_menu_layout(hta_menu *m, uint32_t w, uint32_t h)
     }
     float left = cx - cw * 0.5f;
     float lx0 = left + cw * LOGO_X0, lh = fh * LOGO_H;
-    place(&m->overlay, (int32_t)m->logo_quad, lx0, fh * LOGO_CY - lh * 0.5f,
-          lx0 + cw * LOGO_W, fh * LOGO_CY + lh * 0.5f, w, h);
-    float iw = cw * ITEM_W, ih = fh * ITEM_H;
+    float iw = cw * ITEM_W, ih = fh * ITEM_H, cy0 = ITEM_CY0;
+    float hit_w = cw * ITEM_HIT_W;
+    if (m->art) {
+        /* The art has its own title: no HALO logo. The words stack in the
+         * middle of the band right of the art, a little larger. */
+        hide(&m->overlay, (int32_t)m->logo_quad);
+        float band = band_r - band_l;
+        cx = band_l + band * 0.5f;
+        iw *= 1.15f; ih *= 1.15f;
+        if (iw > band * 1.05f) { ih *= band * 1.05f / iw; iw = band * 1.05f; }
+        hit_w = iw * 0.8f;
+        cy0 = 0.5f - ITEM_STEP * 1.15f * (float)(HTA_MENU_ITEMS - 1) * 0.5f;
+    } else {
+        place(&m->overlay, (int32_t)m->logo_quad, lx0, fh * LOGO_CY - lh * 0.5f,
+              lx0 + cw * LOGO_W, fh * LOGO_CY + lh * 0.5f, w, h);
+    }
+    float step = m->art ? ITEM_STEP * 1.15f : ITEM_STEP;
     for (int i = 0; i < HTA_MENU_ITEMS; i++) {
-        float cy = fh * (ITEM_CY0 + ITEM_STEP * (float)i);
-        m->item_rect[i][0] = cx - cw * ITEM_HIT_W * 0.5f;
+        float cy = fh * (cy0 + step * (float)i);
+        m->item_rect[i][0] = cx - hit_w * 0.5f;
         m->item_rect[i][1] = cy - fh * ITEM_HIT_H * 0.5f;
-        m->item_rect[i][2] = cx + cw * ITEM_HIT_W * 0.5f;
+        m->item_rect[i][2] = cx + hit_w * 0.5f;
         m->item_rect[i][3] = cy + fh * ITEM_HIT_H * 0.5f;
         bool sel = i == m->selected && m->item_quad[i][1] >= 0;
+        /* Over title art the first slot says SINGLEPLAYER, drawn by the
+         * platform in the rect above; the Trial's CAMPAIGN word hides. */
+        bool words = !(m->art && i == HTA_MENU_CAMPAIGN);
         for (int f = 0; f < 2; f++) {
-            if ((f == 1) == sel)
+            if (words && (f == 1) == sel)
                 place(&m->overlay, m->item_quad[i][f], cx - iw * 0.5f, cy - ih * 0.25f,
                       cx + iw * 0.5f, cy + ih * 0.75f, w, h);
             else

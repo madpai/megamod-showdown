@@ -50,6 +50,24 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--time") && i + 1 < argc) at = strtof(argv[++i], NULL);
         else if (!strcmp(argv[i], "--select") && i + 1 < argc) select = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--focus") && i + 1 < argc) focus = argv[++i];
+        else if (!strcmp(argv[i], "--art") && i + 2 < argc) {
+            /* --art title.ppm RIGHT: a game's own title art (binary P6),
+             * RIGHT where the art ends as a fraction of its width. */
+            const char *ap = argv[++i]; float right = strtof(argv[++i], NULL);
+            FILE *af = fopen(ap, "rb"); unsigned aw = 0, ah = 0, mx = 0;
+            if (af && fscanf(af, "P6 %u %u %u", &aw, &ah, &mx) == 3 && mx == 255 && aw && ah) {
+                fgetc(af);
+                uint8_t *rgb = malloc((size_t)aw * ah * 3), *rgba = malloc((size_t)aw * ah * 4);
+                if (rgb && rgba && fread(rgb, 3, (size_t)aw * ah, af) == (size_t)aw * ah) {
+                    for (size_t p = 0; p < (size_t)aw * ah; p++) {
+                        rgba[p*4] = rgb[p*3]; rgba[p*4+1] = rgb[p*3+1]; rgba[p*4+2] = rgb[p*3+2]; rgba[p*4+3] = 255;
+                    }
+                    hta_menu_set_art(rgba, aw, ah, right);
+                }
+                free(rgb); free(rgba);
+            }
+            if (af) fclose(af);
+        }
         else if (!strcmp(argv[i], "--look") && i + 2 < argc) {
             yaw_override = strtof(argv[++i], NULL); pitch_override = strtof(argv[++i], NULL);
         }
@@ -110,7 +128,7 @@ int main(int argc, char **argv)
         hta_scene sc = menu.light;
         hta_gfx_overlay ov = { ui, menu.overlay.vertices, menu.overlay.vertex_count,
                                menu.overlay.submeshes, menu.overlay.submesh_count };
-        if (!hta_gfx_draw(g, &cam, &sc, scene, sky, NULL, NULL, 0, NULL, &ov) ||
+        if (!hta_gfx_draw(g, &cam, &sc, menu.art ? NULL : scene, menu.art ? NULL : sky, NULL, NULL, 0, NULL, &ov) ||
             !hta_gfx_readback(g, rgba, (size_t)W * H * 4u)) { fprintf(stderr, "render failed\n"); return 1; }
         char path[512];
         snprintf(path, sizeof(path), "%s_%02d.ppm", prefix, shots++);
