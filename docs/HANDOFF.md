@@ -178,6 +178,15 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+> **Four imported maps:** the MAP row now also offers DE_AZTEC, CS_OFFICE
+> and GM_CONSTRUCT (converted with the same command as dust2; packages in
+> `~/assetlab-private/bundle`, reports in `bundle-reports/`). Try each:
+> DE_AZTEC team slayer (river: you walk on its bed, no swimming);
+> CS_OFFICE team slayer (3x dust2's triangles -- watch frame rate and
+> load time; doors stay shut); GM_CONSTRUCT slayer (free-for-all only, no
+> team starts; first load builds a large nav grid -- note how long).
+> Report fps, load time, crashes, holes, stuck bots.
+>
 > **Audited-importer build:** dust2 was rebuilt by the generalized
 > importer (teams now read from the package; 9 physics props such as
 > barrels now appear; vertices shared). Play TEAM SLAYER and CTF on
