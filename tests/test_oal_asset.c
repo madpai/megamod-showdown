@@ -36,6 +36,7 @@ static void name(buf *b, const char *s, size_t field)
  * bone 90 degrees about Z when `turn`. `source_frame`: the last bone has a Source world model's weapon-bone
  * frame (rows 1 0 0 / 0 0 -1 / 0 1 0: 90 degrees about X), as CS:S's do. */
 static const char *grip_attachment;   /* one attachment on the last bone, identity */
+static uint32_t group_flags;          /* the one group's flags word */
 
 static void model(buf *b, int bones, const char *const *names, bool turn, bool source_frame)
 {
@@ -50,7 +51,7 @@ static void model(buf *b, int bones, const char *const *names, bool turn, bool s
         f32(b, 1); f32(b, 0); f32(b, 0);
     }
     u32(b, 0); u32(b, 1); u32(b, 2);
-    u32(b, 0); u32(b, 3); u32(b, 0); u32(b, 0);
+    u32(b, 0); u32(b, 3); u32(b, 0); u32(b, group_flags);
     u32(b, 1); u32(b, 1); u32(b, 4);
     uint8_t px[4] = { 200, 100, 50, 255 };
     put(b, px, 4);
@@ -218,6 +219,18 @@ int main(void)
         memcpy(b.d + 32 + 9, "weapon", 6);   /* kind "sounds" -> "weapon" (same length) */
         CHECK(!hta_oal_load_memory(b.d, b.n, &sp, err, sizeof(err)), "a weapon with no models is refused");
         free(b.d);
+    }
+    {
+        /* Group flag bit 1: a see-through material (hair cards). */
+        static hta_oal_asset hc;
+        group_flags = 2u;
+        buf hb = package("{\"kind\":\"character\",\"name\":\"hair\"}", 1, false);
+        group_flags = 0u;
+        CHECK(hta_oal_load_memory(hb.d, hb.n, &hc, err, sizeof(err)) &&
+              hc.models[0].mesh.submeshes[0].draw_mode == HTA_DRAW_ALPHA &&
+              ch.models[0].mesh.submeshes[0].draw_mode == HTA_DRAW_OPAQUE,
+              "an alpha group draws blended, a plain one opaque");
+        hta_oal_free(&hc); free(hb.d);
     }
     buf k = package("{\"kind\":\"vehicle\",\"name\":\"x\"}", 1, false);
     CHECK(!hta_oal_load_memory(k.d, k.n, &bad, err, sizeof(err)), "an unknown kind is refused");

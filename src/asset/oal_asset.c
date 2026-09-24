@@ -111,12 +111,15 @@ static bool read_model(rd *r, hta_oal_model *m, char *err, size_t errlen)
     uint32_t end = 0;
     for (uint32_t i = 0; i < gc; i++) {
         uint32_t first = u32(r), count = u32(r), tex = u32(r);
-        u32(r);
+        uint32_t flags = u32(r);
         if (first != end || !count || count % 3 || count > ic - first || tex >= tc) r->bad = true;
         hta_submesh *s = &mesh->submeshes[i];
         hta_submesh_init(s);
         s->first_index = first; s->index_count = count; s->albedo_tex = tex;
         s->scene_lit = true;   /* no lightmap: lit by the scene like Halo's bodies */
+        /* Bit 1: drawn blended by its texture's alpha (hair cards, lace,
+         * glasses), as an OALMAP group's is. */
+        if (flags & 2u) s->draw_mode = HTA_DRAW_ALPHA;
         end = first + count;
     }
     if (end != ic) r->bad = true;

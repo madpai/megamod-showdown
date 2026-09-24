@@ -2402,9 +2402,13 @@ static bool load_map(hta_android *s)
     hta_scene_light_from_bsp(&s->mesh, s->scene.light_dir, s->scene.light_color, s->scene.ambient);
     s->scene.clear[0] = 0.42f; s->scene.clear[1] = 0.55f; s->scene.clear[2] = 0.72f;  /* sky-ish */
     if (s->world_loaded) {
-        /* No lightmaps in a package: the explorer's even daylight. Ours. */
+        /* No lightmaps in a package: an even daylight. Ours. The world is
+         * drawn at its textures' own brightness; bodies and weapons are lit
+         * as albedo x (ambient + light x wrapped N.L) x 2, so these average
+         * about 1x too. (1.0 and 0.7 here put bodies at 1.4-3.4x: pale skin
+         * and white coats came out as white.) */
         s->scene.light_dir[0] = 0.35f; s->scene.light_dir[1] = 0.4f; s->scene.light_dir[2] = 0.85f;
-        for (int k = 0; k < 3; k++) { s->scene.light_color[k] = 1.0f; s->scene.ambient[k] = 0.7f; }
+        for (int k = 0; k < 3; k++) { s->scene.light_color[k] = 0.46f; s->scene.ambient[k] = 0.30f; }
     }
 
     s->have_mesh = true;
@@ -3894,8 +3898,9 @@ static void preview_draw(hta_android *s, float dt)
     hta_scene sc;
     memset(&sc, 0, sizeof(sc));
     sc.light_dir[0] = 0.55f; sc.light_dir[1] = -0.35f; sc.light_dir[2] = 0.75f;
-    sc.light_color[0] = 0.95f; sc.light_color[1] = 0.85f; sc.light_color[2] = 0.75f;
-    sc.ambient[0] = 0.42f; sc.ambient[1] = 0.40f; sc.ambient[2] = 0.42f;
+    /* Light plus ambient stays near 1: brighter blows pale skin to white. */
+    sc.light_color[0] = 0.66f; sc.light_color[1] = 0.62f; sc.light_color[2] = 0.58f;
+    sc.ambient[0] = 0.36f; sc.ambient[1] = 0.35f; sc.ambient[2] = 0.37f;
     sc.clear[0] = 0.07f; sc.clear[1] = 0.05f; sc.clear[2] = 0.05f;
     if (!hta_gfx_draw(s->gfx, &cam, &sc, NULL, NULL, NULL, nd ? &dyn : NULL, nd, NULL, NULL)) {
         stop_gfx(s);

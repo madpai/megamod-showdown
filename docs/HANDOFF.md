@@ -185,7 +185,18 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Title-art menu + classes v2 (this build, 2026-09-24):**
+> **Workshop characters (this build, 2026-09-24):**
+> 1. New bodies from the Garry's Mod Workshop: HARRY POTTER (item
+>    2855665131, school robes), GOKU (764848190 + its texture item
+>    703107302) and SUPERMAN 64 (3300749206). Presets: Harry needler +
+>    plasma pistol, Goku plasma rifle + rocket launcher, Superman 64
+>    Scattergun + plasma pistol (wands, ki blasts, heat vision come later).
+> 2. Hair, glasses and lace are see-through (alpha) on every character.
+> 3. Bodies and weapons on imported maps were lit 1.4-3.4x too bright
+>    (skin and white coats came out white); now about the world's own
+>    exposure. Say if they look too dark.
+>
+> **Title-art menu + classes v2 (previous build, 2026-09-24):**
 > 1. Main menu: the owner's cover art (ring and HALO logo gone), the
 >    menu words in cream/orange in the band on the right; Halo music kept.
 > 2. Classes are a CHARACTER + two weapons. Every character has a preset

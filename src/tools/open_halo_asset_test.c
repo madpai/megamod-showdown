@@ -99,6 +99,9 @@ int main(int argc, char **argv)
         }
         hta_gfx_set_instances(gfx, &inst, ni);
         hta_scene ps = scene; ps.clear[0] = 0.06f; ps.clear[1] = 0.05f; ps.clear[2] = 0.05f;
+        /* The app's preview light (preview_draw). */
+        ps.light_dir[0] = 0.55f; ps.light_dir[1] = -0.35f; ps.light_dir[2] = 0.75f;
+        for (int k = 0; k < 3; k++) { ps.light_color[k] = 0.62f; ps.ambient[k] = 0.36f; }
         if (hta_gfx_draw(gfx, &cam, &ps, NULL, NULL, NULL, &dyn, 1, NULL, NULL) &&
             hta_gfx_readback(gfx, px, (size_t)W * H * 4)) {
             snprintf(path, sizeof(path), "%s_preview.ppm", argv[2]);
