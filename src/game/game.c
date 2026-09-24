@@ -2852,8 +2852,14 @@ int32_t hta_game_add_imported_weapon(hta_game *g, const hta_oal_asset *a)
         w->def.rof = w->def.rof_initial = a->rounds_per_second;
         w->def.cooldown = 1.0f / a->rounds_per_second;
     }
-    if (a->magazine > 0) w->def.rounds_loaded_max = w->def.rounds_initial = w->def.rounds_reloaded = a->magazine;
-    if (a->reserve > 0) w->def.rounds_reserve_max = a->reserve;
+    /* Halo's "rounds total initial" counts the loaded magazine too: a
+     * weapon starts with a full magazine and its spare rounds. */
+    int spare = w->def.rounds_initial - w->def.rounds_loaded_max;
+    if (spare < 0) spare = 0;
+    if (a->magazine > 0) w->def.rounds_loaded_max = w->def.rounds_reloaded = a->magazine;
+    if (a->reserve > 0) { w->def.rounds_reserve_max = a->reserve; spare = a->reserve; }
+    if (spare > w->def.rounds_reserve_max) spare = w->def.rounds_reserve_max;
+    w->def.rounds_initial = w->def.rounds_loaded_max + spare;
     if (a->spread_scale > 0.0f) {
         w->def.error_angle[0] *= a->spread_scale;
         w->def.error_angle[1] *= a->spread_scale;

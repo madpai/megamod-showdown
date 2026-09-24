@@ -75,6 +75,9 @@ typedef struct {
     char     base[64];
     float    rounds_per_second, damage_scale, spread_scale;
     int      magazine, reserve;
+    /* The view model is authored left-handed and drawn mirrored (CS:S's
+     * cl_righthand): the loader mirrors it across its own Y. */
+    bool     view_mirrored;
     hta_oal_model models[HTA_OAL_MAX_MODELS];   /* weapon: [0] world, [1] view */
     uint32_t model_count;
     hta_oal_sound sounds[HTA_OAL_MAX_SOUNDS];

@@ -191,11 +191,48 @@ bool hta_oal_load_memory(const uint8_t *data, size_t size, hta_oal_asset *out, c
     out->spread_scale = json_num(j, ml, "spread_scale");
     out->magazine = (int)json_num(j, ml, "magazine");
     out->reserve = (int)json_num(j, ml, "reserve");
+    {
+        const char *v = json_find(j, ml, "view_model_mirrored");
+        out->view_mirrored = v && !strncmp(v, "true", 4);
+    }
     if (strcmp(out->kind, "character") && strcmp(out->kind, "weapon")) return fail(err, errlen, "unknown asset kind");
     if (!strcmp(out->kind, "weapon") && (mc != 2 || !out->base[0])) return fail(err, errlen, "a weapon needs a world and a view model and a base");
     out->model_count = mc;
     for (uint32_t i = 0; i < mc; i++)
         if (!read_model(&r, &out->models[i], err, errlen)) { hta_oal_free(out); return false; }
+    if (out->view_mirrored && mc > 1) {
+        /* Mirror the view model across its Y (left/right) once: bind pose,
+         * bones, clips, and the winding, so it faces out again. Skinning
+         * a mirrored skeleton gives the mirrored mesh. */
+        hta_oal_model *vm = &out->models[1];
+        for (uint32_t i = 0; i < vm->mesh.vertex_count; i++) {
+            vm->mesh.vertices[i].pos[1] = -vm->mesh.vertices[i].pos[1];
+            vm->mesh.vertices[i].normal[1] = -vm->mesh.vertices[i].normal[1];
+        }
+        for (uint32_t i = 0; i + 2 < vm->mesh.index_count; i += 3) {
+            uint32_t t = vm->mesh.indices[i + 1];
+            vm->mesh.indices[i + 1] = vm->mesh.indices[i + 2];
+            vm->mesh.indices[i + 2] = t;
+        }
+        /* M' = S M S with S = diag(1,-1,1): negate the Y row and Y column
+         * of every rotation, and the Y of every translation; a quaternion
+         * (x,y,z,w) mirrors to (-x,y,-z,w). */
+        for (uint32_t b = 0; b < vm->bone_count; b++) {
+            float *m = vm->inv_bind[b];
+            m[1] = -m[1]; m[4] = -m[4]; m[6] = -m[6]; m[9] = -m[9]; m[7] = -m[7];
+            vm->bind[b].q[0] = -vm->bind[b].q[0]; vm->bind[b].q[2] = -vm->bind[b].q[2];
+            vm->bind[b].p[1] = -vm->bind[b].p[1];
+        }
+        for (uint32_t c = 0; c < vm->clip_count; c++)
+            for (size_t k = 0; k < (size_t)vm->clips[c].frames * vm->bone_count; k++) {
+                hta_oal_key *key = &vm->clips[c].keys[k];
+                key->q[0] = -key->q[0]; key->q[2] = -key->q[2]; key->p[1] = -key->p[1];
+            }
+        for (uint32_t a = 0; a < vm->att_count; a++) {
+            float *m = vm->att[a].local;
+            m[1] = -m[1]; m[4] = -m[4]; m[6] = -m[6]; m[9] = -m[9]; m[7] = -m[7];
+        }
+    }
     if (!strcmp(out->kind, "character")) {
         /* The team mask: one more 1x1 texture, blue = HTA_OAL_TEAM_TINT. */
         hta_bsp_mesh *mesh = &out->models[0].mesh;

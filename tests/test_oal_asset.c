@@ -136,6 +136,25 @@ int main(void)
     for (int k = 0; k < 12; k++) if (k % 4 != 3) diff += fabsf(both[k] - hold[k]);
     CHECK(diff < 1e-4f, "Halo and Source weapon conventions cross back to the same aim");
 
+    {
+        static hta_oal_asset mir;
+        buf mb = package("{\"base\":\"assault rifle\",\"kind\":\"weapon\",\"name\":\"gun\",\"view_model_mirrored\":true}", 2, true);
+        CHECK(hta_oal_load_memory(mb.d, mb.n, &mir, err, sizeof(err)) && mir.view_mirrored, "a mirrored view model loads");
+        const hta_bsp_mesh *a0 = &wp.models[1].mesh, *a1 = &mir.models[1].mesh;
+        CHECK(a1->vertices[1].pos[1] == -a0->vertices[1].pos[1] && a1->indices[1] == a0->indices[2] &&
+              a1->indices[2] == a0->indices[1], "left-handed view models are mirrored, winding and all");
+        static float wm[HTA_OAL_MAX_BONES][12];
+        hta_vertex vo[3];
+        const float id[12] = { 1,0,0,0, 0,1,0,0, 0,0,1,0 };
+        hta_oal_pose(&mir.models[1], 0, 0, wm);
+        hta_oal_skin(&mir.models[1], (const float (*)[12])wm, id, vo);
+        hta_vertex vn[3];
+        hta_oal_pose(&wp.models[1], 0, 0, wm);
+        hta_oal_skin(&wp.models[1], (const float (*)[12])wm, id, vn);
+        CHECK(fabsf(vo[0].pos[0] - vn[0].pos[0]) < 1e-4f && fabsf(vo[0].pos[1] + vn[0].pos[1]) < 1e-4f &&
+              fabsf(vo[0].pos[2] - vn[0].pos[2]) < 1e-4f, "an animated mirrored view poses as the mirror image");
+        hta_oal_free(&mir); free(mb.d);
+    }
     CHECK(!strcmp(hta_imported_role("crouch rifle move-left"), "crouch_move") &&
           !strcmp(hta_imported_role("stand pistol move-back"), "run_back") &&
           !strcmp(hta_imported_role("stand rifle airborne"), "air") &&
