@@ -101,7 +101,7 @@ fi
 # Hashes so the phone can confirm it got the build you meant.
 ( cd "$ROOT" && : > SHA256SUMS
   for f in megamod-showdown.apk megamod-showdown-guest.apk bloodgulch.map bitmaps.map sounds.map; do
-    [ -f "$f" ] && sha256sum "$f" >> SHA256SUMS
+    if [ -f "$f" ]; then sha256sum "$f" >> SHA256SUMS; fi
   done )
 
 [ -n "$TITLE" ] || TITLE=$(git log -1 --format=%s 2>/dev/null || echo "current build")
