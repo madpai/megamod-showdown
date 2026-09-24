@@ -2,8 +2,10 @@
 
 Status: original design and baseline audit for the first network slice,
 2026-09-21. For implemented state and test results, read
-`NETWORK_PROGRESS.md`; the baseline statements below describe the build
-before networking. The pre-network build is preserved at
+`NETWORK_PROGRESS.md` (protocol v7 on Megamod as of 2026-09-24). The
+baseline statements below describe the build before networking and are
+historical, including references to a future session and old pool limits.
+The pre-network build is preserved at
 `net-baseline-2026-09-21` (`ecc99b8`); `scripts/verify.sh` passed
 57/57 checks with the owner's Blood Gulch map before any networking edits.
 

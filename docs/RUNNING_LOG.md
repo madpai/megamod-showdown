@@ -1,15 +1,25 @@
-# Running log — work in progress
+# Running log — no active mid-task work
 
 A step-by-step log kept WHILE working, so another agent (Codex or Claude)
 can pick up mid-task. Newest entry at the bottom. When a task is finished,
 its story moves to `JOURNAL.md` and `HANDOFF.md`; this file then says so.
 
-Read `CLAUDE.md` and `docs/HANDOFF.md` first. Standing rules: verify.sh
-green before publishing; push to GitHub after every commit
-(`git push origin fp-animated-guns:main`, after the Trial-data check);
-release guest APK for each published build.
+**Current state, 2026-09-24:** The Megamod hero-roster session is complete
+and published at `f9ee859`. There is no unfinished code edit to resume.
+Read `CLAUDE.md`, the current testing objective in `docs/HANDOFF.md`, and
+the 2026-09-24 entry in `docs/JOURNAL.md`. The next action is a phone and
+two-device LAN check of the current personal build at
+`http://100.89.1.14:8733/`. Push `halo-sandbox` only to private
+`megamod/main`. Do not follow the Open Halo publication instructions in
+the archived entry below while on this branch.
 
 ---
+
+## Archive: 2026-09-23 Halo-only driving task (`fp-animated-guns`)
+
+The following log concerns an earlier Open Halo branch. It is not a live
+Megamod task. Check that branch's own handoff and current Git state before
+resuming it.
 
 ## 2026-09-23 ~10:15 — start: objective 2, "driving in a fight"
 

@@ -8,8 +8,8 @@
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-24 (hero roster, unique match slots,
-Superman flight and beam, Workshop characters and weapons)
+**Date of this revision:** 2026-09-24 (published hero roster at `f9ee859`;
+documentation closeout)
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Branches -- read this first:**
 - `halo-sandbox` is **MEGAMOD SHOWDOWN**. Push this branch only to private
@@ -24,11 +24,17 @@ Superman flight and beam, Workshop characters and weapons)
   sandbox).
 **Start of next session, in order:**
 1. `git branch --show-current` -- be on the right branch for the task.
-2. `ls -lt scratch/uploads/ | head` -- screenshots from the latest build.
-3. Sandbox: test the **CURRENT TESTING OBJECTIVE** below on the phone. The
-   code and private packages passed host checks; the new HUD, flight view,
-   sounds and balance still need hands-on feedback.
-4. Halo: NEXT ENGINEERING OBJECTIVES, top down; push only Halo work.
+2. On `halo-sandbox`, inspect `scratch/serve-megamod/` and
+   `scratch/serve-megamod/uploads/` for the published build and new phone
+   screenshots. The current personal APK is at
+   **http://100.89.1.14:8733/** (commit `f9ee859`, 2026-09-24).
+3. Run the **CURRENT TESTING OBJECTIVE** below on the phone and two matched
+   LAN installs. Host checks passed; Superman's head, beam, hero balance,
+   grouped picker, imported equipment and killcam still need device feedback.
+4. Keep game code on private `megamod/main` and importer code on public
+   Open Asset Lab `main`. Source packages stay in `~/assetlab-private/`.
+   For a Halo-only task, switch to `fp-animated-guns` and read that branch's
+   handoff before applying its publication rules.
 
 ---
 
@@ -55,9 +61,9 @@ from a tag.
 - Project code is **GPLv3**.
 - Git author on this repo is **`Phase2 <schultz0@proton.me>`**.
 - **Push after every commit** (the owner's standing instruction since
-  2026-09-23), and release each published build's guest APK. Backups go to `origin`
-  (https://github.com/madpai/open-halo-project, public), local
-  `fp-animated-guns` → remote `main`. On 2026-09-23 the history was
+  2026-09-23). On this branch push only to private `megamod/main`; the
+  `origin`/Open Halo release rules below apply to `fp-animated-guns` only.
+  On 2026-09-23 the history was
   rewritten to remove the Trial's decoded title theme (`in_p0-6.wav`,
   committed by mistake in the main menu commit); `*.wav`/`*.ogg` are now
   ignored. Any hash from before that date in the journal is stale.
@@ -75,9 +81,9 @@ cd /home/commander/projects/halo-trial-android
 HTA_MAP=/home/commander/halo-trial-data/extract/maps/bloodgulch.map scripts/verify.sh
 ```
 
-The latest gate has 75 checks: host build and tests, real Trial map tests,
-synthetic-fixture CLI, offscreen rendering, two desktop Blood Gulch clients,
-Android build, and the APK contents and asset boundary.
+The latest gate has 80 checks (2026-09-24, `f9ee859`): host build and
+tests, real Trial map tests, synthetic-fixture CLI, offscreen rendering,
+two desktop Blood Gulch clients, Android build, and the APK asset boundary.
 
 The host NVIDIA Vulkan driver currently fails `vkCreateInstance`. The saved
 Mesa lavapipe under `scratch/lvp/` runs the render checks and the desktop
@@ -88,7 +94,7 @@ VK_ICD_FILENAMES=$PWD/scratch/lvp/usr/share/vulkan/icd.d/lvp_icd.json \
   HTA_MAP=/home/commander/halo-trial-data/extract/maps/bloodgulch.map scripts/verify.sh
 ```
 
-The 2026-09-23 vehicle-paths build passed **75/75** with that command.
+The 2026-09-24 Megamod hero-roster build passed **80/80** with that command.
 The normal shareable build contains no Trial maps; `verify.sh` checks that.
 
 **`verify.sh` must be green before you publish.** If you add a module, add its
@@ -108,7 +114,7 @@ Builds the owner's map-bundled APK and then cleans the Android app build to
 produce a small asset-free guest APK. It copies both to the serve root,
 refreshes `SHA256SUMS`, stamps the page with the source revision and build
 time, and starts the server if it is not up.
-The owner then installs from **http://100.89.1.14:8731** (Tailscale-bound).
+The owner then installs from **http://100.89.1.14:8733/** (Tailscale-bound).
 Use `--with-assets` for the owner's personal test APK. The launcher icon is
 already in `android/app/src/main/res/drawable/` and referenced by the manifest.
 The publish script marks builds from uncommitted source as `-dirty`.
@@ -117,8 +123,8 @@ The publish script marks builds from uncommitted source as `-dirty`.
 - `--no-build` publishes the existing build; use a normal build when either
   APK needs to change.
 - The page is a committed template at `scripts/sideload/index.html.tmpl` —
-  edit **that**, not the generated `scratch/serve/index.html`.
-- The serve root is `scratch/serve/` (gitignored, so maps and APKs never enter
+  edit **that**, not the generated `scratch/serve-megamod/index.html`.
+- The serve root is `scratch/serve-megamod/` (gitignored, so maps and APKs never enter
   git). It must **not** live in a session scratchpad under `/tmp`: that
   directory dies with the session and the page then advertises a build from
   hours earlier while claiming to be current. If `publish_apk.sh` warns that a
@@ -130,24 +136,23 @@ gets tested deliberately rather than stumbled into.
 **Local backup.** Every publish ends by running `scripts/backup_local.sh`,
 which mirrors the whole project folder, a git bundle of every branch, the
 owner's Trial data, and that build's personal and guest APKs to
-`/mnt/media/backups/halo-trial-android/` (the 8 TB drive; `apks/INDEX`
-lists every build, `apks/latest` is the newest). It skips with a warning if
+`/mnt/media/backups/halo-trial-android/` (the 8 TB drive; `apks-megamod/INDEX`
+lists every build, `apks-megamod/latest` is the newest). It skips with a warning if
 the drive is not mounted. The owner wants this copy current at all times --
 run it by hand after work that is not published. It holds Trial data: it
 is private and never goes anywhere else.
 
-**GitHub.** `origin` is https://github.com/madpai/open-halo-project
-(public); local `fp-animated-guns` tracks its `main`. `gh` is installed in
-`~/.local/bin` and logged in as madpai (Git uses it for HTTPS). Releases
-carry the **guest APK only** -- never the personal one:
-`gh release create vX.Y.Z scratch/serve/halo-trial-guest.apk --target main`,
-then check that `unzip -Z1` of the APK lists no `assets/maps/`. v0.2.0 was
-the first (Team Slayer, CTF, every vehicle). Before any push, check that
-`git rev-list --all --objects | grep -iE '\.(map|wav|ogg)$'` prints nothing.
+**GitHub.** This Megamod branch pushes only to private `megamod/main`:
+`git push megamod halo-sandbox:main`. The APK is published on the private
+Tailscale sideload page, not attached to the public Open Halo repository.
+`origin` is the public Open Halo repository and `fp-animated-guns` tracks
+its `main`; that branch has its own release process. Before any push, check
+that `git rev-list --all --objects | grep -iE '\.(map|wav|ogg|oalmap|oalasset)$'`
+prints nothing.
 
 ### 3. The owner tests on device and sends screenshots
 
-Screenshots uploaded from the phone land in `scratch/serve/uploads/` and are
+Screenshots uploaded from the phone land in `scratch/serve-megamod/uploads/` and are
 mirrored to `scratch/uploads/`. List them newest-first:
 
 ```
@@ -167,6 +172,15 @@ the section below, and update it every time.
 ---
 
 ## CURRENT TESTING OBJECTIVE
+
+**Published checkpoint:** `f9ee859` on private `megamod/main`, personal and
+asset-free guest APKs at **http://100.89.1.14:8733/**. The personal APK is
+1.2 GB and bundles 12 characters, 11 weapons, Blood Gulch, three Trial
+resource caches and five imported maps. The guest APK is 1.9 MB and
+contains none of those private packages or Trial data. SHA-256 manifests
+were checked and a local backup is
+at `/mnt/media/backups/halo-trial-android/apks-megamod/20260924-151217-f9ee859/`.
+No phone or two-device LAN result has been reported for this build yet.
 
 > **Hero shooter roster (next phone test, 2026-09-24):**
 > 1. Pick Superman, fly, and look at his head from the shoulder camera and
@@ -193,6 +207,13 @@ the section below, and update it every time.
 >    The package roster now has room for 32 characters and 64 weapons,
 >    including hidden ability shots; adding content still needs import,
 >    texture, view-model and phone checks.
+
+After the device check, fix any visible regressions it reveals. Then grow
+the roster with authored character abilities and weapons while keeping the
+game's roster limits, LAN protocol and Asset Lab package contract aligned.
+Measure startup, memory and frame rate on the phone before adding another
+large map or many high-resolution characters. These are next-session
+priorities, not claims that the current build has a measured performance bug.
 >
 > **TF2 Scout + Bat (previous build, 2026-09-24):**
 > 1. SCOUT (TF2) body, preset Scattergun + Bat. BAT (TF2) is the first

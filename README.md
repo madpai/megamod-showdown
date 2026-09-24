@@ -35,6 +35,27 @@ says so in a public ledger of invented constants.
 
 **The repository contains no Halo files, and never will.** You bring your own Trial installer.
 
+## Megamod Showdown checkpoint
+
+The private `halo-sandbox` branch now plays Slayer, Team Slayer and CTF with
+characters and equipment from the owner's own Source and Garry's Mod content.
+The 2026-09-24 personal build (`f9ee859`) has **12 characters, 11 imported
+weapons and five imported maps** alongside playable Blood Gulch. The roster is
+grouped by character type. Superman and Goku are strong flying titans with
+signature abilities; Superman's red laser pierces multiple opponents and
+has a cooldown. Harry flies by broom and wands recharge. Unique heroes have
+one match slot by default, with a host setting to allow duplicates.
+Master Chief, Dragonborn, Iron Man and Dumbledore joined this build.
+
+The owner can install the personal build from the Tailscale-only page at
+`http://100.89.1.14:8733/`. It includes their own Trial and converted
+content and stays private. The guest APK at that page is asset-free. Host
+verification passed 80/80; the latest hero visuals and LAN slot rules
+still need phone testing. See [the current handoff](docs/HANDOFF.md).
+
+The screenshots and feature table below document the underlying Open Halo
+engine. They are not a complete roster or UI guide for Megamod.
+
 ## Screenshots
 
 <table>

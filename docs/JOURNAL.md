@@ -9,6 +9,53 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## 2026-09-24 -- Megamod hero shooter checkpoint (branch `halo-sandbox`)
+
+The owner asked for a larger, deliberately chaotic hero roster: unique
+Superman and Goku titan slots by default, stronger Superman, a visible
+piercing laser, more Workshop characters, and a killcam that shows the
+killer's face. The private Megamod repository was published at `f9ee859`.
+The personal build and asset-free guest build are at
+`http://100.89.1.14:8733/`; the personal APK bundles 12 characters,
+11 weapons, Blood Gulch, three Trial resource caches and five imported
+maps. The matching private APK backup is under
+`/mnt/media/backups/halo-trial-android/apks-megamod/20260924-151217-f9ee859/`.
+
+- Superman 64's air/jump animation dropped the head in flight. The power
+  flyers now use a complete idle pose with a small forward lean; Harry
+  keeps the broom animation. Superman flies at 5.8 wu/s with health x2.4,
+  shield x2.5 and damage x1.8. Goku flies at 5.4 wu/s and is also stronger.
+  Flight still lowers outgoing damage. These values are game balance in
+  private character packages, not source-game facts.
+- Laser Eyes is a visible red, 100 wu line that hits multiple bodies up to
+  a wall, with 300 direct base damage and an 8 s cooldown. The beam and
+  damage share one trace. Goku retains a traveling Ki Blast. The hero
+  roster has grouped picker pages, 32 character and 64 weapon capacity,
+  and host-controlled duplicate hero rules. A claimed unique slot rejects
+  a second player and reports TAKEN; the host also reserves a hero selected
+  for its next respawn. Network protocol v7 carries the match rule and
+  rejection, so LAN installs must be from the same build.
+- The killcam searches front-facing camera positions around the killer and
+  chooses an unobstructed face view where possible. Geometry can still
+  constrain the shot; a phone screenshot is the useful next diagnostic.
+- Imported Master Chief, Dragonborn, Iron Man and Dumbledore. Dragonborn
+  equips the Daedric Sword and .357; Dumbledore has an Elder Wand. The
+  package/render lessons, source paths and public importer changes are in
+  Open Asset Lab's `docs/HANDOFF.md` and `docs/PROGRESS.md`.
+- Host evidence: 12-character/11-weapon bot match, 88 game checks, 20
+  contrail checks, network codec/two-client simulation, full
+  `scripts/verify.sh` **80/80**, Asset Lab's 36 synthetic tests, and an
+  asset-boundary check on the guest APK. This proves compilation, package
+  loading and simulated play. The new flight view, beam visibility,
+  equipment FOV, touch picker and unique-slot behavior have not yet been
+  confirmed on a phone or two-device LAN match.
+
+The next session starts with the device checklist in `docs/HANDOFF.md`.
+Preserve the private/public split: `halo-sandbox` pushes only to private
+`megamod/main`; Open Asset Lab code pushes to its public repo; no Trial or
+Workshop content belongs in Git. The old `docs/RUNNING_LOG.md` driving task
+belongs to the Halo-only branch and is archived there for reference.
+
 
 
 ## 2026-09-23 (night) -- generalization audit (branch halo-sandbox)

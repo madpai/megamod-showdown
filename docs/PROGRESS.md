@@ -1,6 +1,16 @@
 # Progress
 
-Last updated: **2026-09-21** (first LAN slice: two automated desktop clients)
+Current checkpoint: **2026-09-24, Megamod Showdown `f9ee859`**. The
+published private build has a 12-character, 11-weapon hero roster, five
+imported maps beside Blood Gulch, a grouped picker, unique titan slots
+with an optional duplicate rule, powered flight and a piercing red Superman
+beam. Host verification passed 80/80. The hero update has not yet received
+phone or two-device LAN feedback. See [HANDOFF.md](HANDOFF.md) for the exact
+device checklist and [JOURNAL.md](JOURNAL.md) for implementation lessons.
+
+The milestone ledger below was last comprehensively updated on **2026-09-21**
+(first LAN slice). It preserves historical states and test counts; its later
+"not started" marks do not describe the current Megamod build.
 
 This is the milestone log. For the current implementation and next-session
 instructions, use `docs/HANDOFF.md`; older test counts below record their

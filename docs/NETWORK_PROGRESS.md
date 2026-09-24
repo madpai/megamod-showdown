@@ -1,4 +1,21 @@
-# Network phase checkpoint — 2026-09-22
+# Network phase checkpoints
+
+## Megamod Showdown status (2026-09-24, `f9ee859`)
+
+This branch now uses **protocol v7** (`src/net/protocol.h`). LAN players must
+run matching builds and load the same private roster packages. Imported
+character bodies and chosen classes were added after the v2 checkpoint
+below. The v7 match rules carry the host's duplicate-heroes setting;
+class selection reports rejection when a unique hero is already claimed.
+The host owns the slot decision and reserves its own pending next-spawn
+choice. Superman's piercing beam uses the host's hit decisions and a
+replicated visible effect. Codec and simulated two-client checks passed,
+as did full verification 80/80. The current roster, beam visibility and
+unique-slot rule still need a **two-device Android LAN test**. For the exact
+test, current APK and package boundary, use [HANDOFF.md](HANDOFF.md).
+
+The remainder is an archived v2 checkpoint; later statements such as
+"vehicles remain solo only" or "next objective" describe that date.
 
 ## Current Android match status (2026-09-22 evening)
 
