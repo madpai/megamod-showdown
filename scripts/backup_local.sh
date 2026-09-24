@@ -76,9 +76,9 @@ map-bundled personal APK; never share or upload this folder).
 project/                   the working tree as of the last backup
 halo-trial-android.bundle  every branch: git clone halo-trial-android.bundle
 halo-trial-data/           the owner's own Trial files (installer/ too)
-apks/latest/               the newest build: megamod-showdown-personal.apk
+apks-megamod/latest/       the newest build: megamod-showdown-personal.apk
                            (maps inside) and megamod-showdown-guest.apk
-apks/INDEX                 every archived build: date, commit, hash, title
+apks-megamod/INDEX         every archived build: date, commit, hash, title
 
 Last backup: $(date '+%Y-%m-%d %H:%M')  (commit $REV)
 EOF
