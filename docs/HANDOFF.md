@@ -29,10 +29,13 @@ de_dust2 matches on the phone; props, spawn and bot fixes)
 **Start of next session, in order:**
 1. `git branch --show-current` -- be on the right branch for the task.
 2. `ls -lt scratch/uploads/ | head` -- screenshots from the latest build.
-3. Sandbox: the owner still has to confirm on the phone the
-   **audited-importer build** (dust2 rebuilt; teams now come from the
-   package) and the roof-spawn fix. Then another map -- the importer was
-   audited against eight (Asset Lab `docs/GENERALIZATION_AUDIT.md`).
+3. Sandbox: **next objective is importing a player model and a weapon**
+   (a CS:S terrorist or a GMod character; the CS:S AK-47). The plan and
+   the list of assets on disk are in Asset Lab's `docs/HANDOFF.md`, "Next:
+   player model + weapon". Engine side: see "PLAYER MODEL + WEAPON (next)"
+   below. Maps on the phone (build `8c25abc`): cs_office and gm_construct
+   at 120 fps, "almost complete with some problems" -- the owner does not
+   want those pursued now; de_aztec unreported.
    Owner preferences: keep the **Halo sky** on imported maps; the
    **Garry's Mod Workshop** is the long-term goal but is NOT started. Read Asset Lab's
    `docs/MAP_IMPORT_PLAYBOOK.md` (`~/projects/open-asset-lab`) -- the
@@ -178,6 +181,11 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+> **Phone result (2026-09-23):** CS_OFFICE and GM_CONSTRUCT run at 120
+> fps and are "almost complete with some problems" (parked by the owner).
+> DE_AZTEC: no report yet. Next test is an imported player model and
+> weapon, not more maps.
+>
 > **Four imported maps:** the MAP row now also offers DE_AZTEC, CS_OFFICE
 > and GM_CONSTRUCT (converted with the same command as dust2; packages in
 > `~/assetlab-private/bundle`, reports in `bundle-reports/`). Try each:
@@ -302,6 +310,29 @@ the section below, and update it every time.
 >    shoots at blue. Get out and it gets off.
 > 8. **CTF waypoints:** a red and a blue chevron with metres over each flag,
 >    pinned to the screen edge when off screen, blinking while away.
+
+## PLAYER MODEL + WEAPON (next, not started)
+
+The owner wants to try a Source character (CS:S terrorist, or a GMod
+character such as Kleiner/Alyx; there is no Gordon model, only GMod's HEV
+arms) and the CS:S AK-47 in a match. Asset Lab's HANDOFF lists the
+files. What in this engine they would replace:
+- **Bodies:** `hta_actor` / `hta_game_view` pose Halo bipeds
+  (`cyborg_mp`) through Halo's animation graph -- `hta_anim` states such
+  as "stand rifle idle", "move-front". A Source body needs its skeleton,
+  skin weights and sequences mapped onto those states (Asset Lab side:
+  a registry of Source activities -> Halo states; unmapped ones
+  reported).
+- **Weapons:** the roster in `hta_game_load` is built from the Trial's
+  `weap` tags (`hta_weapon_load_id`: triggers, magazines, projectile,
+  first-person model and its animations via `viewmodel.c`). An imported
+  weapon needs a roster entry whose numbers come from data, a held/world
+  mesh (`view.c` instances) and a first-person mesh with idle/fire/reload.
+- **Package:** OALMAP is world-only. A character/weapon package format is
+  a contract change to agree between both repos (Asset Lab AGENTS.md).
+- Suggested order: AK-47 world model as the held/pickup mesh on a Halo
+  weapon's numbers -> AK-47 viewmodel with its own sequences -> a
+  terrorist body. Keep Blood Gulch's own assets untouched.
 
 ## IMPORTED MAPS (done 2026-09-23) — how they work
 
