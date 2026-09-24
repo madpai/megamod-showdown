@@ -213,6 +213,8 @@ bool hta_oal_load_memory(const uint8_t *data, size_t size, hta_oal_asset *out, c
     {
         const char *v = json_find(j, ml, "view_model_mirrored");
         out->view_mirrored = v && !strncmp(v, "true", 4);
+        const char *mv = json_find(j, ml, "melee");
+        out->melee = mv && !strncmp(mv, "true", 4);
     }
     if (strcmp(out->kind, "character") && strcmp(out->kind, "weapon") && strcmp(out->kind, "sounds"))
         return fail(err, errlen, "unknown asset kind");

@@ -388,7 +388,8 @@ static void arm(hta_game *g, hta_unit *u)
             int32_t allowed[HTA_GAME_MAX_WEAPONS];
             uint32_t n = 0;
             for (uint32_t w = 0; w < g->weapon_count; w++)
-                if (hta_game_class_weapon(g, (int32_t)w)) allowed[n++] = (int32_t)w;
+                /* Not a bat yet: a bot would fire it from across the map. */
+                if (hta_game_class_weapon(g, (int32_t)w) && !g->weapons[w].melee_only) allowed[n++] = (int32_t)w;
             if (n) {
                 u->rng = u->rng * 1664525u + 1013904223u;
                 pick[0] = allowed[(u->rng >> 8) % n];
@@ -1448,7 +1449,8 @@ int32_t hta_game_melee(hta_game *g, int32_t idx)
     float c[3];
     hta_game_centre(g, who, c);
     if (w->melee_jpt) {
-        hta_game_hurt_jpt(g, who, idx, w->melee_jpt, 1, c);
+        /* A melee weapon's blow is its own damage; a gun's butt is the base's. */
+        hta_game_hurt_jpt_scaled(g, who, idx, w->melee_jpt, 1, c, w->melee_only ? w->damage_scale : 1.0f);
         if (behind) hta_game_hurt(g, who, idx, w->melee_damage * (HTA_BACKSMACK_MULT - 1.0f), c);
     }
     return who;
@@ -2546,7 +2548,14 @@ static void simulate(hta_game *g, int32_t idx, float dt)
         u->throwing -= dt;
         if (u->throwing <= 0.0f) throw_grenade(g, idx);
     }
-    if (in->move.fire && u->cooldown <= 0.0f && u->swing <= 0.0f && u->throwing <= 0.0f &&
+    const hta_game_weapon *hw = hta_game_held(g, idx);
+    if (hw && hw->melee_only) {
+        /* A bat: the trigger swings it. */
+        if (in->move.fire && u->swing <= 0.0f && u->throwing <= 0.0f) {
+            u->swing = UNIT_SWING_TIME;
+            hta_game_melee(g, idx);
+        }
+    } else if (in->move.fire && u->cooldown <= 0.0f && u->swing <= 0.0f && u->throwing <= 0.0f &&
         c->ammo.phase == HTA_AMMO_READY && u->flag < 0)
         fire(g, idx, dt);
     take_items(g, idx);
@@ -2850,6 +2859,7 @@ int32_t hta_game_add_imported_weapon(hta_game *g, const hta_oal_asset *a)
     w->base = base;
     w->model = 0;                  /* the package's world model, not a tag's */
     w->damage_scale = a->damage_scale > 0.0f ? a->damage_scale : 1.0f;
+    w->melee_only = a->melee;
     snprintf(w->display, sizeof(w->display), "%s", a->display);
     if (a->rounds_per_second > 0.0f) {
         w->def.rof = w->def.rof_initial = a->rounds_per_second;

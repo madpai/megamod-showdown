@@ -148,6 +148,9 @@ typedef struct {
     int32_t  base;
     float    damage_scale;
     char     display[48];     /* what a menu calls it */
+    /* Swung, not fired (an imported bat): the trigger is a melee blow
+     * worth the base's melee x damage_scale. */
+    bool     melee_only;
 } hta_game_weapon;
 
 /* A weapon lying where it fell, with what was left in it. */

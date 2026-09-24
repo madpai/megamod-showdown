@@ -84,7 +84,12 @@ int main(int argc, char **argv)
         hta_gfx_mesh *gw = have_held ? hta_gfx_mesh_upload(gfx, &held.models[0].mesh, err, sizeof(err)) : NULL;
         hta_vertex *posed = malloc(m->mesh.vertex_count * sizeof(hta_vertex));
         float hi = 0.0f;
-        for (uint32_t v = 0; v < m->mesh.vertex_count; v++) if (m->mesh.vertices[v].pos[2] > hi) hi = m->mesh.vertices[v].pos[2];
+        {
+            const float id[12] = { 1,0,0,0, 0,1,0,0, 0,0,1,0 };
+            hta_oal_pose(m, hta_oal_clip_find(m, "idle"), 0.0f, world);
+            hta_oal_skin(m, (const float (*)[12])world, id, posed);
+            for (uint32_t v = 0; v < m->mesh.vertex_count; v++) if (posed[v].pos[2] > hi) hi = posed[v].pos[2];
+        }
         float root[12];
         hta_camera cam;
         hta_preview_frame(hi, (float)W / H, strtof(getenv("OAL_PREVIEW"), NULL) / 57.29578f, root, &cam);

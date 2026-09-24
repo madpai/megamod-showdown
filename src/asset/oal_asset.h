@@ -78,6 +78,8 @@ typedef struct {
     /* The view model is authored left-handed and drawn mirrored (CS:S's
      * cl_righthand): the loader mirrors it across its own Y. */
     bool     view_mirrored;
+    /* A melee weapon (TF2's bat): the trigger swings it; no rounds. */
+    bool     melee;
     /* A reload that puts back `reload_rounds` at a time (TF2's rocket
      * launcher and scattergun load one) over `reload_seconds` each; 0
      * keeps the base weapon's. */

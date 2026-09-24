@@ -1002,6 +1002,15 @@ static void vm_play(hta_android *s, hta_vm_state st)
 {
     if (s->vm.loaded) hta_viewmodel_play(&s->vm, st);
     s->ivm_role = st == HTA_VM_FIRE ? "fire" : st == HTA_VM_RELOAD ? "reload" : "idle";
+    {
+        /* A bat's swing is its "fire" clip. */
+        const hta_game_weapon *mw = held_imported(s);
+        if (st == HTA_VM_MELEE && mw && mw->melee_only) {
+            s->ivm_role = "fire";
+            int k = imported_index(s, mw->asset);     /* and its swoosh */
+            if (k >= 0 && s->imp_clip[k][0] != HTA_AUDIO_NO_CLIP) hta_audio_play(&s->audio, s->imp_clip[k][0], 0.9f);
+        }
+    }
     s->ivm_clip = -2;
     s->ivm_rate = 1.0f;
     const hta_game_weapon *w = held_imported(s);
@@ -3845,9 +3854,16 @@ static void preview_draw(hta_android *s, float dt)
                 s->prev_posed = malloc(m->mesh.vertex_count * sizeof(hta_vertex));
                 s->prev_cap = s->prev_posed ? m->mesh.vertex_count : 0;
             }
+            /* Height as it stands in its idle, not its bind pose: a TF2
+             * body's bind mesh lies on its side. */
             s->prev_height = 0.0f;
-            for (uint32_t v = 0; v < m->mesh.vertex_count; v++)
-                if (m->mesh.vertices[v].pos[2] > s->prev_height) s->prev_height = m->mesh.vertices[v].pos[2];
+            if (s->prev_posed) {
+                static const float ident[12] = { 1,0,0,0, 0,1,0,0, 0,0,1,0 };
+                hta_oal_pose(m, hta_oal_clip_find(m, "idle"), 0.0f, s->prev_world);
+                hta_oal_skin(m, (const float (*)[12])s->prev_world, ident, s->prev_posed);
+                for (uint32_t v = 0; v < m->mesh.vertex_count; v++)
+                    if (s->prev_posed[v].pos[2] > s->prev_height) s->prev_height = s->prev_posed[v].pos[2];
+            }
         }
     }
     if (wi != s->prev_weap) {
@@ -6258,6 +6274,14 @@ void android_main(struct android_app *app)
         /* A swing takes the weapon out of the fight until it finishes, so
          * the rest of this frame's trigger work has to know about it. */
         bool swinging = state.vm.loaded && state.vm.state == HTA_VM_MELEE;
+        /* A bat in hand: the trigger is the swing. */
+        {
+            const hta_game_weapon *mw = held_imported(&state);
+            if (mw && mw->melee_only && in.fire) {
+                if (!swinging) state.hud_melee = true;
+                in.fire = false;
+            }
+        }
         if (state.hud_melee) {
             state.hud_melee = false;
             if (!swinging && state.ammo.phase != HTA_AMMO_RELOADING) {

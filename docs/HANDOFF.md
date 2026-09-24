@@ -185,7 +185,14 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Workshop characters (this build, 2026-09-24):**
+> **TF2 Scout + Bat (this build, 2026-09-24):**
+> 1. SCOUT (TF2) body, preset Scattergun + Bat. BAT (TF2) is the first
+>    melee weapon: the trigger swings it (TF2's swing clip and swoosh), a
+>    swing every 0.5 s, the base pistol's melee x0.9, still a kill from
+>    behind. Bots do not take the bat (they would swing from afar).
+> 2. Class previews stand TF2 bodies up properly (height from the idle).
+>
+> **Workshop characters (previous build, 2026-09-24):**
 > 1. New bodies from the Garry's Mod Workshop: HARRY POTTER (item
 >    2855665131, school robes), GOKU (764848190 + its texture item
 >    703107302) and SUPERMAN 64 (3300749206). Presets: Harry needler +
