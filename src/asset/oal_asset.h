@@ -80,6 +80,12 @@ typedef struct {
     bool     view_mirrored;
     /* A melee weapon (TF2's bat): the trigger swings it; no rounds. */
     bool     melee;
+    /* A mount (Harry's broom): held, it carries you flying in third person
+     * at `fly_speed` wu/s; its world model rides under the body at
+     * `mount_offset` (wu, the body's frame: +X ahead, +Z up), turned
+     * `mount_yaw` degrees about +Z and pitched `mount_pitch` about +Y. */
+    bool     mount;
+    float    fly_speed, mount_offset[3], mount_yaw, mount_pitch;
     /* A reload that puts back `reload_rounds` at a time (TF2's rocket
      * launcher and scattergun load one) over `reload_seconds` each; 0
      * keeps the base weapon's. */

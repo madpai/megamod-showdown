@@ -151,6 +151,7 @@ typedef struct {
     /* Swung, not fired (an imported bat): the trigger is a melee blow
      * worth the base's melee x damage_scale. */
     bool     melee_only;
+    bool     mount;            /* a broom: see hta_oal_asset.mount */
 } hta_game_weapon;
 
 /* A weapon lying where it fell, with what was left in it. */
@@ -237,6 +238,7 @@ typedef struct {
     hta_unit_input in;
 
     bool     alive;
+    bool     riding;           /* on a mount (a broom): seated pose, flying */
     float    respawn;         /* seconds until back, while dead */
     float    dead_for;        /* seconds since death, for the corpse */
     float    death_yaw;

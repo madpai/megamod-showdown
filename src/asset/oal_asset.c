@@ -215,6 +215,19 @@ bool hta_oal_load_memory(const uint8_t *data, size_t size, hta_oal_asset *out, c
         out->view_mirrored = v && !strncmp(v, "true", 4);
         const char *mv = json_find(j, ml, "melee");
         out->melee = mv && !strncmp(mv, "true", 4);
+        const char *mt = json_find(j, ml, "mount");
+        out->mount = mt && !strncmp(mt, "true", 4);
+        out->fly_speed = json_num(j, ml, "fly_speed");
+        out->mount_yaw = json_num(j, ml, "mount_yaw");
+        out->mount_pitch = json_num(j, ml, "mount_pitch");
+        const char *mo = json_find(j, ml, "mount_offset");
+        if (mo && *mo == '[') {
+            char tmp[96]; size_t n = 0;
+            for (mo++; mo < j + ml && *mo != ']' && n + 1 < sizeof(tmp); mo++) tmp[n++] = *mo;
+            tmp[n] = 0;
+            if (sscanf(tmp, "%f , %f , %f", &out->mount_offset[0], &out->mount_offset[1], &out->mount_offset[2]) != 3)
+                memset(out->mount_offset, 0, sizeof(out->mount_offset));
+        }
     }
     if (strcmp(out->kind, "character") && strcmp(out->kind, "weapon") && strcmp(out->kind, "sounds"))
         return fail(err, errlen, "unknown asset kind");

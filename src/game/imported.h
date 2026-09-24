@@ -50,4 +50,8 @@ const char *hta_imported_role(const char *halo_base);
 #include "../engine/camera.h"
 void hta_preview_frame(float height, float aspect, float yaw, float root[12], hta_camera *cam);
 
+/* Where a mount's world model goes under a body placed by `root` (3x4,
+ * feet at the origin, +X ahead): the package's offset, yaw and pitch. */
+void hta_imported_mount_matrix(const float root[12], const hta_oal_asset *mount, float out[12]);
+
 #endif

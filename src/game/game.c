@@ -389,7 +389,8 @@ static void arm(hta_game *g, hta_unit *u)
             uint32_t n = 0;
             for (uint32_t w = 0; w < g->weapon_count; w++)
                 /* Not a bat yet: a bot would fire it from across the map. */
-                if (hta_game_class_weapon(g, (int32_t)w) && !g->weapons[w].melee_only) allowed[n++] = (int32_t)w;
+                if (hta_game_class_weapon(g, (int32_t)w) && !g->weapons[w].melee_only && !g->weapons[w].mount)
+                    allowed[n++] = (int32_t)w;
             if (n) {
                 u->rng = u->rng * 1664525u + 1013904223u;
                 pick[0] = allowed[(u->rng >> 8) % n];
@@ -2860,6 +2861,7 @@ int32_t hta_game_add_imported_weapon(hta_game *g, const hta_oal_asset *a)
     w->model = 0;                  /* the package's world model, not a tag's */
     w->damage_scale = a->damage_scale > 0.0f ? a->damage_scale : 1.0f;
     w->melee_only = a->melee;
+    w->mount = a->mount;
     snprintf(w->display, sizeof(w->display), "%s", a->display);
     if (a->rounds_per_second > 0.0f) {
         w->def.rof = w->def.rof_initial = a->rounds_per_second;

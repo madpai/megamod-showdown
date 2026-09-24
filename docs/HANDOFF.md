@@ -185,7 +185,18 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **TF2 Scout + Bat (this build, 2026-09-24):**
+> **Harry's wand and broomstick (this build, 2026-09-24):**
+> 1. Harry's preset is now WAND + BROOMSTICK (both also in every class's
+>    weapon list). The wand casts plasma-pistol bolts (x1.2, tighter) with
+>    the Workshop wand's first-person arm and spell sound.
+> 2. Swap to the BROOMSTICK: third-person camera behind you, Harry rides a
+>    Nimbus 2000 (legs hanging), and you FLY: stick steers where you look,
+>    JUMP climbs, CROUCH dives, 5.5 wu/s; walls and floors still collide;
+>    FIRE casts spells. Swap back to the wand mid-air and you fall (fall
+>    damage applies). Not synced over LAN yet (joiners see Harry in the
+>    air, not his flight). Bots never pick the broom or the bat.
+>
+> **TF2 Scout + Bat (previous build, 2026-09-24):**
 > 1. SCOUT (TF2) body, preset Scattergun + Bat. BAT (TF2) is the first
 >    melee weapon: the trigger swings it (TF2's swing clip and swoosh), a
 >    swing every 0.5 s, the base pistol's melee x0.9, still a kill from

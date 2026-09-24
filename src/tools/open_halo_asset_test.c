@@ -93,12 +93,18 @@ int main(int argc, char **argv)
         float root[12];
         hta_camera cam;
         hta_preview_frame(hi, (float)W / H, strtof(getenv("OAL_PREVIEW"), NULL) / 57.29578f, root, &cam);
-        int32_t idle = hta_oal_clip_find(m, "idle");
+        /* A mount (a broom): seated on it, as riding. */
+        bool riding = have_held && held.mount;
+        int32_t idle = hta_oal_clip_find(m, riding ? (getenv("OAL_RIDE") ? getenv("OAL_RIDE") : "crouch_idle") : "idle");
         hta_oal_pose(m, idle, 0.3f, world);
         hta_oal_skin(m, (const float (*)[12])world, root, posed);
         hta_gfx_dynamic dyn = { .mesh = gm, .vertices = posed, .vertex_count = m->mesh.vertex_count, .lit = true };
         hta_gfx_instance inst; uint32_t ni = 0; float hand[12];
-        if (gw && hta_imported_hold_matrix(m, (const float (*)[12])world, root, &held.models[0], hand)) {
+        if (gw && riding) {
+            hta_imported_mount_matrix(root, &held, hand);
+            inst.mesh = gw; hta_oal_to_mat4(hand, inst.model);
+            inst.first_submesh = inst.submesh_count = 0; inst.lit = true; ni = 1;
+        } else if (gw && hta_imported_hold_matrix(m, (const float (*)[12])world, root, &held.models[0], hand)) {
             inst.mesh = gw; hta_oal_to_mat4(hand, inst.model);
             inst.first_submesh = inst.submesh_count = 0; inst.lit = true; ni = 1;
         }

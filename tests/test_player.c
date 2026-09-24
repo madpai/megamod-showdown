@@ -77,6 +77,30 @@ int main(void)
     CHECK(fabsf(p.velocity[2]) < 0.001f, "vertical velocity zeroed on landing");
     CHECK(fabsf(cam.pos[2] - (p.pos[2] + p.eye_height)) < 1e-4f, "camera sits at eye height above feet");
 
+    {
+        printf("\n[flying]\n");
+        hta_player f = p;
+        hta_camera fc = cam;
+        hta_player_input fi;
+        memset(&fi, 0, sizeof(fi));
+        f.fly = true; f.fly_speed = 5.0f;
+        fi.jump = true;
+        float z0 = f.pos[2];
+        for (int i = 0; i < 60; i++) hta_player_update(&f, &fc, &col, &fi, 1.0f/60.0f);
+        CHECK(!f.on_ground && f.pos[2] > z0 + 1.0f, "a flier climbs on JUMP");
+        fi.jump = false;
+        float z1 = f.pos[2];
+        for (int i = 0; i < 120; i++) hta_player_update(&f, &fc, &col, &fi, 1.0f/60.0f);
+        CHECK(fabsf(f.pos[2] - z1) < 0.6f, "and hangs in the air with no gravity");
+        fc.yaw = 0.0f; fc.pitch = 0.5f; fi.move_forward = 1.0f;
+        float x1 = f.pos[0]; z1 = f.pos[2];
+        for (int i = 0; i < 60; i++) hta_player_update(&f, &fc, &col, &fi, 1.0f/60.0f);
+        CHECK(f.pos[0] > x1 + 2.0f && f.pos[2] > z1 + 1.0f, "and goes where it looks, up included");
+        fi.move_forward = 0.0f; fi.crouch = true;
+        for (int i = 0; i < 600 && !f.on_ground; i++) hta_player_update(&f, &fc, &col, &fi, 1.0f/60.0f);
+        CHECK(f.on_ground && f.pos[2] > -8.0f, "and dives onto the ground, not through it");
+    }
+
     printf("\n[movement]\n");
     float x0 = p.pos[0], y0 = p.pos[1];
     cam.yaw = 0.0f;      /* face +X */

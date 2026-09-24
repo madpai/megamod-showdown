@@ -253,6 +253,8 @@ static void imported_update(hta_game_view *v, const hta_game *g, uint32_t i, flo
             float k = u->dead_for / TOPPLE_TIME;
             topple = (k > 1.0f ? 1.0f : k) * TOPPLE_ANGLE;
         }
+    } else if (u->riding) {
+        role = "air";           /* on a broom: legs hanging, as in the jump */
     } else if (u->vehicle >= 0) {
         role = "crouch_idle";   /* seated: Source bodies have no seat clips */
     } else {
@@ -426,6 +428,20 @@ uint32_t hta_game_view_weapons(const hta_game_view *v, const hta_game *g, int32_
         out[n].first_submesh = out[n].submesh_count = 0;
         const hta_oal_model *body = body_of(g, u);
         const hta_oal_asset *wa = g->weapons[w].asset;
+        if (wa && wa->mount) {
+            /* A broom rides under the body, not in its hand. */
+            float root[12], m34[12];
+            if (body) memcpy(root, v->oal_root[i], sizeof(root));
+            else {
+                float cy = cosf(u->eye.yaw), sy = sinf(u->eye.yaw);
+                const float r[12] = { cy, -sy, 0, u->body.pos[0],  sy, cy, 0, u->body.pos[1],  0, 0, 1, u->body.pos[2] };
+                memcpy(root, r, sizeof(root));
+            }
+            hta_imported_mount_matrix(root, wa, m34);
+            hta_oal_to_mat4(m34, out[n].model);
+            n++;
+            continue;
+        }
         if (body) {
             /* An imported body: bone-merge its own family's weapon, or hold
              * a Halo one across the two conventions. */

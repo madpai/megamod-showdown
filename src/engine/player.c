@@ -836,19 +836,40 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
         p->velocity[0] = p->velocity[1] = p->velocity[2] = 0.0f;
         p->on_ground = false;
     } else {
+        bool was_walking;
+        if (p->fly) {
+            /* Along the look, pitch and all, like a Banshee; a lighter hand
+             * sideways; straight up or down on JUMP and CROUCH. */
+            float f3[3];
+            hta_camera_forward(cam, f3);
+            float sp = p->fly_speed > 0.1f ? p->fly_speed : 5.0f;
+            float want[3];
+            for (int k = 0; k < 3; k++)
+                want[k] = (f3[k] * in->move_forward + right[k] * in->move_right * 0.7f) * sp;
+            if (in->jump) want[2] += sp * 0.6f;
+            if (in->crouch) want[2] -= sp * 0.6f;
+            float a = sp * 3.0f * dt;            /* full speed from rest in 1/3 s */
+            for (int k = 0; k < 3; k++) {
+                float d = want[k] - p->velocity[k];
+                p->velocity[k] += d > a ? a : d < -a ? -a : d;
+            }
+            if (p->velocity[2] > 0.05f) p->on_ground = false;
+            was_walking = false;
+        } else {
         accel_toward(&p->velocity[0], &p->velocity[1], wishx, wishy, accel, dt);
 
         /* Was the pawn walking, rather than falling or jumping, when this
          * frame began? Only then may it be stuck to a descending surface. */
-        bool was_walking = p->on_ground && !in->jump;
+        was_walking = p->on_ground && !in->jump;
         if (in->jump && p->on_ground) { p->velocity[2] = p->jump_speed; p->on_ground = false; }
         p->velocity[2] -= p->gravity * dt;
+        }
         if (p->velocity[2] < -40.0f) p->velocity[2] = -40.0f;
 
         was_air_this_update = !p->on_ground;
         /* How fast we are going down BEFORE the ground zeroes it, which is
          * what a landing has to be judged on. */
-        if (p->velocity[2] < 0.0f) fall_speed_in = -p->velocity[2];
+        if (p->velocity[2] < 0.0f && !p->fly) fall_speed_in = -p->velocity[2];   /* a broom lands, never falls */
         step_start_x = p->pos[0];
         step_start_y = p->pos[1];
         float oz = p->pos[2];

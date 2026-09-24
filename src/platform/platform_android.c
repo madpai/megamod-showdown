@@ -5467,6 +5467,26 @@ static void vehicle_camera(hta_android *s)
                    !(v->kind == HTA_VK_TANK && st && (st->flags & HTA_SEAT_DRIVER));
 }
 
+/* On a broom: out of your body and behind it, the way a Banshee's camera
+ * rides, kept out of walls. Shots still leave from your eyes. Ours. */
+#define BROOM_CAM_BACK 1.7f
+#define BROOM_CAM_UP   0.35f
+static void broom_camera(hta_android *s)
+{
+    if (!s->player.fly || s->dead) return;
+    s->show_self = true;
+    float fwd[3];
+    hta_camera_forward(&s->cam, fwd);
+    float eye[3] = { s->cam.pos[0], s->cam.pos[1], s->cam.pos[2] };
+    float d[3] = { -fwd[0] * BROOM_CAM_BACK, -fwd[1] * BROOM_CAM_BACK, -fwd[2] * BROOM_CAM_BACK + BROOM_CAM_UP };
+    float len = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+    if (len < 1e-4f) return;
+    for (int k = 0; k < 3; k++) d[k] /= len;
+    float t = 0.0f, hit[3], nrm[3];
+    if (s->col.built && hta_collision_ray(&s->col, eye, d, len, &t, hit, nrm)) len = t * 0.85f;
+    for (int k = 0; k < 3; k++) s->cam.pos[k] = eye[k] + d[k] * len;
+}
+
 /* Engines: each running vehicle's own looping sound, from where it is,
  * faster as it goes faster. Idle below the rate. */
 #define HTA_LOOP_ENGINE 40u
@@ -5779,6 +5799,12 @@ void android_main(struct android_app *app)
             state.hud_debug = 0;
             if (!armed_seat) state.hud_zoom = state.hud_reload = false;
         } else {
+            /* A broom in hand: you fly (hta_player.fly), seated on it. */
+            const hta_game_weapon *mount = held_imported(&state);
+            bool riding = mount && mount->mount && !state.dead && state.game_on;
+            state.player.fly = riding;
+            state.player.fly_speed = riding ? mount->asset->fly_speed : 0.0f;
+            if (state.game_on && state.me >= 0) state.game.units[state.me].riding = riding;
             hta_player_update(&state.player, &state.cam,
                 state.col.built ? &state.col : NULL, &in, dt);
         }
@@ -6811,6 +6837,7 @@ void android_main(struct android_app *app)
         net_frame(&state,now,dt,&in);
         vehicle_transition(&state);
         vehicle_camera(&state);
+        broom_camera(&state);
         vehicle_sounds(&state);
         if (state.trails.loaded) {
             for (uint32_t p = 0; p < state.game.pool_count; p++) {
@@ -6889,7 +6916,7 @@ void android_main(struct android_app *app)
              * off the screen entirely while zoomed. Without this the sniper
              * reads as a magnified view with a rifle in front of it. */
             /* And a corpse is not holding it either. */
-            bool fp_weapon = !driving || (armed_seat && !state.show_self);
+            bool fp_weapon = (!driving || (armed_seat && !state.show_self)) && !state.player.fly;
             const hta_game_weapon *iw = held_imported(&state);
             if (iw && state.gpu_ivm && state.ivm_posed && state.ivm_weapon == held_roster(&state) &&
                 state.zoom_level == 0 && !state.dead && fp_weapon) {

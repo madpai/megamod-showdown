@@ -105,6 +105,11 @@ typedef struct {
     float jump_speed;
     float gravity;
     bool  noclip;
+    /* Flying (a broom): no gravity, steered where the camera looks, JUMP
+     * to climb and CROUCH to dive, at fly_speed wu/s; walls and floors
+     * still collide. Ours. */
+    bool  fly;
+    float fly_speed;
     hta_player_physics phys;
 
     /* Zoom magnification, 1.0 unzoomed. The player owns the field of view

@@ -149,3 +149,14 @@ void hta_preview_frame(float height, float aspect, float yaw, float root[12], ht
     cam->yaw = 3.14159265f;
     cam->pitch = 0.0f;
 }
+
+void hta_imported_mount_matrix(const float root[12], const hta_oal_asset *a, float out[12])
+{
+    float y = a->mount_yaw / 57.2957795f, p = a->mount_pitch / 57.2957795f;
+    float cy = cosf(y), sy = sinf(y), cp = cosf(p), sp = sinf(p);
+    /* Yaw about +Z after pitch about +Y, then the offset. */
+    const float local[12] = { cy*cp, -sy, cy*sp, a->mount_offset[0],
+                              sy*cp,  cy, sy*sp, a->mount_offset[1],
+                              -sp,   0.0f, cp,   a->mount_offset[2] };
+    hta_oal_mul(root, local, out);
+}
