@@ -606,6 +606,34 @@ hta_body_attr hta_game_body(const hta_game *g, int32_t idx)
     return b;
 }
 
+bool hta_game_assign_character(hta_game *g, int32_t idx, int32_t character)
+{
+    if (!g || idx < 0 || idx >= (int32_t)g->unit_count || character < -1 ||
+        character >= (int32_t)g->character_count) return false;
+    if (character >= 0 && !g->allow_duplicate_heroes &&
+        g->characters[character] && g->characters[character]->unique_limit == 1) {
+        for (uint32_t i = 0; i < g->unit_count; i++) {
+            if ((int32_t)i == idx || g->units[i].kind == HTA_UNIT_NONE ||
+                g->units[i].character != character) continue;
+            if (g->units[i].kind != HTA_UNIT_BOT || g->units[idx].kind == HTA_UNIT_BOT)
+                return false;
+        }
+        /* Humans take priority over bot picks; those bots use the Spartan. */
+        for (uint32_t i = 0; i < g->unit_count; i++)
+            if ((int32_t)i != idx && g->units[i].kind == HTA_UNIT_BOT &&
+                g->units[i].character == character) {
+                g->units[i].character = -1;
+                g->units[i].flying = false;
+                if (g->units[i].alive) {
+                    hta_game_apply_body(g, (int32_t)i);
+                    hta_vitals_reset(&g->units[i].vitals);
+                }
+            }
+    }
+    g->units[idx].character = (int8_t)character;
+    return true;
+}
+
 void hta_game_body_physics(const hta_game *g, float speed, hta_player_physics *out)
 {
     *out = g->phys;
@@ -1394,6 +1422,36 @@ static void cone(uint32_t *rng, const float aim[3], float half, float out[3])
 
 static void shoot(hta_game *g, int32_t idx, int32_t wi, float spread);
 
+/* A single line of heat vision stops at solid world, but crosses every body
+ * along it. One event draws the whole line; individual hurt events give each
+ * victim their own damage and kill credit. */
+static void beam(hta_game *g, int32_t idx, int32_t wi, float damage)
+{
+    hta_unit *u = &g->units[idx];
+    float dir[3], from[3];
+    aim_dir(&u->eye, dir);
+    for (int k = 0; k < 3; k++) from[k] = u->eye.pos[k] + dir[k] * 0.18f;
+    float reach = 100.0f;
+    if (g->col) hta_collision_ray(g->col, from, dir, reach, &reach, NULL, NULL);
+    hta_game_event e = { .kind = HTA_EV_FIRE, .a = idx, .b = -1, .weapon = wi, .amount = reach };
+    for (int k = 0; k < 3; k++) { e.pos[k] = from[k]; e.dir[k] = dir[k]; }
+    emit(g, &e);
+    for (uint32_t i = 0; i < g->unit_count; i++) {
+        if ((int32_t)i == idx || !g->units[i].alive) continue;
+        hta_unit *v = &g->units[i];
+        float centre[3] = { v->body.pos[0], v->body.pos[1],
+                            v->body.pos[2] + v->body.phys.coll_stand * 0.55f };
+        float delta[3] = { centre[0]-from[0], centre[1]-from[1], centre[2]-from[2] };
+        float along = delta[0]*dir[0] + delta[1]*dir[1] + delta[2]*dir[2];
+        if (along < 0.0f || along > reach) continue;
+        float side2 = 0.0f;
+        for (int k = 0; k < 3; k++) { float d = delta[k]-dir[k]*along; side2 += d*d; }
+        float radius = v->body.phys.radius + 0.18f;
+        if (side2 > radius*radius) continue;
+        hta_game_hurt(g, (int32_t)i, idx, damage, centre);
+    }
+}
+
 bool hta_game_ability(hta_game *g, int32_t idx)
 {
     if (!g || idx < 0 || idx >= (int32_t)g->unit_count || g->over) return false;
@@ -1405,7 +1463,8 @@ bool hta_game_ability(hta_game *g, int32_t idx)
     const hta_oal_asset *a = g->characters[u->character];
     u->ability_cool = a->ability_cooldown > 0.0f ? a->ability_cooldown : 6.0f;
     u->fired = true;
-    shoot(g, idx, wi, g->weapons[wi].def.error_angle[0]);
+    if (g->weapons[wi].beam) beam(g, idx, wi, a->ability_damage > 0.0f ? a->ability_damage : 250.0f);
+    else shoot(g, idx, wi, g->weapons[wi].def.error_angle[0]);
     return true;
 }
 
@@ -2966,6 +3025,7 @@ int32_t hta_game_add_character(hta_game *g, const hta_oal_asset *a)
             hta_game_weapon *w = &g->weapons[idx];
             *w = g->weapons[base];
             w->hidden = true;
+            w->beam = a->ability_beam;
             w->base = base;
             w->damage_scale = a->ability_damage > 0.0f ? a->ability_damage : 1.0f;
             snprintf(w->display, sizeof(w->display), "%s", a->ability_name[0] ? a->ability_name : "ability");

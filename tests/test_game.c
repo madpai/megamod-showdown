@@ -635,6 +635,55 @@ int main(int argc, char **argv)
     }
     hta_game_free(&f);
 
+    {
+        static hta_game hero_match;
+        static hta_oal_asset laser_hero;
+        memset(&laser_hero, 0, sizeof(laser_hero));
+        snprintf(laser_hero.kind, sizeof(laser_hero.kind), "character");
+        laser_hero.loaded = true;
+        laser_hero.body_shield = -1.0f;
+        laser_hero.unique_limit = 1;
+        laser_hero.ability_beam = true;
+        laser_hero.ability_damage = 300.0f;
+        laser_hero.ability_cooldown = 8.0f;
+        snprintf(laser_hero.ability_base, sizeof(laser_hero.ability_base), "sniper rifle");
+        CHECK(hta_game_load(&hero_match, &c, NULL, &col, err, sizeof(err)), "hero match loads");
+        int32_t hero = hta_game_add_character(&hero_match, &laser_hero);
+        int32_t player = hta_game_add(&hero_match, HTA_UNIT_LOCAL, "Hero", 0);
+        int32_t bot = hta_game_add(&hero_match, HTA_UNIT_BOT, "Bot", 0);
+        int32_t rival = hta_game_add(&hero_match, HTA_UNIT_REMOTE, "Rival", 0);
+        CHECK(hta_game_assign_character(&hero_match, bot, hero) &&
+              hta_game_assign_character(&hero_match, player, hero) &&
+              hero_match.units[bot].character == -1,
+              "a player claiming a unique hero displaces a bot");
+        CHECK(!hta_game_assign_character(&hero_match, rival, hero),
+              "another player cannot claim that hero");
+        hero_match.allow_duplicate_heroes = true;
+        CHECK(hta_game_assign_character(&hero_match, rival, hero),
+              "custom rules can allow duplicate heroes");
+        hero_match.allow_duplicate_heroes = false;
+        hero_match.units[rival].character = -1;
+        hta_game_start(&hero_match);
+        hero_match.col = NULL; /* no world wall along this synthetic firing line */
+        hta_unit *shooter = &hero_match.units[player];
+        shooter->eye.pos[0] = shooter->eye.pos[1] = 0.0f;
+        shooter->eye.pos[2] = 0.4f;
+        shooter->eye.yaw = shooter->eye.pitch = 0.0f;
+        for (int k = 0; k < 2; k++) {
+            int unit = k ? rival : bot;
+            hero_match.units[unit].body.pos[0] = k ? 4.0f : 2.0f;
+            hero_match.units[unit].body.pos[1] = 0.0f;
+            hero_match.units[unit].body.pos[2] = 0.0f;
+        }
+        shooter->ability_cool = 0.0f;
+        CHECK(hta_game_ability(&hero_match, player) &&
+              hero_match.units[bot].vitals.health <= 0.0f &&
+              hero_match.units[rival].vitals.health <= 0.0f,
+              "one laser beam burns through two opponents");
+        CHECK(!hta_game_ability(&hero_match, player), "the beam enters cooldown");
+        hta_game_free(&hero_match);
+    }
+
     hta_game_free(&g);
     hta_pickups_free(&items);
     hta_nav_free(&nav);

@@ -106,11 +106,14 @@ typedef struct {
     float    body_health, body_shield, body_damage, body_speed;
     bool     can_fly;
     float    fly_damage;
+    char     hero_group[24];       /* SUPERHERO, SAIYAN, WIZARD, HERO, HUMAN */
+    int      unique_limit;         /* 1: one of this character per match; 0: unlimited */
     /* A character's ability (Superman's laser eyes, Goku's ki blast): a
      * shot of the Halo weapon `ability_base` at x ability_damage, every
      * ability_cooldown seconds, named `ability_name` on its button. */
     char     ability_name[24], ability_base[64];
     float    ability_damage, ability_cooldown;
+    bool     ability_beam;         /* piercing hitscan; a full red beam, not a sniper round */
     /* Weapons: how hard a melee blow throws its victim, wu/s. */
     float    knockback;
     hta_oal_model models[HTA_OAL_MAX_MODELS];   /* weapon: [0] world, [1] view */

@@ -23,6 +23,7 @@ import android.widget.EditText;
 import android.text.InputType;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.net.InterfaceAddress;
 import java.net.NetworkInterface;
@@ -241,6 +242,7 @@ public class GameActivity extends NativeActivity {
     /* Weapons a class may hold and imported bodies: "W\tname" and
      * "C\tid\tname" lines, once the menu has loaded. */
     static native String nativeCatalog();
+    static native boolean nativeCharacterAvailable(String character);
     static native void nativeSetLoadout(String character, int botsImported, int classes,
                                         String primary, String secondary);
     static native String nativeLanScan(String targets, int port, int milliseconds);
@@ -285,6 +287,7 @@ public class GameActivity extends NativeActivity {
         private static final String[] GAMETYPES = { "SLAYER", "TEAM SLAYER", "CAPTURE THE FLAG" };
         /* Seconds nobody can hurt you after a spawn, or until you fire. */
         private int protect = 3;
+        private boolean duplicateHeroes;
         /* The class picker, over the game: before your first spawn in a
          * custom game (native holds you out), or from the pause screen. */
         boolean pickerOpen;
@@ -309,10 +312,12 @@ public class GameActivity extends NativeActivity {
         }
         private final List<String> classWeapons = new ArrayList<>();
         private final List<String[]> characters = new ArrayList<>();   // {id, name}
+        private final HashMap<String, String> heroGroups = new HashMap<>();
         private final List<Loadout> presets = new ArrayList<>();
         private final List<Loadout> customs = new ArrayList<>();
         private static final int MAX_CUSTOM = 8;
         private int pick = 0;             // into presets then customs
+        private int classPage;
         private int classEdit = -1;       // the custom class being edited, -1 none
         private boolean classesLoaded;
         private int classReturn = 2;
@@ -375,16 +380,24 @@ public class GameActivity extends NativeActivity {
             classesLoaded = true;
             presets.add(new Loadout("", "assault rifle", "pistol", true));   // the Spartan
             characters.add(new String[] { "", "Spartan" });
+            heroGroups.put("", "HUMAN");
             for (String line : cat.split("\n")) {
                 String[] f = line.split("\t", -1);
                 if (f.length >= 2 && f[0].equals("W") && !classWeapons.contains(f[1])) classWeapons.add(f[1]);
                 if (f.length >= 3 && f[0].equals("C")) {
                     characters.add(new String[] { f[1], f[2] });
+                    heroGroups.put(f[1], f.length >= 6 && !f[5].isEmpty() ? f[5] : "HERO");
                     String p = f.length >= 4 && !f[3].isEmpty() ? f[3] : "assault rifle";
                     String q = f.length >= 5 && !f[4].isEmpty() ? f[4] : "pistol";
                     presets.add(new Loadout(f[1], p, q, true));
                 }
             }
+            // Keep the expanding roster browsable by role and character.
+            presets.sort((a, b) -> {
+                int group = Integer.compare(heroRank(heroGroups.get(a.character)),
+                                            heroRank(heroGroups.get(b.character)));
+                return group != 0 ? group : charName(a.character).compareToIgnoreCase(charName(b.character));
+            });
             android.content.SharedPreferences prefs = owner.getSharedPreferences("hta", android.content.Context.MODE_PRIVATE);
             int n = prefs.getInt("custom_n", -1);
             if (n < 0) {
@@ -400,11 +413,24 @@ public class GameActivity extends NativeActivity {
                             prefs.getString("custom" + i + "_s", "pistol"), false));
             }
             pick = Math.max(0, Math.min(presets.size() + customs.size() - 1, prefs.getInt("class_pick2", 0)));
+            String saved = prefs.getString("class_pick_id", "");
+            if (saved.startsWith("p:")) {
+                for (int i = 0; i < presets.size(); i++)
+                    if (presets.get(i).character.equals(saved.substring(2))) { pick = i; break; }
+            } else if (saved.startsWith("c:")) {
+                try {
+                    int custom = Integer.parseInt(saved.substring(2));
+                    if (custom >= 0 && custom < customs.size()) pick = presets.size() + custom;
+                } catch (NumberFormatException ignored) { }
+            }
+            classPage = pick / 7;
         }
 
         private void saveClasses() {
             android.content.SharedPreferences.Editor e = owner.getSharedPreferences("hta", android.content.Context.MODE_PRIVATE).edit();
             e.putInt("class_pick2", pick).putInt("custom_n", customs.size());
+            e.putString("class_pick_id", pick < presets.size() ? "p:" + presets.get(pick).character
+                    : "c:" + (pick - presets.size()));
             for (int i = 0; i < customs.size(); i++) {
                 Loadout l = customs.get(i);
                 e.putString("custom" + i + "_char", l.character).putString("custom" + i + "_p", l.primary)
@@ -428,6 +454,14 @@ public class GameActivity extends NativeActivity {
         private String charName(String id) {
             for (String[] c : characters) if (c[0].equals(id)) return c[1];
             return id.isEmpty() ? "Spartan" : id;
+        }
+
+        private int heroRank(String group) {
+            if ("SUPERHERO".equals(group)) return 0;
+            if ("SAIYAN".equals(group)) return 1;
+            if ("WIZARD".equals(group)) return 2;
+            if ("HERO".equals(group)) return 3;
+            return 4;
         }
 
         private String nextCharacter(String id) {
@@ -465,6 +499,7 @@ public class GameActivity extends NativeActivity {
             row("MAP: " + mapName(maps.get(map)), this::cycleMap);
             row("GAME: " + GAMETYPES[gametype], () -> gametype = (gametype + 1) % GAMETYPES.length);
             row("MY CLASS: " + loadoutLabel(selected()), () -> { classReturn = screen; classEdit = -1; open(7); });
+            row("DUPLICATE HEROES: " + (duplicateHeroes ? "ON" : "OFF"), () -> duplicateHeroes = !duplicateHeroes);
             row("BOTS: " + bots, () -> bots = (bots + 1) % 8);
             row("BOT SKILL: " + skillName(), () -> skill = (skill + 1) % 4);
             row(gametype == 2 ? "CAPTURES TO WIN: " + (captures == 0 ? "NONE" : captures)
@@ -617,17 +652,30 @@ public class GameActivity extends NativeActivity {
                 classRow("DONE", 2, () -> classEdit = -1);
                 return;
             }
-            for (int i = 0; i < presets.size() + customs.size(); i++) {
+            int total = presets.size() + customs.size();
+            int pages = Math.max(1, (total + 6) / 7);
+            classPage = Math.max(0, Math.min(classPage, pages - 1));
+            for (int i = classPage * 7; i < Math.min(total, (classPage + 1) * 7); i++) {
                 final int k = i;
                 Loadout l = loadoutAt(i);
-                String tag = l.preset ? "" : "CUSTOM " + (i - presets.size() + 1) + ":  ";
-                classRow(tag + loadoutLabel(l), i == pick ? 1 : 0, () -> pick = k);
+                String tag = l.preset ? up(heroGroups.getOrDefault(l.character, "HERO")) + ": "
+                                      : "CUSTOM " + (i - presets.size() + 1) + ": ";
+                String label = tag + up(charName(l.character));
+                if (!nativeCharacterAvailable(l.character)) label += "  [TAKEN]";
+                classRow(label, i == pick ? 1 : 0, () -> pick = k);
+            }
+            if (pages > 1) {
+                classRow("◀ PAGE " + (classPage + 1) + "/" + pages, 0,
+                         () -> classPage = (classPage + pages - 1) % pages);
+                classRow("PAGE " + (classPage + 1) + "/" + pages + " ▶", 0,
+                         () -> classPage = (classPage + 1) % pages);
             }
             if (customs.size() < MAX_CUSTOM)
                 classRow("+ NEW CUSTOM CLASS", 0, () -> {
                     Loadout from = selected();
                     customs.add(new Loadout(from.character, from.primary, from.secondary, false));
                     pick = presets.size() + customs.size() - 1;
+                    classPage = pick / 7;
                     classEdit = customs.size() - 1;
                 });
             if (!selected().preset)
@@ -635,6 +683,12 @@ public class GameActivity extends NativeActivity {
             if (mode == 0) classRow(word(18, "BACK"), 2, () -> open(classReturn));
             else classRow(mode == 1 ? "SPAWN" : "DONE", 2, () -> {
                 Loadout l = selected();
+                if (!nativeCharacterAvailable(l.character)) {
+                    new AlertDialog.Builder(owner).setMessage(charName(l.character) +
+                            " is already in this match. Pick another hero or enable Duplicate Heroes in match settings.")
+                            .setPositiveButton("OK", null).show();
+                    return;
+                }
                 nativeChooseClass(l.character, l.primary, l.secondary);
                 pickerOpen = false;
                 if (mode == 2) nativeResume();
@@ -814,7 +868,7 @@ public class GameActivity extends NativeActivity {
             // A joiner plays whatever the host chose; the host's GAME says.
             int type = mode == 2 ? 0 : Math.min(gametype, 2);
             nativeStartMatch(new int[] { mode, bots, skill, type == 2 ? captures : kills, minutes, respawn,
-                    maxPlayers, port, vehicles, type, protect }, host, serverName, world);
+                    maxPlayers, port, vehicles, type, protect, duplicateHeroes ? 1 : 0 }, host, serverName, world);
             screen = 0;
         }
 

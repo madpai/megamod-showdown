@@ -57,6 +57,8 @@ int main(int argc,char**argv)
     CHECK(fabsf(cc.type[shell].state[1].width-0.1f)<1e-4f && cc.type[shell].life>0.9f,
           "the shell's smoke widens and lingers, as tagged");
     CHECK(cc.type[ar].life>=0.06f-1e-5f,"a rifle tracer lives long enough to draw");
+    uint32_t laser=hta_contrails_add_laser(&cc);
+    CHECK(laser!=HTA_CONT_NONE && cc.type[laser].additive,"a red laser can be registered without a tag");
     CHECK(hta_contrails_build(&cc,err,sizeof(err)),"contrails build");
     printf("  %s\n",err);
     hta_camera cam;hta_camera_init(&cam);cam.pos[0]=0;cam.pos[1]=-5;cam.pos[2]=1;
@@ -99,6 +101,14 @@ int main(int argc,char**argv)
     hta_contrails_update(&cc,&cam,1.f/60);hta_contrails_update(&cc,&cam,1.f/60);
     const hta_vertex *v=&cc.mesh.vertices[(ar*HTA_CONT_TRAILS*HTA_CONT_POINTS)*4];
     CHECK(v[0].normal[0]>0.9f && v[0].normal[2]<0.5f,"the rifle tracer's head is yellow");
+    for(int i=0;i<30;i++)hta_contrails_update(&cc,&cam,1.f/60);
+    hta_contrails_beam(&cc,laser,a,b);
+    hta_contrails_update(&cc,&cam,1.f/60);
+    v=&cc.mesh.vertices[(laser*HTA_CONT_TRAILS*HTA_CONT_POINTS)*4];
+    CHECK(area(&cc,laser)>1.0f && v[0].normal[0]>0.9f && v[0].normal[1]<0.1f,
+          "laser is a visible full-length red beam");
+    for(int i=0;i<30;i++)hta_contrails_update(&cc,&cam,1.f/60);
+    CHECK(area(&cc,laser)<1e-6f,"laser fades after its burst");
     hta_contrails_free(&cc);free(d);free(bd);
     printf("%d checks, %d failures\n",checks,failures);return failures?1:0;
 }

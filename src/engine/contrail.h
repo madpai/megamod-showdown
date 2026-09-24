@@ -89,6 +89,8 @@ uint32_t hta_contrails_for_projectile(hta_contrails *c, const hta_cache *cache,
                                       const hta_resource_map *bitmaps, uint32_t proj_tag);
 uint32_t hta_contrails_add(hta_contrails *c, const hta_cache *cache,
                            const hta_resource_map *bitmaps, uint32_t cont_tag);
+/* A procedural red laser, registered before build. */
+uint32_t hta_contrails_add_laser(hta_contrails *c);
 bool hta_contrails_build(hta_contrails *c, char *err, size_t errlen);
 
 /* Something flying reports where it is this frame. `key` is the caller's
@@ -98,6 +100,8 @@ void hta_contrails_feed(hta_contrails *c, uint32_t type, uint32_t key,
 /* A hitscan round's trail, muzzle to impact at `speed` wu/s. */
 void hta_contrails_tracer(hta_contrails *c, uint32_t type, const float from[3],
                           const float to[3], float speed);
+/* A full-length line that holds briefly and fades, piercing bodies. */
+void hta_contrails_beam(hta_contrails *c, uint32_t type, const float from[3], const float to[3]);
 
 /* Age the points, move the tracers, stop the trails nothing fed, and pose
  * the ribbons toward the camera. The caller re-uploads the vertices. */

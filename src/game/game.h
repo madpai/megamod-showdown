@@ -34,8 +34,8 @@
 #include "brain.h"
 
 #define HTA_GAME_MAX_UNITS    16
-#define HTA_GAME_MAX_WEAPONS  32
-#define HTA_GAME_MAX_CHARACTERS 16
+#define HTA_GAME_MAX_WEAPONS  64
+#define HTA_GAME_MAX_CHARACTERS 32
 #define HTA_GAME_MAX_EVENTS   96
 #define HTA_GAME_MAX_POOLS    12
 #define HTA_GAME_NAME         24
@@ -154,6 +154,7 @@ typedef struct {
     bool     mount;            /* a broom: see hta_oal_asset.mount */
     float    knockback;        /* a melee blow throws its victim this fast, wu/s */
     bool     hidden;           /* an ability's shot: never carried, never in a class */
+    bool     beam;             /* a piercing laser: FIRE event amount is its reach */
 } hta_game_weapon;
 
 /* A weapon lying where it fell, with what was left in it. */
@@ -296,7 +297,7 @@ typedef enum {
     HTA_EV_NONE = 0,
     HTA_EV_KILL,          /* a: victim, b: killer (-1 none), weapon */
     HTA_EV_SPAWN,         /* a */
-    HTA_EV_FIRE,          /* a, weapon, pos (muzzle), dir */
+    HTA_EV_FIRE,          /* a, weapon, pos (muzzle), dir; amount = reach for beams */
     HTA_EV_HIT_WORLD,     /* a (shooter), weapon, pos, dir (normal), material */
     HTA_EV_HIT_UNIT,      /* a: victim, b: attacker, pos, amount */
     HTA_EV_MELEE,         /* a, b (-1 miss) */
@@ -383,6 +384,7 @@ typedef struct hta_game {
     const hta_oal_asset *characters[HTA_GAME_MAX_CHARACTERS];
     int32_t         char_ability[HTA_GAME_MAX_CHARACTERS];   /* roster index of its ability's shot, -1 none */
     uint32_t        character_count;
+    bool            allow_duplicate_heroes; /* custom match rule; unique_limit otherwise applies */
     /* Custom classes: each unit spawns with its own two weapons, bots with
      * a random pick of the class weapons. */
     bool            classes;
@@ -505,6 +507,9 @@ typedef struct {
     float fly_speed, fly_damage;
 } hta_body_attr;
 hta_body_attr hta_game_body(const hta_game *g, int32_t idx);
+/* Assign a character within its per-match limit. Human choices displace bots;
+ * two human players cannot claim the same unique hero. -1 is the Spartan. */
+bool hta_game_assign_character(hta_game *g, int32_t idx, int32_t character);
 /* The unit's character ability: fire it now if it is ready (true), and how
  * ready it is (0 just used .. 1 ready; -1 none). */
 bool  hta_game_ability(hta_game *g, int32_t idx);

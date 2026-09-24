@@ -202,10 +202,16 @@ bool hta_oal_load_memory(const uint8_t *data, size_t size, hta_oal_asset *out, c
     out->body_damage = json_num(j, ml, "body_damage");
     out->body_speed = json_num(j, ml, "body_speed");
     out->fly_damage = json_num(j, ml, "fly_damage");
+    json_str(j, ml, "hero_group", out->hero_group, sizeof(out->hero_group));
+    out->unique_limit = (int)json_num(j, ml, "unique_limit");
     json_str(j, ml, "ability_name", out->ability_name, sizeof(out->ability_name));
     json_str(j, ml, "ability_base", out->ability_base, sizeof(out->ability_base));
     out->ability_damage = json_num(j, ml, "ability_damage");
     out->ability_cooldown = json_num(j, ml, "ability_cooldown");
+    {
+        const char *beam = json_find(j, ml, "ability_beam");
+        out->ability_beam = beam && !strncmp(beam, "true", 4);
+    }
     out->knockback = json_num(j, ml, "knockback");
     {
         const char *cf = json_find(j, ml, "can_fly");

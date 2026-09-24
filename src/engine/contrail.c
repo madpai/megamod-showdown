@@ -163,6 +163,37 @@ uint32_t hta_contrails_for_projectile(hta_contrails *c, const hta_cache *cache,
     return HTA_CONT_NONE;
 }
 
+uint32_t hta_contrails_add_laser(hta_contrails *c)
+{
+    if (!c || c->loaded || c->type_count >= HTA_CONT_TYPES || c->mesh.texture_count >= 256u)
+        return HTA_CONT_NONE;
+    if (!c->mesh.textures) {
+        c->mesh.textures = calloc(256, sizeof(hta_bsp_texture));
+        if (!c->mesh.textures) return HTA_CONT_NONE;
+    }
+    uint8_t *white = malloc(4);
+    if (!white) return HTA_CONT_NONE;
+    memset(white, 255, 4);
+    uint32_t tex = c->mesh.texture_count++;
+    c->mesh.textures[tex].width = c->mesh.textures[tex].height = 1;
+    c->mesh.textures[tex].rgba = white;
+    hta_contrail_type *ty = &c->type[c->type_count];
+    memset(ty, 0, sizeof(*ty));
+    ty->tex = tex; ty->additive = true; ty->rate = 30.0f;
+    ty->life = 0.34f; ty->repeats_u = ty->repeats_v = 1.0f;
+    ty->sprite.u1 = ty->sprite.v1 = 1.0f;
+    ty->state_count = 2;
+    ty->state[0].duration = 0.14f;
+    ty->state[0].transition = 0.20f;
+    ty->state[0].width = 0.055f;
+    ty->state[0].color[0] = 1.0f; ty->state[0].color[1] = 0.04f;
+    ty->state[0].color[2] = 0.01f; ty->state[0].color[3] = 1.0f;
+    ty->state[1].width = 0.12f;
+    ty->state[1].color[0] = 1.0f; ty->state[1].color[1] = 0.02f;
+    ty->state[1].color[2] = 0.0f; ty->state[1].color[3] = 0.0f;
+    return c->type_count++;
+}
+
 bool hta_contrails_build(hta_contrails *c, char *err, size_t errlen)
 {
     if (!c || !c->type_count) {
@@ -298,6 +329,19 @@ void hta_contrails_tracer(hta_contrails *c, uint32_t type, const float from[3],
     memcpy(tr->head, from, sizeof(tr->head));
     tr->have_head = true;
     push_point(tr, from);
+}
+
+void hta_contrails_beam(hta_contrails *c, uint32_t type, const float from[3], const float to[3])
+{
+    if (!c || !c->loaded || type >= c->type_count || !from || !to) return;
+    hta_contrail *tr = claim(c, type, 0, true);
+    tr->tracer = false;
+    tr->fed = false;
+    tr->travelled = 0.0f;
+    tr->count = 2;
+    memcpy(tr->pt[0].pos, from, sizeof(tr->pt[0].pos));
+    memcpy(tr->pt[1].pos, to, sizeof(tr->pt[1].pos));
+    tr->pt[0].age = tr->pt[1].age = 0.0f;
 }
 
 uint32_t hta_contrails_live(const hta_contrails *c)

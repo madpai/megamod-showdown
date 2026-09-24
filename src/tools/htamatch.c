@@ -72,7 +72,7 @@ int main(int argc, char **argv)
     uint32_t W = 800, H = 450;
     const char *prefix = "match";
     const char *oalmap = NULL;
-    const char *char_paths[8], *weap_paths[8];
+    const char *char_paths[HTA_GAME_MAX_CHARACTERS], *weap_paths[16];
     int nchar = 0, nweap = 0;
     bool classes = false;
     const char *give = NULL;
@@ -88,8 +88,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--ride") && i + 1 < argc) ride = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--vehicles")) vehicles = true;
         else if (!strcmp(argv[i], "--oalmap") && i + 1 < argc) oalmap = argv[++i];
-        else if (!strcmp(argv[i], "--character") && i + 1 < argc && nchar < 8) char_paths[nchar++] = argv[++i];
-        else if (!strcmp(argv[i], "--weapon") && i + 1 < argc && nweap < 8) weap_paths[nweap++] = argv[++i];
+        else if (!strcmp(argv[i], "--character") && i + 1 < argc && nchar < HTA_GAME_MAX_CHARACTERS) char_paths[nchar++] = argv[++i];
+        else if (!strcmp(argv[i], "--weapon") && i + 1 < argc && nweap < 16) weap_paths[nweap++] = argv[++i];
         else if (!strcmp(argv[i], "--classes")) classes = true;
         else if (!strcmp(argv[i], "--give") && i + 1 < argc) { give = argv[++i]; classes = true; }
         else if (!strcmp(argv[i], "--seed") && i + 1 < argc) seed = (uint32_t)strtoul(argv[++i], NULL, 10);
@@ -277,8 +277,8 @@ int main(int argc, char **argv)
         hta_pickups_build(&items, &cache, bmp, err, sizeof(err));
         game.items = &items;
     }
-    static hta_oal_asset chars[8], weaps[8];
-    int32_t char_index[8];
+    static hta_oal_asset chars[HTA_GAME_MAX_CHARACTERS], weaps[16];
+    int32_t char_index[HTA_GAME_MAX_CHARACTERS];
     for (int k = 0; k < nchar; k++) {
         if (!hta_oal_load(char_paths[k], &chars[k], err, sizeof(err))) { fprintf(stderr, "character: %s\n", err); return 1; }
         char_index[k] = hta_game_add_character(&game, &chars[k]);

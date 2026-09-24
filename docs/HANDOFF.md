@@ -8,8 +8,8 @@
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-24 (class attributes, flight, fists,
-abilities, recharging wand, contextual HUD, and CS:S M4A1)
+**Date of this revision:** 2026-09-24 (hero roster, unique match slots,
+Superman flight and beam, Workshop characters and weapons)
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Branches -- read this first:**
 - `halo-sandbox` is **MEGAMOD SHOWDOWN**. Push this branch only to private
@@ -168,26 +168,31 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Class abilities and HUD (next phone test, 2026-09-24):**
-> 1. Start SLAYER, TEAM SLAYER, then CTF: each should open the class picker;
->    there are no separate CUSTOM modes. The DBG button is gone. Buttons
->    appear for the held weapon: ZOOM on scoped guns, RELOAD on magazines,
->    SWING for fists/bat, and an ability button on Goku and Superman.
-> 2. Harry: low health, smaller shield, stronger WAND spells. Empty its 12
->    charges and watch 3 return each second, with no reload button. The
->    BROOMSTICK flies at 3.5 wu/s with a closer shoulder camera; JUMP climbs,
->    CROUCH dives. Shots do 0.6x damage in flight.
-> 3. Goku and Superman: FISTS should punch and push an enemy back. FLY/LAND
->    toggles their own flight (3.5/3.2 wu/s); JUMP/CROUCH move up/down.
->    Goku's KI BLAST uses a rocket round every 6 s; Superman's LASER EYES
->    uses a sniper round every 5 s. Try firing each ability while holding
->    fists and during flight; look for the cooldown ring. Both abilities
->    currently inherit the base weapon's effects and sounds.
-> 4. Counter Strike: Leet starts with the AK-47, Urban with the new CS:S
->    M4A1. Both have no shields and high rifle damage. Check their view
->    models, fire and reload sounds. The M4A1 has no silencer toggle yet.
-> 5. This pass was checked in a rendered de_dust2 bot match and by the
->    80-check verify gate. The phone still needs a visual and touch test.
+> **Hero shooter roster (next phone test, 2026-09-24):**
+> 1. Pick Superman, fly, and look at his head from the shoulder camera and
+>    another player's view. The complete idle pose now leans forward in
+>    flight; he moves at 5.8 wu/s and has much higher health and shields.
+> 2. Aim LASER EYES through two enemies. A full red beam should reach the
+>    wall and damage both targets, then show an 8 s cooldown. Confirm the
+>    beam appears for a LAN joiner too. Goku flies at 5.4 wu/s and keeps his
+>    Ki Blast. Harry remains the frailer broom rider.
+> 3. With duplicate heroes OFF, pick Superman in two LAN clients: the
+>    second should see TAKEN or be held at the picker. Turn duplicates ON
+>    in CREATE GAME and confirm both may spawn as Superman.
+> 4. Browse the grouped pages. New Workshop characters: Master Chief,
+>    Dragonborn, Iron Man and Dumbledore. Dragonborn starts with a Daedric
+>    Sword and .357; Dumbledore has an Elder Wand with eight recharging
+>    charges. Check each body's textures, third person equipment and first
+>    person weapon view. A Sword or Wand may need phone FOV adjustment.
+> 5. Get killed by an imported character near open ground and a wall. The
+>    freeze frame should show the attacker's face. Please send a screenshot
+>    if the camera still lands behind the head or clips into geometry.
+> 6. Host checks: 12-character, 11-weapon bot match; 88 game checks, 20
+>    contrail checks, network codec/two-client test, and verify.sh 80/80.
+>    Phone visual/touch results remain to be reported after publication.
+>    The package roster now has room for 32 characters and 64 weapons,
+>    including hidden ability shots; adding content still needs import,
+>    texture, view-model and phone checks.
 >
 > **TF2 Scout + Bat (previous build, 2026-09-24):**
 > 1. SCOUT (TF2) body, preset Scattergun + Bat. BAT (TF2) is the first
@@ -1006,9 +1011,12 @@ wrong, this list is the first place to look — they are all one constant.
 | `HTA_MELEE_REACH` | 0.5 wu | how far a swing reaches |
 | Fists knockback | 4 wu/s horizontal, 1.4 wu/s up | imported Fists definition; invented for Goku and Superman |
 | Broom flight | 3.5 wu/s; camera 1.25 wu back, 0.28 up/right | slower flight and shoulder view, invented |
-| Class flight | Goku 3.5, Superman 3.2 wu/s; damage x0.6 while airborne | invented character balance in private packages |
-| Ability cooldowns | Superman 5 s, Goku 6 s | invented character balance; shots borrow sniper/rocket tags |
+| Class flight | Goku 5.4, Superman 5.8, Iron Man 4.8 wu/s; airborne damage x0.8/x0.85/x0.75 | invented hero balance in private packages; power-flight camera 2.0 wu back, 0.42 up, 0.38 aside |
+| Titan durability/damage | Superman health x2.4, shield x2.5, damage x1.8; Goku x2.1/x2.0/x1.7 | deliberately strong unique heroes; one slot each unless duplicate rule on |
+| Ability cooldowns | Superman beam 8 s and 300 direct damage before body modifiers; Goku rocket 5.5 s; Iron Man micro missiles 7 s | invented hero balance; Superman's red line is 100 wu and pierces all bodies until a wall |
 | Wand recharge | 12 charges, 3/s; damage x1.6 | invented character balance; no reserve ammo |
+| Elder Wand | 8 charges, 2.2/s; projectile damage x2.1 | stronger, slower wizard wand; same Workshop model/sound |
+| Daedric Sword | 1.6 swings/s; melee damage x2.3; knockback 1.8 wu/s | Skyrim Sweps world/view models; TF2 sword swing sound; invented combat balance |
 | CS:S M4A1 balance | 10 shots/s, 30+90 rounds; Halo AR damage x1.45, 3.1 s reload | model/sound from CS:S; damage and reload timing adapted for this game |
 | `HTA_VM_KEY_FRACTION` | 0.35 | when a clip "does its thing" if `key frame` is 0 |
 | `HTA_BOT_RESPAWN` | 5 s | how long a body lies there |

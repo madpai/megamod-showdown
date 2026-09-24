@@ -48,7 +48,7 @@ static float fr(const uint8_t *p) { uint32_t bits=hta_net_u32_read(p); float f; 
 bool hta_net_player_pack(uint8_t *dst, size_t cap, const hta_net_player *p)
 {
     if (!dst || !p || cap < HTA_NET_PLAYER_BYTES || p->id == 0 ||
-        p->id > HTA_NET_MAX_PLAYERS || p->weapon > 23 || p->flags & ~31u) return false;
+        p->id > HTA_NET_MAX_PLAYERS || p->weapon >= HTA_NET_MAX_WEAPONS || p->flags & ~31u) return false;
     const float values[8]={p->pos[0],p->pos[1],p->pos[2],p->velocity[0],
                             p->velocity[1],p->velocity[2],p->yaw,p->pitch};
     for (unsigned i=0; i<8; i++) if (!isfinite(values[i]) || fabsf(values[i]) > 100000.0f) return false;
@@ -72,7 +72,7 @@ bool hta_net_event_pack(uint8_t *dst, size_t cap, const hta_net_event *e)
 {
     if (!dst || !e || cap < 7 || e->actor < 1 || e->actor > HTA_NET_MAX_PLAYERS ||
         e->kind < HTA_NET_EVENT_FIRE || e->kind > HTA_NET_EVENT_WEAPON ||
-        e->weapon > 23) return false;
+        e->weapon >= HTA_NET_MAX_WEAPONS) return false;
     dst[0]=e->actor; dst[1]=e->kind; dst[2]=e->weapon;
     hta_net_u32_write(dst+3,e->event_id); return true;
 }
@@ -145,10 +145,13 @@ bool hta_net_world_pack(uint8_t *dst, size_t cap, const hta_net_world *w, size_t
         if (e->id>=HTA_NET_MAX_ENTITIES || seen[e->id] ||
             e->kind<HTA_NET_ENTITY_PLAYER || e->kind>HTA_NET_ENTITY_BOT ||
             e->character>63 ||
-            e->flags & ~127u || (e->weapon!=255 && e->weapon>23) ||
+            (e->flags & ~(HTA_NET_ENTITY_ALIVE|HTA_NET_ENTITY_GROUNDED|HTA_NET_ENTITY_CROUCH|
+                          HTA_NET_ENTITY_FIRE|HTA_NET_ENTITY_MELEE|HTA_NET_ENTITY_GRENADE|
+                          HTA_NET_ENTITY_BLUE|HTA_NET_ENTITY_CLASS_REJECT)) ||
+            (e->weapon!=255 && e->weapon>=HTA_NET_MAX_WEAPONS) ||
             e->peer_id>HTA_NET_MAX_PLAYERS || e->slot>1 ||
-            (e->carry[0]!=255 && e->carry[0]>23) ||
-            (e->carry[1]!=255 && e->carry[1]>23) ||
+            (e->carry[0]!=255 && e->carry[0]>=HTA_NET_MAX_WEAPONS) ||
+            (e->carry[1]!=255 && e->carry[1]>=HTA_NET_MAX_WEAPONS) ||
             (e->kind==HTA_NET_ENTITY_BOT && e->peer_id)) return false;
         seen[e->id]=true;
         const float values[9]={e->pos[0],e->pos[1],e->pos[2],
@@ -217,7 +220,8 @@ bool hta_net_control_pack(uint8_t *dst, size_t cap, const hta_net_control *c)
 {
     if (!dst || !c || cap<HTA_NET_CONTROL_BYTES || !c->id ||
         c->id>HTA_NET_MAX_PLAYERS || c->flags & ~31u || c->weapon_slot>1 ||
-        (c->loadout[0]!=255 && c->loadout[0]>23) || (c->loadout[1]!=255 && c->loadout[1]>23) ||
+        (c->loadout[0]!=255 && c->loadout[0]>=HTA_NET_MAX_WEAPONS) ||
+        (c->loadout[1]!=255 && c->loadout[1]>=HTA_NET_MAX_WEAPONS) ||
         c->character>63 ||
         !isfinite(c->forward) || fabsf(c->forward)>1.0f ||
         !isfinite(c->right) || fabsf(c->right)>1.0f ||
@@ -483,7 +487,7 @@ bool hta_net_game_pack(uint8_t *dst, size_t cap, const hta_net_game *g)
     if (!dst || !g || cap<HTA_NET_GAME_BYTES || g->mode>2) return false;
     dst[0]=g->mode; dst[1]=g->score_limit;
     u16w(dst+2,(uint16_t)g->team_score[0]); u16w(dst+4,(uint16_t)g->team_score[1]);
-    if (g->options & ~1u) return false;
+    if (g->options & ~(HTA_NET_GAME_CLASSES | HTA_NET_GAME_DUPLICATES)) return false;
     dst[6]=g->winner_team; dst[7]=g->options;
     for (unsigned t=0;t<2;t++) {
         uint8_t *o=dst+8+t*11;

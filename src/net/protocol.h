@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define HTA_NET_MAGIC 0x31415448u /* "HTA1" on the wire */
-#define HTA_NET_VERSION 6u
+#define HTA_NET_VERSION 7u
 #define HTA_NET_HEADER 20u
 #define HTA_NET_MAX_PACKET 1200u
 #define HTA_NET_MAX_PLAYERS 8u
@@ -26,7 +26,7 @@
 #define HTA_NET_POOL_HOST_WEAPON 12u
 #define HTA_NET_POOL_HOST_GRENADES 13u
 /* Roster entries an FX may name: carried weapons and vehicle triggers. */
-#define HTA_NET_MAX_WEAPONS 32u
+#define HTA_NET_MAX_WEAPONS 64u
 #define HTA_NET_MAX_VEHICLES 32u
 #define HTA_NET_VEHICLE_SEATS 6u
 #define HTA_NET_VEHICLE_BYTES 36u
@@ -88,7 +88,8 @@ enum { HTA_NET_ENTITY_NONE, HTA_NET_ENTITY_PLAYER, HTA_NET_ENTITY_BOT };
 enum { HTA_NET_ENTITY_ALIVE=1, HTA_NET_ENTITY_GROUNDED=2,
        HTA_NET_ENTITY_CROUCH=4, HTA_NET_ENTITY_FIRE=8,
        HTA_NET_ENTITY_MELEE=16, HTA_NET_ENTITY_GRENADE=32,
-       HTA_NET_ENTITY_BLUE=64 /* v4: on the blue team (team games) */ };
+       HTA_NET_ENTITY_BLUE=64, /* v4: on the blue team (team games) */
+       HTA_NET_ENTITY_CLASS_REJECT=128 /* v7: unique hero was claimed */ };
 typedef struct {
     uint8_t id, kind, flags, weapon, peer_id; /* peer_id 0 for bots */
     float pos[3], velocity[2], yaw, pitch, health, shield;
@@ -202,7 +203,7 @@ bool hta_net_drops_unpack(const uint8_t *src, size_t len, hta_net_drops *d);
  * hull (0..255 of full; 0 for a wreck). */
 #define HTA_NET_GAME_BYTES (8u + 2u * 11u + HTA_NET_MAX_VEHICLES)
 enum { HTA_NET_FLAG_HOME = 0, HTA_NET_FLAG_CARRIED, HTA_NET_FLAG_DROPPED };
-enum { HTA_NET_GAME_CLASSES = 1 };   /* players choose a class before spawning */
+enum { HTA_NET_GAME_CLASSES = 1, HTA_NET_GAME_DUPLICATES = 2 };
 typedef struct {
     uint8_t mode;              /* hta_game_mode */
     uint8_t score_limit;

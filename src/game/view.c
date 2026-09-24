@@ -253,6 +253,11 @@ static void imported_update(hta_game_view *v, const hta_game *g, uint32_t i, flo
             float k = u->dead_for / TOPPLE_TIME;
             topple = (k > 1.0f ? 1.0f : k) * TOPPLE_ANGLE;
         }
+    } else if (u->flying) {
+        /* Superman 64's imported jump clip loses its head. A self-powered
+         * flyer leans forward in the complete idle pose; broom riders use air. */
+        role = "idle";
+        topple = 0.25f;
     } else if (u->riding) {
         role = "air";           /* on a broom: legs hanging, as in the jump */
     } else if (u->vehicle >= 0) {

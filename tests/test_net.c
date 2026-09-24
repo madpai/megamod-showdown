@@ -79,7 +79,7 @@ static void world_codec(void)
     assert(hta_net_control_pack(control_wire,sizeof(control_wire),&ctl));
     assert(hta_net_control_unpack(control_wire,sizeof(control_wire),&ctl2));
     assert((ctl2.flags&HTA_NET_READY) && ctl2.loadout[0]==10 && ctl2.loadout[1]==255 && ctl2.character==3);
-    ctl.loadout[0]=24; assert(!hta_net_control_pack(control_wire,sizeof(control_wire),&ctl));
+    ctl.loadout[0]=HTA_NET_MAX_WEAPONS; assert(!hta_net_control_pack(control_wire,sizeof(control_wire),&ctl));
     ctl.loadout[0]=10; ctl.character=64; assert(!hta_net_control_pack(control_wire,sizeof(control_wire),&ctl));
     ctl.character=3;
     /* Vehicles: 32 of them, full, under the packet cap; values survive
@@ -116,7 +116,7 @@ static void world_codec(void)
     a.time=12.5f; a.round=3; a.count=2; a.bot_count=1;
     a.winner=255; a.score_limit=25; a.time_limit=10; a.respawn_time=5;
     a.entities[0]=(hta_net_entity){.id=0,.kind=HTA_NET_ENTITY_PLAYER,
-        .flags=HTA_NET_ENTITY_ALIVE|HTA_NET_ENTITY_GROUNDED,.weapon=1,
+        .flags=HTA_NET_ENTITY_ALIVE|HTA_NET_ENTITY_GROUNDED|HTA_NET_ENTITY_CLASS_REJECT,.weapon=42,
         .pos={1,2,3},.velocity={4,5},.yaw=0.4f,.pitch=-0.1f,
         .health=75,.shield=25,.score=3,.kills=4,.deaths=1};
     snprintf(a.entities[0].name,sizeof(a.entities[0].name),"Host");
@@ -128,6 +128,7 @@ static void world_codec(void)
     assert(n==HTA_NET_WORLD_HEADER+2*HTA_NET_ENTITY_BYTES);
     assert(hta_net_world_unpack(payload,n,&b));
     assert(b.round==3 && b.entities[0].score==3 && b.entities[0].health==75 &&
+           b.entities[0].weapon==42 && (b.entities[0].flags&HTA_NET_ENTITY_CLASS_REJECT) &&
            !strcmp(b.entities[1].name,"Bot"));
     assert((b.entities[1].flags&HTA_NET_ENTITY_BLUE) && !(b.entities[0].flags&HTA_NET_ENTITY_BLUE));
     assert(!hta_net_world_unpack(payload,n-1,&b));
@@ -291,10 +292,10 @@ static void sessions(void)
     { uint8_t buf[HTA_NET_GAME_BYTES]; hta_net_game bad=gm; bad.flag[1].carrier=HTA_NET_MAX_ENTITIES;
       assert(!hta_net_game_pack(buf,sizeof(buf),&bad));
       bad=gm; bad.mode=7; assert(!hta_net_game_pack(buf,sizeof(buf),&bad));
-      bad=gm; bad.options=2; assert(!hta_net_game_pack(buf,sizeof(buf),&bad));
-      bad=gm; bad.options=HTA_NET_GAME_CLASSES; hta_net_game ok;
+      bad=gm; bad.options=4; assert(!hta_net_game_pack(buf,sizeof(buf),&bad));
+      bad=gm; bad.options=HTA_NET_GAME_CLASSES | HTA_NET_GAME_DUPLICATES; hta_net_game ok;
       assert(hta_net_game_pack(buf,sizeof(buf),&bad) && hta_net_game_unpack(buf,sizeof(buf),&ok) &&
-             ok.options==HTA_NET_GAME_CLASSES);
+             ok.options==(HTA_NET_GAME_CLASSES | HTA_NET_GAME_DUPLICATES));
       assert(hta_net_game_pack(buf,sizeof(buf),&gm)); buf[8]=0xFF;
       hta_net_game back; assert(!hta_net_game_unpack(buf,sizeof(buf),&back)); }
     hta_net_fx fx={.kind=HTA_NET_FX_FIRE,.entity=0,.weapon=1};
