@@ -65,6 +65,15 @@ if [ "$BUILD" = 1 ]; then
       ln "$f" "$STAGE/maps/" 2>/dev/null || cp "$f" "$STAGE/maps/"
       echo "bundling imported map $(basename "$f" .oalmap)"
     done
+    # Imported characters and weapons (.oalasset), same private source.
+    for kind in characters weapons; do
+      for f in "$HTA_IMPORTED/$kind"/*.oalasset; do
+        [ -f "$f" ] || continue
+        mkdir -p "$STAGE/$kind"
+        ln "$f" "$STAGE/$kind/" 2>/dev/null || cp "$f" "$STAGE/$kind/"
+        echo "bundling imported $kind $(basename "$f" .oalasset)"
+      done
+    done
     PROPS="$PROPS -PhtaAssetsDir=$STAGE"
     echo "bundling the owner's Trial data from $HTA_DATA (personal build)"
   fi
@@ -81,7 +90,7 @@ if [ "$BUILD" = 1 ] && [ "$WITH_ASSETS" = 1 ]; then
   echo "building asset-free guest APK…"
   (cd android && $GRADLE --no-daemon -q :app:clean :app:assembleDebug \
       -PhtaVersionCode="$(git rev-list --count HEAD)" -PhtaVersionName="$SOURCE")
-  if unzip -Z1 "$APK" | grep -q '^assets/maps/'; then
+  if unzip -Z1 "$APK" | grep -qE '^assets/(maps|characters|weapons)/'; then
     echo "guest APK unexpectedly contains Trial maps" >&2; exit 1
   fi
   cp "$APK" "$ROOT/halo-trial-guest.apk"

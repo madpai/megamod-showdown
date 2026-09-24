@@ -51,6 +51,8 @@
 #include "../asset/strings.h"
 #include "../asset/external_map.h"
 #include "../game/external_world.h"
+#include "../game/imported.h"
+#include "../asset/oal_asset.h"
 
 #include <android/log.h>
 #include <android/input.h>
@@ -227,6 +229,35 @@ typedef struct {
     uint32_t held_slot;
     uint32_t start_weapon[HTA_CARRY_MAX];
     uint32_t start_count;
+    /* Imported weapons ride on a Halo weapon's tag, so a slot's tag alone
+     * cannot tell an AK-47 from the assault rifle under it: this is the
+     * roster index of an imported weapon in that slot, -1 otherwise. */
+    int32_t  held_asset[HTA_CARRY_MAX];
+    int32_t  start_asset[HTA_CARRY_MAX];
+
+    /* Imported content built into the APK (assets/characters and
+     * assets/weapons): loaded once, for the menus and every match. */
+#define HTA_MAX_IMPORTED 8
+    hta_oal_asset imp_char[HTA_MAX_IMPORTED];
+    uint32_t imp_char_count;
+    hta_oal_asset imp_weap[HTA_MAX_IMPORTED];
+    uint32_t imp_weap_count;
+    uint32_t imp_clip[HTA_MAX_IMPORTED][2];      /* audio: fire, reload */
+    bool     imported_loaded;
+    /* This match's look and class, from the menus. */
+    char     my_character[48];
+    bool     bots_imported;
+    bool     classes;
+    char     my_class[2][48];
+    /* The first-person view of an imported weapon. */
+    hta_gfx_mesh *gpu_ivm;
+    int32_t  ivm_weapon;        /* roster index it was uploaded for, -1 */
+    const char *ivm_role;       /* the clip wanted: "idle", "fire", "reload", "draw" */
+    int32_t  ivm_clip;
+    float    ivm_time;
+    hta_vertex *ivm_posed;
+    uint32_t ivm_cap;
+    float    ivm_world[HTA_OAL_MAX_BONES][12];
     bool     hud_swap;
     bool     hud_zoom;
     int      zoom_level;     /* 0 = not zoomed */
@@ -716,6 +747,24 @@ static void play_tag(hta_android *s, uint32_t tag_id, float gain)
 /* A sound that happens somewhere in the world rather than in your hands:
  * quieter with distance, and placed left or right of where you are
  * looking. */
+static bool world_voice(hta_android *s, const float at[3], float gain, float *g_out, float *pan_out)
+{
+    float d[3] = { at[0] - s->cam.pos[0], at[1] - s->cam.pos[1], at[2] - s->cam.pos[2] };
+    float dist = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+    if (dist >= HTA_SOUND_FAR) return false;
+    float g = gain;
+    if (dist > HTA_SOUND_NEAR) { g *= HTA_SOUND_NEAR / dist; g *= 1.0f - dist / HTA_SOUND_FAR; }
+    if (g <= 0.001f) return false;
+    float pan = 0.0f;
+    if (dist > 0.01f) {
+        float right[3];
+        hta_camera_right(&s->cam, right);
+        pan = (d[0]*right[0] + d[1]*right[1] + d[2]*right[2]) / dist;
+    }
+    *g_out = g; *pan_out = pan;
+    return true;
+}
+
 static void play_tag_at(hta_android *s, uint32_t tag_id, const float at[3],
                         float gain)
 {
@@ -898,12 +947,89 @@ static float blast_falloff(const float centre[3], const float at[3],
 #define HTA_DEATH_PULLBACK  1.2f    /* seconds for the camera to get there */
 
 static void equip_weapon(hta_android *s, uint32_t weap_tag_id);
+static void equip_weapon_tag(hta_android *s, uint32_t weap_tag_id);
 static int32_t held_roster(hta_android *s);
+static const hta_game_weapon *held_imported(hta_android *s);
+static int imported_index(const hta_android *s, const hta_oal_asset *a);
 
 /* How far above a start to look down for its floor. Blood Gulch's starts
  * are in the open and some sit a little under the ground, so 8 wu; an
  * imported map's are already on the floor, under arches and ceilings. */
 static float spawn_lift(const hta_android *s) { return s->world_loaded ? HTA_EXTERNAL_SPAWN_LIFT : 8.0f; }
+
+/* The first-person clip for a viewmodel state, on whichever view is up:
+ * Halo's own, or the imported weapon's. */
+static void vm_play(hta_android *s, hta_vm_state st)
+{
+    if (s->vm.loaded) hta_viewmodel_play(&s->vm, st);
+    s->ivm_role = st == HTA_VM_FIRE ? "fire" : st == HTA_VM_RELOAD ? "reload" : "idle";
+    s->ivm_clip = -2;
+    const hta_game_weapon *w = held_imported(s);
+    if (w && st == HTA_VM_RELOAD) {
+        int k = imported_index(s, w->asset);
+        if (k >= 0 && s->imp_clip[k][1] != HTA_AUDIO_NO_CLIP) hta_audio_play(&s->audio, s->imp_clip[k][1], 0.9f);
+    }
+}
+
+/* The imported first-person view: the clip wanted, else idle, posed in
+ * view space (+X forward, +Y left, +Z up -- Source's viewmodel axes are
+ * Halo's). A one-shot clip falls back to idle when it ends. */
+static void ivm_update(hta_android *s, float dt)
+{
+    const hta_game_weapon *w = held_imported(s);
+    if (!w || !s->gfx) return;
+    const hta_oal_model *m = &w->asset->models[1];
+    int32_t roster = held_roster(s);
+    if (s->ivm_weapon != roster || !s->gpu_ivm) {
+        char err[HTA_ERRLEN];
+        if (s->gpu_ivm) { hta_gfx_mesh_free(s->gfx, s->gpu_ivm); s->gpu_ivm = NULL; }
+        s->gpu_ivm = hta_gfx_mesh_upload_dynamic(s->gfx, &m->mesh, err, sizeof(err));
+        if (!s->gpu_ivm) hta_log("[imported] view model upload failed: %s", err);
+        if (s->ivm_cap < m->mesh.vertex_count) {
+            free(s->ivm_posed);
+            s->ivm_posed = malloc(m->mesh.vertex_count * sizeof(hta_vertex));
+            s->ivm_cap = s->ivm_posed ? m->mesh.vertex_count : 0;
+        }
+        s->ivm_weapon = roster;
+        s->ivm_role = "draw";
+        s->ivm_clip = -2;
+    }
+    if (!s->ivm_posed) return;
+    if (s->ivm_clip == -2) {
+        s->ivm_clip = hta_oal_clip_find(m, s->ivm_role ? s->ivm_role : "idle");
+        if (s->ivm_clip < 0) s->ivm_clip = hta_oal_clip_find(m, "idle");
+        s->ivm_time = 0.0f;
+    } else {
+        s->ivm_time += dt;
+    }
+    if (s->ivm_clip >= 0 && !m->clips[s->ivm_clip].loop &&
+        s->ivm_time > hta_oal_clip_length(m, s->ivm_clip)) {
+        s->ivm_role = "idle";
+        s->ivm_clip = hta_oal_clip_find(m, "idle");
+        s->ivm_time = 0.0f;
+    }
+    static const float ident[12] = { 1,0,0,0, 0,1,0,0, 0,0,1,0 };
+    hta_oal_pose(m, s->ivm_clip, s->ivm_time, s->ivm_world);
+    hta_oal_skin(m, (const float (*)[12])s->ivm_world, ident, s->ivm_posed);
+}
+
+/* The class to spawn with, when the match has custom classes: the start
+ * weapons become the class's (tags of their base, and which are imported). */
+static void class_start(hta_android *s)
+{
+    for (uint32_t k = 0; k < HTA_CARRY_MAX; k++) s->start_asset[k] = -1;
+    if (!s->game_on || !s->game.classes || s->me < 0) return;
+    const hta_unit *u = &s->game.units[s->me];
+    uint32_t n = 0;
+    for (int k = 0; k < 2; k++) {
+        int32_t r = u->loadout[k];
+        if (r < 0 || (uint32_t)r >= s->game.weapon_count) continue;
+        s->start_weapon[n] = s->game.weapons[r].tag;
+        s->start_asset[n] = s->game.weapons[r].asset ? r : -1;
+        n++;
+    }
+    if (n) s->start_count = n;
+}
 
 static void respawn(hta_android *s)
 {
@@ -930,13 +1056,17 @@ static void respawn(hta_android *s)
      * had scavenged. */
     /* Every slot, not just the first: a weapon picked up (or handed over by
      * the debug pad) into the second hand used to survive a death. */
+    class_start(s);
     bool rearm = s->start_count && s->held_count != s->start_count;
     for (uint32_t k = 0; s->start_count && !rearm && k < s->start_count; k++)
-        if (s->held[k] != s->start_weapon[k]) rearm = true;
+        if (s->held[k] != s->start_weapon[k] || s->held_asset[k] != s->start_asset[k]) rearm = true;
     if (s->start_count && s->held_slot != 0) rearm = true;
     if (rearm) {
         s->held_count = s->start_count;
-        for (uint32_t i = 0; i < s->start_count; i++) s->held[i] = s->start_weapon[i];
+        for (uint32_t i = 0; i < s->start_count; i++) {
+            s->held[i] = s->start_weapon[i];
+            s->held_asset[i] = s->start_asset[i];
+        }
         s->held_slot = 0;
         equip_weapon(s, s->held[0]);
     }
@@ -947,7 +1077,7 @@ static void respawn(hta_android *s)
     s->zoom_level = 0;
     apply_zoom(s);
     fire_loop(s, false);
-    if (s->vm.loaded) hta_viewmodel_play(&s->vm, HTA_VM_IDLE);
+    vm_play(s, HTA_VM_IDLE);
     s->nade_count = s->nade_max;
 
     s->corpse_up = false;
@@ -959,7 +1089,36 @@ static void respawn(hta_android *s)
             i, s->player.pos[0], s->player.pos[1], s->player.pos[2]);
 }
 
+static void equip_imported(hta_android *s);
+
 static void equip_weapon(hta_android *s, uint32_t weap_tag_id)
+{
+    if (!weap_tag_id) return;
+    equip_weapon_tag(s, weap_tag_id);
+    equip_imported(s);
+}
+
+/* An imported weapon in hand lays its numbers over its base's, and brings
+ * its own first-person view up with its draw clip. */
+static void equip_imported(hta_android *s)
+{
+    const hta_game_weapon *w = held_imported(s);
+    s->ivm_weapon = -1;
+    if (!w) return;
+    uint32_t fp = s->weap.fp_model_id, hud = s->weap.hud_interface_id;
+    s->weap = w->def;
+    s->weap.fp_model_id = fp;
+    s->weap.hud_interface_id = hud;
+    s->gun.fire_interval = s->weap.cooldown;
+    hta_gun_set_error(&s->gun, s->weap.error_angle, s->weap.error_accel, s->weap.error_decel);
+    hta_ammo_init(&s->ammo, &s->weap);
+    s->ivm_role = "draw";
+    s->ivm_clip = -2;
+    hta_log("[imported] holding %s: %.1f rounds/s, %d-round magazine, damage x%.2f",
+            w->display, w->def.rof, w->def.rounds_loaded_max, w->damage_scale);
+}
+
+static void equip_weapon_tag(hta_android *s, uint32_t weap_tag_id)
 {
     if (!weap_tag_id) return;
     char err[HTA_ERRLEN] = {0};
@@ -1420,9 +1579,148 @@ static void world_nav(hta_android *s)
             (hta_time_seconds() - t0) * 1000.0);
 }
 
+/* The APK's imported characters and weapons (assets/characters/NAME.oalasset,
+ * assets/weapons/NAME.oalasset): loaded once, for the menus and every match.
+ * Personal builds only -- publish_apk.sh --with-assets puts them there. */
+static void load_imported(hta_android *s)
+{
+    if (s->imported_loaded) return;
+    s->imported_loaded = true;
+    AAssetManager *am = s->app->activity->assetManager;
+    if (!am) return;
+    static const char *const DIRS[2] = { "characters", "weapons" };
+    for (int d = 0; d < 2; d++) {
+        AAssetDir *dir = AAssetManager_openDir(am, DIRS[d]);
+        if (!dir) continue;
+        const char *fn;
+        while ((fn = AAssetDir_getNextFileName(dir))) {
+            size_t n = strlen(fn);
+            if (n < 9 || strcmp(fn + n - 9, ".oalasset")) continue;
+            hta_oal_asset *slot = d ? &s->imp_weap[s->imp_weap_count] : &s->imp_char[s->imp_char_count];
+            if ((d ? s->imp_weap_count : s->imp_char_count) >= HTA_MAX_IMPORTED) break;
+            char name[128], err[HTA_ERRLEN];
+            snprintf(name, sizeof(name), "%s/%s", DIRS[d], fn);
+            AAsset *a = AAssetManager_open(am, name, AASSET_MODE_BUFFER);
+            if (!a) continue;
+            const void *buf = AAsset_getBuffer(a);
+            size_t len = (size_t)AAsset_getLength(a);
+            bool ok = buf && hta_oal_load_memory((const uint8_t *)buf, len, slot, err, sizeof(err));
+            AAsset_close(a);
+            if (!ok) { hta_log("[imported] %s: %s", name, err); continue; }
+            if (d) {
+                uint32_t k = s->imp_weap_count++;
+                s->imp_clip[k][0] = s->imp_clip[k][1] = HTA_AUDIO_NO_CLIP;
+            } else {
+                s->imp_char_count++;
+            }
+            hta_log("[imported] %s '%s' (%s), %u models", slot->kind, slot->name, slot->display, slot->model_count);
+        }
+        AAssetDir_close(dir);
+    }
+}
+
+/* What the menus offer, for the Java side: one line per entry,
+ * "W<TAB>name" for every weapon a class may hold (the Trial's hand-held
+ * weapons, then imported ones), "C<TAB>id<TAB>name" per imported body. */
+static char g_catalog[4096];
+static _Atomic int g_catalog_ready;
+
+static void catalog_build(hta_android *s)
+{
+    if (atomic_load(&g_catalog_ready)) return;
+    load_imported(s);
+    size_t len = 0;
+    g_catalog[0] = 0;
+    uint8_t *data = NULL;
+    size_t size = 0;
+    if (find_map(s) && map_data_file(s, s->map_path, &data, &size)) {
+        hta_cache c;
+        char err[HTA_ERRLEN];
+        if (hta_cache_open(&c, data, size, err, sizeof(err))) {
+            uint32_t tags[HTA_GAME_MAX_WEAPONS];
+            uint32_t n = hta_weapon_list_playable(&c, tags, HTA_GAME_MAX_WEAPONS);
+            for (uint32_t i = 0; i < n; i++) {
+                int32_t ti = hta_cache_find_tag_by_id(&c, tags[i]);
+                hta_tag_entry t;
+                char path[256];
+                if (ti < 0 || !hta_cache_tag(&c, (uint32_t)ti, &t) || !hta_cache_tag_path(&c, &t, path, sizeof(path)))
+                    continue;
+                /* The same name the game's roster uses: the tag's own leaf. */
+                const char *leaf = strrchr(path, '\\');
+                leaf = leaf ? leaf + 1 : path;
+                int w = snprintf(g_catalog + len, sizeof(g_catalog) - len, "W\t%s\n", leaf);
+                if (w > 0 && (size_t)w < sizeof(g_catalog) - len) len += (size_t)w;
+            }
+        }
+        /* Only the catalog needed it: unmap the copy just made. */
+        s->mapped_count--;
+        munmap(s->mapped_base[s->mapped_count], s->mapped_len[s->mapped_count]);
+    }
+    for (uint32_t k = 0; k < s->imp_weap_count; k++) {
+        int w = snprintf(g_catalog + len, sizeof(g_catalog) - len, "W\t%s\n", s->imp_weap[k].display);
+        if (w > 0 && (size_t)w < sizeof(g_catalog) - len) len += (size_t)w;
+    }
+    for (uint32_t k = 0; k < s->imp_char_count; k++) {
+        int w = snprintf(g_catalog + len, sizeof(g_catalog) - len, "C\t%s\t%s\n", s->imp_char[k].name,
+                         s->imp_char[k].display);
+        if (w > 0 && (size_t)w < sizeof(g_catalog) - len) len += (size_t)w;
+    }
+    atomic_store(&g_catalog_ready, 1);
+}
+
+JNIEXPORT jstring JNICALL
+Java_net_hta_halotrial_GameActivity_nativeCatalog(JNIEnv *env, jclass cls)
+{
+    (void)cls;
+    return (*env)->NewStringUTF(env, atomic_load(&g_catalog_ready) ? g_catalog : "");
+}
+
+/* Look and class for the next match, set by the menu before it starts one. */
+static struct { char character[48]; int bots_imported, classes; char cls[2][48]; } g_loadout;
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeSetLoadout(JNIEnv *env, jclass cls, jstring character,
+                                                     jint bots_imported, jint classes,
+                                                     jstring primary, jstring secondary)
+{
+    (void)cls;
+    memset(&g_loadout, 0, sizeof(g_loadout));
+    const char *u;
+    if (character && (u = (*env)->GetStringUTFChars(env, character, NULL))) {
+        snprintf(g_loadout.character, sizeof(g_loadout.character), "%s", u);
+        (*env)->ReleaseStringUTFChars(env, character, u);
+    }
+    if (primary && (u = (*env)->GetStringUTFChars(env, primary, NULL))) {
+        snprintf(g_loadout.cls[0], sizeof(g_loadout.cls[0]), "%s", u);
+        (*env)->ReleaseStringUTFChars(env, primary, u);
+    }
+    if (secondary && (u = (*env)->GetStringUTFChars(env, secondary, NULL))) {
+        snprintf(g_loadout.cls[1], sizeof(g_loadout.cls[1]), "%s", u);
+        (*env)->ReleaseStringUTFChars(env, secondary, u);
+    }
+    g_loadout.bots_imported = bots_imported;
+    g_loadout.classes = classes;
+}
+
+/* The imported weapons' sounds as mixer clips, once audio is up. */
+static void imported_sounds(hta_android *s)
+{
+    static const char *const ROLES[2] = { "fire", "reload" };
+    for (uint32_t k = 0; k < s->imp_weap_count && s->audio_ok; k++)
+        for (int r = 0; r < 2; r++) {
+            if (s->imp_clip[k][r] != HTA_AUDIO_NO_CLIP) continue;
+            const hta_oal_sound *snd = hta_oal_sound_find(&s->imp_weap[k], ROLES[r]);
+            if (snd)
+                s->imp_clip[k][r] = hta_audio_add_clip(&s->audio, snd->samples, snd->frames, snd->rate,
+                                                       (uint8_t)snd->channels);
+        }
+}
+
 static bool load_map(hta_android *s)
 {
     if (!find_map(s)) return false;
+    load_imported(s);
+    imported_sounds(s);
     hta_log("[assets] found %s", s->map_path);
 
     /* mmap the cache read-only: no copy, and the OS pages it in lazily */
@@ -1612,7 +1910,7 @@ static bool load_map(hta_android *s)
             hta_log("[weapon] spawn with %s", probe.path);
     }
     s->held_count = s->start_count;
-    for (uint32_t i = 0; i < s->start_count; i++) s->held[i] = s->start_weapon[i];
+    for (uint32_t i = 0; i < s->start_count; i++) { s->held[i] = s->start_weapon[i]; s->held_asset[i] = -1; }
     s->held_slot = 0;
     if (s->held_count) equip_weapon(s, s->held[0]);
     else hta_log("[weapon] nothing to hold");
@@ -1882,9 +2180,18 @@ static bool load_map(hta_android *s)
     s->map_loaded = true;
     snprintf(s->status, sizeof(s->status), "loaded %s", s->cache.name);
     start_game(s);
+    /* With custom classes you start with your class, not the map's pair. */
+    if (s->game_on && s->game.classes) {
+        class_start(s);
+        s->held_count = s->start_count;
+        for (uint32_t i = 0; i < s->start_count; i++) { s->held[i] = s->start_weapon[i]; s->held_asset[i] = s->start_asset[i]; }
+        s->held_slot = 0;
+        for (uint32_t k = 0; k < HTA_CARRY_MAX; k++) s->held_ammo_set[k] = false;
+    }
     /* Again, now the game's rounds exist: their detonations need particle
      * recipes built alongside the held weapon's. */
     if (s->game_on && s->held_count) equip_weapon(s, s->held[s->held_slot]);
+    if (s->game_on) hta_game_sync_local(&s->game, &s->player, &s->cam, held_roster(s));
     return true;
 }
 
@@ -1917,7 +2224,38 @@ static uint32_t find_sound(const hta_cache *c, const char *path)
 static int32_t held_roster(hta_android *s)
 {
     if (!s->game_on || !s->held_count) return -1;
+    if (s->held_asset[s->held_slot] >= 0) return s->held_asset[s->held_slot];
     return hta_game_weapon_index(&s->game, s->held[s->held_slot]);
+}
+
+/* The imported weapon in hand, or NULL. */
+static const hta_game_weapon *held_imported(hta_android *s)
+{
+    int32_t w = held_roster(s);
+    return w >= 0 && (uint32_t)w < s->game.weapon_count && s->game.weapons[w].asset ? &s->game.weapons[w] : NULL;
+}
+
+/* Which loaded package a roster entry came from, -1 if none. */
+static int imported_index(const hta_android *s, const hta_oal_asset *a)
+{
+    for (uint32_t k = 0; k < s->imp_weap_count; k++) if (&s->imp_weap[k] == a) return (int)k;
+    return -1;
+}
+
+/* A sound somewhere in the world: gain after distance, and pan. False when
+ * it is out of earshot. */
+static bool world_voice(hta_android *s, const float at[3], float gain, float *g_out, float *pan_out);
+
+/* The imported weapon's own gunshot, in hand or at a place. */
+static bool imported_fire_sound(hta_android *s, int32_t roster, const float *at)
+{
+    if (roster < 0 || (uint32_t)roster >= s->game.weapon_count || !s->game.weapons[roster].asset) return false;
+    int k = imported_index(s, s->game.weapons[roster].asset);
+    if (k < 0 || s->imp_clip[k][0] == HTA_AUDIO_NO_CLIP) return false;
+    if (!at) { hta_audio_play(&s->audio, s->imp_clip[k][0], 1.0f); return true; }
+    float g, pan;
+    if (world_voice(s, at, 1.0f, &g, &pan)) hta_audio_play_pan(&s->audio, s->imp_clip[k][0], g, pan);
+    return true;
 }
 
 static void feed_push(hta_android *s, const char *text)
@@ -1940,6 +2278,14 @@ static void start_game(hta_android *s)
         return;
     }
     hta_log("[game] %s", err);
+    /* Imported weapons join the roster before anything reads it; the
+     * characters anyone may wear; and whether classes are on. */
+    for (uint32_t k = 0; k < s->imp_weap_count; k++) {
+        int32_t r = hta_game_add_imported_weapon(&s->game, &s->imp_weap[k]);
+        hta_log("[imported] weapon %s on %s: roster %d", s->imp_weap[k].display, s->imp_weap[k].base, (int)r);
+    }
+    for (uint32_t k = 0; k < s->imp_char_count; k++) hta_game_add_character(&s->game, &s->imp_char[k]);
+    s->game.classes = s->classes;
     if (s->world_loaded) {
         hta_game_use_external(&s->game, s->world_ext.spawns, s->world_ext.spawn_count,
                               s->nav.built ? &s->nav : NULL, s->world_playable);
@@ -2016,6 +2362,24 @@ static void start_game(hta_android *s)
     for (int i = 0; i < bots && i < HTA_GAME_MAX_UNITS - 1; i++)
         hta_game_add(&s->game, HTA_UNIT_BOT, NULL, HTA_TEAM_AUTO);
     hta_game_set_skill(&s->game, (uint8_t)s->bot_skill);
+    /* Looks: yours from Settings; bots take turns through the imported
+     * bodies when Settings asks for them. */
+    for (uint32_t k = 0; k < s->game.character_count; k++)
+        if (!strcmp(s->game.characters[k]->name, s->my_character)) s->game.units[s->me].character = (int8_t)k;
+    if (s->bots_imported && s->game.character_count)
+        for (uint32_t i = 0, n = 0; i < s->game.unit_count; i++)
+            if (s->game.units[i].kind == HTA_UNIT_BOT)
+                s->game.units[i].character = (int8_t)(n++ % s->game.character_count);
+    /* Your class: its two weapons by the names the menu showed. */
+    if (s->game.classes) {
+        int32_t pick[2] = { -1, -1 };
+        for (int k = 0; k < 2; k++)
+            for (uint32_t w = 0; w < s->game.weapon_count && pick[k] < 0; w++)
+                if (hta_game_class_weapon(&s->game, (int32_t)w) && s->my_class[k][0] &&
+                    !strcasecmp(s->game.weapons[w].display, s->my_class[k])) pick[k] = (int32_t)w;
+        hta_game_set_loadout(&s->game, s->me, pick[0], pick[1]);
+        hta_log("[class] %s / %s -> roster %d / %d", s->my_class[0], s->my_class[1], (int)pick[0], (int)pick[1]);
+    }
     /* The local player's health and shield move into the game, carrying
      * what the tags already gave them. */
     s->game.units[s->me].vitals = *s->vit;
@@ -2098,7 +2462,7 @@ static void game_gpu_upload(hta_android *s)
     for (uint32_t i = 0; i < s->game.unit_count; i++)
         if (s->gview.actor[i].loaded && !s->gpu_units[i])
             s->gpu_units[i] = hta_gfx_mesh_upload_dynamic_world(s->gfx,
-                &s->gview.actor[i].mesh, err, sizeof(err));
+                hta_game_view_body_mesh(&s->gview, &s->game, i), err, sizeof(err));
     for (uint32_t w = 0; w < s->game.weapon_count; w++)
         if (s->gview.have_weapon[w] && !s->gpu_held[w])
             s->gpu_held[w] = hta_gfx_mesh_upload(s->gfx, &s->gview.weapon_mesh[w], err, sizeof(err));
@@ -2119,6 +2483,8 @@ static void game_gpu_free(hta_android *s)
     for (uint32_t p = 0; p < HTA_GAME_MAX_POOLS; p++)
         if (s->gpu_pools[p]) { hta_gfx_mesh_free(s->gfx, s->gpu_pools[p]); s->gpu_pools[p] = NULL; }
     if (s->gpu_trails) { hta_gfx_mesh_free(s->gfx, s->gpu_trails); s->gpu_trails = NULL; }
+    if (s->gpu_ivm) { hta_gfx_mesh_free(s->gfx, s->gpu_ivm); s->gpu_ivm = NULL; }
+    s->ivm_weapon = -1;
 }
 
 /* A hitscan round's tracer, from where it left to the first thing in its
@@ -2251,6 +2617,7 @@ static void game_events(hta_android *s)
                 s->unit_fire_snd[e.weapon] = hta_effect_first_sound(&s->cache,
                     s->game.weapons[e.weapon].def.firing_fx_id);
             }
+            if (imported_fire_sound(s, e.weapon, e.pos)) break;
             if (s->unit_fire_snd[e.weapon]) play_tag_at(s, s->unit_fire_snd[e.weapon], e.pos, 1.0f);
             break;
         case HTA_EV_HIT_WORLD:
@@ -2486,8 +2853,8 @@ static uint32_t game_draw(hta_android *s, hta_gfx_dynamic *dyn, uint32_t n)
         if (((int32_t)i == s->me && !s->show_self) || !s->gview.shown[i] || !s->gpu_units[i])
             continue;
         dyn[n].mesh = s->gpu_units[i];
-        dyn[n].vertices = s->gview.actor[i].posed;
-        dyn[n].vertex_count = s->gview.actor[i].mesh.vertex_count;
+        dyn[n].vertices = hta_game_view_body_vertices(&s->gview, &s->game, i);
+        dyn[n].vertex_count = hta_game_view_body_mesh(&s->gview, &s->game, i)->vertex_count;
         dyn[n].lit = true;
         if (s->game.teams) {
             dyn[n].change = true;
@@ -2541,6 +2908,7 @@ static uint32_t game_draw(hta_android *s, hta_gfx_dynamic *dyn, uint32_t n)
         /* Model +X along the yaw, +Y up (on its side), +Z to the side. */
         float m[16] = { cy, sy, 0, 0,   0, 0, 1, 0,   sy, -cy, 0, 0,
                         d->pos[0], d->pos[1], d->pos[2] + 0.05f, 1 };
+        hta_game_view_weapon_space(&s->game, d->weapon, m);
         memcpy(in->model, m, sizeof(m));
         in->first_submesh = in->submesh_count = 0;
         in->lit = true;
@@ -2591,6 +2959,7 @@ static bool menu_load(hta_android *s)
 {
     char err[HTA_ERRLEN];
     char path[512];
+    catalog_build(s);
     if (!find_map(s)) return false;           /* where the data is, not loaded */
     if (!find_named(s, "ui.map", path, sizeof(path)) ||
         !map_data_file(s, path, &s->ui_data, &s->ui_size) ||
@@ -2929,6 +3298,10 @@ static void match_take(hta_android *s)
     s->game_mode = m.mode != 2 && m.gametype > 0 && m.gametype < HTA_MODE_COUNT
                  ? m.gametype : HTA_MODE_SLAYER;
     snprintf(s->world, sizeof(s->world), "%s", m.map);
+    snprintf(s->my_character, sizeof(s->my_character), "%s", g_loadout.character);
+    s->bots_imported = g_loadout.bots_imported != 0;
+    s->classes = g_loadout.classes != 0;
+    for (int k = 0; k < 2; k++) snprintf(s->my_class[k], sizeof(s->my_class[k]), "%s", g_loadout.cls[k]);
     uint16_t port = (uint16_t)(m.port > 0 && m.port < 65536 ? m.port : 32270);
     if (m.mode == 1) {
         hta_net_info info;
@@ -3874,18 +4247,20 @@ static void net_client_world(hta_android *s)
             u->vitals.died=false;
         }
         if (idx==s->me) {
-            uint32_t held[2]={0}; unsigned held_count=0;
+            uint32_t held[2]={0}; int32_t hasset[2]={-1,-1}; unsigned held_count=0;
             for (int slot=0;slot<2;slot++)
                 if (u->carry[slot].weapon>=0 &&
-                    (uint32_t)u->carry[slot].weapon<s->game.weapon_count)
+                    (uint32_t)u->carry[slot].weapon<s->game.weapon_count) {
+                    hasset[held_count]=s->game.weapons[u->carry[slot].weapon].asset ? u->carry[slot].weapon : -1;
                     held[held_count++]=s->game.weapons[u->carry[slot].weapon].tag;
+                }
             if (held_count) {
                 unsigned slot=e->slot<held_count ? e->slot : 0;
                 bool change=s->held_count!=held_count || s->held_slot!=slot;
                 for (unsigned k=0;k<held_count;k++)
-                    if (s->held[k]!=held[k]) change=true;
+                    if (s->held[k]!=held[k] || s->held_asset[k]!=hasset[k]) change=true;
                 s->held_count=held_count; s->held_slot=slot;
-                for (unsigned k=0;k<held_count;k++) s->held[k]=held[k];
+                for (unsigned k=0;k<held_count;k++) { s->held[k]=held[k]; s->held_asset[k]=hasset[k]; }
                 if (change) equip_weapon(s,s->held[slot]);
             }
             s->ammo.loaded=e->ammo_loaded;
@@ -3940,7 +4315,8 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
                 s->unit_fire_snd[fx.weapon]=hta_effect_first_sound(&s->cache,
                     s->game.weapons[fx.weapon].def.firing_fx_id);
             }
-            if (s->unit_fire_snd[fx.weapon])
+            if (imported_fire_sound(s, fx.weapon, fx.pos)) {}
+            else if (s->unit_fire_snd[fx.weapon])
                 play_tag_at(s,s->unit_fire_snd[fx.weapon],fx.pos,1.0f);
             if (s->game.weapons[fx.weapon].vehicle &&
                 s->vfire_recipe[fx.weapon]!=HTA_PART_NO_RECIPE)
@@ -4485,7 +4861,7 @@ static void vehicle_transition(hta_android *s)
         s->hud_fire = false;
         s->throwing = false;
         fire_loop(s, false);
-        if (s->vm.loaded) hta_viewmodel_play(&s->vm, HTA_VM_IDLE);
+        vm_play(s, HTA_VM_IDLE);
         const hta_vehicle *v = &s->vehicles.cars[car];
         if (!was) {
             s->seat_look[0] = 0.0f;
@@ -4559,6 +4935,8 @@ void android_main(struct android_app *app)
     state.app = app;
     state.vit = &state.vitals;
     state.move_pointer = state.look_pointer = -1;
+    for (unsigned k = 0; k < HTA_CARRY_MAX; k++) state.held_asset[k] = state.start_asset[k] = -1;
+    state.ivm_weapon = -1;
     g_android = &state;
     state.hud_ready = g_hud_wanted;
     char net_host[64]; bool net_hosting=false;
@@ -4952,7 +5330,7 @@ void android_main(struct android_app *app)
          * the first was being loaded silently with no animation -- which is
          * most of a shotgun reload from empty. Each one replays the clip. */
         if (state.ammo.reload_began && state.vm.loaded)
-            hta_viewmodel_play(&state.vm, HTA_VM_RELOAD);
+            vm_play(&state, HTA_VM_RELOAD);
         if (state.dry_cooldown > 0.0f) state.dry_cooldown -= dt;
 
         /* What you are standing on.
@@ -5053,14 +5431,17 @@ void android_main(struct android_app *app)
                         hta_ammo am;
                         hta_game_take_drop(&state.game, dr, &wi, &am);
                         uint32_t tag = state.game.weapons[wi].tag;
+                        int32_t asset = state.game.weapons[wi].asset ? wi : -1;
                         if (state.held_count < HTA_CARRY_MAX) {
                             state.held_ammo[state.held_slot] = state.ammo;
                             state.held_ammo_set[state.held_slot] = true;
                             state.held_slot = state.held_count;
+                            state.held_asset[state.held_count] = asset;
                             state.held[state.held_count++] = tag;
                         } else {
                             drop_held(&state);
                             state.held[state.held_slot] = tag;
+                            state.held_asset[state.held_slot] = asset;
                         }
                         state.held_ammo_set[state.held_slot] = false;
                         equip_weapon(&state, tag);
@@ -5113,6 +5494,7 @@ void android_main(struct android_app *app)
                         state.held_ammo[state.held_slot] = state.ammo;
                         state.held_ammo_set[state.held_slot] = true;
                         state.held_slot = state.held_count;
+                        state.held_asset[state.held_count] = -1;
                         state.held[state.held_count++] = w->tag_id;
                     } else {
                         /* Full: it replaces the one you are holding, which
@@ -5120,6 +5502,7 @@ void android_main(struct android_app *app)
                          * and that one goes on the ground. */
                         drop_held(&state);
                         state.held[state.held_slot] = w->tag_id;
+                        state.held_asset[state.held_slot] = -1;
                     }
                     state.held_ammo_set[state.held_slot] = false;
                     equip_weapon(&state, w->tag_id);
@@ -5178,9 +5561,11 @@ void android_main(struct android_app *app)
                 uint32_t give = state.weapons[state.debug_weapon];
                 if (state.held_count < HTA_CARRY_MAX) {
                     state.held_slot = state.held_count;
+                    state.held_asset[state.held_count] = -1;
                     state.held[state.held_count++] = give;
                 } else {
                     state.held[state.held_slot] = give;
+                    state.held_asset[state.held_slot] = -1;
                 }
                 equip_weapon(&state, give);
                 hta_log("[debug] gave %s (%u of %u)", state.weap.path,
@@ -5248,7 +5633,7 @@ void android_main(struct android_app *app)
                         hta_log("[bot] melee connected");
                     }
                 }
-                hta_viewmodel_play(&state.vm, HTA_VM_MELEE);
+                vm_play(&state, HTA_VM_MELEE);
                 net_action(&state,HTA_NET_EVENT_MELEE);
                 swinging = state.vm.state == HTA_VM_MELEE;
             }
@@ -5258,7 +5643,7 @@ void android_main(struct android_app *app)
             state.hud_reload = false;
             if (!swinging && hta_ammo_reload(&state.ammo)) {
                 state.net_reload_count++;
-                hta_viewmodel_play(&state.vm, HTA_VM_RELOAD);
+                vm_play(&state, HTA_VM_RELOAD);
             }
         }
         if (in.fire && !swinging && hta_gun_ready(&state.gun)) {
@@ -5338,8 +5723,9 @@ void android_main(struct android_app *app)
                         if (onbot && who >= 0 && (!state.net_enabled || state.net_hosting)) {
                             int pellets = state.weap.projectiles_per_shot > 0
                                         ? state.weap.projectiles_per_shot : 1;
-                            hta_game_hurt_jpt(&state.game, who, state.me,
-                                              state.impact_jpt, pellets, bhit);
+                            const hta_game_weapon *iw = held_imported(&state);
+                            hta_game_hurt_jpt_scaled(&state.game, who, state.me,
+                                              state.impact_jpt, pellets, bhit, iw ? iw->damage_scale : 1.0f);
                         } else if (onbot && !state.game_on) {
                             /* What a round does depends on WHAT it hits:
                              * the same shotgun pellet is 8 into armour and
@@ -5385,7 +5771,7 @@ void android_main(struct android_app *app)
                                             state.impact_recipe[state.gun.hit_material],
                                             state.gun.last_hit, state.gun.last_nrm);
                 }
-                hta_viewmodel_play(&state.vm, HTA_VM_FIRE);
+                vm_play(&state, HTA_VM_FIRE);
                 hta_viewmodel_flash(&state.vm);
                 /* Eject the spent casing from the gun's own marker. The
                  * viewmodel poses it in its own space, so it takes the
@@ -5407,7 +5793,8 @@ void android_main(struct android_app *app)
                     }
                     hta_particles_burst(&state.parts, state.casing_recipe, at, dir);
                 }
-                play_tag(&state, state.fire_snd, 1.0f);
+                if (!imported_fire_sound(&state, held_roster(&state), NULL))
+                    play_tag(&state, state.fire_snd, 1.0f);
                 net_action(&state,HTA_NET_EVENT_FIRE);
             } else if (state.ammo.dry && state.dry_cooldown <= 0.0f) {
                 /* Click, then reload by itself, the way Halo does. */
@@ -5415,7 +5802,7 @@ void android_main(struct android_app *app)
                 state.dry_cooldown = 0.35f;
                 if (hta_ammo_reload(&state.ammo)) {
                     state.net_reload_count++;
-                    hta_viewmodel_play(&state.vm, HTA_VM_RELOAD);
+                    vm_play(&state, HTA_VM_RELOAD);
                 }
             }
         }
@@ -5470,6 +5857,7 @@ void android_main(struct android_app *app)
         }
         hta_audio_android_poll(&state.audio);
         hta_viewmodel_update(&state.vm, dt);
+        ivm_update(&state, dt);
         /* Throw a grenade.
          *
          * The arm goes first. Every weapon carries a `first-person
@@ -5483,7 +5871,7 @@ void android_main(struct android_app *app)
             if (state.nades.loaded && state.nade_count > 0 && !swinging &&
                 !state.throwing && state.ammo.phase != HTA_AMMO_RELOADING) {
                 if (state.vm.loaded && state.vm.clip[HTA_VM_THROW] >= 0) {
-                    hta_viewmodel_play(&state.vm, HTA_VM_THROW);
+                    vm_play(&state, HTA_VM_THROW);
                     state.throwing = true;
                 } else {
                     state.throwing = true;
@@ -5592,7 +5980,8 @@ void android_main(struct android_app *app)
                     int32_t who = hta_game_near(&state.game, pr->pos, 0.02f, state.me);
                     if (who < 0) continue;
                     if (!state.net_enabled || state.net_hosting)
-                        hta_game_hurt_jpt(&state.game, who, state.me, state.impact_jpt, 1, pr->pos);
+                        hta_game_hurt_jpt_scaled(&state.game, who, state.me, state.impact_jpt, 1, pr->pos,
+                                                 held_imported(&state) ? held_imported(&state)->damage_scale : 1.0f);
                     if ((!state.net_enabled || state.net_hosting) && state.proj.blast_damage > 0.0f)
                         hta_game_blast(&state.game, state.me, pr->pos, state.proj.blast_damage,
                                        state.proj.blast_core, state.proj.blast_damage_radius);
@@ -5817,7 +6206,14 @@ void android_main(struct android_app *app)
              * reads as a magnified view with a rifle in front of it. */
             /* And a corpse is not holding it either. */
             bool fp_weapon = !driving || (armed_seat && !state.show_self);
-            if (state.gpu_fp && state.zoom_level == 0 && !state.dead && fp_weapon) {
+            const hta_game_weapon *iw = held_imported(&state);
+            if (iw && state.gpu_ivm && state.ivm_posed && state.ivm_weapon == held_roster(&state) &&
+                state.zoom_level == 0 && !state.dead && fp_weapon) {
+                /* An imported weapon's own first-person model and hands. */
+                vmdraw.mesh = state.gpu_ivm;
+                vmdraw.vertices = state.ivm_posed;
+                vmdraw.vertex_count = iw->asset->models[1].mesh.vertex_count;
+            } else if (!iw && state.gpu_fp && state.zoom_level == 0 && !state.dead && fp_weapon) {
                 vmdraw.mesh = state.gpu_fp;
                 vmdraw.vertices = state.vm.posed;
                 vmdraw.vertex_count = state.vm.mesh.vertex_count;
@@ -5993,6 +6389,8 @@ done:
     hta_game_free(&state.game);
     hta_nav_free(&state.nav);
     hta_external_map_free(&state.world_ext);
+    for (uint32_t k = 0; k < HTA_MAX_IMPORTED; k++) { hta_oal_free(&state.imp_char[k]); hta_oal_free(&state.imp_weap[k]); }
+    free(state.ivm_posed);
     free(state.world_playable);
     hta_collision_free(&state.col);
     hta_vehicles_free(&state.vehicles);

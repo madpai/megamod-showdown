@@ -2,6 +2,7 @@
 #include "../asset/model.h"
 #include "../asset/bitmap.h"
 #include "../asset/bsp.h"
+#include "imported.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -154,6 +155,12 @@ bool hta_game_view_load(hta_game_view *v, const hta_game *g,
 
     uint32_t weapons = 0;
     for (uint32_t w = 0; w < g->weapon_count; w++) {
+        if (g->weapons[w].asset) {
+            v->weapon_mesh[w] = g->weapons[w].asset->models[0].mesh;
+            v->have_weapon[w] = v->borrowed[w] = true;
+            weapons++;
+            continue;
+        }
         if (!g->weapons[w].model) continue;
         hta_bsp_mesh *m = &v->weapon_mesh[w];
         memset(m, 0, sizeof(*m));
@@ -187,7 +194,8 @@ void hta_game_view_free(hta_game_view *v)
     if (!v) return;
     for (uint32_t i = 0; i < HTA_GAME_MAX_UNITS; i++) hta_actor_free(&v->actor[i]);
     for (uint32_t w = 0; w < HTA_GAME_MAX_WEAPONS; w++)
-        if (v->have_weapon[w]) hta_bsp_free(&v->weapon_mesh[w]);
+        if (v->have_weapon[w] && !v->borrowed[w]) hta_bsp_free(&v->weapon_mesh[w]);
+    for (uint32_t i = 0; i < HTA_GAME_MAX_UNITS; i++) free(v->oal_posed[i]);
     memset(v, 0, sizeof(*v));
 }
 
@@ -209,6 +217,85 @@ static bool play_best(hta_actor *a, const char *want, bool hold)
     return hta_actor_play(a, "stand rifle idle", hold);
 }
 
+/* How long a body without a death clip takes to topple, and how far it
+ * falls (radians, onto its back). Ours: Source bodies ragdoll instead. */
+#define TOPPLE_TIME 0.45f
+#define TOPPLE_ANGLE 1.5f
+
+static const hta_oal_model *body_of(const hta_game *g, const hta_unit *u)
+{
+    if (u->character < 0 || (uint32_t)u->character >= g->character_count || !g->characters[u->character])
+        return NULL;
+    return &g->characters[u->character]->models[0];
+}
+
+/* An imported body: pick the clip the game state calls for, pose, skin. */
+static void imported_update(hta_game_view *v, const hta_game *g, uint32_t i, float dt)
+{
+    const hta_unit *u = &g->units[i];
+    const hta_oal_model *m = body_of(g, u);
+    if (!m) return;
+    if (v->oal_capacity[i] < m->mesh.vertex_count || v->oal_char[i] != u->character) {
+        free(v->oal_posed[i]);
+        v->oal_posed[i] = malloc(m->mesh.vertex_count * sizeof(hta_vertex));
+        v->oal_capacity[i] = v->oal_posed[i] ? m->mesh.vertex_count : 0;
+        v->oal_char[i] = u->character;
+        v->oal_clip[i] = -2;
+    }
+    if (!v->oal_posed[i]) return;
+    const char *role;
+    char base[48], action[64];
+    float topple = 0.0f;
+    if (!u->alive) {
+        role = "death";
+        if (hta_oal_clip_find(m, role) < 0) {
+            role = "idle";
+            float k = u->dead_for / TOPPLE_TIME;
+            topple = (k > 1.0f ? 1.0f : k) * TOPPLE_ANGLE;
+        }
+    } else if (u->vehicle >= 0) {
+        role = "crouch_idle";   /* seated: Source bodies have no seat clips */
+    } else {
+        hta_game_anim(g, (int32_t)i, base, sizeof(base), action, sizeof(action));
+        role = u->body.on_ground ? hta_imported_role(base) : "air";
+    }
+    int32_t clip = hta_oal_clip_find(m, role);
+    if (clip < 0) clip = hta_oal_clip_find(m, "idle");
+    if (clip != v->oal_clip[i]) { v->oal_clip[i] = clip; v->oal_time[i] = 0.0f; }
+    else v->oal_time[i] += dt;
+    hta_oal_pose(m, clip, v->oal_time[i], v->oal_world[i]);
+    float yaw = u->alive ? u->eye.yaw : u->death_yaw;
+    const float *at = u->body.pos;
+    hta_transform seat;
+    if (u->alive && u->vehicle >= 0 && hta_game_seat_root(g, (int32_t)i, &seat)) {
+        /* The seat's place and heading (yaw of its rotation). */
+        const float *q = seat.q;
+        yaw = atan2f(2.0f*(q[3]*q[2] + q[0]*q[1]), 1.0f - 2.0f*(q[1]*q[1] + q[2]*q[2]));
+        at = seat.t;
+    }
+    float cy = cosf(yaw), sy = sinf(yaw), ct = cosf(topple), st = sinf(topple);
+    /* Yaw about +Z, after a fall backwards about the body's own +Y. */
+    float *r = v->oal_root[i];
+    r[0] = cy*ct;  r[1] = -sy; r[2] = cy*st;  r[3] = at[0];
+    r[4] = sy*ct;  r[5] = cy;  r[6] = sy*st;  r[7] = at[1];
+    r[8] = -st;    r[9] = 0;   r[10] = ct;    r[11] = at[2];
+    hta_oal_skin(m, (const float (*)[12])v->oal_world[i], r, v->oal_posed[i]);
+}
+
+const hta_bsp_mesh *hta_game_view_body_mesh(const hta_game_view *v, const hta_game *g, uint32_t i)
+{
+    if (!v || !g || i >= HTA_GAME_MAX_UNITS) return NULL;
+    const hta_oal_model *m = i < g->unit_count ? body_of(g, &g->units[i]) : NULL;
+    return m ? &m->mesh : &v->actor[i].mesh;
+}
+
+const hta_vertex *hta_game_view_body_vertices(const hta_game_view *v, const hta_game *g, uint32_t i)
+{
+    if (!v || !g || i >= HTA_GAME_MAX_UNITS) return NULL;
+    const hta_oal_model *m = i < g->unit_count ? body_of(g, &g->units[i]) : NULL;
+    return m ? v->oal_posed[i] : v->actor[i].posed;
+}
+
 void hta_game_view_update(hta_game_view *v, const hta_game *g, int32_t skip, float dt)
 {
     if (!v || !v->loaded || !g) return;
@@ -216,6 +303,11 @@ void hta_game_view_update(hta_game_view *v, const hta_game *g, int32_t skip, flo
         hta_actor *a = &v->actor[i];
         const hta_unit *u = &g->units[i];
         v->shown[i] = false;
+        if (u->kind != HTA_UNIT_NONE && (int32_t)i != skip && body_of(g, u)) {
+            imported_update(v, g, i, dt);
+            v->shown[i] = v->oal_posed[i] && (u->alive || u->dead_for < g->respawn_time - 0.05f);
+            continue;
+        }
         if (!a->loaded || u->kind == HTA_UNIT_NONE || (int32_t)i == skip) continue;
         if (!u->alive) {
             /* The body stays where it fell until the unit comes back. */
@@ -300,6 +392,21 @@ void hta_game_view_update(hta_game_view *v, const hta_game *g, int32_t skip, flo
     }
 }
 
+void hta_game_view_weapon_space(const hta_game *g, int32_t weapon, float model[16])
+{
+    if (!g || weapon < 0 || (uint32_t)weapon >= g->weapon_count || !g->weapons[weapon].asset) return;
+    float s34[12], s[16], t[16];
+    hta_imported_source_in_halo_hand(&g->weapons[weapon].asset->models[0], s34);
+    hta_oal_to_mat4(s34, s);
+    for (int c = 0; c < 4; c++)
+        for (int r = 0; r < 4; r++) {
+            float acc = 0;
+            for (int k = 0; k < 4; k++) acc += model[k*4+r] * s[c*4+k];
+            t[c*4+r] = acc;
+        }
+    memcpy(model, t, sizeof(t));
+}
+
 uint32_t hta_game_view_weapons(const hta_game_view *v, const hta_game *g, int32_t skip,
                                hta_game_held_weapon *out, uint32_t max)
 {
@@ -317,7 +424,24 @@ uint32_t hta_game_view_weapons(const hta_game_view *v, const hta_game *g, int32_
         }
         out[n].weapon = w;
         out[n].first_submesh = out[n].submesh_count = 0;
+        const hta_oal_model *body = body_of(g, u);
+        const hta_oal_asset *wa = g->weapons[w].asset;
+        if (body) {
+            /* An imported body: bone-merge its own family's weapon, or hold
+             * a Halo one across the two conventions. */
+            float m34[12];
+            bool ok = wa ? hta_imported_hold_matrix(body, (const float (*)[12])v->oal_world[i], v->oal_root[i],
+                                                    &wa->models[0], m34)
+                         : hta_imported_halo_in_source_hand(body, (const float (*)[12])v->oal_world[i],
+                                                            v->oal_root[i], m34);
+            if (!ok) continue;
+            hta_oal_to_mat4(m34, out[n].model);
+            n++;
+            continue;
+        }
         hta_actor_marker_matrix(&v->actor[i], v->hand_node, v->hand_offset, out[n].model);
+        /* A Halo body holding an imported weapon. */
+        if (wa) hta_game_view_weapon_space(g, w, out[n].model);
         if (u->flag >= 0) {
             /* The pole and the cloth of whichever flag it is. */
             uint32_t first[2], count[2];

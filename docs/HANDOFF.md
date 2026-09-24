@@ -181,6 +181,22 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+> **Characters, AK-47 and custom classes (this build):**
+> 1. Settings: **Player model** (Spartan, T_LEET, CT_URBAN, KLEINER,
+>    ALYX) and **Bot models** (Spartans / imported bodies).
+> 2. SINGLEPLAYER or CREATE GAME: **CUSTOM CLASSES: ON**, then **EDIT
+>    CLASSES** -- three classes, two weapons each, from every Trial weapon
+>    plus the **AK-47**. **MY CLASS** picks which you spawn with. Bots make
+>    up a class each life.
+> 3. Check: your class on spawn and respawn; the AK in first person (CS:S
+>    hands, idle/fire/reload/draw clips, its own gunshot and reload sound,
+>    10 rounds/s, 30-round magazine, x1.6 damage); bodies running,
+>    crouching, jumping, holding guns; team tint on imported bodies in team
+>    games; bodies toppling when killed; a dropped AK lying flat; frame
+>    rate with 7 imported bots.
+> Not in LAN yet: other phones see Spartans and joiners spawn with the
+> map's weapons (characters and classes are not in the protocol).
+>
 > **Phone result (2026-09-23):** CS_OFFICE and GM_CONSTRUCT run at 120
 > fps and are "almost complete with some problems" (parked by the owner).
 > DE_AZTEC: no report yet. Next test is an imported player model and
@@ -311,7 +327,45 @@ the section below, and update it every time.
 > 8. **CTF waypoints:** a red and a blue chevron with metres over each flag,
 >    pinned to the screen edge when off screen, blinking while away.
 
-## PLAYER MODEL + WEAPON (next, not started)
+## IMPORTED CHARACTERS AND WEAPONS (done 2026-09-23) — how they work
+
+- **Package**: `src/asset/oal_asset.c` loads Asset Lab's OALASSET v1
+  (skinned models, bones, attachments, clips by role, PCM sounds, weapon
+  stats). `hta_oal_pose` / `hta_oal_skin`: CPU skinning like Halo bodies.
+  Characters get a uniform team mask (`HTA_OAL_TEAM_TINT`).
+- **Game** (`game.c`): `hta_game_add_imported_weapon` clones the base
+  roster entry (tag path match, e.g. "assault rifle") and lays the
+  package's rof/magazine/reserve/spread over it; `damage_scale` multiplies
+  its rounds (`hta_game_hurt_jpt_scaled`). `hta_game_add_character`;
+  per unit `character` and `loadout[2]`; `g->classes` makes `arm()` use
+  the loadout, and bots invent a class each life. `display` names come
+  from tag leaves ("sniper rifle") -- the menu catalog uses the same.
+- **View** (`view.c`, `imported.c`): an imported body plays the role
+  `hta_imported_role` gives its Halo stance; seated it crouch-idles at the
+  seat; dead without a death clip it topples (0.45 s, 1.5 rad). Holding:
+  bone-merge on a shared bone name (Source's rule); Halo<->Source weapon
+  axes bridged by `hta_imported_source_in_halo_hand` /
+  `hta_imported_halo_in_source_hand` (Source world models: barrel -Y,
+  weapon bone rows 1 0 0 / 0 0 -1 / 0 1 0; Halo: +X). Drops use
+  `hta_game_view_weapon_space`.
+- **Android**: packages from `assets/characters|weapons/*.oalasset`
+  (`load_imported`, sounds -> mixer clips in `imported_sounds`). A slot's
+  imported weapon is `held_asset[slot]` (roster index) beside its base
+  tag; `held_roster` prefers it; `equip_imported` overrides `s->weap`.
+  First person: `ivm_update` poses the view model in Halo FP space (same
+  axes as Source's); `vm_play` drives both views. Menu:
+  `nativeCatalog` (weapons + characters), `nativeSetLoadout` (look,
+  bot looks, classes, your class). Settings store `player_model`,
+  `bot_models`; the shell stores classes as `class{c}_{k}`, `classes_on`,
+  `class_sel`.
+- **Tools**: `open-halo-asset-test pkg out [held.oalasset]` renders every
+  role / view clip; `htamatch --character PKG --weapon PKG --classes
+  --give NAME`, `HTA_SIDE_CAM=1`, `HTA_DEBUG_WEAPONS=1`. Test:
+  `test_oal_asset`.
+- **Bundling**: `$HTA_IMPORTED/characters|weapons/*.oalasset` go into the
+  personal APK; verify.sh and the guest check refuse them elsewhere.
+
+## PLAYER MODEL + WEAPON (original plan, now done -- kept for the notes below)
 
 The owner wants to try a Source character (CS:S terrorist, or a GMod
 character such as Kleiner/Alyx; there is no Gordon model, only GMod's HEV
@@ -813,6 +867,8 @@ wrong, this list is the first place to look — they are all one constant.
 | bot item give-up | 1.5 s / 25 s, off 30 s | `brain.c`, unreachable items |
 | failed-path retry wait | 1 s per goal node | `brain.c` `plan_wait` |
 | imported spawn lift | 0.1 wu | `HTA_EXTERNAL_SPAWN_LIFT`: packages ground starts |
+| imported body team tint | 110/255 | `HTA_OAL_TEAM_TINT`: no multipurpose map |
+| imported death topple | 0.45 s, 1.5 rad | `view.c`: Source bodies ragdoll, no clip |
 | imported collision grid | 255 cells across | `HTA_COLLISION_CELLS_IMPORTED` |
 | imported-map flags | nearest node to team starts' middle | no flag data in a Source map |
 | `HTA_HUD_PHONE_SCALE` | 1.75 | HUD size on a phone |

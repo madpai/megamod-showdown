@@ -194,6 +194,11 @@ public class GameActivity extends NativeActivity {
     static native void nativeShellScreen(int screen);
     static native void nativeShellSound(int which);
     static native void nativeStartMatch(int[] config, String host, String name, String map);
+    /* Weapons a class may hold and imported bodies: "W\tname" and
+     * "C\tid\tname" lines, once the menu has loaded. */
+    static native String nativeCatalog();
+    static native void nativeSetLoadout(String character, int botsImported, int classes,
+                                        String primary, String secondary);
     static native String nativeLanScan(String targets, int port, int milliseconds);
 
     public void openSolo() { runOnUiThread(() -> { shell.open(2); if (hud != null) hud.invalidate(); }); }
@@ -240,6 +245,17 @@ public class GameActivity extends NativeActivity {
          * Settings ("imported"). The native side loads by these names. */
         private final List<String> maps = new ArrayList<>();
         private int map = 0;
+        /* Custom classes: three, two slots each, weapon names as the game
+         * shows them; which one you play; whether the match uses them. */
+        private final List<String> classWeapons = new ArrayList<>();
+        private final String[][] classes = new String[3][2];
+        private int myClass = 0;
+        private boolean classesOn = false;
+        private int classReturn = 2;
+        /* The rows of the match screens, rebuilt each time they are asked
+         * for, and what tapping each does. */
+        private final List<String> matchLabels = new ArrayList<>();
+        private final List<Runnable> matchActions = new ArrayList<>();
         private int maxPlayers = 8, port = 32270;
         private String serverName = "Halo", address = "";
         private String[] lanGames = new String[0];
@@ -280,8 +296,76 @@ public class GameActivity extends NativeActivity {
 
         private void cycleMap() { map = (map + 1) % maps.size(); }
 
+        private void findClasses() {
+            if (!classWeapons.isEmpty()) return;
+            String cat = nativeCatalog();
+            if (cat != null) for (String line : cat.split("\n")) {
+                String[] f = line.split("\t", -1);
+                if (f.length >= 2 && f[0].equals("W") && !classWeapons.contains(f[1])) classWeapons.add(f[1]);
+            }
+            android.content.SharedPreferences prefs = owner.getSharedPreferences("hta", android.content.Context.MODE_PRIVATE);
+            classesOn = prefs.getBoolean("classes_on", false);
+            myClass = Math.max(0, Math.min(2, prefs.getInt("class_sel", 0)));
+            String[][] defaults = { { "assault rifle", "pistol" }, { "shotgun", "pistol" }, { "sniper rifle", "pistol" } };
+            for (int c = 0; c < 3; c++)
+                for (int k = 0; k < 2; k++)
+                    classes[c][k] = prefs.getString("class" + c + "_" + k, defaults[c][k]);
+        }
+
+        private void saveClasses() {
+            android.content.SharedPreferences.Editor e = owner.getSharedPreferences("hta", android.content.Context.MODE_PRIVATE).edit();
+            e.putBoolean("classes_on", classesOn).putInt("class_sel", myClass);
+            for (int c = 0; c < 3; c++) for (int k = 0; k < 2; k++) e.putString("class" + c + "_" + k, classes[c][k]);
+            e.apply();
+        }
+
+        private String nextWeapon(String current, String other) {
+            if (classWeapons.isEmpty()) return current;
+            int i = classWeapons.indexOf(current);
+            for (int step = 1; step <= classWeapons.size(); step++) {
+                String w = classWeapons.get((Math.max(i, 0) + step) % classWeapons.size());
+                if (!w.equals(other)) return w;
+            }
+            return current;
+        }
+
+        private String up(String t) { return t.toUpperCase(java.util.Locale.ROOT); }
+
+        private void row(String label, Runnable action) { matchLabels.add(label); matchActions.add(action); }
+
+        /* SINGLEPLAYER (host false) and CREATE GAME (host true). */
+        private void buildMatchRows(boolean host) {
+            matchLabels.clear(); matchActions.clear();
+            if (host) {
+                row(word(10, "SERVER NAME") + ": " + serverName, () -> edit(false));
+                row(word(11, "MAX PLAYERS") + ": " + maxPlayers, () -> maxPlayers = maxPlayers == 8 ? 2 : maxPlayers + 1);
+            }
+            row("MAP: " + mapName(maps.get(map)), this::cycleMap);
+            row("GAME: " + GAMETYPES[gametype], () -> gametype = (gametype + 1) % GAMETYPES.length);
+            row("CUSTOM CLASSES: " + (classesOn ? "ON" : "OFF"), () -> { classesOn = !classesOn; saveClasses(); });
+            if (classesOn) {
+                row("MY CLASS: " + up(classes[myClass][0]) + " + " + up(classes[myClass][1]),
+                    () -> { myClass = (myClass + 1) % 3; saveClasses(); });
+                row("EDIT CLASSES", () -> { classReturn = screen; open(7); });
+            }
+            row("BOTS: " + bots, () -> bots = (bots + 1) % 8);
+            row("BOT SKILL: " + skillName(), () -> skill = (skill + 1) % 4);
+            row(gametype == 2 ? "CAPTURES TO WIN: " + (captures == 0 ? "NONE" : captures)
+                              : word(21, "KILLS TO WIN") + " " + (kills == 0 ? "NONE" : kills), () -> {
+                if (gametype == 2) captures = next(captures, new int[] { 1, 3, 5, 10, 0 });
+                else kills = next(kills, new int[] { 0, 10, 25, 50, 100 });
+            });
+            row("TIME LIMIT: " + (minutes == 0 ? "NONE" : minutes + " MIN"),
+                () -> minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 }));
+            row(word(22, "RESPAWN TIME") + " " + respawn + " SEC", () -> respawn = next(respawn, new int[] { 2, 5, 10, 15 }));
+            row("VEHICLES: " + VEHICLE_SETS[vehicles], () -> vehicles = (vehicles + 1) % VEHICLE_SETS.length);
+            row(word(12, "START GAME"), () -> { if (host) start(1, "127.0.0.1", maps.get(map)); else start(0, "", maps.get(map)); });
+            row(word(18, "BACK"), this::back);
+        }
+
         void open(int next) {
             findMaps();
+            findClasses();
             screen = next;
             nativeShellScreen(next == 2 ? 1 : 2);
             nativeShellSound(1);
@@ -314,6 +398,7 @@ public class GameActivity extends NativeActivity {
             case 3: return "CREATE GAME";
             case 4: return word(0, "JOIN GAME");
             case 5: return "LAN GAMES";
+            case 7: return "EDIT CLASSES";
             default: return "INTERNET GAME";
             }
         }
@@ -321,26 +406,16 @@ public class GameActivity extends NativeActivity {
         private String[] rows() {
             switch (screen) {
             case 1: return new String[] { word(1, "CREATE GAME"), word(0, "JOIN GAME"), word(18, "BACK") };
-            case 2: return new String[] { "MAP: " + mapName(maps.get(map)),
-                    "GAME: " + GAMETYPES[gametype],
-                    "BOTS: " + bots, "BOT SKILL: " + skillName(),
-                    gametype == 2 ? "CAPTURES TO WIN: " + (captures == 0 ? "NONE" : captures)
-                                  : word(21, "KILLS TO WIN") + " " + (kills == 0 ? "NONE" : kills),
-                    "TIME LIMIT: " + (minutes == 0 ? "NONE" : minutes + " MIN"),
-                    word(22, "RESPAWN TIME") + " " + respawn + " SEC",
-                    "VEHICLES: " + VEHICLE_SETS[vehicles],
-                    word(12, "START GAME"), word(18, "BACK") };
-            case 3: return new String[] { word(10, "SERVER NAME") + ": " + serverName,
-                    word(11, "MAX PLAYERS") + ": " + maxPlayers,
-                    "MAP: " + mapName(maps.get(map)),
-                    "GAME: " + GAMETYPES[gametype],
-                    "BOTS: " + bots, "BOT SKILL: " + skillName(),
-                    gametype == 2 ? "CAPTURES TO WIN: " + (captures == 0 ? "NONE" : captures)
-                                  : word(21, "KILLS TO WIN") + " " + (kills == 0 ? "NONE" : kills),
-                    "TIME LIMIT: " + (minutes == 0 ? "NONE" : minutes + " MIN"),
-                    word(22, "RESPAWN TIME") + " " + respawn + " SEC",
-                    "VEHICLES: " + VEHICLE_SETS[vehicles],
-                    word(12, "START GAME"), word(18, "BACK") };
+            case 2: case 3: buildMatchRows(screen == 3); return matchLabels.toArray(new String[0]);
+            case 7: {
+                String[] r = new String[7];
+                for (int c = 0; c < 3; c++) {
+                    r[c*2] = "CLASS " + (c + 1) + " PRIMARY: " + up(classes[c][0]);
+                    r[c*2 + 1] = "CLASS " + (c + 1) + " SECONDARY: " + up(classes[c][1]);
+                }
+                r[6] = word(18, "BACK");
+                return r;
+            }
             case 4: return new String[] { word(3, "LAN"), word(2, "INTERNET") + " / DIRECT IP", word(18, "BACK") };
             case 5: {
                 int count = Math.min(5, lanGames.length);
@@ -384,7 +459,9 @@ public class GameActivity extends NativeActivity {
                 c.drawText(heading(), w * 0.5f, h * 0.20f, title);
             }
             float step = 0.65f / Math.max(8, r.length);
-            text.setTextSize(scale * (r.length >= 7 ? 0.044f : 0.055f));
+            /* Long lists (a host with classes on has fifteen rows) shrink the
+             * words to fit their rows. */
+            text.setTextSize(Math.min(scale * (r.length >= 7 ? 0.044f : 0.055f), h * step * 0.62f));
             for (int i = 0; i < r.length; i++) {
                 float y = h * (0.255f + i * step);
                 Bitmap background = image(8);
@@ -422,35 +499,16 @@ public class GameActivity extends NativeActivity {
             case 1:
                 if (i == 0) open(3); else if (i == 1) open(4); else back();
                 break;
-            case 2:
-                if (i == 0) cycleMap();
-                else if (i == 1) gametype = (gametype + 1) % GAMETYPES.length;
-                else if (i == 2) bots = (bots + 1) % 8;
-                else if (i == 3) skill = (skill + 1) % 4;
-                else if (i == 4) {
-                    if (gametype == 2) captures = next(captures, new int[] { 1, 3, 5, 10, 0 });
-                    else kills = next(kills, new int[] { 0, 10, 25, 50, 100 });
-                }
-                else if (i == 5) minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 });
-                else if (i == 6) respawn = next(respawn, new int[] { 2, 5, 10, 15 });
-                else if (i == 7) vehicles = (vehicles + 1) % VEHICLE_SETS.length;
-                else if (i == 8) start(0, "", maps.get(map)); else back();
+            case 2: case 3:
+                buildMatchRows(screen == 3);
+                if (i < matchActions.size()) matchActions.get(i).run();
                 break;
-            case 3:
-                if (i == 0) edit(false);
-                else if (i == 1) maxPlayers = maxPlayers == 8 ? 2 : maxPlayers + 1;
-                else if (i == 2) cycleMap();
-                else if (i == 3) gametype = (gametype + 1) % GAMETYPES.length;
-                else if (i == 4) bots = (bots + 1) % 8;
-                else if (i == 5) skill = (skill + 1) % 4;
-                else if (i == 6) {
-                    if (gametype == 2) captures = next(captures, new int[] { 1, 3, 5, 10, 0 });
-                    else kills = next(kills, new int[] { 0, 10, 25, 50, 100 });
-                }
-                else if (i == 7) minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 });
-                else if (i == 8) respawn = next(respawn, new int[] { 2, 5, 10, 15 });
-                else if (i == 9) vehicles = (vehicles + 1) % VEHICLE_SETS.length;
-                else if (i == 10) start(1, "127.0.0.1", maps.get(map)); else back();
+            case 7:
+                if (i < 6) {
+                    int c = i / 2, k = i % 2;
+                    classes[c][k] = nextWeapon(classes[c][k], classes[c][1 - k]);
+                    saveClasses();
+                } else open(classReturn);
                 break;
             case 4:
                 if (i == 0) open(5); else if (i == 1) open(6); else back();
@@ -508,6 +566,10 @@ public class GameActivity extends NativeActivity {
         }
 
         private void start(int mode, String host, String world) {
+            // Your look from Settings, and your class when the match has them.
+            android.content.SharedPreferences prefs = owner.getSharedPreferences("hta", android.content.Context.MODE_PRIVATE);
+            nativeSetLoadout(prefs.getString("player_model", ""), prefs.getBoolean("bot_models", false) ? 1 : 0,
+                    classesOn && mode != 2 ? 1 : 0, classes[myClass][0], classes[myClass][1]);
             // A joiner plays whatever the host chose; the host's GAME says.
             int type = mode == 2 ? 0 : gametype;
             nativeStartMatch(new int[] { mode, bots, skill, type == 2 ? captures : kills, minutes, respawn,
@@ -543,6 +605,7 @@ public class GameActivity extends NativeActivity {
             nativeShellSound(2);
             if (screen == 1 || screen == 2) { screen = 0; nativeShellScreen(0); }
             else if (screen == 3 || screen == 4) open(1);
+            else if (screen == 7) open(classReturn);
             else open(4);
         }
 

@@ -22,6 +22,7 @@ if ./build-host/test_vehicle >/dev/null 2>&1; then ok "vehicle driving and colli
 if ./build-host/test_model >/dev/null 2>&1; then ok "model UV and lighting tests"; else bad "model UV and lighting tests"; fi
 if ./build-host/test_bsp    >/dev/null 2>&1; then ok "bsp extraction tests"; else bad "bsp extraction tests"; fi
 if ./build-host/test_external_map >/dev/null 2>&1; then ok "external map package loader and collision"; else bad "external map package loader and collision"; fi
+if ./build-host/test_oal_asset >/dev/null 2>&1; then ok "imported characters and weapons: load, pose, skin, hold"; else bad "imported characters and weapons: load, pose, skin, hold"; fi
 if ./build-host/test_external_world >/dev/null 2>&1; then ok "imported map: starts, flags and items on the reachable ground"; else bad "imported map: starts, flags and items on the reachable ground"; fi
 if ./build-host/test_camera >/dev/null 2>&1; then ok "camera/projection tests"; else bad "camera/projection tests"; fi
 if ./build-host/test_player >/dev/null 2>&1; then ok "player/collision tests"; else bad "player/collision tests"; fi
@@ -194,6 +195,7 @@ unzip -l "$APK" | grep -qiE '\.(wav|ogg|mp3|m4a|aac|opus)$' && bad "no audio bun
 unzip -l "$APK" | grep -qiE '\.map$' && bad "no Trial maps in the shareable APK" || ok "no Trial maps in the shareable APK"
 # Imported maps are converted from the owner's own game files: personal build only.
 unzip -l "$APK" | grep -qiE '\.oalmap$' && bad "no imported maps in the shareable APK" || ok "no imported maps in the shareable APK"
+unzip -l "$APK" | grep -qiE '\.oalasset$' && bad "no imported characters or weapons in the shareable APK" || ok "no imported characters or weapons in the shareable APK"
 
 echo
 echo "$pass passed, $fail failed"

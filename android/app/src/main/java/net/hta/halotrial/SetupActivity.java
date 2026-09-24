@@ -45,7 +45,12 @@ public class SetupActivity extends Activity {
     private TextView lanAddress;
     private Button play;
     private EditText serverAddress;
-    private Button botsButton, skillButton;
+    private Button botsButton, skillButton, modelButton, botModelButton;
+    /* Imported bodies built into this APK (assets/characters/NAME.oalasset);
+     * "" is the Spartan. */
+    private final java.util.List<String> models = new java.util.ArrayList<>();
+    private int model = 0;
+    private boolean botModels = false;
     private int bots = 3, skill = 1;
     /* Halo's own four difficulty names. */
     private static final String[] SKILLS = { "Easy", "Normal", "Heroic", "Legendary" };
@@ -93,6 +98,20 @@ public class SetupActivity extends Activity {
         skillButton.setOnClickListener(v -> { skill = (skill + 1) % 4; showBotSettings(); });
         showBotSettings();
 
+        models.add("");
+        try {
+            String[] found = getAssets().list("characters");
+            if (found != null) for (String f : found)
+                if (f.endsWith(".oalasset")) models.add(f.substring(0, f.length() - 9));
+        } catch (java.io.IOException ignored) { }
+        model = Math.max(0, models.indexOf(prefs.getString("player_model", "")));
+        botModels = prefs.getBoolean("bot_models", false);
+        modelButton = btn("", 0xFF3C4656);
+        modelButton.setOnClickListener(v -> { model = (model + 1) % models.size(); showModelSettings(); });
+        botModelButton = btn("", 0xFF3C4656);
+        botModelButton.setOnClickListener(v -> { botModels = !botModels; showModelSettings(); });
+        showModelSettings();
+
         play = btn("Back to main menu", 0xFF2A7A3A);
         play.setOnClickListener(v -> {
             if (existingMap() == null && !builtInData()) { status.setText("Pick a map first."); return; }
@@ -137,6 +156,10 @@ public class SetupActivity extends Activity {
         root.addView(botsButton);
         root.addView(space(6));
         root.addView(skillButton);
+        root.addView(space(6));
+        root.addView(modelButton);
+        root.addView(space(6));
+        root.addView(botModelButton);
         root.addView(space(10));
         root.addView(play);
         root.addView(space(8));
@@ -374,6 +397,15 @@ public class SetupActivity extends Activity {
         }
         startActivity(i);
         finish();
+    }
+
+    private void showModelSettings() {
+        String m = models.get(model);
+        modelButton.setText("Player model: " + (m.isEmpty() ? "Spartan" : m.toUpperCase(java.util.Locale.ROOT)));
+        botModelButton.setText("Bot models: " + (models.size() < 2 ? "Spartans (no imported bodies in this build)"
+                : botModels ? "imported bodies" : "Spartans"));
+        getSharedPreferences("hta", MODE_PRIVATE).edit()
+                .putString("player_model", m).putBoolean("bot_models", botModels).apply();
     }
 
     private void showBotSettings() {

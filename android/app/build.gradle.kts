@@ -49,5 +49,5 @@ android {
     // owner's own Trial maps (never in git). Stored uncompressed so native
     // code can mmap them straight out of the APK. Never share such an APK.
     providers.gradleProperty("htaAssetsDir").orNull?.let { sourceSets["main"].assets.srcDir(it) }
-    androidResources { noCompress += listOf("map", "oalmap") }
+    androidResources { noCompress += listOf("map", "oalmap", "oalasset") }
 }

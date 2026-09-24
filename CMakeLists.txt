@@ -29,13 +29,14 @@ if(ANDROID)
         src/engine/hud.c
         src/game/nav.c
         src/game/external_world.c
+        src/game/imported.c
         src/game/game.c
         src/game/brain.c
         src/game/view.c
         src/game/menu.c
         src/asset/cache.c
         src/asset/bsp.c
-        src/asset/external_map.c
+        src/asset/external_map.c src/asset/oal_asset.c
         src/asset/bitmap.c
         src/asset/sound.c
         src/asset/ogg.c
@@ -78,11 +79,12 @@ else()
         src/engine/bot.c src/engine/viewmodel.c src/engine/audio.c src/engine/ammo.c src/engine/hud.c
         src/game/nav.c
         src/game/external_world.c
+        src/game/imported.c
         src/game/game.c
         src/game/brain.c
         src/game/view.c
         src/game/menu.c
-        src/asset/cache.c src/asset/bsp.c src/asset/external_map.c src/asset/bitmap.c src/asset/sound.c src/asset/ogg.c src/asset/effect.c src/asset/dialogue.c src/asset/strings.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
+        src/asset/cache.c src/asset/bsp.c src/asset/external_map.c src/asset/oal_asset.c src/asset/bitmap.c src/asset/sound.c src/asset/ogg.c src/asset/effect.c src/asset/dialogue.c src/asset/strings.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
         src/asset/anim.c src/asset/model.c src/asset/font.c)
     target_include_directories(hta_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(hta_engine PRIVATE -Wall -Wextra)
@@ -129,6 +131,8 @@ else()
 
         add_executable(open-halo-map-test src/tools/open_halo_map_test.c)
         target_link_libraries(open-halo-map-test PRIVATE hta_engine hta_gfx_host m)
+        add_executable(open-halo-asset-test src/tools/open_halo_asset_test.c)
+        target_link_libraries(open-halo-asset-test PRIVATE hta_engine hta_gfx_host m)
 
         add_executable(htaview src/tools/htaview.c)
         target_link_libraries(htaview PRIVATE hta_engine hta_gfx_host m)
@@ -198,6 +202,9 @@ else()
     target_link_libraries(test_pickup PRIVATE hta_engine m)
     add_test(NAME pickup COMMAND test_pickup)
 
+    add_executable(test_oal_asset tests/test_oal_asset.c)
+    target_link_libraries(test_oal_asset PRIVATE hta_engine m)
+    add_test(NAME oal_asset COMMAND test_oal_asset)
     add_executable(test_external_world tests/test_external_world.c)
     target_link_libraries(test_external_world PRIVATE hta_engine m)
     add_test(NAME external_world COMMAND test_external_world)

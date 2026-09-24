@@ -280,6 +280,17 @@ bool hta_game_load(hta_game *g, const hta_cache *c, const hta_resource_map *bitm
     }
 
     /* What everybody spawns with. */
+    for (uint32_t w = 0; w < g->weapon_count; w++) {
+        g->weapons[w].asset = NULL;
+        g->weapons[w].base = -1;
+        g->weapons[w].damage_scale = 1.0f;
+        /* The tag's own name: "weapons\\sniper rifle\\sniper rifle". */
+        const char *leaf = strrchr(g->weapons[w].def.path, '\\');
+        leaf = leaf ? leaf + 1 : g->weapons[w].def.path;
+        memset(g->weapons[w].display, 0, sizeof(g->weapons[w].display));
+        for (size_t k = 0; leaf[k] && k + 1 < sizeof(g->weapons[w].display); k++)
+            g->weapons[w].display[k] = leaf[k] == '_' ? ' ' : leaf[k];
+    }
     g->start_weapon[0] = g->start_weapon[1] = -1;
     uint32_t start[2];
     uint32_t ns = hta_scenario_starting_weapons(c, start, 2);
@@ -352,10 +363,44 @@ const hta_game_weapon *hta_game_held(const hta_game *g, int32_t u)
 
 /* ---------------------------------------------------------------- units */
 
+bool hta_game_class_weapon(const hta_game *g, int32_t w)
+{
+    return g && w >= 0 && (uint32_t)w < g->weapon_count && !g->weapons[w].vehicle && w != g->flag_weapon;
+}
+
+void hta_game_set_loadout(hta_game *g, int32_t unit, int32_t a, int32_t b)
+{
+    if (!g || unit < 0 || unit >= (int32_t)g->unit_count) return;
+    g->units[unit].loadout[0] = hta_game_class_weapon(g, a) ? a : -1;
+    g->units[unit].loadout[1] = hta_game_class_weapon(g, b) && b != a ? b : -1;
+}
+
 static void arm(hta_game *g, hta_unit *u)
 {
+    int32_t pick[2] = { g->start_weapon[0], g->start_weapon[1] };
+    if (g->classes) {
+        if (u->loadout[0] >= 0 || u->loadout[1] >= 0) {
+            /* The player's class; an empty slot keeps the map's weapon. */
+            for (int s = 0; s < 2; s++) if (u->loadout[s] >= 0) pick[s] = u->loadout[s];
+            if (pick[0] == pick[1]) pick[1] = -1;
+        } else if (u->kind == HTA_UNIT_BOT) {
+            /* A bot makes up a class each life, from everything allowed. */
+            int32_t allowed[HTA_GAME_MAX_WEAPONS];
+            uint32_t n = 0;
+            for (uint32_t w = 0; w < g->weapon_count; w++)
+                if (hta_game_class_weapon(g, (int32_t)w)) allowed[n++] = (int32_t)w;
+            if (n) {
+                u->rng = u->rng * 1664525u + 1013904223u;
+                pick[0] = allowed[(u->rng >> 8) % n];
+                u->rng = u->rng * 1664525u + 1013904223u;
+                pick[1] = n > 1 ? allowed[(u->rng >> 8) % n] : -1;
+                if (pick[1] == pick[0]) pick[1] = allowed[((u->rng >> 8) + 1) % n];
+                if (n == 1) pick[1] = -1;
+            }
+        }
+    }
     for (int s = 0; s < 2; s++) {
-        u->carry[s].weapon = g->start_weapon[s];
+        u->carry[s].weapon = pick[s];
         if (u->carry[s].weapon >= 0)
             hta_ammo_init(&u->carry[s].ammo, &g->weapons[u->carry[s].weapon].def);
         else
@@ -389,6 +434,8 @@ int32_t hta_game_add(hta_game *g, hta_unit_kind kind, const char *name, uint8_t 
     }
     u->kind = kind;
     u->team = team;
+    u->character = -1;
+    u->loadout[0] = u->loadout[1] = -1;
     u->flag = -1;
     u->vehicle = -1;
     u->seat = -1;
@@ -836,9 +883,18 @@ void hta_game_hurt(hta_game *g, int32_t victim, int32_t attacker, float amount,
     emit(g, &e);
 }
 
+
 void hta_game_hurt_jpt(hta_game *g, int32_t victim, int32_t attacker,
                        uint32_t jpt, int count, const float at[3])
 {
+    hta_game_hurt_jpt_scaled(g, victim, attacker, jpt, count, at, 1.0f);
+}
+
+/* An imported weapon hits as its base weapon's round times its own scale. */
+void hta_game_hurt_jpt_scaled(hta_game *g, int32_t victim, int32_t attacker,
+                              uint32_t jpt, int count, const float at[3], float scale)
+{
+    if (!(scale > 0.0f)) scale = 1.0f;
     if (!g || victim < 0 || victim >= (int32_t)g->unit_count || !jpt) return;
     if (count < 1) count = 1;
     if (count > 32) count = 32;
@@ -849,7 +905,7 @@ void hta_game_hurt_jpt(hta_game *g, int32_t victim, int32_t attacker,
     float shield = v->vitals.shield;
     for (int i = 0; i < count; i++) {
         uint8_t mat = shield > 0.0f ? HTA_MATERIAL_CYBORG_SHIELD : HTA_MATERIAL_CYBORG_ARMOR;
-        float d = hta_damage_vs(g->cache, jpt, mat);
+        float d = hta_damage_vs(g->cache, jpt, mat) * scale;
         shield -= d;
         total += d;
     }
@@ -1361,7 +1417,7 @@ static void fire(hta_game *g, int32_t idx, float dt)
         }
     }
     for (uint32_t v = 0; v < g->unit_count; v++)
-        if (hits[v]) hta_game_hurt_jpt(g, (int32_t)v, idx, w->impact_jpt, hits[v], hit_at[v]);
+        if (hits[v]) hta_game_hurt_jpt_scaled(g, (int32_t)v, idx, w->impact_jpt, hits[v], hit_at[v], w->damage_scale);
 }
 
 int32_t hta_game_melee(hta_game *g, int32_t idx)
@@ -2262,7 +2318,7 @@ static void vfire(hta_game *g, int32_t idx, uint32_t car, uint32_t trig, float d
     }
     own->active = was;
     for (uint32_t v = 0; v < g->unit_count; v++)
-        if (hits[v]) hta_game_hurt_jpt(g, (int32_t)v, idx, w->impact_jpt, hits[v], hit_at[v]);
+        if (hits[v]) hta_game_hurt_jpt_scaled(g, (int32_t)v, idx, w->impact_jpt, hits[v], hit_at[v], w->damage_scale);
 }
 
 /* The guns' own clocks: cooldowns, chambers, bloom, spin-up. */
@@ -2763,4 +2819,45 @@ void hta_game_anim(const hta_game *g, int32_t idx, char *base, size_t baselen,
     if (u->fired) snprintf(action, actlen, "%s %s %s fire-1", stance, cls, label);
     else if (u->meleed) snprintf(action, actlen, "%s %s %s melee", stance, cls, label);
     else if (u->threw) snprintf(action, actlen, "%s %s throw-grenade", stance, cls);
+}
+
+/* ------------------------------------------------------- imported content */
+
+int32_t hta_game_add_character(hta_game *g, const hta_oal_asset *a)
+{
+    if (!g || !a || !a->loaded || strcmp(a->kind, "character") || g->character_count >= HTA_GAME_MAX_CHARACTERS)
+        return -1;
+    g->characters[g->character_count] = a;
+    return (int32_t)g->character_count++;
+}
+
+int32_t hta_game_add_imported_weapon(hta_game *g, const hta_oal_asset *a)
+{
+    if (!g || !a || !a->loaded || strcmp(a->kind, "weapon") || g->weapon_count >= HTA_GAME_MAX_WEAPONS) return -1;
+    int32_t base = -1;
+    for (uint32_t w = 0; w < g->weapon_count && base < 0; w++) {
+        if (g->weapons[w].vehicle || g->weapons[w].asset || (int32_t)w == g->flag_weapon) continue;
+        if (strstr(g->weapons[w].def.path, a->base)) base = (int32_t)w;
+    }
+    if (base < 0) return -1;
+    int32_t idx = (int32_t)g->weapon_count++;
+    hta_game_weapon *w = &g->weapons[idx];
+    *w = g->weapons[base];
+    w->asset = a;
+    w->base = base;
+    w->model = 0;                  /* the package's world model, not a tag's */
+    w->damage_scale = a->damage_scale > 0.0f ? a->damage_scale : 1.0f;
+    snprintf(w->display, sizeof(w->display), "%s", a->display);
+    if (a->rounds_per_second > 0.0f) {
+        w->def.rof = w->def.rof_initial = a->rounds_per_second;
+        w->def.cooldown = 1.0f / a->rounds_per_second;
+    }
+    if (a->magazine > 0) w->def.rounds_loaded_max = w->def.rounds_initial = w->def.rounds_reloaded = a->magazine;
+    if (a->reserve > 0) w->def.rounds_reserve_max = a->reserve;
+    if (a->spread_scale > 0.0f) {
+        w->def.error_angle[0] *= a->spread_scale;
+        w->def.error_angle[1] *= a->spread_scale;
+        w->def.min_error *= a->spread_scale;
+    }
+    return idx;
 }

@@ -19,6 +19,7 @@
 #ifndef HTA_GAME_H
 #define HTA_GAME_H
 
+#include "../asset/oal_asset.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include "../engine/player.h"
@@ -34,6 +35,7 @@
 
 #define HTA_GAME_MAX_UNITS    16
 #define HTA_GAME_MAX_WEAPONS  32
+#define HTA_GAME_MAX_CHARACTERS 16
 #define HTA_GAME_MAX_EVENTS   96
 #define HTA_GAME_MAX_POOLS    12
 #define HTA_GAME_NAME         24
@@ -139,6 +141,13 @@ typedef struct {
     /* A vehicle's gun: one roster entry per trigger, never carried. */
     bool     vehicle;
     int8_t   trigger;
+    /* An imported weapon (an Open Asset Lab package) riding on a Halo
+     * weapon's tag: the package, the base roster entry it was cloned from,
+     * and its damage relative to that base's round. NULL, -1, 1 otherwise. */
+    const hta_oal_asset *asset;
+    int32_t  base;
+    float    damage_scale;
+    char     display[48];     /* what a menu calls it */
 } hta_game_weapon;
 
 /* A weapon lying where it fell, with what was left in it. */
@@ -261,6 +270,12 @@ typedef struct {
     float    powerup_timer;
     uint8_t  powerup;         /* hta_item_kind */
 
+    /* Imported look and custom class: the body (index into the game's
+     * characters, -1 for the cyborg) and the two weapons it spawns with
+     * when the match has custom classes (-1: the map's own). */
+    int8_t   character;
+    int32_t  loadout[2];
+
     uint32_t rng;
 } hta_unit;
 
@@ -352,6 +367,12 @@ typedef struct hta_game {
     hta_game_weapon weapons[HTA_GAME_MAX_WEAPONS];
     uint32_t        weapon_count;
     int32_t         start_weapon[2];
+    /* Imported bodies anyone may wear (the platform loads them). */
+    const hta_oal_asset *characters[HTA_GAME_MAX_CHARACTERS];
+    uint32_t        character_count;
+    /* Custom classes: each unit spawns with its own two weapons, bots with
+     * a random pick of the class weapons. */
+    bool            classes;
     int             start_grenades, max_grenades;
 
     /* Rounds that fly, for units the game simulates: one pool per
@@ -416,6 +437,21 @@ typedef struct hta_game {
 bool hta_game_load(hta_game *g, const hta_cache *c, const hta_resource_map *bitmaps,
                    const hta_collision *col, char *err, size_t errlen);
 void hta_game_free(hta_game *g);
+
+/* An imported weapon joins the roster as a copy of its base weapon (found
+ * by tag path, e.g. "assault rifle") with the package's numbers laid over
+ * it. Returns its roster index, -1 when the base is not in this map. */
+int32_t hta_game_add_imported_weapon(hta_game *g, const hta_oal_asset *a);
+
+/* An imported body anyone may wear. Returns its index, -1 when full. */
+int32_t hta_game_add_character(hta_game *g, const hta_oal_asset *a);
+
+/* May this roster weapon go in a custom class? Hand-held, not the flag. */
+bool hta_game_class_weapon(const hta_game *g, int32_t weapon);
+
+/* What `unit` spawns with when the match has custom classes. -1 for a slot
+ * leaves the map's own weapon there. Takes effect at its next spawn. */
+void hta_game_set_loadout(hta_game *g, int32_t unit, int32_t primary, int32_t secondary);
 
 /* Choose the rules, and the mode's score limit with them. Call before
  * adding units: a team game puts each HTA_TEAM_AUTO unit on the smaller team. Returns false (and plays
@@ -575,6 +611,9 @@ int32_t hta_game_near(const hta_game *g, const float pos[3], float reach, int32_
 
 /* Hurt a unit by a `jpt!` -- against its shield while it has one, else its
  * armour -- `count` times (a shotgun's pellets). Attributed to `attacker`. */
+/* The same, times `scale`: an imported weapon's rounds against its base's. */
+void hta_game_hurt_jpt_scaled(hta_game *g, int32_t victim, int32_t attacker,
+                              uint32_t jpt, int count, const float at[3], float scale);
 void hta_game_hurt_jpt(hta_game *g, int32_t victim, int32_t attacker,
                        uint32_t jpt, int count, const float at[3]);
 

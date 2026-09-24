@@ -13,7 +13,10 @@
  * bots drove and how much of it their cars spent blocked. `--seed` plays
  * a different match of the same setup; judge a change on several.
  * `--oalmap` plays on an imported map instead: its world and starts, Blood
- * Gulch's weapons spread over it, no vehicles.
+ * Gulch's weapons spread over it, no vehicles. `--character PKG` (up to 8)
+ * dresses the bots in imported bodies, in turn; `--weapon PKG` adds an
+ * imported weapon to the roster; `--classes` turns custom classes on (bots
+ * make up a class each life, which is how imported weapons reach them).
  */
 #include "asset/cache.h"
 #include "asset/bsp.h"
@@ -26,6 +29,7 @@
 #include "game/nav.h"
 #include "game/external_world.h"
 #include "asset/external_map.h"
+#include "asset/oal_asset.h"
 #include "gfx/gfx.h"
 #include "platform/platform.h"
 #include <math.h>
@@ -68,6 +72,10 @@ int main(int argc, char **argv)
     uint32_t W = 800, H = 450;
     const char *prefix = "match";
     const char *oalmap = NULL;
+    const char *char_paths[8], *weap_paths[8];
+    int nchar = 0, nweap = 0;
+    bool classes = false;
+    const char *give = NULL;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--bots") && i + 1 < argc) bots = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--skill") && i + 1 < argc) skill = atoi(argv[++i]);
@@ -80,6 +88,10 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--ride") && i + 1 < argc) ride = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--vehicles")) vehicles = true;
         else if (!strcmp(argv[i], "--oalmap") && i + 1 < argc) oalmap = argv[++i];
+        else if (!strcmp(argv[i], "--character") && i + 1 < argc && nchar < 8) char_paths[nchar++] = argv[++i];
+        else if (!strcmp(argv[i], "--weapon") && i + 1 < argc && nweap < 8) weap_paths[nweap++] = argv[++i];
+        else if (!strcmp(argv[i], "--classes")) classes = true;
+        else if (!strcmp(argv[i], "--give") && i + 1 < argc) { give = argv[++i]; classes = true; }
         else if (!strcmp(argv[i], "--seed") && i + 1 < argc) seed = (uint32_t)strtoul(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--mode") && i + 1 < argc) {
             const char *m = argv[++i];
@@ -182,15 +194,53 @@ int main(int argc, char **argv)
         hta_pickups_build(&items, &cache, bmp, err, sizeof(err));
         game.items = &items;
     }
+    static hta_oal_asset chars[8], weaps[8];
+    int32_t char_index[8];
+    for (int k = 0; k < nchar; k++) {
+        if (!hta_oal_load(char_paths[k], &chars[k], err, sizeof(err))) { fprintf(stderr, "character: %s\n", err); return 1; }
+        char_index[k] = hta_game_add_character(&game, &chars[k]);
+        printf("character      %s: %u verts, %u clips\n", chars[k].name, chars[k].models[0].mesh.vertex_count,
+               chars[k].models[0].clip_count);
+    }
+    for (int k = 0; k < nweap; k++) {
+        if (!hta_oal_load(weap_paths[k], &weaps[k], err, sizeof(err))) { fprintf(stderr, "weapon: %s\n", err); return 1; }
+        int32_t wi = hta_game_add_imported_weapon(&game, &weaps[k]);
+        printf("weapon         %s on %s: roster %d, %.1f rounds/s, mag %d, damage x%.2f\n", weaps[k].display,
+               weaps[k].base, wi, wi >= 0 ? game.weapons[wi].def.rof : 0.0f,
+               wi >= 0 ? game.weapons[wi].def.rounds_loaded_max : 0, wi >= 0 ? game.weapons[wi].damage_scale : 0.0f);
+    }
+    game.classes = classes;
     if (!hta_game_set_mode(&game, mode)) printf("mode           not on this map: Slayer\n");
     for (int i = 0; i < bots; i++)
         hta_game_add(&game, ride >= 0 && i < 2 ? HTA_UNIT_REMOTE : HTA_UNIT_BOT, NULL,
                      HTA_TEAM_AUTO);
     hta_game_set_skill(&game, (uint8_t)skill);
+    for (int i = 0; i < bots && nchar; i++) game.units[i].character = (int8_t)char_index[i % nchar];
+    if (give) {
+        /* Everyone spawns with the named weapon (its display name). */
+        int32_t gw = -1;
+        for (uint32_t w = 0; w < game.weapon_count && gw < 0; w++)
+            if (strstr(game.weapons[w].display, give)) gw = (int32_t)w;
+        printf("give           %s -> roster %d\n", give, gw);
+        for (int i = 0; i < bots; i++) hta_game_set_loadout(&game, i, gw, -1);
+    }
     if (!hta_game_view_load(&view, &game, bmp, (uint32_t)bots, err, sizeof(err))) {
         fprintf(stderr, "view: %s\n", err); return 1;
     }
     printf("view           %s\n", err);
+    if (getenv("HTA_DEBUG_WEAPONS"))
+        for (uint32_t w = 0; w < game.weapon_count; w++)
+            if (view.have_weapon[w]) {
+                float lo[3] = { 1e9f, 1e9f, 1e9f }, hi[3] = { -1e9f, -1e9f, -1e9f };
+                const hta_bsp_mesh *wm = &view.weapon_mesh[w];
+                for (uint32_t k = 0; k < wm->vertex_count; k++)
+                    for (int e = 0; e < 3; e++) {
+                        if (wm->vertices[k].pos[e] < lo[e]) lo[e] = wm->vertices[k].pos[e];
+                        if (wm->vertices[k].pos[e] > hi[e]) hi[e] = wm->vertices[k].pos[e];
+                    }
+                printf("  weapon %2u %-16s bounds %.3f %.3f %.3f .. %.3f %.3f %.3f\n", w, game.weapons[w].display,
+                       lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+            }
     hta_game_start(&game);
     int32_t ride_car = -1;
     for (uint32_t i = 0; veh.loaded && i < veh.count; i++)
@@ -221,7 +271,8 @@ int main(int argc, char **argv)
         hta_gfx_mesh_upload_dynamic_world(gfx, &items.mesh, err, sizeof(err)) : NULL;
     hta_gfx_mesh *body[HTA_GAME_MAX_UNITS] = {0};
     for (int i = 0; i < bots; i++)
-        body[i] = hta_gfx_mesh_upload_dynamic_world(gfx, &view.actor[i].mesh, err, sizeof(err));
+        body[i] = hta_gfx_mesh_upload_dynamic_world(gfx, hta_game_view_body_mesh(&view, &game, (uint32_t)i),
+                                                    err, sizeof(err));
     hta_gfx_mesh *wgpu[HTA_GAME_MAX_WEAPONS] = {0};
     for (uint32_t w = 0; w < game.weapon_count; w++)
         if (view.have_weapon[w]) wgpu[w] = hta_gfx_mesh_upload(gfx, &view.weapon_mesh[w], err, sizeof(err));
@@ -322,7 +373,9 @@ int main(int argc, char **argv)
         } else {
         /* A negative --back stands in front, looking at its face. */
         float up = back < 0.0f ? 0.25f : 0.7f;
-        float fx = cosf(u->eye.yaw), fy = sinf(u->eye.yaw);
+        /* HTA_SIDE_CAM: look from the unit's left side instead. */
+        float cam_yaw = u->eye.yaw + (getenv("HTA_SIDE_CAM") ? 1.5707963f : 0.0f);
+        float fx = cosf(cam_yaw), fy = sinf(cam_yaw);
         float look[3] = { u->body.pos[0], u->body.pos[1], u->body.pos[2] + 0.45f };
         float want[3] = { look[0] - fx * back, look[1] - fy * back, look[2] + up };
         float d[3] = { want[0]-look[0], want[1]-look[1], want[2]-look[2] };
@@ -345,8 +398,8 @@ int main(int argc, char **argv)
         for (int i = 0; i < bots && nd < HTA_GFX_MAX_DYNAMIC; i++) {
             if (!view.shown[i] || !body[i]) continue;
             dyn[nd].mesh = body[i];
-            dyn[nd].vertices = view.actor[i].posed;
-            dyn[nd].vertex_count = view.actor[i].mesh.vertex_count;
+            dyn[nd].vertices = hta_game_view_body_vertices(&view, &game, (uint32_t)i);
+            dyn[nd].vertex_count = hta_game_view_body_mesh(&view, &game, (uint32_t)i)->vertex_count;
             dyn[nd].lit = true;
             if (game.teams) {
                 dyn[nd].change = true;
@@ -406,6 +459,7 @@ int main(int argc, char **argv)
             float m[16] = { cy, sy, 0, 0,   0, 0, 1, 0,   sy, -cy, 0, 0,
                             dr->pos[0], dr->pos[1], dr->pos[2] + 0.05f, 1 };
             inst[ni].mesh = wgpu[dr->weapon];
+            hta_game_view_weapon_space(&game, dr->weapon, m);
             memcpy(inst[ni].model, m, sizeof(m));
             inst[ni].first_submesh = inst[ni].submesh_count = 0;
             inst[ni].lit = true;
