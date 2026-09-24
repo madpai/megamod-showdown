@@ -235,6 +235,7 @@ public class GameActivity extends NativeActivity {
     static native void nativeStartMatch(int[] config, String host, String name, String map);
     /* 1: held out of a custom game until a class is picked; 2: the match has classes. */
     static native int nativeClassState();
+    static native void nativeChooseTeam(int team);
     static native void nativeChooseClass(String character, String primary, String secondary);
     /* The class screen's preview: a character (package id, "" the Spartan)
      * holding a weapon, drawn instead of the menu or world while on. */
@@ -313,12 +314,11 @@ public class GameActivity extends NativeActivity {
         private final List<String> classWeapons = new ArrayList<>();
         private final List<String[]> characters = new ArrayList<>();   // {id, name}
         private final HashMap<String, String> heroGroups = new HashMap<>();
+        private final HashMap<String, String> heroPowers = new HashMap<>();
         private final List<Loadout> presets = new ArrayList<>();
-        private final List<Loadout> customs = new ArrayList<>();
-        private static final int MAX_CUSTOM = 8;
         private int pick = 0;             // into presets then customs
         private int classPage;
-        private int classEdit = -1;       // the custom class being edited, -1 none
+        private int classEdit = -1; // retained preview state
         private boolean classesLoaded;
         private int classReturn = 2;
         private boolean previewOn;
@@ -330,15 +330,16 @@ public class GameActivity extends NativeActivity {
         private final List<String> matchLabels = new ArrayList<>();
         private final List<Runnable> matchActions = new ArrayList<>();
         private int maxPlayers = 8, port = 32270;
-        private String serverName = "Halo", address = "";
+        private String serverName = "Megamod Showdown", address = "";
         private String[] lanGames = new String[0];
         private boolean scanning;
+        private Bitmap cover;
 
         ShellMenu(GameActivity owner) {
             this.owner = owner;
-            panel.setColor(0xC8102038);
-            row.setColor(0xAA234567);
-            title.setColor(0xFFE3F2FF);
+            panel.setColor(0xF0141720);
+            row.setColor(0xF0272B35);
+            title.setColor(0xFFFFE5BE);
             title.setTypeface(Typeface.DEFAULT_BOLD);
             title.setTextAlign(Paint.Align.CENTER);
             text.setColor(0xFFFFFFFF);
@@ -367,6 +368,7 @@ public class GameActivity extends NativeActivity {
 
         private String mapName(String id) {
             if (id.equals("bloodgulch")) return "BLOOD GULCH";
+            if (id.equals("mcdonalds")) return "MCRONALDS";
             if (id.equals("imported")) return "IMPORTED MAP";
             return id.toUpperCase(java.util.Locale.ROOT);
         }
@@ -386,12 +388,14 @@ public class GameActivity extends NativeActivity {
                 if (f.length >= 2 && f[0].equals("W") && !classWeapons.contains(f[1])) classWeapons.add(f[1]);
                 if (f.length >= 3 && f[0].equals("C")) {
                     characters.add(new String[] { f[1], f[2] });
+                    if(f.length>=8) heroPowers.put(f[1],f[7]);
                     heroGroups.put(f[1], f.length >= 6 && !f[5].isEmpty() ? f[5] : "HERO");
                     String p = f.length >= 4 && !f[3].isEmpty() ? f[3] : "assault rifle";
                     String q = f.length >= 5 && !f[4].isEmpty() ? f[4] : "pistol";
                     presets.add(new Loadout(f[1], p, q, true));
                 }
             }
+            if (presets.size()>1) presets.remove(0); // imported heroes have authored kits
             // Keep the expanding roster browsable by role and character.
             presets.sort((a, b) -> {
                 int group = Integer.compare(heroRank(heroGroups.get(a.character)),
@@ -399,53 +403,26 @@ public class GameActivity extends NativeActivity {
                 return group != 0 ? group : charName(a.character).compareToIgnoreCase(charName(b.character));
             });
             android.content.SharedPreferences prefs = owner.getSharedPreferences("hta", android.content.Context.MODE_PRIVATE);
-            int n = prefs.getInt("custom_n", -1);
-            if (n < 0) {
-                // The three classes of before become the first custom ones (Spartan).
-                String[][] defaults = { { "assault rifle", "pistol" }, { "shotgun", "pistol" }, { "sniper rifle", "pistol" } };
-                for (int c = 0; c < 3; c++)
-                    customs.add(new Loadout("", prefs.getString("class" + c + "_0", defaults[c][0]),
-                            prefs.getString("class" + c + "_1", defaults[c][1]), false));
-            } else {
-                for (int i = 0; i < Math.min(n, MAX_CUSTOM); i++)
-                    customs.add(new Loadout(prefs.getString("custom" + i + "_char", ""),
-                            prefs.getString("custom" + i + "_p", "assault rifle"),
-                            prefs.getString("custom" + i + "_s", "pistol"), false));
-            }
-            pick = Math.max(0, Math.min(presets.size() + customs.size() - 1, prefs.getInt("class_pick2", 0)));
-            String saved = prefs.getString("class_pick_id", "");
-            if (saved.startsWith("p:")) {
-                for (int i = 0; i < presets.size(); i++)
-                    if (presets.get(i).character.equals(saved.substring(2))) { pick = i; break; }
-            } else if (saved.startsWith("c:")) {
-                try {
-                    int custom = Integer.parseInt(saved.substring(2));
-                    if (custom >= 0 && custom < customs.size()) pick = presets.size() + custom;
-                } catch (NumberFormatException ignored) { }
-            }
+            pick = 0;
+            String saved = prefs.getString("hero_pick", "");
+            for (int i = 0; i < presets.size(); i++)
+                if (presets.get(i).character.equals(saved)) pick = i;
             classPage = pick / 7;
         }
 
         private void saveClasses() {
             android.content.SharedPreferences.Editor e = owner.getSharedPreferences("hta", android.content.Context.MODE_PRIVATE).edit();
-            e.putInt("class_pick2", pick).putInt("custom_n", customs.size());
-            e.putString("class_pick_id", pick < presets.size() ? "p:" + presets.get(pick).character
-                    : "c:" + (pick - presets.size()));
-            for (int i = 0; i < customs.size(); i++) {
-                Loadout l = customs.get(i);
-                e.putString("custom" + i + "_char", l.character).putString("custom" + i + "_p", l.primary)
-                 .putString("custom" + i + "_s", l.secondary);
-            }
+            e.putString("hero_pick", selected().character);
             e.apply();
         }
 
         private Loadout loadoutAt(int i) {
-            return i < presets.size() ? presets.get(i) : customs.get(i - presets.size());
+            return presets.get(i);
         }
 
         Loadout selected() {
             findClasses();
-            int n = presets.size() + customs.size();
+            int n = presets.size();
             if (n == 0) return new Loadout("", "assault rifle", "pistol", true);
             pick = Math.max(0, Math.min(n - 1, pick));
             return loadoutAt(pick);
@@ -498,7 +475,6 @@ public class GameActivity extends NativeActivity {
             }
             row("MAP: " + mapName(maps.get(map)), this::cycleMap);
             row("GAME: " + GAMETYPES[gametype], () -> gametype = (gametype + 1) % GAMETYPES.length);
-            row("MY CLASS: " + loadoutLabel(selected()), () -> { classReturn = screen; classEdit = -1; open(7); });
             row("DUPLICATE HEROES: " + (duplicateHeroes ? "ON" : "OFF"), () -> duplicateHeroes = !duplicateHeroes);
             row("BOTS: " + bots, () -> bots = (bots + 1) % 8);
             row("BOT SKILL: " + skillName(), () -> skill = (skill + 1) % 4);
@@ -531,7 +507,7 @@ public class GameActivity extends NativeActivity {
         }
 
         private String word(int n, String fallback) {
-            return n < words.length && !words[n].isEmpty() ? words[n] : fallback;
+            return fallback;
         }
 
         private Bitmap image(int n) {
@@ -582,46 +558,59 @@ public class GameActivity extends NativeActivity {
         }
 
         private String skillName() {
-            String[] fallback = { "Easy", "Normal", "Heroic", "Legendary" };
+            String[] fallback = { "CASUAL", "STANDARD", "AGGRESSIVE", "BRUTAL" };
             return word(26 + skill, fallback[skill]);
+        }
+
+        private int menuColumns() { return screen == 2 || screen == 3 ? 2 : 1; }
+        private int menuRows(int count) { return (count + menuColumns() - 1) / menuColumns(); }
+        private float menuStep(int count) { return 0.65f / Math.max(4, menuRows(count)); }
+
+        private void ensureCover() {
+            if (cover != null) return;
+            try {
+                android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+                o.inScaled = false;
+                cover = android.graphics.BitmapFactory.decodeResource(owner.getResources(),
+                        R.drawable.megamod_menu, o);
+            } catch (Throwable ignored) { }
         }
 
         void draw(Canvas c, int w, int h) {
             if (screen == 0) return;
-            if (screen == 7) { drawClassUi(c, w, h, 0); return; }
             String[] r = rows();
             float scale = Math.min(w, h);
-            float left = w * 0.18f, right = w * 0.82f;
-            c.drawRoundRect(left, h * 0.08f, right, h * 0.94f, 18f, 18f, panel);
-            int headArt = screen == 1 ? 0 : screen == 3 ? 4 : screen == 5 ? 1 : screen == 6 ? 2 : -1;
-            Bitmap header = headArt >= 0 ? image(headArt) : null;
-            if (header != null) {
-                float aspect = (float) header.getWidth() / header.getHeight();
-                float hh = h * 0.11f;
-                c.drawBitmap(header, null, new Rect((int)(w * 0.5f - hh * aspect * 0.5f),
-                        (int)(h * 0.10f), (int)(w * 0.5f + hh * aspect * 0.5f),
-                        (int)(h * 0.10f + hh)), null);
+            ensureCover();
+            if (cover != null) {
+                float aspect = (float) cover.getWidth() / Math.max(1, cover.getHeight());
+                float dw = h * aspect;
+                int left = (int) ((w - dw) * 0.5f);
+                c.drawBitmap(cover, null, new Rect(left, 0, left + (int) dw, h), null);
+                c.drawColor(0xC0100C0A);
             } else {
-                title.setTextSize(scale * 0.075f);
-                c.drawText(heading(), w * 0.5f, h * 0.20f, title);
+                c.drawColor(0xFF0B0D13);
             }
-            float step = 0.65f / Math.max(8, r.length);
-            /* Long lists (a host with classes on has fifteen rows) shrink the
-             * words to fit their rows. */
-            text.setTextSize(Math.min(scale * (r.length >= 7 ? 0.044f : 0.055f), h * step * 0.62f));
+            panel.setColor(0xE6141923);
+            c.drawRoundRect(w * .055f, h * .055f, w * .945f, h * .945f, 24, 24, panel);
+            row.setColor(0xFFFF752B);
+            c.drawRect(w * .055f, h * .055f, w * .062f, h * .945f, row);
+            title.setTextSize(scale * .032f);
+            c.drawText("MEGAMOD SHOWDOWN", w * .5f, h * .12f, title);
+            title.setTextSize(scale * .065f);
+            c.drawText(heading(), w * .5f, h * .205f, title);
+            int cols = menuColumns(), nr = menuRows(r.length);
+            float step = menuStep(r.length), width = .82f / cols;
             for (int i = 0; i < r.length; i++) {
-                float y = h * (0.255f + i * step);
-                Bitmap background = image(8);
-                if (background != null) c.drawBitmap(background, null,
-                        new Rect((int)left + 12, (int)y, (int)right - 12, (int)(y + h * step * 0.86f)), null);
-                c.drawRoundRect(left + 12, y, right - 12, y + h * step * 0.86f, 8, 8, row);
-                c.drawText(r[i], w * 0.5f, y + h * step * 0.58f, text);
+                float x = .09f + (i / nr) * width, y = .255f + (i % nr) * step;
+                boolean go = r[i].equals("START GAME") || r[i].equals("JOIN GAME");
+                row.setColor(go ? 0xFFB64A19 : 0xFF252C39);
+                c.drawRoundRect(w*x, h*y, w*(x+width-.018f), h*(y+step*.86f), 12, 12, row);
+                text.setTextSize(Math.min(scale*.037f, h*step*.43f));
+                float max = w*(width-.05f);
+                if (text.measureText(r[i]) > max) text.setTextSize(text.getTextSize()*max/text.measureText(r[i]));
+                c.drawText(r[i], w*(x+(width-.018f)*.5f), h*(y+step*.56f), text);
             }
-            if (screen == 5 && !scanning && lanGames.length == 0) {
-                text.setTextSize(scale * 0.035f);
-                c.drawText("No LAN games found. Tap REFRESH to scan again.",
-                        w * 0.5f, h * 0.77f, text);
-            }
+            row.setColor(0xF0272B35);
         }
 
         /* The class screen: every class on the left (character presets,
@@ -639,27 +628,18 @@ public class GameActivity extends NativeActivity {
         private void buildClassRows(int mode) {
             classLabels.clear(); classKinds.clear(); classActions.clear();
             findClasses();
-            if (classEdit >= 0 && classEdit < customs.size()) {
-                Loadout l = customs.get(classEdit);
-                classRow("CHARACTER: " + up(charName(l.character)), 0, () -> l.character = nextCharacter(l.character));
-                classRow("PRIMARY: " + up(l.primary), 0, () -> l.primary = nextWeapon(l.primary, l.secondary));
-                classRow("SECONDARY: " + up(l.secondary), 0, () -> l.secondary = nextWeapon(l.secondary, l.primary));
-                classRow("DELETE THIS CLASS", 0, () -> {
-                    customs.remove(classEdit);
-                    pick = Math.min(pick, presets.size() + customs.size() - 1);
-                    classEdit = -1;
-                });
-                classRow("DONE", 2, () -> classEdit = -1);
+            if ((nativeClassState() & 4) != 0) {
+                classRow("JOIN RED TEAM", 1, () -> nativeChooseTeam(0));
+                classRow("JOIN BLUE TEAM", 0, () -> nativeChooseTeam(1));
                 return;
             }
-            int total = presets.size() + customs.size();
+            int total = presets.size();
             int pages = Math.max(1, (total + 6) / 7);
             classPage = Math.max(0, Math.min(classPage, pages - 1));
             for (int i = classPage * 7; i < Math.min(total, (classPage + 1) * 7); i++) {
                 final int k = i;
                 Loadout l = loadoutAt(i);
-                String tag = l.preset ? up(heroGroups.getOrDefault(l.character, "HERO")) + ": "
-                                      : "CUSTOM " + (i - presets.size() + 1) + ": ";
+                String tag = up(heroGroups.getOrDefault(l.character, "HERO")) + ": ";
                 String label = tag + up(charName(l.character));
                 if (!nativeCharacterAvailable(l.character)) label += "  [TAKEN]";
                 classRow(label, i == pick ? 1 : 0, () -> pick = k);
@@ -670,16 +650,6 @@ public class GameActivity extends NativeActivity {
                 classRow("PAGE " + (classPage + 1) + "/" + pages + " ▶", 0,
                          () -> classPage = (classPage + 1) % pages);
             }
-            if (customs.size() < MAX_CUSTOM)
-                classRow("+ NEW CUSTOM CLASS", 0, () -> {
-                    Loadout from = selected();
-                    customs.add(new Loadout(from.character, from.primary, from.secondary, false));
-                    pick = presets.size() + customs.size() - 1;
-                    classPage = pick / 7;
-                    classEdit = customs.size() - 1;
-                });
-            if (!selected().preset)
-                classRow("EDIT CUSTOM " + (pick - presets.size() + 1), 0, () -> classEdit = pick - presets.size());
             if (mode == 0) classRow(word(18, "BACK"), 2, () -> open(classReturn));
             else classRow(mode == 1 ? "SPAWN" : "DONE", 2, () -> {
                 Loadout l = selected();
@@ -698,7 +668,7 @@ public class GameActivity extends NativeActivity {
         /* Which class screen is up tells native to draw its preview. */
         void syncPreview(boolean visible) {
             if (visible) {
-                Loadout l = classEdit >= 0 && classEdit < customs.size() ? customs.get(classEdit) : selected();
+                Loadout l = selected();
                 nativeSetPreview(l.character, l.primary, 1);
                 previewOn = true;
             } else if (previewOn) {
@@ -713,8 +683,8 @@ public class GameActivity extends NativeActivity {
             float left = w * CLS_L, right = w * CLS_R;
             c.drawRoundRect(left, h * 0.04f, right, h * 0.97f, 18f, 18f, panel);
             title.setTextSize(scale * 0.058f);
-            String head = classEdit >= 0 ? "CUSTOM CLASS " + (classEdit + 1)
-                        : mode == 1 ? "CHOOSE YOUR CLASS" : mode == 2 ? "CHANGE CLASS" : "CLASSES";
+            boolean team = (nativeClassState() & 4) != 0;
+            String head = team ? "CHOOSE YOUR TEAM" : mode == 1 ? "CHOOSE YOUR CHARACTER" : "CHANGE CHARACTER";
             c.drawText(head, (left + right) * 0.5f, h * 0.12f, title);
             if (mode == 2 && classEdit < 0) {
                 text.setTextSize(scale * 0.026f);
@@ -727,7 +697,8 @@ public class GameActivity extends NativeActivity {
                 float y = h * (CLS_TOP + i * step);
                 int kind = classKinds.get(i);
                 int saved = row.getColor();
-                if (kind == 1) row.setColor(0xE0C0501A);          // selected: the art's orange
+                if (team) row.setColor(i==0 ? 0xFFAF3444 : 0xFF2466B3);
+                else if (kind == 1) row.setColor(0xE0C0501A);          // selected: the art's orange
                 else if (kind == 2) row.setColor(0xE02A7A3A);
                 c.drawRoundRect(left + 12, y, right - 12, y + h * step * 0.86f, 8, 8, row);
                 row.setColor(saved);
@@ -737,16 +708,19 @@ public class GameActivity extends NativeActivity {
                 if (text.measureText(t) > maxw) text.setTextSize(size * maxw / text.measureText(t));
                 c.drawText(t, (left + right) * 0.5f, y + h * step * 0.58f, text);
             }
+            if (team) return;
             /* Under the preview: whose it is and what they carry. */
-            Loadout l = classEdit >= 0 && classEdit < customs.size() ? customs.get(classEdit) : selected();
+            Loadout l = selected();
             float px = w * 0.78f;
+            text.setTextSize(scale * .033f);
+            c.drawText(heroPowers.getOrDefault(l.character,""), px, h*.85f,text);
             title.setTextSize(scale * 0.05f);
             c.drawText(up(charName(l.character)), px, h * 0.90f, title);
             text.setTextSize(scale * 0.03f);
             c.drawText(up(l.primary) + "  +  " + up(l.secondary), px, h * 0.95f, text);
             if (l.character.isEmpty()) {
                 text.setTextSize(scale * 0.028f);
-                c.drawText("(the Spartan is Halo's own body)", px, h * 0.5f, text);
+                c.drawText("ARMORED SOLDIER", px, h * 0.5f, text);
             }
         }
 
@@ -782,18 +756,20 @@ public class GameActivity extends NativeActivity {
             row.setColor(0xE0193457);
             c.drawRoundRect(w * 0.35f, h * 0.515f, w * 0.65f, h * 0.583f,
                     8, 8, row);
-            row.setColor(0xAA234567);
+            row.setColor(0xF0272B35);
             title.setTextSize(Math.min(w, h) * 0.055f);
             c.drawText("SINGLEPLAYER", w * 0.5f, h * 0.563f, title);
         }
 
         void tap(float x, float y) {
             if (screen == 7) { tapClassUi(x, y, 0); if (owner.hud != null) owner.hud.invalidate(); return; }
-            if (screen == 0 || x < 0.18f || x > 0.82f) return;
+            if (screen == 0 || x < .09f || x > .91f) return;
             String[] r = rows();
-            float step = 0.65f / Math.max(8, r.length);
-            int i = (int)((y - 0.255f) / step);
-            if (y < 0.255f || i < 0 || i >= r.length || y > 0.255f + (i + 0.86f) * step) return;
+            int cols = menuColumns(), nr = menuRows(r.length);
+            float step = menuStep(r.length), width = .82f / cols;
+            int col = Math.min(cols-1, (int)((x-.09f)/width));
+            int ri = (int)((y-.255f)/step), i = col*nr+ri;
+            if (y < .255f || ri < 0 || ri >= nr || i >= r.length || y > .255f+(ri+.86f)*step) return;
             nativeShellSound(1);
             switch (screen) {
             case 1:
@@ -859,12 +835,8 @@ public class GameActivity extends NativeActivity {
         }
 
         private void start(int mode, String host, String world) {
-            // Your look from Settings, and your class when the match has them.
-            android.content.SharedPreferences prefs = owner.getSharedPreferences("hta", android.content.Context.MODE_PRIVATE);
-            // Your class's character is your body, in every game.
-            String body = selected().character;
-            nativeSetLoadout(body, prefs.getBoolean("bot_models", false) ? 1 : 0,
-                    mode != 2 ? 1 : 0, selected().primary, selected().secondary);
+            pickerOpen = false;
+            nativeSetLoadout("", 1, mode != 2 ? 1 : 0, "assault rifle", "pistol");
             // A joiner plays whatever the host chose; the host's GAME says.
             int type = mode == 2 ? 0 : Math.min(gametype, 2);
             nativeStartMatch(new int[] { mode, bots, skill, type == 2 ? captures : kills, minutes, respawn,
@@ -1190,7 +1162,7 @@ public class GameActivity extends NativeActivity {
             flyR = m * 0.06f;
             flyCx = w * 0.935f;
             flyCy = h * 0.40f;
-            abilR = m * 0.068f;
+            abilR = m * 0.085f;
             abilCx = w * 0.755f;
             abilCy = h * 0.46f;
             pauseR = m * 0.04f;
@@ -1536,7 +1508,7 @@ public class GameActivity extends NativeActivity {
             }
             int classState = GameActivity.nativeClassState();
             boolean picking = (classState & 1) != 0 || (owner.shell.pickerOpen && (classState & 2) != 0);
-            owner.shell.syncPreview(picking);
+            owner.shell.syncPreview(picking && (classState & 4) == 0);
             if (picking) {
                 owner.shell.drawClassUi(c, getWidth(), getHeight(), (classState & 1) != 0 ? 1 : 2);
                 postInvalidateDelayed(100);
@@ -1554,7 +1526,7 @@ public class GameActivity extends NativeActivity {
                 c.drawText("QUIT TO MAIN MENU", w * 0.5f, h * 0.675f, label);
                 if ((classState & 2) != 0) {
                     c.drawRect(w * 0.35f, h * 0.76f, w * 0.65f, h * 0.88f, pauseBtn);
-                    c.drawText("CHANGE CLASS", w * 0.5f, h * 0.835f, label);
+                    c.drawText("CHANGE CHARACTER", w * 0.5f, h * 0.835f, label);
                 }
                 drawGame(c);
                 postInvalidateDelayed(100);

@@ -197,6 +197,7 @@ bool hta_oal_load_memory(const uint8_t *data, size_t size, hta_oal_asset *out, c
     out->reload_rounds = (int)json_num(j, ml, "reload_rounds");
     out->reload_seconds = json_num(j, ml, "reload_seconds");
     out->recharge = json_num(j, ml, "recharge");
+    json_str(j, ml, "hold_type", out->hold_type, sizeof(out->hold_type));
     out->body_health = json_num(j, ml, "body_health");
     out->body_shield = json_num(j, ml, "body_shield");
     out->body_damage = json_num(j, ml, "body_damage");
@@ -208,6 +209,12 @@ bool hta_oal_load_memory(const uint8_t *data, size_t size, hta_oal_asset *out, c
     json_str(j, ml, "ability_base", out->ability_base, sizeof(out->ability_base));
     out->ability_damage = json_num(j, ml, "ability_damage");
     out->ability_cooldown = json_num(j, ml, "ability_cooldown");
+    out->ability_duration = json_num(j, ml, "ability_duration");
+    out->ability_interval = json_num(j, ml, "ability_interval");
+    out->ability_radius = json_num(j, ml, "ability_radius");
+    out->ability_force = json_num(j, ml, "ability_force");
+    out->ability_cone = json_num(j, ml, "ability_cone");
+    out->ability_color = (int)json_num(j, ml, "ability_color");
     {
         const char *beam = json_find(j, ml, "ability_beam");
         out->ability_beam = beam && !strncmp(beam, "true", 4);
@@ -431,6 +438,19 @@ void hta_oal_pose(const hta_oal_model *m, int32_t clip, float t, float (*world)[
             float sg = d < 0 ? -1.0f : 1.0f;
             for (int k = 0; k < 4; k++) q[k] = a->q[k] + (sg * c->q[k] - a->q[k]) * s;
             for (int k = 0; k < 3; k++) p[k] = a->p[k] + (c->p[k] - a->p[k]) * s;
+            /* HL2MP clips are authored on a citizen neck. On a taller body
+             * those keys sink the head into the collar. Keep this model's
+             * own head and neck when the clip's bone is much closer in. */
+            const char *bn = m->bone_name[b];
+            if (bn && (strstr(bn, "Head") || strstr(bn, "Neck"))) {
+                float bp = sqrtf(m->bind[b].p[0]*m->bind[b].p[0] + m->bind[b].p[1]*m->bind[b].p[1] +
+                                 m->bind[b].p[2]*m->bind[b].p[2]);
+                float ap = sqrtf(p[0]*p[0] + p[1]*p[1] + p[2]*p[2]);
+                if (bp > 0.04f && ap < bp * 0.75f) {
+                    memcpy(q, m->bind[b].q, sizeof(q));
+                    memcpy(p, m->bind[b].p, sizeof(p));
+                }
+            }
         } else {
             memcpy(q, m->bind[b].q, sizeof(q)); memcpy(p, m->bind[b].p, sizeof(p));
         }

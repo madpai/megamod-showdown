@@ -8,8 +8,7 @@
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-24 (published hero roster at `f9ee859`;
-documentation closeout)
+**Date of this revision:** 2026-09-24 (hero polish, citizen fists, McRonalds map)
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Branches -- read this first:**
 - `halo-sandbox` is **MEGAMOD SHOWDOWN**. Push this branch only to private
@@ -27,10 +26,12 @@ documentation closeout)
 2. On `halo-sandbox`, inspect `scratch/serve-megamod/` and
    `scratch/serve-megamod/uploads/` for the published build and new phone
    screenshots. The current personal APK is at
-   **http://100.89.1.14:8733/** (commit `f9ee859`, 2026-09-24).
-3. Run the **CURRENT TESTING OBJECTIVE** below on the phone and two matched
-   LAN installs. Host checks passed; Superman's head, beam, hero balance,
-   grouped picker, imported equipment and killcam still need device feedback.
+   **http://100.89.1.14:8733/**. Protocol is **v8** (35-byte controls).
+   An older APK cannot join this one.
+3. Run the **CURRENT TESTING OBJECTIVE** below on the phone. Host checks
+   passed for the restaurant map, the head restore, and the game rules.
+   Device look of flight, the beam, citizen fists, Harry's flyby tune, and
+   McRonalds still need a phone pass.
 4. Keep game code on private `megamod/main` and importer code on public
    Open Asset Lab `main`. Source packages stay in `~/assetlab-private/`.
    For a Halo-only task, switch to `fp-animated-guns` and read that branch's
@@ -173,47 +174,44 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-**Published checkpoint:** `f9ee859` on private `megamod/main`, personal and
-asset-free guest APKs at **http://100.89.1.14:8733/**. The personal APK is
-1.2 GB and bundles 12 characters, 11 weapons, Blood Gulch, three Trial
-resource caches and five imported maps. The guest APK is 1.9 MB and
-contains none of those private packages or Trial data. SHA-256 manifests
-were checked and a local backup is
-at `/mnt/media/backups/halo-trial-android/apks-megamod/20260924-151217-f9ee859/`.
-No phone or two-device LAN result has been reported for this build yet.
+**This session's phone test (2026-09-24).** Personal and guest APKs go to
+**http://100.89.1.14:8733/** after this handoff is committed. Protocol **v8**.
+The personal APK adds `mcdonalds.oalmap` (menu name MCRONALDS) and replaces
+the Heavy fist viewmodel with Garry's Mod citizen arms. Previous checkpoint
+was `f9ee859`.
 
-> **Hero shooter roster (next phone test, 2026-09-24):**
-> 1. Pick Superman, fly, and look at his head from the shoulder camera and
->    another player's view. The complete idle pose now leans forward in
->    flight; he moves at 5.8 wu/s and has much higher health and shields.
-> 2. Aim LASER EYES through two enemies. A full red beam should reach the
->    wall and damage both targets, then show an 8 s cooldown. Confirm the
->    beam appears for a LAN joiner too. Goku flies at 5.4 wu/s and keeps his
->    Ki Blast. Harry remains the frailer broom rider.
-> 3. With duplicate heroes OFF, pick Superman in two LAN clients: the
->    second should see TAKEN or be held at the picker. Turn duplicates ON
->    in CREATE GAME and confirm both may spawn as Superman.
-> 4. Browse the grouped pages. New Workshop characters: Master Chief,
->    Dragonborn, Iron Man and Dumbledore. Dragonborn starts with a Daedric
->    Sword and .357; Dumbledore has an Elder Wand with eight recharging
->    charges. Check each body's textures, third person equipment and first
->    person weapon view. A Sword or Wand may need phone FOV adjustment.
-> 5. Get killed by an imported character near open ground and a wall. The
->    freeze frame should show the attacker's face. Please send a screenshot
->    if the camera still lands behind the head or clips into geometry.
-> 6. Host checks: 12-character, 11-weapon bot match; 88 game checks, 20
->    contrail checks, network codec/two-client test, and verify.sh 80/80.
->    Phone visual/touch results remain to be reported after publication.
->    The package roster now has room for 32 characters and 64 weapons,
->    including hidden ability shots; adding content still needs import,
->    texture, view-model and phone checks.
+> 1. **Superman's head.** Fly and look at yourself, then at another Superman.
+>    The head should sit on the collar in the idle and the jump pose. The
+>    chase camera is farther back and lower than the previous build.
+> 2. **Heat vision.** Hold the ability and sweep. Twin thick beams, a roar,
+>    and a shake. It should not be ready again until the cooldown after the
+>    beam ends. A LAN joiner should see the same beam.
+> 3. **Fists.** Superman, Goku, or anyone on Fists: first person is citizen
+>    arms and a left hook, not the Heavy's gloves. Ki bolts and repulsors
+>    use the same hands.
+> 4. **Harry's broom.** Fly. An original tune plays around him and stays
+>    audible from far away. It is not the film theme.
+> 5. **McRonalds.** MAP: MCRONALDS. Walk the dining room and the lot. Four
+>    starts, all grounded on the host. Bots got 3 kills in 45 s at 0.79 ms
+>    per tick. Send a screenshot if a spawn is inside a booth or a conveyor
+>    is a wall (eight `func_conveyor` brushes were not imported).
+> 6. **Ammo.** Kill someone who has the same gun and walk over the drop.
+>    The magazine you already carry should fill. A different gun still
+>    needs the pickup button.
+> 7. **Join flow.** Team matches ask for a team, then a character, after
+>    the match starts. There is no custom-class editor. Singleplayer and
+>    multiplayer screens use the Megamod title art.
 
-After the device check, fix any visible regressions it reveals. Then grow
-the roster with authored character abilities and weapons while keeping the
-game's roster limits, LAN protocol and Asset Lab package contract aligned.
-Measure startup, memory and frame rate on the phone before adding another
-large map or many high-resolution characters. These are next-session
-priorities, not claims that the current build has a measured performance bug.
+Host evidence this session: `open-halo-map-test` on `mcdonalds.oalmap`
+(113462/113462 solid, 4/4 spawns usable, 0 fell out), a 45 s 4-bot Slayer,
+`test_game` 88/88, contrail and net tests, `ndkcheck.sh`, and an offscreen
+render of the citizen fist idle and punch. `verify.sh` was 80/80 on the
+code before the head restore and the fist package; the Android typecheck
+and the later host tests cover those. Phone appearance is still open.
+
+After that device pass, the downloaded Workshop maps not yet imported are
+the Backrooms (`2732733089`), gm_abandoned_mall (`2878375438`),
+gm_liminal_hotel (`2556466049`), and gm_construct_remaster (`3334581973`).
 >
 > **TF2 Scout + Bat (previous build, 2026-09-24):**
 > 1. SCOUT (TF2) body, preset Scattergun + Bat. BAT (TF2) is the first

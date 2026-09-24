@@ -153,6 +153,7 @@ typedef struct {
     bool     melee_only;
     bool     mount;            /* a broom: see hta_oal_asset.mount */
     float    knockback;        /* a melee blow throws its victim this fast, wu/s */
+    const hta_oal_asset *hero; /* metadata of a signature ability */
     bool     hidden;           /* an ability's shot: never carried, never in a class */
     bool     beam;             /* a piercing laser: FIRE event amount is its reach */
 } hta_game_weapon;
@@ -244,6 +245,7 @@ typedef struct {
     bool     riding;           /* in the air: on a broom, or flying by itself */
     bool     flying;           /* flying by itself (Goku, Superman); the platform's for the local player */
     float    knock[3];         /* a blow's push not yet taken by the body (the local player's is the platform's) */
+    float    ability_active, ability_tick;
     float    ability_cool;     /* seconds until the character's ability is ready */
     float    respawn;         /* seconds until back, while dead */
     float    dead_for;        /* seconds since death, for the corpse */

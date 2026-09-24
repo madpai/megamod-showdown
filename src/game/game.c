@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #define PI 3.14159265f
 
@@ -380,6 +381,15 @@ static void arm(hta_game *g, hta_unit *u)
 {
     int32_t pick[2] = { g->start_weapon[0], g->start_weapon[1] };
     if (g->classes) {
+        if(u->character>=0 && (uint32_t)u->character<g->character_count) {
+            const hta_oal_asset *hero=g->characters[u->character];
+            for(int slot=0;slot<2;slot++) {
+                u->loadout[slot]=-1;
+                for(uint32_t w=0;w<g->weapon_count;w++)
+                    if(hta_game_class_weapon(g,(int32_t)w) && !strcmp(g->weapons[w].display,hero->loadout[slot]))
+                        u->loadout[slot]=(int32_t)w;
+            }
+        }
         if (u->loadout[0] >= 0 || u->loadout[1] >= 0) {
             /* The player's class; an empty slot keeps the map's weapon. */
             for (int s = 0; s < 2; s++) if (u->loadout[s] >= 0) pick[s] = u->loadout[s];
@@ -413,6 +423,7 @@ static void arm(hta_game *g, hta_unit *u)
     u->grenades = g->start_grenades;
     u->cooldown = u->error = 0.0f;
     u->swing = u->throwing = 0.0f;
+    u->ability_active = 0.0f;
 }
 
 int32_t hta_game_add(hta_game *g, hta_unit_kind kind, const char *name, uint8_t team)
@@ -1439,6 +1450,7 @@ static void beam(hta_game *g, int32_t idx, int32_t wi, float damage)
     for (uint32_t i = 0; i < g->unit_count; i++) {
         if ((int32_t)i == idx || !g->units[i].alive) continue;
         hta_unit *v = &g->units[i];
+        if (g->teams && v->team == u->team) continue;
         float centre[3] = { v->body.pos[0], v->body.pos[1],
                             v->body.pos[2] + v->body.phys.coll_stand * 0.55f };
         float delta[3] = { centre[0]-from[0], centre[1]-from[1], centre[2]-from[2] };
@@ -1446,25 +1458,63 @@ static void beam(hta_game *g, int32_t idx, int32_t wi, float damage)
         if (along < 0.0f || along > reach) continue;
         float side2 = 0.0f;
         for (int k = 0; k < 3; k++) { float d = delta[k]-dir[k]*along; side2 += d*d; }
-        float radius = v->body.phys.radius + 0.18f;
+        float radius = v->body.phys.radius + 0.48f;
         if (side2 > radius*radius) continue;
         hta_game_hurt(g, (int32_t)i, idx, damage, centre);
     }
 }
 
+/* A shockwave respects walls and teams; a cone is a directional shout. */
+static void hero_pulse(hta_game *g, int32_t idx, int32_t wi, const hta_oal_asset *a)
+{
+    hta_unit *u = &g->units[idx];
+    float from[3], dir[3];
+    hta_game_centre(g, idx, from); aim_dir(&u->eye, dir);
+    hta_game_event e = { .kind=HTA_EV_FIRE, .a=idx, .b=-1, .weapon=wi, .amount=a->ability_radius };
+    memcpy(e.pos, from, sizeof(from)); memcpy(e.dir, dir, sizeof(dir)); emit(g, &e);
+    for (uint32_t i=0; i<g->unit_count; i++) {
+        if ((int32_t)i==idx || !g->units[i].alive ||
+            (g->mode!=HTA_MODE_SLAYER && g->units[i].team==u->team)) continue;
+        float at[3], d[3]; hta_game_centre(g, (int32_t)i, at);
+        for (int k=0;k<3;k++) d[k]=at[k]-from[k];
+        float dist=sqrtf(d[0]*d[0]+d[1]*d[1]+d[2]*d[2]);
+        if (dist<0.001f || dist>a->ability_radius) continue;
+        for (int k=0;k<3;k++) d[k]/=dist;
+        if (a->ability_cone>0.0f && d[0]*dir[0]+d[1]*dir[1]+d[2]*dir[2]<a->ability_cone) continue;
+        float wall=dist;
+        if (g->col && hta_collision_ray(g->col,from,d,dist,&wall,NULL,NULL) && wall<dist-0.08f) continue;
+        float power=1.0f-0.5f*dist/a->ability_radius;
+        hta_game_hurt(g,(int32_t)i,idx,a->ability_damage*power,at);
+        for (int k=0;k<3;k++) g->units[i].knock[k]+=d[k]*a->ability_force*power;
+        g->units[i].knock[2]+=a->ability_force*0.3f;
+    }
+}
+
+static void hero_shot(hta_game *g, int32_t idx)
+{
+    hta_unit *u=&g->units[idx];
+    if (u->character<0 || (uint32_t)u->character>=g->character_count) return;
+    int32_t wi=g->char_ability[u->character];
+    if (wi<0) return;
+    const hta_oal_asset *a=g->characters[u->character];
+    if (a->ability_radius>0.0f) hero_pulse(g,idx,wi,a);
+    else if (g->weapons[wi].beam) beam(g,idx,wi,a->ability_damage>0.0f?a->ability_damage:250.0f);
+    else shoot(g,idx,wi,g->weapons[wi].def.error_angle[0]);
+}
+
 bool hta_game_ability(hta_game *g, int32_t idx)
 {
-    if (!g || idx < 0 || idx >= (int32_t)g->unit_count || g->over) return false;
-    hta_unit *u = &g->units[idx];
-    if (!u->alive || u->ability_cool > 0.0f || u->character < 0 ||
-        (uint32_t)u->character >= g->character_count) return false;
-    int32_t wi = g->char_ability[u->character];
-    if (wi < 0) return false;
-    const hta_oal_asset *a = g->characters[u->character];
-    u->ability_cool = a->ability_cooldown > 0.0f ? a->ability_cooldown : 6.0f;
-    u->fired = true;
-    if (g->weapons[wi].beam) beam(g, idx, wi, a->ability_damage > 0.0f ? a->ability_damage : 250.0f);
-    else shoot(g, idx, wi, g->weapons[wi].def.error_angle[0]);
+    if (!g || idx<0 || idx>=(int32_t)g->unit_count || g->over) return false;
+    hta_unit *u=&g->units[idx];
+    if (!u->alive || u->ability_cool>0.0f || u->character<0 ||
+        (uint32_t)u->character>=g->character_count || g->char_ability[u->character]<0) return false;
+    const hta_oal_asset *a=g->characters[u->character];
+    u->ability_cool=a->ability_cooldown>0.0f?a->ability_cooldown:6.0f;
+    u->ability_active=fminf(a->ability_duration,4.0f);
+    u->ability_tick=a->ability_interval>0.0f?fmaxf(a->ability_interval,0.10f):0.15f;
+    u->fired=true;
+    u->protect=0.0f;
+    hero_shot(g,idx);
     return true;
 }
 
@@ -1579,10 +1629,22 @@ int32_t hta_game_melee(hta_game *g, int32_t idx)
     u->meleed = true;
     float fwd[3];
     aim_dir(&u->eye, fwd);
+    float range = w && w->melee_only ? 1.15f : HTA_GAME_MELEE_REACH;
     float reach[3];
     for (int k = 0; k < 3; k++)
-        reach[k] = u->eye.pos[k] - u->body.eye_height * 0.4f * (k == 2) + fwd[k] * HTA_GAME_MELEE_REACH;
-    int32_t who = hta_game_near(g, reach, HTA_GAME_MELEE_REACH, idx);
+        reach[k] = u->eye.pos[k] - u->body.eye_height * 0.4f * (k == 2) + fwd[k] * range;
+    int32_t who = hta_game_near(g, reach, range, idx);
+    if (who >= 0 && g->col) {
+        float at[3], ray[3]; hta_game_centre(g, who, at);
+        float len=0.0f;
+        for(int k=0;k<3;k++) { ray[k]=at[k]-u->eye.pos[k]; len+=ray[k]*ray[k]; }
+        len=sqrtf(len);
+        if(len>0.001f) {
+            for(int k=0;k<3;k++) ray[k]/=len;
+            float hit=len;
+            if(hta_collision_ray(g->col,u->eye.pos,ray,len,&hit,NULL,NULL) && hit<len-0.08f) who=-1;
+        }
+    }
     hta_game_event e = { .kind = HTA_EV_MELEE, .a = idx, .b = who };
     for (int k = 0; k < 3; k++) e.pos[k] = reach[k];
     emit(g, &e);
@@ -1640,6 +1702,14 @@ static void throw_grenade(hta_game *g, int32_t idx)
 
 /* ---------------------------------------------------------------- items */
 
+static int same_gun(const hta_game *g, int32_t a, int32_t b)
+{
+    if (a == b) return 1;
+    if (!g || a < 0 || b < 0 || (uint32_t)a >= g->weapon_count || (uint32_t)b >= g->weapon_count) return 0;
+    const char *da = g->weapons[a].display, *db = g->weapons[b].display;
+    return da[0] && db[0] && !strcasecmp(da, db);
+}
+
 static bool take_drops(hta_game *g, int32_t idx)
 {
     hta_unit *u = &g->units[idx];
@@ -1648,7 +1718,7 @@ static bool take_drops(hta_game *g, int32_t idx)
     if (dr >= 0) {
         hta_game_drop *d = &g->drops[dr];
         for (int s = 0; s < 2; s++) {
-            if (u->carry[s].weapon != d->weapon) continue;
+            if (!same_gun(g, u->carry[s].weapon, d->weapon)) continue;
             hta_ammo *a = &u->carry[s].ammo;
             if (a->reserve >= a->reserve_max) break;
             a->reserve += d->ammo.loaded + d->ammo.reserve;
@@ -2819,7 +2889,19 @@ void hta_game_update(hta_game *g, float dt)
         if (u->kind == HTA_UNIT_NONE) continue;
         u->since_attacked += dt;
         if (u->protect > 0.0f) u->protect = u->fired ? 0.0f : u->protect - dt;
-        if (u->ability_cool > 0.0f) u->ability_cool -= dt;
+        if (!u->alive || g->over) u->ability_active=0.0f;
+        if (u->ability_active>0.0f && u->character>=0 && (uint32_t)u->character<g->character_count) {
+            u->ability_active-=dt; u->ability_tick-=dt;
+            if (u->ability_tick<=0.0f && u->ability_active>0.0f) {
+                const hta_oal_asset *a=g->characters[u->character];
+                u->ability_tick=fmaxf(a->ability_interval,0.10f);
+                hero_shot(g,(int32_t)i);
+            }
+        } else if (u->ability_cool > 0.0f) {
+            /* The wait starts when the attack finishes, so a long beam
+             * cannot be fired again the moment it ends. */
+            u->ability_cool -= dt;
+        }
         if (u->kind != HTA_UNIT_LOCAL && (u->knock[0] != 0.0f || u->knock[1] != 0.0f || u->knock[2] != 0.0f)) {
             for (int k = 0; k < 3; k++) { u->body.velocity[k] += u->knock[k]; u->knock[k] = 0.0f; }
             u->body.on_ground = false;
@@ -2865,6 +2947,13 @@ void hta_game_update(hta_game *g, float dt)
             if (u->vehicle >= 0) continue;
         }
         if (u->kind != HTA_UNIT_LOCAL) simulate(g, (int32_t)i, dt);
+        if(u->kind==HTA_UNIT_BOT && u->alive && u->character>=0 &&
+           g->brains[i].visible && g->brains[i].target>=0 && u->ability_cool<=0.0f && u->in.move.fire) {
+            const hta_oal_asset *a=g->characters[u->character];
+            const hta_unit *target=&g->units[g->brains[i].target];
+            float dist=hypotf(target->body.pos[0]-u->body.pos[0],target->body.pos[1]-u->body.pos[1]);
+            if(a->ability_radius<=0.0f || dist<a->ability_radius) hta_game_ability(g,(int32_t)i);
+        }
 
         /* Powerups run down for everyone; the overshield bleeds. */
         if (u->powerup_timer > 0.0f && u->kind != HTA_UNIT_LOCAL) {
@@ -3025,6 +3114,7 @@ int32_t hta_game_add_character(hta_game *g, const hta_oal_asset *a)
             hta_game_weapon *w = &g->weapons[idx];
             *w = g->weapons[base];
             w->hidden = true;
+            w->hero = a;
             w->beam = a->ability_beam;
             w->base = base;
             w->damage_scale = a->ability_damage > 0.0f ? a->ability_damage : 1.0f;

@@ -158,7 +158,8 @@ typedef struct {
     bool          hud_alt;            /* the vehicle's second trigger, held */
     bool          veh_fire;           /* the vehicle gun's trigger, for the host */
     bool          show_self;          /* our own body is on screen: third person */
-    uint16_t      net_action_count;
+    uint16_t      net_action_count, net_ability_count;
+    uint16_t      peer_ability_seen[8];
     uint16_t      peer_action_seen[8];
     /* A joiner in a custom-class game stays out until it says READY. */
     bool          peer_ready[8];
@@ -177,6 +178,8 @@ typedef struct {
     hta_contrails trails;
     hta_gfx_mesh *gpu_trails;
     uint32_t      wtrail[HTA_GAME_MAX_WEAPONS], ptrail[HTA_GAME_MAX_POOLS], laser_trail;
+    uint32_t hero_trail[6], hero_ring[6], hero_core, hero_sound[6], flight_clip;
+    float hero_sound_time[HTA_GAME_MAX_UNITS];
     /* Rounds each shooter has fired since its last tracer (the trigger's
      * `projectiles between contrails`); the last slot is ours on foot. */
     uint8_t       since_tracer[HTA_GAME_MAX_UNITS + 1];
@@ -280,6 +283,7 @@ typedef struct {
     struct { float pos[3]; float amount, age; int32_t victim; } dmg[16];
     /* A custom-class match holds you out of it until you have picked. */
     bool     choosing;
+    int      selected_team; /* -1 until the joining player chooses */
     float    spawn_protect;     /* seconds, from the match setup */
     /* The first-person view of an imported weapon. */
     hta_gfx_mesh *gpu_ivm;
@@ -1831,9 +1835,9 @@ static void catalog_build(hta_android *s)
     }
     for (uint32_t k = 0; k < s->imp_char_count; k++) {
         /* Body, default weapons, hero group, and per-match limit. */
-        int w = snprintf(g_catalog + len, sizeof(g_catalog) - len, "C\t%s\t%s\t%s\t%s\t%s\t%d\n", s->imp_char[k].name,
+        int w = snprintf(g_catalog + len, sizeof(g_catalog) - len, "C\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n", s->imp_char[k].name,
                          s->imp_char[k].display, s->imp_char[k].loadout[0], s->imp_char[k].loadout[1],
-                         s->imp_char[k].hero_group, s->imp_char[k].unique_limit);
+                         s->imp_char[k].hero_group, s->imp_char[k].unique_limit, s->imp_char[k].ability_name);
         if (w > 0 && (size_t)w < sizeof(g_catalog) - len) len += (size_t)w;
     }
     atomic_store(&g_catalog_ready, 1);
@@ -1878,6 +1882,14 @@ static struct { char cls[2][48]; char character[48]; } g_chosen;
 static _Atomic int g_chosen_ready;
 /* 1: held out until a class is picked; 2: the match has classes. */
 static _Atomic int g_class_state;
+static _Atomic int g_team_request;
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeChooseTeam(JNIEnv *env, jclass cls, jint team)
+{
+    (void)env; (void)cls;
+    if (team==0 || team==1) atomic_store(&g_team_request, team+1);
+}
 static _Atomic uint32_t g_taken_heroes;
 
 static void hero_occupancy(hta_android *s)
@@ -1945,8 +1957,13 @@ Java_net_hta_halotrial_GameActivity_nativeChooseClass(JNIEnv *env, jclass cls, j
 static void class_poll(hta_android *s)
 {
     bool on = s->game_on && s->game.classes;
+    int team=atomic_exchange(&g_team_request,0);
+    if (on && s->choosing && team>0 && s->game.teams) {
+        s->selected_team=team-1;
+        s->game.units[s->me].team=(uint8_t)(team-1);
+    }
     if (atomic_load(&g_chosen_ready)) {
-        if (on) {
+        if (on && (!s->game.teams || s->selected_team>=0)) {
             /* The class's body: now, before the first spawn; at the next
              * respawn when picked from the pause screen. */
             int32_t body = -1;
@@ -1973,7 +1990,8 @@ static void class_poll(hta_android *s)
         atomic_store(&g_chosen_ready, 0);
     }
     if (s->choosing && s->dead_timer < s->respawn_delay) s->dead_timer = s->respawn_delay;
-    atomic_store(&g_class_state, (s->choosing ? 1 : 0) | (on ? 2 : 0));
+    atomic_store(&g_class_state, (s->choosing ? 1 : 0) | (on ? 2 : 0) |
+                 (on && s->choosing && s->game.teams && s->selected_team<0 ? 4 : 0));
 }
 
 /* A plain ding when no sound pack brings TF2's: E6 with its octave,
@@ -1992,10 +2010,67 @@ static uint32_t synth_ding(hta_android *s, bool kill)
     return hta_audio_add_clip(&s->audio, o, N, RATE, 1);
 }
 
+/* A bass-heavy roar. Overlapping plays during a sustained beam are the
+ * volume; the sample itself stays under full scale so two layers clip
+ * instead of five. */
+static uint32_t synth_power(hta_android *s, int color)
+{
+    enum { RATE = 22050, N = RATE * 9 / 10 };
+    int16_t *pcm = malloc((size_t)N * sizeof(*pcm));
+    if (!pcm) return HTA_AUDIO_NO_CLIP;
+    uint32_t noise = 0x458ace1u + (uint32_t)color * 97u;
+    float f0 = 32.0f + (float)color * 6.0f;
+    float f1 = 110.0f + (float)color * 40.0f;
+    for (int i = 0; i < N; i++) {
+        float t = (float)i / (float)RATE;
+        float env = 1.0f - t / ((float)N / (float)RATE);
+        env *= env;
+        float atk = t < 0.012f ? t / 0.012f : 1.0f;
+        noise = noise * 1664525u + 1013904223u;
+        float n = ((float)(noise >> 16) - 32768.0f) / 32768.0f;
+        float bass = sinf(6.2831853f * (f0 * t + 6.0f * t * t));
+        float mid = sinf(6.2831853f * (f1 * t + 70.0f * t * t));
+        float v = (0.62f * bass + 0.2f * mid + 0.3f * n * expf(-t * 3.5f)) * env * atk;
+        if (v > 0.95f) v = 0.95f;
+        if (v < -0.95f) v = -0.95f;
+        pcm[i] = (int16_t)(v * 32767.0f);
+    }
+    uint32_t clip = hta_audio_add_clip(&s->audio, pcm, N, RATE, 1);
+    free(pcm);
+    return clip;
+}
+
+/* An original flying tune: a major lift and a step down, not anyone's
+ * film theme. Quarter notes at 120, four seconds, so the loop lands on
+ * the first note. */
+static uint32_t synth_flight(hta_android *s)
+{
+    enum { RATE = 22050, NOTE = RATE / 2, COUNT = 8, N = NOTE * COUNT };
+    static const float hz[COUNT] = { 392.0f, 493.9f, 587.3f, 784.0f,
+                                     659.3f, 523.3f, 440.0f, 392.0f };
+    int16_t *pcm = malloc((size_t)N * sizeof(*pcm));
+    if (!pcm) return HTA_AUDIO_NO_CLIP;
+    for (int i = 0; i < N; i++) {
+        int note = i / NOTE;
+        float u = (float)(i % NOTE) / (float)NOTE;
+        float env = u < 0.04f ? u / 0.04f : u > 0.82f ? (1.0f - u) / 0.18f : 1.0f;
+        float t = (float)i / (float)RATE;
+        float f = hz[note];
+        float v = (0.55f * sinf(6.2831853f * f * t) + 0.18f * sinf(6.2831853f * f * 2.0f * t) +
+                   0.08f * sinf(6.2831853f * f * 3.0f * t)) * env;
+        pcm[i] = (int16_t)(v * 26000.0f);
+    }
+    uint32_t clip = hta_audio_add_clip(&s->audio, pcm, N, RATE, 1);
+    free(pcm);
+    return clip;
+}
+
 /* The imported weapons' sounds as mixer clips, once audio is up. */
 static void imported_sounds(hta_android *s)
 {
     if (s->audio_ok && s->ding_clip == HTA_AUDIO_NO_CLIP) {
+        for(int c=0;c<6;c++) s->hero_sound[c]=synth_power(s,c);
+        s->flight_clip = synth_flight(s);
         const hta_oal_sound *h = hta_oal_sound_find(&s->ui_sounds, "hit");
         const hta_oal_sound *k = hta_oal_sound_find(&s->ui_sounds, "kill");
         s->ding_clip = h ? hta_audio_add_clip(&s->audio, h->samples, h->frames, h->rate, (uint8_t)h->channels)
@@ -2752,9 +2827,16 @@ static void start_game(hta_android *s)
         s->ptrail[p] = p < s->game.pool_count
             ? hta_contrails_for_projectile(&s->trails, &s->cache, bm, s->game.pools[p].proj_tag_id)
             : HTA_CONT_NONE;
-    s->laser_trail = HTA_CONT_NONE;
-    for (uint32_t w = 0; w < s->game.weapon_count; w++)
-        if (s->game.weapons[w].beam) { s->laser_trail = hta_contrails_add_laser(&s->trails); break; }
+    static const float colors[6][3]={{1,.04f,.01f},{.15f,.45f,1},{.72f,.18f,1},{1,.62f,.08f},{.2f,1,.28f},{.15f,1,1}};
+    static const float widths[6]={.78f,.68f,.58f,.64f,.52f,.60f};
+    for(int k=0;k<6;k++) {
+        s->hero_trail[k]=hta_contrails_add_energy(&s->trails,colors[k],widths[k],.75f);
+        s->hero_ring[k]=hta_contrails_add_energy(&s->trails,colors[k],widths[k]*1.35f,.95f);
+    }
+    const float white[3]={1,1,.92f};
+    s->hero_core=hta_contrails_add_energy(&s->trails,white,.22f,.4f);
+    s->laser_trail=s->hero_trail[0];
+    for(int k=0;k<HTA_GAME_MAX_UNITS;k++) s->hero_sound_time[k]=-10.0f;
     if (hta_contrails_build(&s->trails, err, sizeof(err))) hta_log("[game] %s", err);
     /* The practice target is gone: there are real people to shoot now. */
     if (bots > 0) hta_bot_free(&s->bot);
@@ -2812,16 +2894,106 @@ static bool tracer_due(hta_android *s, int32_t shooter, int between)
     return true;
 }
 
+/* Drop a horizontal ring onto the ground under `at` when the BSP has a
+ * floor there; otherwise a little below the point itself. */
+static void hero_ground(hta_android *s, const float at[3], float out[3])
+{
+    out[0] = at[0]; out[1] = at[1]; out[2] = at[2] - 0.45f;
+    if (!s->col.built) return;
+    float z = at[2];
+    if (hta_collision_ground(&s->col, at[0], at[1], at[2] + 4.0f, &z)) out[2] = z + 0.08f;
+}
+
+/* Beams stay in fixed slots so a sustained attack can be swept. Rings live
+ * on their own type, or they steal those slots and the beam vanishes. */
+static void hero_fx(hta_android *s, int32_t shooter, const hta_oal_asset *hero,
+                     const float from[3], const float dir[3])
+{
+    int color = hero->ability_color >= 0 && hero->ability_color < 6 ? hero->ability_color : 0;
+    int unit = shooter >= 0 && shooter < HTA_GAME_MAX_UNITS ? shooter : 0;
+    bool beam = hero->ability_beam && hero->ability_radius <= 0.0f;
+    bool pulse = hero->ability_radius > 0.0f;
+    float end[3], reach = 120.0f;
+    if (s->col.built) hta_collision_ray(&s->col, from, dir, reach, &reach, NULL, NULL);
+    for (int k = 0; k < 3; k++) end[k] = from[k] + dir[k] * reach;
+    if (beam) {
+        /* Twin ribbons offset from the look axis: a line through the eye
+         * has no area when the camera sits on it. */
+        float right[3] = { -dir[1], dir[0], 0.0f };
+        float rl = hypotf(right[0], right[1]);
+        if (rl < 0.01f) { right[0] = 1.0f; right[1] = 0.0f; rl = 1.0f; }
+        for (int side = -1; side <= 1; side += 2) {
+            float start[3];
+            for (int k = 0; k < 3; k++)
+                start[k] = from[k] + dir[k] * 0.85f + right[k] / rl * 0.2f * (float)side;
+            start[2] -= 0.06f;
+            hta_contrails_beam_key(&s->trails, s->hero_trail[color],
+                                   (uint32_t)unit * 16u + (uint32_t)(side > 0), start, end);
+        }
+        float core0[3], core1[3];
+        for (int k = 0; k < 3; k++) {
+            core0[k] = from[k] + dir[k] * 0.4f;
+            core1[k] = end[k];
+        }
+        core0[2] -= 0.04f;
+        hta_contrails_beam_key(&s->trails, s->hero_core, (uint32_t)unit * 16u + 2u, core0, core1);
+        hta_damage_shake kick = { .radius = { 2.0f, 22.0f }, .shake_time = 0.2f,
+                                  .shake_move = 0.11f, .shake_rot = 0.04f };
+        hta_shake_add(&s->shake, &kick, &s->cam, shooter == s->me ? NULL : from);
+    } else if (pulse && hero->ability_cone > 0.0f) {
+        float yaw = atan2f(dir[1], dir[0]);
+        float reach_cone = hero->ability_radius > 1.0f ? hero->ability_radius : 8.0f;
+        for (int i = -2; i <= 2; i++) {
+            float a = yaw + (float)i * 0.16f;
+            float d[3] = { cosf(a), sinf(a), dir[2] * 0.35f };
+            float len = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+            float tip[3];
+            for (int k = 0; k < 3; k++) {
+                d[k] /= len;
+                tip[k] = from[k] + d[k] * reach_cone;
+            }
+            hta_contrails_beam_key(&s->trails, s->hero_trail[color],
+                                   (uint32_t)unit * 16u + 4u + (uint32_t)(i + 2), from, tip);
+        }
+    }
+    if (s->game.time - s->hero_sound_time[unit] < (beam ? 0.28f : 0.15f)) return;
+    s->hero_sound_time[unit] = s->game.time;
+    float gain = 1.0f, pan = 0.0f;
+    if (s->audio_ok && (shooter == s->me || world_voice(s, from, 1.0f, &gain, &pan)))
+        hta_audio_play_pan(&s->audio, s->hero_sound[color], gain, pan);
+    if (!beam) {
+        float move = pulse ? 0.28f : 0.1f, rot = pulse ? 0.08f : 0.03f;
+        hta_damage_shake kick = { .radius = { 3.0f, 24.0f }, .shake_time = 0.65f,
+                                  .shake_move = move, .shake_rot = rot,
+                                  .impulse_time = 0.22f, .impulse_rot = rot * 0.7f,
+                                  .impulse_push = pulse ? 0.12f : 0.04f };
+        hta_shake_add(&s->shake, &kick, &s->cam, shooter == s->me ? NULL : from);
+    } else {
+        hta_damage_shake kick = { .radius = { 2.0f, 18.0f }, .impulse_time = 0.18f,
+                                  .impulse_rot = 0.04f, .impulse_push = 0.06f };
+        hta_shake_add(&s->shake, &kick, &s->cam, shooter == s->me ? NULL : end);
+    }
+    float feet[3], hit[3];
+    hero_ground(s, from, feet);
+    hero_ground(s, end, hit);
+    uint32_t ring = s->hero_ring[color];
+    if (pulse) {
+        float radius = hero->ability_radius > 1.0f ? hero->ability_radius : 4.0f;
+        hta_contrails_ring(&s->trails, ring, feet, radius * 0.45f);
+        hta_contrails_ring(&s->trails, ring, feet, radius);
+    } else if (beam) {
+        hta_contrails_ring(&s->trails, ring, feet, 1.6f);
+        hta_contrails_ring(&s->trails, ring, hit, 2.4f);
+    }
+}
+
 static void tracer(hta_android *s, int32_t shooter, int32_t weapon, const float from[3], const float dir[3])
 {
     if (!s->trails.loaded || weapon < 0 || weapon >= (int32_t)s->game.weapon_count) return;
-    if (s->game.weapons[weapon].beam) {
-        if (s->laser_trail == HTA_CONT_NONE) return;
-        float t = 100.0f, end[3];
-        if (s->col.built) hta_collision_ray(&s->col, from, dir, t, &t, NULL, NULL);
-        for (int k = 0; k < 3; k++) end[k] = from[k] + dir[k] * t;
-        hta_contrails_beam(&s->trails, s->laser_trail, from, end);
-        return;
+    const hta_oal_asset *hero = s->game.weapons[weapon].hero;
+    if (hero) {
+        hero_fx(s, shooter, hero, from, dir);
+        if (hero->ability_beam || hero->ability_radius > 0.0f) return;
     }
     uint32_t type = s->wtrail[weapon];
     if (type == HTA_CONT_NONE || s->game.weapons[weapon].travels) return;
@@ -3098,6 +3270,7 @@ static void game_events(hta_android *s)
                 s->unit_fire_snd[e.weapon] = hta_effect_first_sound(&s->cache,
                     s->game.weapons[e.weapon].def.firing_fx_id);
             }
+            if (s->game.weapons[e.weapon].hero) break;
             if (imported_fire_sound(s, e.weapon, e.pos)) break;
             if (s->unit_fire_snd[e.weapon]) play_tag_at(s, s->unit_fire_snd[e.weapon], e.pos, 1.0f);
             break;
@@ -3167,7 +3340,20 @@ static void game_events(hta_android *s)
             wreck_fx(s, e.pos);
             break;
         case HTA_EV_PICKUP:
-            if (e.a != s->me) {
+            if (e.a == s->me && s->me >= 0) {
+                /* The game added the rounds to its copy. The gun in hand
+                 * reads the platform's magazine, so copy them back or the
+                 * next frame throws the pickup away. */
+                hta_unit *u = &s->game.units[s->me];
+                for (unsigned k = 0; k < s->held_count && k < 2; k++) {
+                    int32_t mine = s->held_asset[k] >= 0 ? s->held_asset[k]
+                                   : hta_game_weapon_index(&s->game, s->held[k]);
+                    if (mine < 0 || u->carry[k].weapon != mine) continue;
+                    if (k == (s->held_slot & 1u)) s->ammo = u->carry[k].ammo;
+                    else { s->held_ammo[k] = u->carry[k].ammo; s->held_ammo_set[k] = true; }
+                }
+            }
+            {
                 hta_item_choice ch;
                 char path[96];
                 memset(&ch, 0, sizeof(ch));
@@ -3178,7 +3364,10 @@ static void game_events(hta_android *s)
                     if (hta_weapon_load_id(&s->cache, NULL, e.tag, &wd, NULL, NULL, 0))
                         snd = wd.pickup_snd_id;
                 }
-                if (snd) play_tag_at(s, snd, e.pos, 0.8f);
+                if (snd) {
+                    if (e.a == s->me) play_tag(s, snd, 0.7f);
+                    else play_tag_at(s, snd, e.pos, 0.8f);
+                }
             }
             break;
         case HTA_EV_KILL:
@@ -3816,6 +4005,9 @@ static void net_begin(hta_android *s, const char *host, bool hosting, uint16_t p
 static void match_take(hta_android *s)
 {
     match_setup m = g_match;
+    s->selected_team=-1;
+    s->next_character=-2;
+    atomic_store(&g_team_request,0);
     s->bot_count = m.mode == 2 ? 0 : m.bots;
     if (s->bot_count < 0) s->bot_count = 0;
     if (s->bot_count > 7) s->bot_count = 7;
@@ -3975,7 +4167,16 @@ static void preview_draw(hta_android *s, float dt)
     uint32_t ni = 0;
     if (ci >= 0 && s->gpu_prev_body && s->prev_posed) {
         const hta_oal_model *m = &s->imp_char[ci].models[0];
-        int32_t idle = hta_oal_clip_find(m, "idle");
+        const char *hold = wi >= 0 ? s->imp_weap[wi].hold_type : "";
+        char stance = !strcmp(hold, "fist") ? 'f' : !strcmp(hold, "melee") ? 'm'
+                    : !strcmp(hold, "pistol") ? 'p' : hold[0] ? 'r' : 0;
+        char posed[16];
+        int32_t idle = -1;
+        if (stance) {
+            snprintf(posed, sizeof(posed), "%c_idle", stance);
+            idle = hta_oal_clip_find(m, posed);
+        }
+        if (idle < 0) idle = hta_oal_clip_find(m, "idle");
         hta_oal_pose(m, idle, s->prev_time, s->prev_world);
         hta_oal_skin(m, (const float (*)[12])s->prev_world, root, s->prev_posed);
         dyn.mesh = s->gpu_prev_body; dyn.vertices = s->prev_posed;
@@ -4505,6 +4706,7 @@ static void net_host_peers(hta_android *s, double now)
             s->peer_melee_seen[i]=s->peer_grenade_seen[i]=0;
             s->peer_reload_seen[i]=s->peer_pickup_seen[i]=0;
             s->peer_action_seen[i]=0;
+            s->peer_ability_seen[i]=0;
             s->peer_ready[i]=false;
             continue;
         }
@@ -4550,7 +4752,8 @@ static void net_host_peers(hta_android *s, double now)
             int32_t a=c->loadout[0]==255 ? -1 : c->loadout[0], b=c->loadout[1]==255 ? -1 : c->loadout[1];
             if (a!=u->loadout[0] || b!=u->loadout[1]) hta_game_set_loadout(&s->game,unit,a,b);
             if (!s->peer_ready[i]) {
-                if (c->flags&HTA_NET_READY) {
+                if ((c->flags&HTA_NET_READY) && (!s->game.teams || c->team>0)) {
+                    if (s->game.teams) u->team=c->team-1;
                     s->peer_ready[i]=true;
                     if (!u->alive) u->respawn=0.0f;   /* in on the next tick */
                 } else {
@@ -4570,6 +4773,15 @@ static void net_host_peers(hta_android *s, double now)
             s->peer_action_seen[i]=c->action_count; in->action=true;
         }
         u->eye.yaw=c->yaw; u->eye.pitch=c->pitch;
+        hta_body_attr attr=hta_game_body(&s->game,unit);
+        u->flying=(c->flags&HTA_NET_FLY) && attr.can_fly && u->vehicle<0;
+        const hta_game_weapon *held=hta_game_held(&s->game,unit);
+        u->body.fly=u->flying || (held && held->mount && u->vehicle<0);
+        u->body.fly_speed=held && held->mount ? held->asset->fly_speed : attr.fly_speed;
+        if (s->peer_ability_seen[i]!=c->ability_count) {
+            s->peer_ability_seen[i]=c->ability_count;
+            hta_game_ability(&s->game,unit);
+        }
         if (u->slot!=c->weapon_slot) in->swap=true;
         if (s->peer_melee_seen[i]!=c->melee_count) {
             s->peer_melee_seen[i]=c->melee_count; in->melee=true;
@@ -5060,7 +5272,7 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
         /* Our own on-foot shots we heard already; a vehicle gun we did not. */
         if (fx.entity==(uint8_t)s->me &&
             !(fx.kind==HTA_NET_FX_FIRE && fx.weapon<s->game.weapon_count &&
-              (s->game.weapons[fx.weapon].vehicle || s->game.weapons[fx.weapon].beam))) continue;
+              (s->game.weapons[fx.weapon].vehicle || s->game.weapons[fx.weapon].hidden))) continue;
         if (fx.kind==HTA_NET_FX_FIRE && fx.weapon<s->game.weapon_count) {
             tracer(s,fx.entity==255 ? -1 : (int32_t)fx.entity,fx.weapon,fx.pos,fx.dir);
             if (!s->unit_fire_known[fx.weapon]) {
@@ -5068,7 +5280,8 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
                 s->unit_fire_snd[fx.weapon]=hta_effect_first_sound(&s->cache,
                     s->game.weapons[fx.weapon].def.firing_fx_id);
             }
-            if (imported_fire_sound(s, fx.weapon, fx.pos)) {}
+            if (s->game.weapons[fx.weapon].hero) {}
+            else if (imported_fire_sound(s, fx.weapon, fx.pos)) {}
             else if (s->unit_fire_snd[fx.weapon])
                 play_tag_at(s,s->unit_fire_snd[fx.weapon],fx.pos,1.0f);
             if (s->game.weapons[fx.weapon].vehicle &&
@@ -5188,6 +5401,9 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
         if (in->crouch) c.flags|=HTA_NET_DUCK;
         if (s->hud_alt) c.flags|=HTA_NET_ALT;
         c.action_count=s->net_action_count;
+        c.ability_count=s->net_ability_count;
+        c.team=s->selected_team<0 ? 0 : (uint8_t)(s->selected_team+1);
+        if(s->power_fly) c.flags|=HTA_NET_FLY;
         c.melee_count=s->net_melee_count;
         c.grenade_count=s->net_grenade_count;
         c.reload_count=s->net_reload_count;
@@ -5637,9 +5853,10 @@ static void broom_camera(hta_android *s)
     s->show_self = true;
     /* Superman and Goku need room in frame at titan flight speeds; the
      * broom keeps its closer shoulder view. */
-    float back = s->power_fly ? 2.0f : BROOM_CAM_BACK;
-    float up = s->power_fly ? 0.42f : BROOM_CAM_UP;
-    float shoulder = s->power_fly ? 0.38f : BROOM_CAM_RIGHT;
+    /* Far enough back, and low enough, that the head stays in frame. */
+    float back = s->power_fly ? 2.9f : BROOM_CAM_BACK;
+    float up = s->power_fly ? 0.08f : BROOM_CAM_UP;
+    float shoulder = s->power_fly ? 0.62f : BROOM_CAM_RIGHT;
     float fwd[3];
     hta_camera_forward(&s->cam, fwd);
     float eye[3] = { s->cam.pos[0], s->cam.pos[1], s->cam.pos[2] };
@@ -5691,6 +5908,48 @@ static void vehicle_sounds(hta_android *s)
                           0.85f + 0.5f * frac);
         s->veh_engine_on[i] = true;
     }
+}
+
+/* Harry on a broom. Loud beside him, still a tune when he is a speck.
+ * One loop, the nearest flyer. Power flight is not a broom. */
+#define HTA_LOOP_FLIGHT 120u
+#define FLIGHT_HEAR     80.0f
+static void flight_music(hta_android *s)
+{
+    if (!s->audio_ok || s->flight_clip == HTA_AUDIO_NO_CLIP || !s->game_on) {
+        if (s->audio_ok) hta_audio_loop_stop(&s->audio, HTA_LOOP_FLIGHT);
+        return;
+    }
+    int best = -1;
+    float best_d = FLIGHT_HEAR;
+    for (uint32_t i = 0; i < s->game.unit_count; i++) {
+        const hta_unit *u = &s->game.units[i];
+        if (!u->alive || !u->riding || u->flying) continue;
+        if (u->character < 0 || (uint32_t)u->character >= s->game.character_count) continue;
+        const hta_oal_asset *hero = s->game.characters[u->character];
+        if (!hero || strcmp(hero->name, "harry")) continue;
+        float d[3] = { u->body.pos[0] - s->cam.pos[0], u->body.pos[1] - s->cam.pos[1],
+                       u->body.pos[2] - s->cam.pos[2] };
+        float dist = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+        if (dist < best_d) { best_d = dist; best = (int)i; }
+    }
+    if (best < 0) { hta_audio_loop_stop(&s->audio, HTA_LOOP_FLIGHT); return; }
+    const hta_unit *u = &s->game.units[best];
+    float d[3] = { u->body.pos[0] - s->cam.pos[0], u->body.pos[1] - s->cam.pos[1],
+                   u->body.pos[2] + 0.6f - s->cam.pos[2] };
+    float dist = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+    float g = dist < 6.0f ? 0.9f : 0.9f * (6.0f / dist) * (1.0f - dist / FLIGHT_HEAR);
+    if (g < 0.05f) g = 0.05f;
+    if ((int32_t)best == s->me) g = 0.55f;
+    float pan = 0.0f;
+    if (dist > 0.05f) {
+        float right[3];
+        hta_camera_right(&s->cam, right);
+        pan = (d[0]*right[0] + d[1]*right[1] + d[2]*right[2]) / dist;
+        if (pan > 1.0f) pan = 1.0f;
+        if (pan < -1.0f) pan = -1.0f;
+    }
+    hta_audio_loop_ex(&s->audio, HTA_LOOP_FLIGHT, s->flight_clip, g, pan, 1.0f);
 }
 
 /* In, out, or across: what changes for this device when its seat does. */
@@ -5787,6 +6046,7 @@ void android_main(struct android_app *app)
     for (unsigned k = 0; k < HTA_CARRY_MAX; k++) state.held_asset[k] = state.start_asset[k] = -1;
     state.ivm_weapon = -1;
     state.ding_clip = state.kill_clip = state.freeze_clip = state.snap_clip = HTA_AUDIO_NO_CLIP;
+    state.flight_clip = HTA_AUDIO_NO_CLIP;
     state.killcam_unit = -1;
     state.prev_char = state.prev_weap = state.prev_roster = -2;
     state.next_character = -2;
@@ -5990,10 +6250,20 @@ void android_main(struct android_app *app)
                 bool swung = hw && hw->melee_only;
                 /* The ability: fire it on its button, show how ready. */
                 float charge = state.game_on ? hta_game_ability_charge(&state.game, state.me) : -1.0f;
+                if (state.net_enabled && !state.net_hosting && state.me>=0 && state.game_on) {
+                    hta_unit *mu=&state.game.units[state.me];
+                    if(mu->ability_cool>0.0f) mu->ability_cool-=dt;
+                }
                 if (state.hud_ability) {
                     state.hud_ability = false;
-                    if (charge >= 1.0f && !state.dead && (!state.net_enabled || state.net_hosting))
-                        hta_game_ability(&state.game, state.me);
+                    if (charge >= 1.0f && !state.dead) {
+                        if (!state.net_enabled || state.net_hosting) hta_game_ability(&state.game,state.me);
+                        else {
+                            state.net_ability_count++;
+                            hta_unit *mu=&state.game.units[state.me];
+                            mu->ability_cool=state.game.characters[mu->character]->ability_cooldown;
+                        }
+                    }
                 }
                 if (charge >= 0.0f) {
                     atomic_store(&g_ability_charge, (int)(charge * 1000.0f));
@@ -7053,6 +7323,7 @@ void android_main(struct android_app *app)
         vehicle_camera(&state);
         broom_camera(&state);
         vehicle_sounds(&state);
+        flight_music(&state);
         if (state.trails.loaded) {
             for (uint32_t p = 0; p < state.game.pool_count; p++) {
                 if (state.ptrail[p] == HTA_CONT_NONE) continue;

@@ -117,6 +117,7 @@ static int want(const hta_game_weapon *w)
 /* Where a weapon is worth firing from, in wu. */
 static float best_range(const hta_game_weapon *w)
 {
+    if(w && w->melee_only) return 1.0f;
     if (!w) return 5.0f;
     const char *l = w->label;
     if (!strcmp(l, "sg") || !strcmp(l, "ft")) return 2.0f;
@@ -128,6 +129,7 @@ static float best_range(const hta_game_weapon *w)
 
 static float max_range(const hta_game_weapon *w)
 {
+    if(w && w->melee_only) return 2.2f;
     if (!w) return 10.0f;
     const char *l = w->label;
     if (!strcmp(l, "sg")) return 7.0f;
@@ -1006,7 +1008,8 @@ void hta_brain_think(struct hta_game *g, int32_t me, hta_brain *b, float dt)
         float to[2] = { cosf(want_yaw), sinf(want_yaw) };
         float side[2] = { to[1], -to[0] };
         float close = seen_dist - best_range(w);
-        float fwd = close > 1.5f ? 1.0f : (close < -1.5f ? -0.7f : 0.0f);
+        float margin=w && w->melee_only ? .2f : 1.5f;
+        float fwd = close > margin ? 1.0f : (close < -margin ? -0.7f : 0.0f);
         move[0] = to[0] * fwd + side[0] * b->strafe;
         move[1] = to[1] * fwd + side[1] * b->strafe;
         /* With a flag to take or take back, keep going and shoot on the

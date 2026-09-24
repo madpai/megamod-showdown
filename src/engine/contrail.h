@@ -28,7 +28,7 @@
 #include "../asset/bitmap.h"
 #include "camera.h"
 
-#define HTA_CONT_TYPES      12u
+#define HTA_CONT_TYPES      32u
 #define HTA_CONT_TRAILS     12u   /* per type */
 #define HTA_CONT_POINTS     12u   /* per trail, head included */
 #define HTA_CONT_STATES      4u
@@ -91,6 +91,8 @@ uint32_t hta_contrails_add(hta_contrails *c, const hta_cache *cache,
                            const hta_resource_map *bitmaps, uint32_t cont_tag);
 /* A procedural red laser, registered before build. */
 uint32_t hta_contrails_add_laser(hta_contrails *c);
+uint32_t hta_contrails_add_energy(hta_contrails *c, const float color[3], float width, float life);
+void hta_contrails_ring(hta_contrails *c, uint32_t type, const float at[3], float radius);
 bool hta_contrails_build(hta_contrails *c, char *err, size_t errlen);
 
 /* Something flying reports where it is this frame. `key` is the caller's
@@ -102,6 +104,10 @@ void hta_contrails_tracer(hta_contrails *c, uint32_t type, const float from[3],
                           const float to[3], float speed);
 /* A full-length line that holds briefly and fades, piercing bodies. */
 void hta_contrails_beam(hta_contrails *c, uint32_t type, const float from[3], const float to[3]);
+/* The same line, kept in one slot: calling again with the same key moves it
+ * instead of allocating another ribbon. */
+void hta_contrails_beam_key(hta_contrails *c, uint32_t type, uint32_t key,
+                            const float from[3], const float to[3]);
 
 /* Age the points, move the tracers, stop the trails nothing fed, and pose
  * the ribbons toward the camera. The caller re-uploads the vertices. */

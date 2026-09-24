@@ -2,6 +2,18 @@
 #include <math.h>
 #include <string.h>
 
+static int name_eq(const char *a, const char *b)
+{
+    if (!a || !b) return 0;
+    while (*a && *b) {
+        unsigned char ca = (unsigned char)*a++, cb = (unsigned char)*b++;
+        if (ca >= 'A' && ca <= 'Z') ca = (unsigned char)(ca + 32);
+        if (cb >= 'A' && cb <= 'Z') cb = (unsigned char)(cb + 32);
+        if (ca != cb) return 0;
+    }
+    return *a == *b;
+}
+
 /* The body's hand, in order of preference: Source's weapon bone, its
  * right-hand attachment, its hand bone. Skeleton-family names, not models. */
 static const char *const HAND_BONES[] = { "ValveBiped.weapon_bone", "ValveBiped.Bip01_R_Hand" };
@@ -33,13 +45,23 @@ bool hta_imported_hold_matrix(const hta_oal_model *body, const float (*world)[12
     if (!body || !weapon) return false;
     static float wbind[HTA_OAL_MAX_BONES][12];
     hta_oal_pose(weapon, -1, 0.0f, wbind);
-    /* Bone-merge: the first weapon bone the body also has (as a bone, or
-     * as an attachment Asset Lab gave a body of the same skeleton family),
-     * root excepted. */
-    for (uint32_t wb = 1; wb < weapon->bone_count; wb++) {
+    /* Bone-merge: the first weapon bone the body also has. A sword's root
+     * is the right hand, so that bone is used; a root that is only a model
+     * pivot is still skipped. */
+    for (uint32_t wb = 0; wb < weapon->bone_count; wb++) {
+        /* Skyrim swords use the right hand itself as the root. Skipping
+         * that bone attached them through a rifle's synthetic grip. */
+        if (wb == 0 && !name_eq(weapon->bone_name[wb], "ValveBiped.Bip01_R_Hand") &&
+            !name_eq(weapon->bone_name[wb], "ValveBiped.weapon_bone")) continue;
         float at[12];
         int32_t bb = hta_oal_bone_find(body, weapon->bone_name[wb]);
+        if (bb < 0)
+            for (uint32_t b = 0; b < body->bone_count; b++)
+                if (name_eq(body->bone_name[b], weapon->bone_name[wb])) { bb = (int32_t)b; break; }
         int32_t ba = bb < 0 ? hta_oal_attachment_find(body, weapon->bone_name[wb]) : -1;
+        if (ba < 0 && bb < 0)
+            for (uint32_t a = 0; a < body->att_count; a++)
+                if (name_eq(body->att[a].name, weapon->bone_name[wb])) { ba = (int32_t)a; break; }
         if (bb >= 0) memcpy(at, world[bb], sizeof(at));
         else if (ba >= 0) hta_oal_mul(world[body->att[ba].bone], body->att[ba].local, at);
         else continue;

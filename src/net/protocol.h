@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define HTA_NET_MAGIC 0x31415448u /* "HTA1" on the wire */
-#define HTA_NET_VERSION 7u
+#define HTA_NET_VERSION 8u
 #define HTA_NET_HEADER 20u
 #define HTA_NET_MAX_PACKET 1200u
 #define HTA_NET_MAX_PLAYERS 8u
@@ -15,7 +15,7 @@
 #define HTA_NET_ENTITY_NAME 12u
 #define HTA_NET_ENTITY_BYTES 68u
 #define HTA_NET_WORLD_HEADER 86u
-#define HTA_NET_CONTROL_BYTES 32u
+#define HTA_NET_CONTROL_BYTES 35u
 #define HTA_NET_KILL_BYTES 102u
 #define HTA_NET_FX_BYTES 28u
 #define HTA_NET_PROJECTILE_BYTES 30u
@@ -113,7 +113,7 @@ typedef struct {
 /* A player's requested controls, sampled repeatedly. The host applies
  * movement and fire; counters make one-shot actions survive packet loss. */
 /* v6 HTA_NET_READY: the player has chosen a class and may be spawned. */
-enum { HTA_NET_JUMP=1, HTA_NET_TRIGGER=2, HTA_NET_DUCK=4, HTA_NET_ALT=8, HTA_NET_READY=16 };
+enum { HTA_NET_JUMP=1, HTA_NET_TRIGGER=2, HTA_NET_DUCK=4, HTA_NET_ALT=8, HTA_NET_READY=16, HTA_NET_FLY=32 };
 enum { HTA_NET_REJECT_FULL=1, HTA_NET_REJECT_MAP=2 };
 typedef struct {
     uint8_t id, flags, weapon_slot;
@@ -123,6 +123,8 @@ typedef struct {
     /* v6: the player's custom class (roster indices, 255 none) and body
      * (0 the cyborg, else character index + 1). */
     uint8_t loadout[2], character;
+    uint8_t team; /* 0 unchosen, 1 crimson, 2 azure */
+    uint16_t ability_count;
 } hta_net_control;
 
 /* Every vehicle the host runs, whole, at snapshot rate. Positions are

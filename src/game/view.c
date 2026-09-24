@@ -257,7 +257,7 @@ static void imported_update(hta_game_view *v, const hta_game *g, uint32_t i, flo
         /* Superman 64's imported jump clip loses its head. A self-powered
          * flyer leans forward in the complete idle pose; broom riders use air. */
         role = "idle";
-        topple = 0.25f;
+        topple = 0.12f;
     } else if (u->riding) {
         role = "air";           /* on a broom: legs hanging, as in the jump */
     } else if (u->vehicle >= 0) {
@@ -265,6 +265,19 @@ static void imported_update(hta_game_view *v, const hta_game *g, uint32_t i, flo
     } else {
         hta_game_anim(g, (int32_t)i, base, sizeof(base), action, sizeof(action));
         role = u->body.on_ground ? hta_imported_role(base) : "air";
+    }
+    const hta_game_weapon *held=hta_game_held(g,(int32_t)i);
+    char stance='r', posed_role[24];
+    if(held && held->asset) {
+        const char *h=held->asset->hold_type;
+        stance=!strcmp(h,"fist")?'f':!strcmp(h,"melee")?'m':!strcmp(h,"pistol")?'p':'r';
+    } else if(held && !strcmp(held->anim_class,"pistol")) stance='p';
+    if(v->oal_attack[i]>0.0f) v->oal_attack[i]-=dt;
+    if(v->oal_attack[i]<=0.0f && (u->meleed || (u->fired && stance!='r'))) v->oal_attack[i]=.45f;
+    if(u->alive && !u->riding && !u->flying && u->vehicle<0) {
+        const char *pose_role=(u->swing>0.0f || v->oal_attack[i]>0.0f || u->ability_active>0.0f)?"attack":role;
+        snprintf(posed_role,sizeof(posed_role),"%c_%s",stance,pose_role);
+        if(hta_oal_clip_find(m,posed_role)>=0) role=posed_role;
     }
     int32_t clip = hta_oal_clip_find(m, role);
     if (clip < 0) clip = hta_oal_clip_find(m, "idle");

@@ -82,6 +82,12 @@ static void world_codec(void)
     ctl.loadout[0]=HTA_NET_MAX_WEAPONS; assert(!hta_net_control_pack(control_wire,sizeof(control_wire),&ctl));
     ctl.loadout[0]=10; ctl.character=64; assert(!hta_net_control_pack(control_wire,sizeof(control_wire),&ctl));
     ctl.character=3;
+    ctl.team=2; ctl.ability_count=65534; ctl.flags|=HTA_NET_FLY;
+    assert(hta_net_control_pack(control_wire,sizeof(control_wire),&ctl));
+    assert(hta_net_control_unpack(control_wire,sizeof(control_wire),&ctl2));
+    assert(ctl2.team==2 && ctl2.ability_count==65534 && (ctl2.flags&HTA_NET_FLY));
+    ctl.team=3; assert(!hta_net_control_pack(control_wire,sizeof(control_wire),&ctl));
+    ctl.team=2;
     /* Vehicles: 32 of them, full, under the packet cap; values survive
      * their fixed point; bad values and trailing bytes are refused. */
     static hta_net_vehicles veh, veh2;

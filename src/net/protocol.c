@@ -219,10 +219,10 @@ bool hta_net_world_unpack(const uint8_t *src, size_t len, hta_net_world *w)
 bool hta_net_control_pack(uint8_t *dst, size_t cap, const hta_net_control *c)
 {
     if (!dst || !c || cap<HTA_NET_CONTROL_BYTES || !c->id ||
-        c->id>HTA_NET_MAX_PLAYERS || c->flags & ~31u || c->weapon_slot>1 ||
+        c->id>HTA_NET_MAX_PLAYERS || c->flags & ~63u || c->weapon_slot>1 ||
         (c->loadout[0]!=255 && c->loadout[0]>=HTA_NET_MAX_WEAPONS) ||
         (c->loadout[1]!=255 && c->loadout[1]>=HTA_NET_MAX_WEAPONS) ||
-        c->character>63 ||
+        c->character>63 || c->team>2 ||
         !isfinite(c->forward) || fabsf(c->forward)>1.0f ||
         !isfinite(c->right) || fabsf(c->right)>1.0f ||
         !isfinite(c->yaw) || fabsf(c->yaw)>1000.0f ||
@@ -234,6 +234,7 @@ bool hta_net_control_pack(uint8_t *dst, size_t cap, const hta_net_control *c)
     u16w(dst+23,c->reload_count); u16w(dst+25,c->pickup_count);
     u16w(dst+27,c->action_count);
     dst[29]=c->loadout[0]; dst[30]=c->loadout[1]; dst[31]=c->character;
+    dst[32]=c->team; u16w(dst+33,c->ability_count);
     return true;
 }
 
@@ -242,7 +243,7 @@ bool hta_net_control_unpack(const uint8_t *src, size_t len, hta_net_control *c)
     if (!src || !c || len!=HTA_NET_CONTROL_BYTES) return false;
     hta_net_control tmp={src[0],src[1],src[2],fr(src+3),fr(src+7),
         fr(src+11),fr(src+15),u16r(src+19),u16r(src+21),u16r(src+23),u16r(src+25),
-        u16r(src+27),{src[29],src[30]},src[31]};
+        u16r(src+27),{src[29],src[30]},src[31],src[32],u16r(src+33)};
     uint8_t check[HTA_NET_CONTROL_BYTES];
     if (!hta_net_control_pack(check,sizeof(check),&tmp)) return false;
     *c=tmp; return true;

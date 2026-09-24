@@ -9,6 +9,35 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## 2026-09-24 -- Head in the collar, citizen fists, McRonalds
+
+Superman's missing head in flight was not the jump clip deleting geometry.
+HL2MP sequences live in `models/m_anm.mdl` and store a citizen neck about
+3 inches long. Superman 64's own neck bind is about 16 inches. Playing the
+clip's absolute local pose pulled the head into the chest. Bind pose and
+the offscreen idle both showed a head; the idle and air clips did not,
+until neck and head bones whose clip position is much shorter than the
+model's bind are posed from that bind. The chase camera was also high
+enough to look over a short model; it now sits farther back and lower.
+
+Workshop fist addons already on disk (Hands SWEP `852703807`, Fighting
+Fists `954655623`, Zombie SWEP `2371481770`, parkour hands `2923379220`)
+are scripts or animation stubs. The mesh they expect is Garry's Mod
+`models/weapons/c_arms_citizen.mdl` (5381 source verts). Its punches are
+sequence labels `fists_left` / `fists_right`, not `ACT_VM_PRIMARYATTACK`.
+
+`gm_mcronalds` (Workshop `3159770816`) is a 3-file addon: `maps/mcronald.bsp`,
+a nav file, and a thumbnail. No extra content mount. Converted at prop LOD 1
+with GMod `garrysmod` and `sourceengine`. Package `mcdonalds.oalmap` is
+120 MB, 113462 triangles, 0 missing dependencies, one placeholder
+(`glass/reflectiveglass001`, a lightmapped reflective with no basetexture),
+eight `func_conveyor` brushes left out. Four info_player_start, all
+grounded. A 4-bot 45 s Slayer got 3 kills at 0.787 ms/tick.
+
+Other Workshop maps already downloaded and not converted: Backrooms
+`2732733089`, abandoned mall `2878375438`, liminal hotel `2556466049`,
+Construct remaster `3334581973`.
+
 ## 2026-09-24 -- Megamod hero shooter checkpoint (branch `halo-sandbox`)
 
 The owner asked for a larger, deliberately chaotic hero roster: unique

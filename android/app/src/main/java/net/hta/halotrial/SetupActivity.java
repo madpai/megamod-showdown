@@ -166,9 +166,9 @@ public class SetupActivity extends Activity {
         root.addView(space(6));
         root.addView(skillButton);
         root.addView(space(6));
-        root.addView(modelButton);
+
         root.addView(space(6));
-        root.addView(botModelButton);
+
         root.addView(space(10));
         root.addView(play);
         root.addView(space(8));

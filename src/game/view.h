@@ -39,7 +39,7 @@ typedef struct {
     float     oal_world[HTA_GAME_MAX_UNITS][HTA_OAL_MAX_BONES][12];
     float     oal_root[HTA_GAME_MAX_UNITS][12];
     int32_t   oal_clip[HTA_GAME_MAX_UNITS];
-    float     oal_time[HTA_GAME_MAX_UNITS];
+    float     oal_time[HTA_GAME_MAX_UNITS], oal_attack[HTA_GAME_MAX_UNITS];
     int8_t    oal_char[HTA_GAME_MAX_UNITS];
     /* The flag's mesh is its pole, then a red cloth and a blue one: the
      * pole's submesh count, and each cloth's submesh (0 when there is none). */

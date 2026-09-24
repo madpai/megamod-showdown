@@ -163,35 +163,37 @@ uint32_t hta_contrails_for_projectile(hta_contrails *c, const hta_cache *cache,
     return HTA_CONT_NONE;
 }
 
-uint32_t hta_contrails_add_laser(hta_contrails *c)
+uint32_t hta_contrails_add_energy(hta_contrails *c, const float color[3], float width, float life)
 {
-    if (!c || c->loaded || c->type_count >= HTA_CONT_TYPES || c->mesh.texture_count >= 256u)
-        return HTA_CONT_NONE;
+    if (!c || c->loaded || c->type_count>=HTA_CONT_TYPES || c->mesh.texture_count>=256u) return HTA_CONT_NONE;
     if (!c->mesh.textures) {
-        c->mesh.textures = calloc(256, sizeof(hta_bsp_texture));
+        c->mesh.textures=calloc(256,sizeof(hta_bsp_texture));
         if (!c->mesh.textures) return HTA_CONT_NONE;
     }
-    uint8_t *white = malloc(4);
-    if (!white) return HTA_CONT_NONE;
-    memset(white, 255, 4);
-    uint32_t tex = c->mesh.texture_count++;
-    c->mesh.textures[tex].width = c->mesh.textures[tex].height = 1;
-    c->mesh.textures[tex].rgba = white;
-    hta_contrail_type *ty = &c->type[c->type_count];
-    memset(ty, 0, sizeof(*ty));
-    ty->tex = tex; ty->additive = true; ty->rate = 30.0f;
-    ty->life = 0.34f; ty->repeats_u = ty->repeats_v = 1.0f;
-    ty->sprite.u1 = ty->sprite.v1 = 1.0f;
-    ty->state_count = 2;
-    ty->state[0].duration = 0.14f;
-    ty->state[0].transition = 0.20f;
-    ty->state[0].width = 0.055f;
-    ty->state[0].color[0] = 1.0f; ty->state[0].color[1] = 0.04f;
-    ty->state[0].color[2] = 0.01f; ty->state[0].color[3] = 1.0f;
-    ty->state[1].width = 0.12f;
-    ty->state[1].color[0] = 1.0f; ty->state[1].color[1] = 0.02f;
-    ty->state[1].color[2] = 0.0f; ty->state[1].color[3] = 0.0f;
+    uint8_t *pixels=malloc(32*4);
+    if(!pixels) return HTA_CONT_NONE;
+    for(int i=0;i<32;i++) {
+        float x=fabsf((i+0.5f)/16.0f-1.0f);
+        for(int k=0;k<3;k++) pixels[i*4+k]=(uint8_t)(255.0f*expf(-x*x*5.0f));
+        pixels[i*4+3]=255;
+    }
+    uint32_t tex=c->mesh.texture_count++;
+    c->mesh.textures[tex].width=1; c->mesh.textures[tex].height=32;
+    c->mesh.textures[tex].rgba=pixels;
+    hta_contrail_type *ty=&c->type[c->type_count]; memset(ty,0,sizeof(*ty));
+    ty->tex=tex; ty->additive=true; ty->rate=30; ty->life=life;
+    ty->repeats_u=ty->repeats_v=1; ty->sprite.u1=ty->sprite.v1=1;
+    ty->state_count=2; ty->state[0].duration=life*.45f; ty->state[0].transition=life*.55f;
+    ty->state[0].width=width; ty->state[1].width=width*1.5f;
+    for(int k=0;k<3;k++) ty->state[0].color[k]=ty->state[1].color[k]=color[k];
+    ty->state[0].color[3]=1; ty->state[1].color[3]=0;
     return c->type_count++;
+}
+
+uint32_t hta_contrails_add_laser(hta_contrails *c)
+{
+    const float red[3]={1.0f,.025f,.008f};
+    return hta_contrails_add_energy(c,red,.22f,.38f);
 }
 
 bool hta_contrails_build(hta_contrails *c, char *err, size_t errlen)
@@ -331,10 +333,11 @@ void hta_contrails_tracer(hta_contrails *c, uint32_t type, const float from[3],
     push_point(tr, from);
 }
 
-void hta_contrails_beam(hta_contrails *c, uint32_t type, const float from[3], const float to[3])
+void hta_contrails_beam_key(hta_contrails *c, uint32_t type, uint32_t key,
+                            const float from[3], const float to[3])
 {
     if (!c || !c->loaded || type >= c->type_count || !from || !to) return;
-    hta_contrail *tr = claim(c, type, 0, true);
+    hta_contrail *tr = claim(c, type, key, false);
     tr->tracer = false;
     tr->fed = false;
     tr->travelled = 0.0f;
@@ -342,6 +345,24 @@ void hta_contrails_beam(hta_contrails *c, uint32_t type, const float from[3], co
     memcpy(tr->pt[0].pos, from, sizeof(tr->pt[0].pos));
     memcpy(tr->pt[1].pos, to, sizeof(tr->pt[1].pos));
     tr->pt[0].age = tr->pt[1].age = 0.0f;
+}
+
+void hta_contrails_beam(hta_contrails *c, uint32_t type, const float from[3], const float to[3])
+{
+    hta_contrails_beam_key(c, type, 0x80000000u, from, to);
+}
+
+void hta_contrails_ring(hta_contrails *c, uint32_t type, const float at[3], float radius)
+{
+    if (!c || !c->loaded || type>=c->type_count) return;
+    hta_contrail *tr=claim(c,type,0,true);
+    tr->tracer=false; tr->fed=false; tr->travelled=0; tr->count=HTA_CONT_POINTS;
+    for(uint32_t i=0;i<HTA_CONT_POINTS;i++) {
+        float angle=6.2831853f*(float)i/(HTA_CONT_POINTS-1);
+        tr->pt[i].pos[0]=at[0]+cosf(angle)*radius;
+        tr->pt[i].pos[1]=at[1]+sinf(angle)*radius;
+        tr->pt[i].pos[2]=at[2]; tr->pt[i].age=0;
+    }
 }
 
 uint32_t hta_contrails_live(const hta_contrails *c)
@@ -427,7 +448,9 @@ void hta_contrails_update(hta_contrails *c, const hta_camera *cam, float dt)
                 float side[3] = { d[1]*view[2]-d[2]*view[1], d[2]*view[0]-d[0]*view[2],
                                   d[0]*view[1]-d[1]*view[0] };
                 float sl = sqrtf(side[0]*side[0] + side[1]*side[1] + side[2]*side[2]);
-                if (sl < 1e-6f) continue;
+                if (sl < 1e-6f) {
+                    hta_camera_right(cam,side); sl=1.0f;
+                }
                 for (int m = 0; m < 3; m++) side[m] /= sl;
                 hta_vertex *o = &v[q * 4u];
                 for (int e = 0; e < 2; e++) {

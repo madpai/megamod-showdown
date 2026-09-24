@@ -109,6 +109,13 @@ int main(int argc,char**argv)
           "laser is a visible full-length red beam");
     for(int i=0;i<30;i++)hta_contrails_update(&cc,&cam,1.f/60);
     CHECK(area(&cc,laser)<1e-6f,"laser fades after its burst");
+    memcpy(cam.pos,a,sizeof(cam.pos));
+    hta_contrails_beam(&cc,laser,a,b);
+    hta_contrails_update(&cc,&cam,1.f/60);
+    CHECK(area(&cc,laser)>1.0f,"looking directly down a beam does not collapse its geometry");
+    hta_contrails_ring(&cc,laser,b,3.0f);
+    hta_contrails_update(&cc,&cam,1.f/60);
+    CHECK(area(&cc,laser)>2.0f,"power shockwave has visible ring geometry");
     hta_contrails_free(&cc);free(d);free(bd);
     printf("%d checks, %d failures\n",checks,failures);return failures?1:0;
 }

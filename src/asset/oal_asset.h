@@ -94,6 +94,7 @@ typedef struct {
     float    recharge;          /* rounds/s back into the magazine (a wand); 0 none */
     /* Its own crosshair: "arms", "dot", "ring", joined with '+', and its
      * size on the 640x480 HUD canvas. Empty keeps the base weapon's. */
+    char     hold_type[16];
     char     crosshair[32];
     float    crosshair_size;
     /* Characters: the default class, two weapon names as the game shows
@@ -113,6 +114,8 @@ typedef struct {
      * ability_cooldown seconds, named `ability_name` on its button. */
     char     ability_name[24], ability_base[64];
     float    ability_damage, ability_cooldown;
+    float    ability_duration, ability_interval, ability_radius, ability_force, ability_cone;
+    int      ability_color; /* 0 heat, 1 ki, 2 arcane, 3 gold, 4 green, 5 cyan */
     bool     ability_beam;         /* piercing hitscan; a full red beam, not a sniper round */
     /* Weapons: how hard a melee blow throws its victim, wu/s. */
     float    knockback;
