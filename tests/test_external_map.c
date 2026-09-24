@@ -42,6 +42,14 @@ int main(void)
         assert(m.spawn_count==1&&m.spawns[0].team_index==1&&m.key);
         /* The map's own flag stand, blue's only. */
         assert(!m.has_flag[0]&&m.has_flag[1]&&m.flag[1][0]==1.5f&&m.flag[1][1]==-2.0f&&m.flag[1][2]==0.25f);
+        assert(m.mesh.submeshes[0].draw_mode==HTA_DRAW_OPAQUE);
+        uint32_t key0=m.key;hta_external_map_free(&m);
+        /* Group flag bit 1: drawn alpha-blended. */
+        size_t g=64+ml+3*40+3*4;
+        w[g+12]|=HTA_EXTERNAL_GROUP_ALPHA;
+        assert(hta_external_map_load_memory(w,n+ml,&m,err,sizeof(err)));
+        assert(m.mesh.submeshes[0].draw_mode==HTA_DRAW_ALPHA&&m.solid_index_count==3&&m.key==key0);
+        w[g+12]&=(unsigned char)~HTA_EXTERNAL_GROUP_ALPHA;
         uint32_t key=m.key;hta_external_map_free(&m);
         w[64+ml-40]^=1;assert(hta_external_map_load_memory(w,n+ml,&m,err,sizeof(err))&&m.key!=key);
         hta_external_map_free(&m);free(w);

@@ -151,6 +151,7 @@ bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external
         if(first!=end||count==0||count%3||count>ic-first||tex>=tc){fail(err,errlen,"invalid material group");goto done;}
         hta_submesh *s=&out->mesh.submeshes[i];hta_submesh_init(s);
         s->first_index=first;s->index_count=count;s->albedo_tex=tex;
+        if(flags&HTA_EXTERNAL_GROUP_ALPHA) s->draw_mode=HTA_DRAW_ALPHA;   /* fences, foliage, glass */
         if(!(flags&HTA_EXTERNAL_GROUP_NO_COLLISION)){
             memcpy(out->solid_indices+out->solid_index_count,out->mesh.indices+first,(size_t)count*4);
             out->solid_index_count+=count;

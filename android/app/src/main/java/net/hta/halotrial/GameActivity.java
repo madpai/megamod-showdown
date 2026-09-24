@@ -51,6 +51,9 @@ public class GameActivity extends NativeActivity {
         super.onCreate(savedInstanceState);
         exploreExternal = getIntent().getIntExtra("explore_external", 0) != 0;
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // The volume keys move the media volume, which is what the game
+        // plays on, even when nothing is sounding at that moment.
+        setVolumeControlStream(android.media.AudioManager.STREAM_MUSIC);
         goFullscreen();
     }
 

@@ -22,6 +22,9 @@ typedef struct {
 } hta_external_map;
 
 #define HTA_EXTERNAL_GROUP_NO_COLLISION 1u
+/* Drawn blended by its texture's alpha, after the solid world: Source's
+ * $alphatest and $translucent materials (chain-link, hay, cobwebs, glass). */
+#define HTA_EXTERNAL_GROUP_ALPHA 2u
 
 /* A mesh to build collision from: `render`'s vertices (which may have been
  * moved out of the package) with only the solid triangles. Borrows both;

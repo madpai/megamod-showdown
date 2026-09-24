@@ -3655,6 +3655,12 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
     if (type == AINPUT_EVENT_TYPE_KEY) {
         int32_t code = AKeyEvent_getKeyCode(event);
         bool down = (AKeyEvent_getAction(event) == AKEY_EVENT_ACTION_DOWN);
+        /* The phone's own keys stay the phone's: answering 1 here swallowed
+         * volume up/down, so the volume could only be changed outside the
+         * game. */
+        if (code == AKEYCODE_VOLUME_UP || code == AKEYCODE_VOLUME_DOWN ||
+            code == AKEYCODE_VOLUME_MUTE || code == AKEYCODE_MUTE)
+            return 0;
         if (code == AKEYCODE_BACK) {
             /* In the menu, BACK leaves the app. In a game it pauses, the
              * way Halo's does; the pause screen offers the way out. */

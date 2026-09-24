@@ -181,7 +181,17 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Weapon polish (this build, 2026-09-24):**
+> **Map polish + volume keys (this build, 2026-09-24):**
+> 1. Fences, hay, cobwebs, foliage and glass are see-through where their
+>    texture is (Source $alphatest / $translucent, drawn in the alpha
+>    pass). They were black cut-outs.
+> 2. ALL five imported maps re-imported with every fix so far: 3D skybox
+>    left out, sliding doors open (cs_office's garage doors too),
+>    additive glows left out, CTF flags from the map where it has them.
+>    dust2 now also mounts CS:S's hl2 content (0 missing).
+> 3. Volume up/down work in game (the native key handler was eating them).
+>
+> **Weapon polish (previous build, 2026-09-24):**
 > 1. Imported weapons draw their OWN crosshair (small, with a centre dot)
 >    instead of the base Halo weapon's reticle: AK and .357 CS-style arms
 >    + dot, TF2 weapons a ring + dot (scattergun wider). It opens up while
