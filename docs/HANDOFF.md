@@ -174,8 +174,8 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-**This session's phone test (2026-09-24).** Personal and guest APKs go to
-**http://100.89.1.14:8733/** after this handoff is committed. Protocol **v8**.
+**This session's phone test (2026-09-24), game `91a1679`.** Personal and
+guest APKs go to **http://100.89.1.14:8733/**. Protocol **v8**.
 The personal APK adds `mcdonalds.oalmap` (menu name MCRONALDS) and replaces
 the Heavy fist viewmodel with Garry's Mod citizen arms. Previous checkpoint
 was `f9ee859`.
