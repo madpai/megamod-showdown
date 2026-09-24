@@ -365,7 +365,8 @@ const hta_game_weapon *hta_game_held(const hta_game *g, int32_t u)
 
 bool hta_game_class_weapon(const hta_game *g, int32_t w)
 {
-    return g && w >= 0 && (uint32_t)w < g->weapon_count && !g->weapons[w].vehicle && w != g->flag_weapon;
+    return g && w >= 0 && (uint32_t)w < g->weapon_count && !g->weapons[w].vehicle && w != g->flag_weapon &&
+           !g->weapons[w].hidden;
 }
 
 void hta_game_set_loadout(hta_game *g, int32_t unit, int32_t a, int32_t b)
@@ -588,6 +589,44 @@ void hta_game_pick_spawn(hta_game *g, int32_t idx, float out_pos[3], float *out_
     if (out_facing) *out_facing = sp->facing;
 }
 
+hta_body_attr hta_game_body(const hta_game *g, int32_t idx)
+{
+    hta_body_attr b = { 1.0f, 1.0f, 1.0f, 1.0f, false, 0.0f, 1.0f };
+    if (!g || idx < 0 || idx >= (int32_t)g->unit_count) return b;
+    const hta_unit *u = &g->units[idx];
+    if (u->character < 0 || (uint32_t)u->character >= g->character_count || !g->characters[u->character]) return b;
+    const hta_oal_asset *a = g->characters[u->character];
+    if (a->body_health > 0.0f) b.health = a->body_health;
+    if (a->body_shield >= 0.0f) b.shield = a->body_shield;
+    if (a->body_damage > 0.0f) b.damage = a->body_damage;
+    if (a->body_speed > 0.0f) b.speed = a->body_speed;
+    b.can_fly = a->can_fly;
+    b.fly_speed = a->fly_speed > 0.0f ? a->fly_speed : 3.5f;
+    if (a->fly_damage > 0.0f) b.fly_damage = a->fly_damage;
+    return b;
+}
+
+void hta_game_body_physics(const hta_game *g, float speed, hta_player_physics *out)
+{
+    *out = g->phys;
+    if (!(speed > 0.0f) || speed == 1.0f) return;
+    out->run_forward *= speed; out->run_back *= speed; out->run_side *= speed;
+    out->sneak_forward *= speed; out->sneak_back *= speed; out->sneak_side *= speed;
+    out->run_accel *= speed;
+}
+
+void hta_game_apply_body(hta_game *g, int32_t idx)
+{
+    if (!g || idx < 0 || idx >= (int32_t)g->unit_count) return;
+    hta_unit *u = &g->units[idx];
+    hta_body_attr b = hta_game_body(g, idx);
+    u->vitals.max_health = g->vitals_template.max_health * b.health;
+    u->vitals.max_shield = g->vitals_template.max_shield * b.shield;
+    hta_player_physics ph;
+    hta_game_body_physics(g, b.speed, &ph);
+    hta_player_apply_physics(&u->body, &ph);
+}
+
 static void spawn_unit(hta_game *g, int32_t idx)
 {
     hta_unit *u = &g->units[idx];
@@ -604,6 +643,7 @@ static void spawn_unit(hta_game *g, int32_t idx)
     u->eye.pos[0] = pos[0]; u->eye.pos[1] = pos[1];
     u->eye.pos[2] = pos[2] + u->body.eye_height;
     u->vitals = g->vitals_template;
+    hta_game_apply_body(g, idx);          /* this character's health, shield, speed */
     hta_vitals_reset(&u->vitals);
     arm(g, u);
     u->flag = -1;
@@ -869,6 +909,12 @@ void hta_game_hurt(hta_game *g, int32_t victim, int32_t attacker, float amount,
     hta_unit *v = &g->units[victim];
     /* Nobody gets hurt in the postgame, nor just after coming back. */
     if (!v->alive || g->over || v->protect > 0.0f) return;
+    /* The attacker's body: a Saiyan hits harder; anyone in the air, on a
+     * broom or by themselves, hits softer. */
+    if (attacker >= 0 && attacker < (int32_t)g->unit_count) {
+        hta_body_attr b = hta_game_body(g, attacker);
+        amount *= b.damage * (g->units[attacker].riding ? b.fly_damage : 1.0f);
+    }
     /* Nor by their own side. Ours: a gametype says, and bots do not check
      * their line of fire, so a team game would be a betrayal a minute. */
     if (g->teams && attacker >= 0 && attacker != victim &&
@@ -1346,6 +1392,35 @@ static void cone(uint32_t *rng, const float aim[3], float half, float out[3])
     for (int k = 0; k < 3; k++) out[k] /= l;
 }
 
+static void shoot(hta_game *g, int32_t idx, int32_t wi, float spread);
+
+bool hta_game_ability(hta_game *g, int32_t idx)
+{
+    if (!g || idx < 0 || idx >= (int32_t)g->unit_count || g->over) return false;
+    hta_unit *u = &g->units[idx];
+    if (!u->alive || u->ability_cool > 0.0f || u->character < 0 ||
+        (uint32_t)u->character >= g->character_count) return false;
+    int32_t wi = g->char_ability[u->character];
+    if (wi < 0) return false;
+    const hta_oal_asset *a = g->characters[u->character];
+    u->ability_cool = a->ability_cooldown > 0.0f ? a->ability_cooldown : 6.0f;
+    u->fired = true;
+    shoot(g, idx, wi, g->weapons[wi].def.error_angle[0]);
+    return true;
+}
+
+float hta_game_ability_charge(const hta_game *g, int32_t idx)
+{
+    if (!g || idx < 0 || idx >= (int32_t)g->unit_count) return -1.0f;
+    const hta_unit *u = &g->units[idx];
+    if (u->character < 0 || (uint32_t)u->character >= g->character_count || g->char_ability[u->character] < 0)
+        return -1.0f;
+    const hta_oal_asset *a = g->characters[u->character];
+    float cd = a->ability_cooldown > 0.0f ? a->ability_cooldown : 6.0f;
+    float f = 1.0f - u->ability_cool / cd;
+    return f < 0.0f ? 0.0f : f > 1.0f ? 1.0f : f;
+}
+
 static void fire(hta_game *g, int32_t idx, float dt)
 {
     hta_unit *u = &g->units[idx];
@@ -1372,13 +1447,23 @@ static void fire(hta_game *g, int32_t idx, float dt)
         u->error += u->cooldown / w->def.error_accel;
         if (u->error > 1.0f) u->error = 1.0f;
     }
+    shoot(g, idx, c->weapon, spread);
+}
+
+/* One shot of roster weapon `wi` from the unit's eyes along its aim: the
+ * event, then projectiles or hitscan. No ammunition, no cooldown: fire()
+ * has spent those; an ability pays in its own cooldown. */
+static void shoot(hta_game *g, int32_t idx, int32_t wi, float spread)
+{
+    hta_unit *u = &g->units[idx];
+    const hta_game_weapon *w = &g->weapons[wi];
     float aim[3];
     aim_dir(&u->eye, aim);
     float muzzle[3];
     for (int k = 0; k < 3; k++) muzzle[k] = u->eye.pos[k] + aim[k] * 0.3f;
-    assist(g, idx, c->weapon, u->eye.pos, aim);
+    assist(g, idx, wi, u->eye.pos, aim);
 
-    hta_game_event fe = { .kind = HTA_EV_FIRE, .a = idx, .b = -1, .weapon = c->weapon };
+    hta_game_event fe = { .kind = HTA_EV_FIRE, .a = idx, .b = -1, .weapon = wi };
     for (int k = 0; k < 3; k++) { fe.pos[k] = muzzle[k]; fe.dir[k] = aim[k]; }
     emit(g, &fe);
 
@@ -1389,7 +1474,10 @@ static void fire(hta_game *g, int32_t idx, float dt)
             float dir[3];
             cone(&u->rng, aim, spread, dir);
             int slot = hta_projectiles_fire(&g->pools[w->pool], muzzle, dir);
-            if (slot >= 0) g->pool_owner[w->pool][slot] = (int8_t)idx;
+            if (slot >= 0) {
+                g->pool_owner[w->pool][slot] = (int8_t)idx;
+                g->pool_scale[w->pool][slot] = w->damage_scale > 0.0f ? w->damage_scale : 1.0f;
+            }
         }
         return;
     }
@@ -1414,7 +1502,7 @@ static void fire(hta_game *g, int32_t idx, float dt)
             for (int k = 0; k < 3; k++) hit_at[who][k] = uh[k];
         } else if (wall) {
             hta_game_event e = { .kind = HTA_EV_HIT_WORLD, .a = idx, .b = -1,
-                                 .weapon = c->weapon, .material = mat };
+                                 .weapon = wi, .material = mat };
             for (int k = 0; k < 3; k++) { e.pos[k] = wh[k]; e.dir[k] = wn[k]; }
             emit(g, &e);
             hta_game_hurt_car_jpt(g, hta_game_car_at(g, wh, 0.1f), idx, w->impact_jpt, 1, wh);
@@ -1452,6 +1540,16 @@ int32_t hta_game_melee(hta_game *g, int32_t idx)
     if (w->melee_jpt) {
         /* A melee weapon's blow is its own damage; a gun's butt is the base's. */
         hta_game_hurt_jpt_scaled(g, who, idx, w->melee_jpt, 1, c, w->melee_only ? w->damage_scale : 1.0f);
+        if (w->knockback > 0.0f) {
+            /* Fists: the blow throws them back, and a little up. */
+            hta_unit *vk = &g->units[who];
+            float dx = vk->body.pos[0] - u->body.pos[0], dy = vk->body.pos[1] - u->body.pos[1];
+            float dl = hypotf(dx, dy);
+            if (dl < 1e-4f) { dx = cosf(u->eye.yaw); dy = sinf(u->eye.yaw); dl = 1.0f; }
+            vk->knock[0] += dx / dl * w->knockback;
+            vk->knock[1] += dy / dl * w->knockback;
+            vk->knock[2] += w->knockback * 0.35f;
+        }
         if (behind) hta_game_hurt(g, who, idx, w->melee_damage * (HTA_BACKSMACK_MULT - 1.0f), c);
     }
     return who;
@@ -1470,7 +1568,10 @@ static void throw_grenade(hta_game *g, int32_t idx)
     }
     int slot = hta_projectiles_throw(&g->pools[g->grenade_pool], at, dir,
                                      HTA_GAME_GRENADE_THROW);
-    if (slot >= 0) g->pool_owner[g->grenade_pool][slot] = (int8_t)idx;
+    if (slot >= 0) {
+        g->pool_owner[g->grenade_pool][slot] = (int8_t)idx;
+        g->pool_scale[g->grenade_pool][slot] = 1.0f;
+    }
     u->grenades--;
     u->threw = true;
     hta_game_event e = { .kind = HTA_EV_GRENADE, .a = idx, .b = -1 };
@@ -2288,6 +2389,7 @@ static void vfire(hta_game *g, int32_t idx, uint32_t car, uint32_t trig, float d
             int slot = hta_projectiles_fire(&g->pools[w->pool], muzzle, dir);
             if (slot >= 0) {
                 g->pool_owner[w->pool][slot] = (int8_t)idx;
+                g->pool_scale[w->pool][slot] = 1.0f;     /* a vehicle's gun */
                 /* Clear of its own hull before it can hit a vehicle. */
                 g->pools[w->pool].live[slot].clear = c->body_radius + 0.5f;
             }
@@ -2550,6 +2652,9 @@ static void simulate(hta_game *g, int32_t idx, float dt)
         if (u->throwing <= 0.0f) throw_grenade(g, idx);
     }
     const hta_game_weapon *hw = hta_game_held(g, idx);
+    /* A broom in hand is a broom ridden (the local player's flight is
+     * the platform's; everyone is drawn seated on it). */
+    u->riding = ((hw && hw->mount) || u->flying) && u->vehicle < 0;
     if (hw && hw->melee_only) {
         /* A bat: the trigger swings it. */
         if (in->move.fire && u->swing <= 0.0f && u->throwing <= 0.0f) {
@@ -2599,9 +2704,10 @@ static void fly(hta_game *g, float dt)
             }
             if (who < 0) who = hta_game_near(g, q->pos, 0.02f, ignore);
             if (who < 0) continue;
-            if (jpt) hta_game_hurt_jpt(g, who, owner, jpt, 1, q->pos);
+            float sc = g->pool_scale[p][k] > 0.0f ? g->pool_scale[p][k] : 1.0f;
+            if (jpt) hta_game_hurt_jpt_scaled(g, who, owner, jpt, 1, q->pos, sc);
             if (pool->blast_damage > 0.0f)
-                hta_game_blast(g, owner, q->pos, pool->blast_damage,
+                hta_game_blast(g, owner, q->pos, pool->blast_damage * sc,
                                pool->blast_core, pool->blast_damage_radius);
             hta_game_event e = { .kind = HTA_EV_DETONATE, .a = owner, .b = who,
                                  .pool = (int32_t)p, .material = HTA_MATERIAL_NONE };
@@ -2612,12 +2718,13 @@ static void fly(hta_game *g, float dt)
         }
         for (uint32_t b = 0; b < pool->blast_count; b++) {
             int32_t owner = g->pool_owner[p][pool->blasts[b].slot];
+            float sc = g->pool_scale[p][pool->blasts[b].slot] > 0.0f ? g->pool_scale[p][pool->blasts[b].slot] : 1.0f;
             /* A bolt into a hull: its own impact damage. A blast's is below. */
             if (jpt && !(pool->blast_damage > 0.0f))
                 hta_game_hurt_car_jpt(g, hta_game_car_at(g, pool->blasts[b].pos, 0.15f),
                                       owner, jpt, 1, pool->blasts[b].pos);
             if (pool->blast_damage > 0.0f)
-                hta_game_blast(g, owner, pool->blasts[b].pos, pool->blast_damage,
+                hta_game_blast(g, owner, pool->blasts[b].pos, pool->blast_damage * sc,
                                pool->blast_core, pool->blast_damage_radius);
             hta_game_event e = { .kind = HTA_EV_DETONATE, .a = owner, .b = -1,
                                  .pool = (int32_t)p, .material = pool->blasts[b].material };
@@ -2653,6 +2760,11 @@ void hta_game_update(hta_game *g, float dt)
         if (u->kind == HTA_UNIT_NONE) continue;
         u->since_attacked += dt;
         if (u->protect > 0.0f) u->protect = u->fired ? 0.0f : u->protect - dt;
+        if (u->ability_cool > 0.0f) u->ability_cool -= dt;
+        if (u->kind != HTA_UNIT_LOCAL && (u->knock[0] != 0.0f || u->knock[1] != 0.0f || u->knock[2] != 0.0f)) {
+            for (int k = 0; k < 3; k++) { u->body.velocity[k] += u->knock[k]; u->knock[k] = 0.0f; }
+            u->body.on_ground = false;
+        }
         if (u->multi_timer > 0.0f) u->multi_timer -= dt;
         if (!u->alive) {
             u->dead_for += dt;
@@ -2841,6 +2953,25 @@ int32_t hta_game_add_character(hta_game *g, const hta_oal_asset *a)
     if (!g || !a || !a->loaded || strcmp(a->kind, "character") || g->character_count >= HTA_GAME_MAX_CHARACTERS)
         return -1;
     g->characters[g->character_count] = a;
+    g->char_ability[g->character_count] = -1;
+    if (a->ability_base[0] && g->weapon_count < HTA_GAME_MAX_WEAPONS) {
+        /* Its ability's shot: a copy of a Halo weapon at its own damage,
+         * never carried and never offered in a class. */
+        int32_t base = -1;
+        for (uint32_t w = 0; w < g->weapon_count && base < 0; w++)
+            if (!g->weapons[w].vehicle && !g->weapons[w].asset && !g->weapons[w].hidden &&
+                (int32_t)w != g->flag_weapon && strstr(g->weapons[w].def.path, a->ability_base)) base = (int32_t)w;
+        if (base >= 0) {
+            int32_t idx = (int32_t)g->weapon_count++;
+            hta_game_weapon *w = &g->weapons[idx];
+            *w = g->weapons[base];
+            w->hidden = true;
+            w->base = base;
+            w->damage_scale = a->ability_damage > 0.0f ? a->ability_damage : 1.0f;
+            snprintf(w->display, sizeof(w->display), "%s", a->ability_name[0] ? a->ability_name : "ability");
+            g->char_ability[g->character_count] = idx;
+        }
+    }
     return (int32_t)g->character_count++;
 }
 
@@ -2862,6 +2993,7 @@ int32_t hta_game_add_imported_weapon(hta_game *g, const hta_oal_asset *a)
     w->damage_scale = a->damage_scale > 0.0f ? a->damage_scale : 1.0f;
     w->melee_only = a->melee;
     w->mount = a->mount;
+    w->knockback = a->knockback;
     snprintf(w->display, sizeof(w->display), "%s", a->display);
     if (a->rounds_per_second > 0.0f) {
         w->def.rof = w->def.rof_initial = a->rounds_per_second;
@@ -2877,6 +3009,12 @@ int32_t hta_game_add_imported_weapon(hta_game *g, const hta_oal_asset *a)
     w->def.rounds_initial = w->def.rounds_loaded_max + spare;
     if (a->reload_rounds > 0) w->def.rounds_reloaded = a->reload_rounds;
     if (a->reload_seconds > 0.0f) w->def.reload_time = a->reload_seconds;
+    if (a->recharge > 0.0f) {
+        /* Charge, not ammunition: a full magazine, no spare, refilling. */
+        w->def.recharge = a->recharge;
+        w->def.rounds_reserve_max = 0;
+        w->def.rounds_initial = w->def.rounds_loaded_max;
+    }
     if (a->spread_scale > 0.0f) {
         w->def.error_angle[0] *= a->spread_scale;
         w->def.error_angle[1] *= a->spread_scale;

@@ -101,6 +101,9 @@ typedef struct {
     int      rounds_loaded_max, rounds_reserve_max, rounds_initial, rounds_reloaded;
     float    reload_time, chamber_time;
     uint32_t reloading_fx_id;
+    /* Rounds a second the magazine refills by itself (a wand's charge);
+     * such a weapon has no reserve and never reloads. 0: none. Ours. */
+    float    recharge;
 
     /* Projectile spawn offset from the trigger (+X fwd, +Y left, +Z up).
      * The Trial leaves this (0,0,0) for the AR and the pistol: it is NOT

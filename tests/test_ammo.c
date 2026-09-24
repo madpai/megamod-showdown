@@ -207,6 +207,21 @@ int main(int argc, char **argv)
         CHECK(!cfull.chaining, "a full-magazine reload has nothing to chain");
     }
 
+    printf("\n[recharge]\n");
+    {
+        /* A wand: twelve charges, three back a second, nothing to reload. */
+        hta_weapon_def w = fake(12, 0, 12, 1, 12, 1.0f);
+        w.recharge = 3.0f;
+        hta_ammo a;
+        hta_ammo_init(&a, &w);
+        for (int i = 0; i < 12; i++) hta_ammo_shoot(&a);
+        CHECK(a.loaded == 0 && !hta_ammo_reload(&a), "an empty wand does not reload");
+        for (int i = 0; i < 60; i++) hta_ammo_update(&a, 1.0f / 60.0f);
+        CHECK(a.loaded == 3, "it gets three charges back in a second");
+        for (int i = 0; i < 600; i++) hta_ammo_update(&a, 1.0f / 60.0f);
+        CHECK(a.loaded == 12 && a.reserve == 0, "and fills up, no further");
+    }
+
     if (argc < 2) {
         printf("\n  skip: no map path (pass bloodgulch.map for the tag check)\n");
         printf("\n%d checks, %d failures\n", checks, failures);

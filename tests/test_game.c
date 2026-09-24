@@ -161,6 +161,56 @@ int main(int argc, char **argv)
         CHECK(ub->protect <= 0.0f && ub->vitals.shield < sh, "and firing gives the protection up");
         g.spawn_protect = 0.0f;
     }
+    {
+        /* A character's body: twice the health, no shield, hits 1.5x. */
+        static hta_oal_asset brute;
+        memset(&brute, 0, sizeof(brute));
+        snprintf(brute.kind, sizeof(brute.kind), "character");
+        brute.loaded = true;
+        brute.body_health = 2.0f; brute.body_shield = 0.0f; brute.body_damage = 1.5f;
+        int32_t k = hta_game_add_character(&g, &brute);
+        ub->character = (int8_t)k;
+        hta_game_hurt(&g, b, a, 1000.0f, NULL);
+        hta_game_update(&g, 1.0f / 30.0f);           /* the death is taken here */
+        for (int i = 0; i < 300 && !ub->alive; i++) hta_game_update(&g, 1.0f / 30.0f);
+        CHECK(ub->alive && fabsf(ub->vitals.max_health - 2.0f * g.vitals_template.max_health) < 1e-3f &&
+              ub->vitals.max_shield == 0.0f && ub->vitals.shield == 0.0f,
+              "a character spawns with its own health and shield");
+        ua->character = (int8_t)k;
+        ub->protect = 0.0f;
+        float h0 = ub->vitals.health;
+        hta_game_hurt(&g, b, a, 10.0f, NULL);
+        CHECK(fabsf((h0 - ub->vitals.health) - 15.0f) < 0.01f, "and hits 1.5x as hard");
+        ua->riding = true;
+        h0 = ub->vitals.health;
+        hta_game_hurt(&g, b, a, 10.0f, NULL);
+        CHECK(fabsf((h0 - ub->vitals.health) - 15.0f) < 0.01f, "(its fly penalty defaults to none)");
+        ua->riding = false; ua->character = ub->character = -1;
+    }
+    {
+        /* An ability: laser eyes, a sniper round every 5 s, never a class weapon. */
+        static hta_oal_asset hero;
+        memset(&hero, 0, sizeof(hero));
+        snprintf(hero.kind, sizeof(hero.kind), "character");
+        hero.loaded = true; hero.body_shield = -1.0f;
+        snprintf(hero.ability_name, sizeof(hero.ability_name), "LASER EYES");
+        snprintf(hero.ability_base, sizeof(hero.ability_base), "sniper rifle");
+        hero.ability_damage = 1.4f; hero.ability_cooldown = 5.0f;
+        uint32_t roster = g.weapon_count;
+        int32_t k = hta_game_add_character(&g, &hero);
+        int32_t aw = k >= 0 ? g.char_ability[k] : -1;
+        CHECK(aw == (int32_t)roster && g.weapons[aw].hidden && !hta_game_class_weapon(&g, aw) &&
+              !strcmp(g.weapons[aw].display, "LASER EYES") && fabsf(g.weapons[aw].damage_scale - 1.4f) < 1e-6f,
+              "a character's ability is a hidden copy of its base weapon");
+        ua->character = (int8_t)k;
+        ua->ability_cool = 0.0f;
+        CHECK(hta_game_ability_charge(&g, a) == 1.0f && hta_game_ability(&g, a), "a ready ability fires");
+        CHECK(!hta_game_ability(&g, a) && hta_game_ability_charge(&g, a) < 0.05f, "and then cools down");
+        for (int i = 0; i < 160; i++) hta_game_update(&g, 1.0f / 30.0f);
+        CHECK(hta_game_ability_charge(&g, a) >= 1.0f, "and is ready again after its cooldown");
+        ua->character = -1;
+        CHECK(hta_game_ability_charge(&g, a) < 0.0f, "a Spartan has none");
+    }
     /* Blow yourself up. */
     float ctr[3];
     hta_game_centre(&g, a, ctr);

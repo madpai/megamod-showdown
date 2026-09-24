@@ -152,6 +152,8 @@ typedef struct {
      * worth the base's melee x damage_scale. */
     bool     melee_only;
     bool     mount;            /* a broom: see hta_oal_asset.mount */
+    float    knockback;        /* a melee blow throws its victim this fast, wu/s */
+    bool     hidden;           /* an ability's shot: never carried, never in a class */
 } hta_game_weapon;
 
 /* A weapon lying where it fell, with what was left in it. */
@@ -238,7 +240,10 @@ typedef struct {
     hta_unit_input in;
 
     bool     alive;
-    bool     riding;           /* on a mount (a broom): seated pose, flying */
+    bool     riding;           /* in the air: on a broom, or flying by itself */
+    bool     flying;           /* flying by itself (Goku, Superman); the platform's for the local player */
+    float    knock[3];         /* a blow's push not yet taken by the body (the local player's is the platform's) */
+    float    ability_cool;     /* seconds until the character's ability is ready */
     float    respawn;         /* seconds until back, while dead */
     float    dead_for;        /* seconds since death, for the corpse */
     float    death_yaw;
@@ -376,6 +381,7 @@ typedef struct hta_game {
     int32_t         start_weapon[2];
     /* Imported bodies anyone may wear (the platform loads them). */
     const hta_oal_asset *characters[HTA_GAME_MAX_CHARACTERS];
+    int32_t         char_ability[HTA_GAME_MAX_CHARACTERS];   /* roster index of its ability's shot, -1 none */
     uint32_t        character_count;
     /* Custom classes: each unit spawns with its own two weapons, bots with
      * a random pick of the class weapons. */
@@ -389,6 +395,7 @@ typedef struct hta_game {
      * draws their meshes. */
     hta_projectiles pools[HTA_GAME_MAX_POOLS];
     int8_t          pool_owner[HTA_GAME_MAX_POOLS][HTA_PROJ_MAX];
+    float           pool_scale[HTA_GAME_MAX_POOLS][HTA_PROJ_MAX];   /* each round's damage scale (its weapon's) */
     int32_t         pool_weapon[HTA_GAME_MAX_POOLS];  /* roster index, -1 grenade */
     uint32_t        pool_count;
     int32_t         grenade_pool;
@@ -488,7 +495,24 @@ void hta_game_give(hta_game *g, int32_t unit, int32_t weapon, const hta_ammo *am
 void hta_game_pick_spawn(hta_game *g, int32_t unit, float out_pos[3], float *out_facing);
 
 /* The platform has respawned the local player: count it as alive. */
-void hta_game_revive(hta_game *g, int32_t unit);
+void hta_game_revive(hta_game *g, int32_t idx);
+
+/* How a unit's body plays: its character's attributes (hta_oal_asset
+ * body_*), the Spartan's all 1. */
+typedef struct {
+    float health, shield, damage, speed;
+    bool  can_fly;
+    float fly_speed, fly_damage;
+} hta_body_attr;
+hta_body_attr hta_game_body(const hta_game *g, int32_t idx);
+/* The unit's character ability: fire it now if it is ready (true), and how
+ * ready it is (0 just used .. 1 ready; -1 none). */
+bool  hta_game_ability(hta_game *g, int32_t idx);
+float hta_game_ability_charge(const hta_game *g, int32_t idx);
+/* Its health and shield maximums and its run speeds, from the templates. */
+void hta_game_apply_body(hta_game *g, int32_t idx);
+/* Physics for a body of this speed, from the game's own. */
+void hta_game_body_physics(const hta_game *g, float speed, hta_player_physics *out);
 /* Spawn a newly joined player at a safe scenario start. */
 void hta_game_spawn(hta_game *g, int32_t unit);
 

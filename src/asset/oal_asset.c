@@ -196,6 +196,23 @@ bool hta_oal_load_memory(const uint8_t *data, size_t size, hta_oal_asset *out, c
     out->reserve = (int)json_num(j, ml, "reserve");
     out->reload_rounds = (int)json_num(j, ml, "reload_rounds");
     out->reload_seconds = json_num(j, ml, "reload_seconds");
+    out->recharge = json_num(j, ml, "recharge");
+    out->body_health = json_num(j, ml, "body_health");
+    out->body_shield = json_num(j, ml, "body_shield");
+    out->body_damage = json_num(j, ml, "body_damage");
+    out->body_speed = json_num(j, ml, "body_speed");
+    out->fly_damage = json_num(j, ml, "fly_damage");
+    json_str(j, ml, "ability_name", out->ability_name, sizeof(out->ability_name));
+    json_str(j, ml, "ability_base", out->ability_base, sizeof(out->ability_base));
+    out->ability_damage = json_num(j, ml, "ability_damage");
+    out->ability_cooldown = json_num(j, ml, "ability_cooldown");
+    out->knockback = json_num(j, ml, "knockback");
+    {
+        const char *cf = json_find(j, ml, "can_fly");
+        out->can_fly = cf && !strncmp(cf, "true", 4);
+        /* "body_shield":0 is a real value (no shield): absent is 1. */
+        if (!json_find(j, ml, "body_shield")) out->body_shield = -1.0f;
+    }
     json_str(j, ml, "crosshair", out->crosshair, sizeof(out->crosshair));
     out->crosshair_size = json_num(j, ml, "crosshair_size");
     {

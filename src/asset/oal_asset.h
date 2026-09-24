@@ -91,6 +91,7 @@ typedef struct {
      * keeps the base weapon's. */
     int      reload_rounds;
     float    reload_seconds;
+    float    recharge;          /* rounds/s back into the magazine (a wand); 0 none */
     /* Its own crosshair: "arms", "dot", "ring", joined with '+', and its
      * size on the 640x480 HUD canvas. Empty keeps the base weapon's. */
     char     crosshair[32];
@@ -98,6 +99,20 @@ typedef struct {
     /* Characters: the default class, two weapon names as the game shows
      * them ("AK-47", "pistol"); empty when the package names none. */
     char     loadout[2][48];
+    /* Characters: how this body plays, against the Spartan's 1.0: health
+     * and shield maximums, damage dealt, run speed; whether it flies by
+     * itself (Goku, Superman) at fly_speed wu/s; and the damage it deals
+     * while flying (by itself or on a broom), 0 meaning 1. */
+    float    body_health, body_shield, body_damage, body_speed;
+    bool     can_fly;
+    float    fly_damage;
+    /* A character's ability (Superman's laser eyes, Goku's ki blast): a
+     * shot of the Halo weapon `ability_base` at x ability_damage, every
+     * ability_cooldown seconds, named `ability_name` on its button. */
+    char     ability_name[24], ability_base[64];
+    float    ability_damage, ability_cooldown;
+    /* Weapons: how hard a melee blow throws its victim, wu/s. */
+    float    knockback;
     hta_oal_model models[HTA_OAL_MAX_MODELS];   /* weapon: [0] world, [1] view */
     uint32_t model_count;
     hta_oal_sound sounds[HTA_OAL_MAX_SOUNDS];

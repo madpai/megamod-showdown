@@ -185,13 +185,19 @@ public class GameActivity extends NativeActivity {
      * the next one is a case in the switch and nothing else.
      *   0  hand over the next weapon in the cache's roster
      */
-    static native void nativeHudDebug(int action);
     static native String nativeDebugText();
     static native String nativeAmmoText();
     static native int nativeVehicleMode();
     static native String nativeVehicleText();
     static native void nativeHudAlt(boolean down);
     static native int nativeDamageFlash();
+    /* The HUD's buttons that mean something now (see platform nativeHudCaps). */
+    static native int nativeHudCaps();
+    static native void nativeHudFly();
+    static native void nativeHudAbility();
+    /* The character's ability: 0..1 charging, 1 ready; its name ("LASER"). */
+    static native float nativeAbilityCharge();
+    static native String nativeAbilityName();
     /* Damage you dealt, floating up: x, y (0..1 of the view), amount, opacity. */
     static native float[] nativeDamageNumbers();
     /* The main menu's title art (ARGB) and where the art ends (fraction of
@@ -274,10 +280,9 @@ public class GameActivity extends NativeActivity {
         /* hta_game_mode: free-for-all Slayer, Team Slayer, CTF. Solo only
          * until the LAN snapshot carries teams and flags. */
         private int gametype = 0, captures = 3;
-        /* The three again as (CUSTOM): the same game, played with the
-         * classes. hta_game_mode is gametype % 3. */
-        private static final String[] GAMETYPES = { "SLAYER", "TEAM SLAYER", "CAPTURE THE FLAG",
-                "SLAYER (CUSTOM)", "TEAM SLAYER (CUSTOM)", "CTF (CUSTOM)" };
+        /* hta_game_mode. Every game is played with classes: nothing here is
+         * just Halo any more. */
+        private static final String[] GAMETYPES = { "SLAYER", "TEAM SLAYER", "CAPTURE THE FLAG" };
         /* Seconds nobody can hurt you after a spawn, or until you fire. */
         private int protect = 3;
         /* The class picker, over the game: before your first spawn in a
@@ -459,14 +464,12 @@ public class GameActivity extends NativeActivity {
             }
             row("MAP: " + mapName(maps.get(map)), this::cycleMap);
             row("GAME: " + GAMETYPES[gametype], () -> gametype = (gametype + 1) % GAMETYPES.length);
-            if (gametype >= 3) {
-                row("MY CLASS: " + loadoutLabel(selected()), () -> { classReturn = screen; classEdit = -1; open(7); });
-            }
+            row("MY CLASS: " + loadoutLabel(selected()), () -> { classReturn = screen; classEdit = -1; open(7); });
             row("BOTS: " + bots, () -> bots = (bots + 1) % 8);
             row("BOT SKILL: " + skillName(), () -> skill = (skill + 1) % 4);
-            row(gametype % 3 == 2 ? "CAPTURES TO WIN: " + (captures == 0 ? "NONE" : captures)
+            row(gametype == 2 ? "CAPTURES TO WIN: " + (captures == 0 ? "NONE" : captures)
                               : word(21, "KILLS TO WIN") + " " + (kills == 0 ? "NONE" : kills), () -> {
-                if (gametype % 3 == 2) captures = next(captures, new int[] { 1, 3, 5, 10, 0 });
+                if (gametype == 2) captures = next(captures, new int[] { 1, 3, 5, 10, 0 });
                 else kills = next(kills, new int[] { 0, 10, 25, 50, 100 });
             });
             row("TIME LIMIT: " + (minutes == 0 ? "NONE" : minutes + " MIN"),
@@ -804,12 +807,12 @@ public class GameActivity extends NativeActivity {
         private void start(int mode, String host, String world) {
             // Your look from Settings, and your class when the match has them.
             android.content.SharedPreferences prefs = owner.getSharedPreferences("hta", android.content.Context.MODE_PRIVATE);
-            // In a (CUSTOM) game your class's character is your body.
-            String body = gametype >= 3 && mode != 2 ? selected().character : prefs.getString("player_model", "");
+            // Your class's character is your body, in every game.
+            String body = selected().character;
             nativeSetLoadout(body, prefs.getBoolean("bot_models", false) ? 1 : 0,
-                    gametype >= 3 && mode != 2 ? 1 : 0, selected().primary, selected().secondary);
+                    mode != 2 ? 1 : 0, selected().primary, selected().secondary);
             // A joiner plays whatever the host chose; the host's GAME says.
-            int type = mode == 2 ? 0 : gametype % 3;
+            int type = mode == 2 ? 0 : Math.min(gametype, 2);
             nativeStartMatch(new int[] { mode, bots, skill, type == 2 ? captures : kills, minutes, respawn,
                     maxPlayers, port, vehicles, type, protect }, host, serverName, world);
             screen = 0;
@@ -902,7 +905,6 @@ public class GameActivity extends NativeActivity {
         private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint debug = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint ammo = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint dbgP = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint banner = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint feed = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint board = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -924,11 +926,12 @@ public class GameActivity extends NativeActivity {
         /* A debug pad on the left edge, clear of the stick below it and the
          * readout above it. Deliberately small and dull -- it is not part of
          * the game. */
-        private float dbgCx, dbgCy, dbgR;
         private float pauseCx, pauseCy, pauseR;
+        private float flyCx, flyCy, flyR, abilCx, abilCy, abilR;
         private int stickPtr = -1, firePtr = -1, jumpPtr = -1, crouchPtr = -1;
         private int reloadPtr = -1, meleePtr = -1, swapPtr = -1, zoomPtr = -1;
-        private int nadePtr = -1, dbgPtr = -1;
+        private int nadePtr = -1;
+        private int caps;   /* nativeHudCaps at the last touch */
         private final float[] lastX = new float[16];
         private final float[] lastY = new float[16];
 
@@ -940,6 +943,112 @@ public class GameActivity extends NativeActivity {
         private final Paint killBg = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint killBig = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint killSmall = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        /* ---- MEGAMOD's HUD buttons: dark glass, a white icon, a small
+         * caption; the fire button ringed in the title art's orange. */
+        static final int IC_FIRE = 0, IC_UP = 1, IC_DOWN = 2, IC_RELOAD = 3, IC_MELEE = 4, IC_SWAP = 5,
+                IC_ZOOM = 6, IC_NADE = 7, IC_FLY = 8, IC_ABILITY = 9, IC_TEXT = 10;
+        private final Paint glass = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint rim = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint icon = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint caption = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.Path ip = new android.graphics.Path();
+        private final android.graphics.RectF arc = new android.graphics.RectF();
+
+        private void initButtons() {
+            glass.setColor(0x7010141A);
+            rim.setStyle(Paint.Style.STROKE);
+            icon.setStyle(Paint.Style.STROKE);
+            icon.setStrokeCap(Paint.Cap.ROUND);
+            icon.setStrokeJoin(Paint.Join.ROUND);
+            icon.setColor(0xF0FFFFFF);
+            caption.setColor(0xD8FFFFFF);
+            caption.setTextAlign(Paint.Align.CENTER);
+            caption.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+            caption.setLetterSpacing(0.06f);
+        }
+
+        /* `charge` 0..1 draws a cooldown sweep; 1 or more is ready. */
+        private void button(Canvas c, float cx, float cy, float r, int ic, String cap, int accent,
+                            boolean held, float charge) {
+            glass.setColor(held ? 0xA0303844 : 0x7010141A);
+            c.drawCircle(cx, cy, r, glass);
+            rim.setStrokeWidth(Math.max(2f, r * 0.06f));
+            rim.setColor(accent);
+            c.drawCircle(cx, cy, r - rim.getStrokeWidth() * 0.5f, rim);
+            if (charge < 1f) {
+                /* Cooling down: the ring fills clockwise, the icon greyed. */
+                rim.setColor(0xFFFFB14A);
+                arc.set(cx - r + 3, cy - r + 3, cx + r - 3, cy + r - 3);
+                c.drawArc(arc, -90f, 360f * Math.max(0f, charge), false, rim);
+            }
+            icon.setAlpha(charge < 1f ? 110 : 240);
+            icon.setStrokeWidth(Math.max(2.5f, r * 0.09f));
+            float s = r * 0.42f, iy = cap == null ? cy : cy - r * 0.12f;
+            ip.reset();
+            switch (ic) {
+            case IC_FIRE:
+                c.drawCircle(cx, iy, s * 0.62f, icon);
+                c.drawLine(cx - s, iy, cx - s * 0.35f, iy, icon); c.drawLine(cx + s * 0.35f, iy, cx + s, iy, icon);
+                c.drawLine(cx, iy - s, cx, iy - s * 0.35f, icon); c.drawLine(cx, iy + s * 0.35f, cx, iy + s, icon);
+                break;
+            case IC_UP:
+                ip.moveTo(cx - s * 0.8f, iy + s * 0.35f); ip.lineTo(cx, iy - s * 0.45f); ip.lineTo(cx + s * 0.8f, iy + s * 0.35f);
+                c.drawPath(ip, icon); break;
+            case IC_DOWN:
+                ip.moveTo(cx - s * 0.8f, iy - s * 0.35f); ip.lineTo(cx, iy + s * 0.45f); ip.lineTo(cx + s * 0.8f, iy - s * 0.35f);
+                c.drawPath(ip, icon); break;
+            case IC_RELOAD:
+                arc.set(cx - s * 0.75f, iy - s * 0.75f, cx + s * 0.75f, iy + s * 0.75f);
+                c.drawArc(arc, -60f, 290f, false, icon);
+                ip.moveTo(cx + s * 0.75f * 0.5f + s * 0.1f, iy - s * 0.95f);
+                ip.lineTo(cx + s * 0.75f * 0.5f, iy - s * 0.62f);
+                ip.lineTo(cx + s * 0.05f, iy - s * 0.78f);
+                c.drawPath(ip, icon); break;
+            case IC_MELEE:
+                for (int k = 0; k < 8; k++) {
+                    double a = k * Math.PI / 4;
+                    float in = k % 2 == 0 ? s * 0.25f : s * 0.45f, out = k % 2 == 0 ? s * 0.95f : s * 0.7f;
+                    c.drawLine(cx + (float) Math.cos(a) * in, iy + (float) Math.sin(a) * in,
+                               cx + (float) Math.cos(a) * out, iy + (float) Math.sin(a) * out, icon);
+                }
+                break;
+            case IC_SWAP:
+                c.drawLine(cx - s * 0.8f, iy - s * 0.3f, cx + s * 0.8f, iy - s * 0.3f, icon);
+                c.drawLine(cx + s * 0.8f, iy - s * 0.3f, cx + s * 0.45f, iy - s * 0.65f, icon);
+                c.drawLine(cx + s * 0.8f, iy + s * 0.3f, cx - s * 0.8f, iy + s * 0.3f, icon);
+                c.drawLine(cx - s * 0.8f, iy + s * 0.3f, cx - s * 0.45f, iy + s * 0.65f, icon);
+                break;
+            case IC_ZOOM:
+                c.drawCircle(cx - s * 0.15f, iy - s * 0.15f, s * 0.55f, icon);
+                c.drawLine(cx + s * 0.25f, iy + s * 0.25f, cx + s * 0.85f, iy + s * 0.85f, icon);
+                break;
+            case IC_NADE:
+                c.drawCircle(cx, iy + s * 0.15f, s * 0.6f, icon);
+                c.drawLine(cx - s * 0.2f, iy - s * 0.45f, cx + s * 0.35f, iy - s * 0.45f, icon);
+                c.drawLine(cx + s * 0.35f, iy - s * 0.45f, cx + s * 0.65f, iy - s * 0.2f, icon);
+                break;
+            case IC_FLY:
+                ip.moveTo(cx - s, iy + s * 0.1f); ip.lineTo(cx, iy - s * 0.55f); ip.lineTo(cx + s, iy + s * 0.1f);
+                ip.moveTo(cx - s * 0.6f, iy + s * 0.55f); ip.lineTo(cx, iy + s * 0.05f); ip.lineTo(cx + s * 0.6f, iy + s * 0.55f);
+                c.drawPath(ip, icon); break;
+            case IC_ABILITY:
+                for (int k = 0; k < 5; k++) {
+                    double a0 = -Math.PI / 2 + k * 2 * Math.PI / 5, a1 = a0 + Math.PI / 5;
+                    float x0 = cx + (float) Math.cos(a0) * s, y0 = iy + (float) Math.sin(a0) * s;
+                    float x1 = cx + (float) Math.cos(a1) * s * 0.45f, y1 = iy + (float) Math.sin(a1) * s * 0.45f;
+                    if (k == 0) ip.moveTo(x0, y0); else ip.lineTo(x0, y0);
+                    ip.lineTo(x1, y1);
+                }
+                ip.close(); c.drawPath(ip, icon); break;
+            default: break;
+            }
+            if (cap != null) {
+                caption.setTextSize(r * (ic == IC_TEXT ? 0.36f : 0.27f));
+                caption.setAlpha(charge < 1f ? 140 : 216);
+                c.drawText(cap, cx, ic == IC_TEXT ? cy + caption.getTextSize() * 0.35f : cy + r * 0.62f, caption);
+            }
+        }
 
         HudOverlay(GameActivity a) {
             super(a);
@@ -959,6 +1068,7 @@ public class GameActivity extends NativeActivity {
             killSmall.setTypeface(Typeface.DEFAULT_BOLD);
             killSmall.setTextAlign(Paint.Align.CENTER);
             setClickable(true);
+            initButtons();
             ring.setStyle(Paint.Style.STROKE);
             ring.setStrokeWidth(4f);
             ring.setColor(0x66FFFFFF);
@@ -971,7 +1081,6 @@ public class GameActivity extends NativeActivity {
             meleeP.setColor(0xCC6E3BA8);
             swapP.setColor(0xCC2E7D6B);
             zoomP.setColor(0xCC3C5A8C);
-            dbgP.setColor(0x99202830);
             label.setColor(0xFFFFFFFF);
             ammo.setColor(0xF2FFFFFF);
             ammo.setTextAlign(Paint.Align.RIGHT);
@@ -1024,12 +1133,15 @@ public class GameActivity extends NativeActivity {
             nadeR = m * 0.058f;
             nadeCx = w * 0.725f;
             nadeCy = h * 0.90f;
+            flyR = m * 0.06f;
+            flyCx = w * 0.935f;
+            flyCy = h * 0.40f;
+            abilR = m * 0.068f;
+            abilCx = w * 0.755f;
+            abilCy = h * 0.46f;
             pauseR = m * 0.04f;
             pauseCx = w * 0.955f;
             pauseCy = h * 0.09f;
-            dbgR = m * 0.045f;
-            dbgCx = w * 0.035f;
-            dbgCy = h * 0.42f;
             label.setTextSize(m * 0.032f);
             banner.setTextSize(m * 0.062f);
             feed.setTextSize(m * 0.034f);
@@ -1106,6 +1218,7 @@ public class GameActivity extends NativeActivity {
             switch (action) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN:
+                caps = GameActivity.nativeHudCaps();
                 remember(id, x, y);
                 if (!owner.exploreExternal && in(x, y, fireCx, fireCy, fireR * 1.15f) && firePtr < 0) {
                     firePtr = id;
@@ -1116,24 +1229,26 @@ public class GameActivity extends NativeActivity {
                 } else if (in(x, y, crouchCx, crouchCy, crouchR * 1.15f) && crouchPtr < 0) {
                     crouchPtr = id;
                     GameActivity.nativeHudCrouch(true);
-                } else if (!owner.exploreExternal && in(x, y, reloadCx, reloadCy, reloadR * 1.15f) && reloadPtr < 0) {
+                } else if ((caps & 1) != 0 && in(x, y, flyCx, flyCy, flyR * 1.2f)) {
+                    GameActivity.nativeHudFly();
+                } else if ((caps & 128) != 0 && in(x, y, abilCx, abilCy, abilR * 1.15f)) {
+                    GameActivity.nativeHudAbility();
+                } else if (!owner.exploreExternal && (caps & 8) != 0 && in(x, y, reloadCx, reloadCy, reloadR * 1.15f) && reloadPtr < 0) {
                     reloadPtr = id;
                     GameActivity.nativeHudReload();
-                } else if (!owner.exploreExternal && in(x, y, meleeCx, meleeCy, meleeR * 1.15f) && meleePtr < 0) {
+                } else if (!owner.exploreExternal && (caps & 16) == 0 && in(x, y, meleeCx, meleeCy, meleeR * 1.15f) && meleePtr < 0) {
                     meleePtr = id;
                     GameActivity.nativeHudMelee();
                 } else if (!owner.exploreExternal && in(x, y, swapCx, swapCy, swapR * 1.15f) && swapPtr < 0) {
                     swapPtr = id;
                     GameActivity.nativeHudSwap();
-                } else if (!owner.exploreExternal && in(x, y, zoomCx, zoomCy, zoomR * 1.15f) && zoomPtr < 0) {
+                } else if (!owner.exploreExternal && (caps & 4) != 0 && in(x, y, zoomCx, zoomCy, zoomR * 1.15f) && zoomPtr < 0) {
                     zoomPtr = id;
                     GameActivity.nativeHudZoom();
                 } else if (in(x, y, pauseCx, pauseCy, pauseR * 1.3f)) {
                     GameActivity.nativePause();
-                } else if (in(x, y, dbgCx, dbgCy, dbgR * 1.25f) && dbgPtr < 0) {
-                    dbgPtr = id;
-                    GameActivity.nativeHudDebug(0);
-                } else if (!owner.exploreExternal && in(x, y, nadeCx, nadeCy, nadeR * 1.15f) && nadePtr < 0) {
+                } else if (!owner.exploreExternal && ((caps & 32) != 0 || (GameActivity.nativeVehicleMode() & 16) != 0)
+                        && in(x, y, nadeCx, nadeCy, nadeR * 1.15f) && nadePtr < 0) {
                     nadePtr = id;
                     /* In a vehicle with a second gun, NADE is that trigger,
                      * held like FIRE: the Scorpion's machine gun, the
@@ -1176,7 +1291,6 @@ public class GameActivity extends NativeActivity {
                     swapPtr = -1;
                     zoomPtr = -1;
                     releaseNade();
-                    dbgPtr = -1;
                 } else {
                     if (id == stickPtr) releaseStick();
                     if (id == firePtr) releaseFire();
@@ -1187,7 +1301,6 @@ public class GameActivity extends NativeActivity {
                     if (id == swapPtr) swapPtr = -1;
                     if (id == zoomPtr) zoomPtr = -1;
                     if (id == nadePtr) releaseNade();
-                    if (id == dbgPtr) dbgPtr = -1;
                 }
                 break;
             default:
@@ -1465,47 +1578,32 @@ public class GameActivity extends NativeActivity {
             c.drawCircle(stickCx, stickCy, stickR, ring);
             c.drawCircle(stickTx, stickTy, stickR * 0.38f, thumb);
 
-            c.drawCircle(pauseCx, pauseCy, pauseR, dbgP);
-            c.drawCircle(pauseCx, pauseCy, pauseR, ring);
-            c.drawText("II", pauseCx, pauseCy + label.getTextSize() * 0.35f, label);
-            c.drawCircle(dbgCx, dbgCy, dbgR, dbgP);
-            c.drawCircle(dbgCx, dbgCy, dbgR, ring);
-            c.drawText("DBG", dbgCx, dbgCy + label.getTextSize() * 0.35f, label);
-
-            if (!owner.exploreExternal) {
-                c.drawCircle(fireCx, fireCy, fireR, fireP);
-                c.drawCircle(fireCx, fireCy, fireR, ring);
-                c.drawText("FIRE", fireCx, fireCy + label.getTextSize() * 0.35f, label);
+            /* The pause button, small, top right. */
+            button(c, pauseCx, pauseCy, pauseR, IC_TEXT, "II", 0x66FFFFFF, false, 1f);
+            int hc = GameActivity.nativeHudCaps();
+            boolean inAir = (hc & 2) != 0;
+            if (!owner.exploreExternal)
+                button(c, fireCx, fireCy, fireR, IC_FIRE, (hc & 16) != 0 ? "SWING" : "FIRE", 0xFFFF7A1A, firePtr >= 0, 1f);
+            if (seatMode == 2) button(c, jumpCx, jumpCy, jumpR, IC_TEXT, "BRAKE", 0x88FFFFFF, jumpPtr >= 0, 1f);
+            else button(c, jumpCx, jumpCy, jumpR, IC_UP, inAir ? "UP" : "JUMP", 0x88FFFFFF, jumpPtr >= 0, 1f);
+            button(c, crouchCx, crouchCy, crouchR, IC_DOWN, inAir ? "DOWN" : "CROUCH", 0x88FFFFFF, crouchPtr >= 0, 1f);
+            if ((hc & 1) != 0)
+                button(c, flyCx, flyCy, flyR, IC_FLY, inAir ? "LAND" : "FLY", 0xFF7FD4FF, false, 1f);
+            if ((hc & 128) != 0) {
+                float ch = GameActivity.nativeAbilityCharge();
+                String an = GameActivity.nativeAbilityName();
+                button(c, abilCx, abilCy, abilR, IC_ABILITY, an == null || an.isEmpty() ? "POWER" : an,
+                        0xFFFFD23A, false, ch);
             }
 
-            c.drawCircle(jumpCx, jumpCy, jumpR, jumpP);
-            c.drawCircle(jumpCx, jumpCy, jumpR, ring);
-            c.drawText(seatMode == 2 ? "BRAKE" : "JUMP", jumpCx, jumpCy + label.getTextSize() * 0.35f, label);
-
-            c.drawCircle(crouchCx, crouchCy, crouchR, crouchP);
-            c.drawCircle(crouchCx, crouchCy, crouchR, ring);
-            c.drawText("CROUCH", crouchCx, crouchCy + label.getTextSize() * 0.35f, label);
-
             if (!owner.exploreExternal) {
-                c.drawCircle(reloadCx, reloadCy, reloadR, reloadP);
-                c.drawCircle(reloadCx, reloadCy, reloadR, ring);
-                c.drawText("RELOAD", reloadCx, reloadCy + label.getTextSize() * 0.35f, label);
-
-                c.drawCircle(meleeCx, meleeCy, meleeR, meleeP);
-                c.drawCircle(meleeCx, meleeCy, meleeR, ring);
-                c.drawText("MELEE", meleeCx, meleeCy + label.getTextSize() * 0.35f, label);
-
-                c.drawCircle(swapCx, swapCy, swapR, swapP);
-                c.drawCircle(swapCx, swapCy, swapR, ring);
-                c.drawText(seatMode >= 2 ? "EXIT" :
-                        seatMode == 1 ? "GET IN" : "SWAP", swapCx, swapCy + label.getTextSize() * 0.35f, label);
-
-                c.drawCircle(zoomCx, zoomCy, zoomR, zoomP);
-                c.drawCircle(zoomCx, zoomCy, zoomR, ring);
-                c.drawText("ZOOM", zoomCx, zoomCy + label.getTextSize() * 0.35f, label);
-                c.drawCircle(nadeCx, nadeCy, nadeR, zoomP);
-                c.drawCircle(nadeCx, nadeCy, nadeR, ring);
-                c.drawText((vehicleMode & 16) != 0 ? "ALT" : "NADE", nadeCx, nadeCy + label.getTextSize() * 0.35f, label);
+                if ((hc & 8) != 0) button(c, reloadCx, reloadCy, reloadR, IC_RELOAD, "RELOAD", 0x88FFFFFF, reloadPtr >= 0, 1f);
+                if ((hc & 16) == 0) button(c, meleeCx, meleeCy, meleeR, IC_MELEE, "MELEE", 0x88FFFFFF, meleePtr >= 0, 1f);
+                if (seatMode >= 1) button(c, swapCx, swapCy, swapR, IC_TEXT, seatMode >= 2 ? "EXIT" : "GET IN", 0xFF7FD4FF, swapPtr >= 0, 1f);
+                else button(c, swapCx, swapCy, swapR, IC_SWAP, "SWAP", 0x88FFFFFF, swapPtr >= 0, 1f);
+                if ((hc & 4) != 0) button(c, zoomCx, zoomCy, zoomR, IC_ZOOM, "ZOOM", 0x88FFFFFF, zoomPtr >= 0, 1f);
+                if ((vehicleMode & 16) != 0) button(c, nadeCx, nadeCy, nadeR, IC_TEXT, "ALT", 0xFFFF7A1A, nadePtr >= 0, 1f);
+                else if ((hc & 32) != 0) button(c, nadeCx, nadeCy, nadeR, IC_NADE, "GRENADE", 0x88FFFFFF, nadePtr >= 0, 1f);
 
                 /* Ammo, big and bottom-right: loaded / reserve, "--" while the
                  * magazine is out. */

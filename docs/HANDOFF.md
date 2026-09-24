@@ -8,15 +8,13 @@
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-23, end of day (imported maps playable:
-de_dust2 matches on the phone; props, spawn and bot fixes)
+**Date of this revision:** 2026-09-24 (class attributes, flight, fists,
+abilities, recharging wand, contextual HUD, and CS:S M4A1)
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Branches -- read this first:**
-- `halo-sandbox` (**local only, never push**): everything about imported
-  maps -- the owner's separate "Halo Garry's Mod" idea built on Open Halo.
-  HEAD `bd20c08` + docs. Last published (personal APK on the sideload
-  page, backed up): `bd20c08`, verify.sh 78/78. LAN protocol here is
-  **v5**; it cannot join `main` builds (v4).
+- `halo-sandbox` is **MEGAMOD SHOWDOWN**. Push this branch only to private
+  remote `megamod`, as `main`; never push it to Open Halo's public `origin`.
+  Its sideload page is port 8733. LAN builds must match protocol versions.
 - `fp-animated-guns` -> GitHub `main`: **strictly Halo**. The owner said
   imported-map work must not ship there. Codex's explorer commit
   `2189479` was reverted on `main` (`4979acb`, 2026-09-23, verify 76/76);
@@ -24,27 +22,12 @@ de_dust2 matches on the phone; props, spawn and bot fixes)
   there because Asset Lab validates packages with them. When returning
   to Halo work, `git switch fp-animated-guns` (its HANDOFF predates the
   sandbox).
-- **Planned:** the sandbox becomes its own repository (the owner's
-  "Garry's Mod-style" Open Halo with custom content; name not chosen).
-  Not created yet -- ask for the name and public/private before making
-  it. It should carry `halo-sandbox`'s history, and never any Trial,
-  Valve or converted map data.
-
 **Start of next session, in order:**
 1. `git branch --show-current` -- be on the right branch for the task.
 2. `ls -lt scratch/uploads/ | head` -- screenshots from the latest build.
-3. Sandbox: **next objective is importing a player model and a weapon**
-   (a CS:S terrorist or a GMod character; the CS:S AK-47). The plan and
-   the list of assets on disk are in Asset Lab's `docs/HANDOFF.md`, "Next:
-   player model + weapon". Engine side: see "PLAYER MODEL + WEAPON (next)"
-   below. Maps on the phone (build `8c25abc`): cs_office and gm_construct
-   at 120 fps, "almost complete with some problems" -- the owner does not
-   want those pursued now; de_aztec unreported.
-   Owner preferences: keep the **Halo sky** on imported maps; the
-   **Garry's Mod Workshop** is the long-term goal but is NOT started. Read Asset Lab's
-   `docs/MAP_IMPORT_PLAYBOOK.md` (`~/projects/open-asset-lab`) -- the
-   whole pipeline, every bug de_dust2 hit, and a dry run of all stock
-   CS:S maps. Best next: **de_dust**. Then the IMPORTED MAPS section here.
+3. Sandbox: test the **CURRENT TESTING OBJECTIVE** below on the phone. The
+   code and private packages passed host checks; the new HUD, flight view,
+   sounds and balance still need hands-on feedback.
 4. Halo: NEXT ENGINEERING OBJECTIVES, top down; push only Halo work.
 
 ---
@@ -185,16 +168,26 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Harry's wand and broomstick (this build, 2026-09-24):**
-> 1. Harry's preset is now WAND + BROOMSTICK (both also in every class's
->    weapon list). The wand casts plasma-pistol bolts (x1.2, tighter) with
->    the Workshop wand's first-person arm and spell sound.
-> 2. Swap to the BROOMSTICK: third-person camera behind you, Harry rides a
->    Nimbus 2000 (legs hanging), and you FLY: stick steers where you look,
->    JUMP climbs, CROUCH dives, 5.5 wu/s; walls and floors still collide;
->    FIRE casts spells. Swap back to the wand mid-air and you fall (fall
->    damage applies). Not synced over LAN yet (joiners see Harry in the
->    air, not his flight). Bots never pick the broom or the bat.
+> **Class abilities and HUD (next phone test, 2026-09-24):**
+> 1. Start SLAYER, TEAM SLAYER, then CTF: each should open the class picker;
+>    there are no separate CUSTOM modes. The DBG button is gone. Buttons
+>    appear for the held weapon: ZOOM on scoped guns, RELOAD on magazines,
+>    SWING for fists/bat, and an ability button on Goku and Superman.
+> 2. Harry: low health, smaller shield, stronger WAND spells. Empty its 12
+>    charges and watch 3 return each second, with no reload button. The
+>    BROOMSTICK flies at 3.5 wu/s with a closer shoulder camera; JUMP climbs,
+>    CROUCH dives. Shots do 0.6x damage in flight.
+> 3. Goku and Superman: FISTS should punch and push an enemy back. FLY/LAND
+>    toggles their own flight (3.5/3.2 wu/s); JUMP/CROUCH move up/down.
+>    Goku's KI BLAST uses a rocket round every 6 s; Superman's LASER EYES
+>    uses a sniper round every 5 s. Try firing each ability while holding
+>    fists and during flight; look for the cooldown ring. Both abilities
+>    currently inherit the base weapon's effects and sounds.
+> 4. Counter Strike: Leet starts with the AK-47, Urban with the new CS:S
+>    M4A1. Both have no shields and high rifle damage. Check their view
+>    models, fire and reload sounds. The M4A1 has no silencer toggle yet.
+> 5. This pass was checked in a rendered de_dust2 bot match and by the
+>    80-check verify gate. The phone still needs a visual and touch test.
 >
 > **TF2 Scout + Bat (previous build, 2026-09-24):**
 > 1. SCOUT (TF2) body, preset Scattergun + Bat. BAT (TF2) is the first
@@ -1011,6 +1004,12 @@ wrong, this list is the first place to look — they are all one constant.
 | `HTA_PICKUP_LIFT` | 0.06 wu | how far an item floats off its placement |
 | `HTA_ITEM_RESPAWN_DEFAULT` | 15 s | when neither placement nor collection says |
 | `HTA_MELEE_REACH` | 0.5 wu | how far a swing reaches |
+| Fists knockback | 4 wu/s horizontal, 1.4 wu/s up | imported Fists definition; invented for Goku and Superman |
+| Broom flight | 3.5 wu/s; camera 1.25 wu back, 0.28 up/right | slower flight and shoulder view, invented |
+| Class flight | Goku 3.5, Superman 3.2 wu/s; damage x0.6 while airborne | invented character balance in private packages |
+| Ability cooldowns | Superman 5 s, Goku 6 s | invented character balance; shots borrow sniper/rocket tags |
+| Wand recharge | 12 charges, 3/s; damage x1.6 | invented character balance; no reserve ammo |
+| CS:S M4A1 balance | 10 shots/s, 30+90 rounds; Halo AR damage x1.45, 3.1 s reload | model/sound from CS:S; damage and reload timing adapted for this game |
 | `HTA_VM_KEY_FRACTION` | 0.35 | when a clip "does its thing" if `key frame` is 0 |
 | `HTA_BOT_RESPAWN` | 5 s | how long a body lies there |
 | `HTA_ITEMS_UPLOAD_FRAMES` | 8 | ≥ any swapchain image count |

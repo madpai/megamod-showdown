@@ -173,6 +173,7 @@ float hta_vitals_health_fraction(const hta_vitals *v)
 
 float hta_vitals_shield_fraction(const hta_vitals *v)
 {
-    if (!v || v->max_shield <= 0.0f) return 1.0f;
+    if (!v) return 1.0f;
+    if (v->max_shield <= 0.0f) return 0.0f;     /* no shield at all (a normal person): an empty bar */
     return v->shield / v->max_shield;
 }

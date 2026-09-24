@@ -31,6 +31,8 @@ typedef struct {
     int   per_reload;      /* rounds a single reload puts back */
     float reload_time;
     float chamber_time;
+    float recharge;        /* rounds/s back into the magazine; 0 none */
+    float recharge_acc;
 
     hta_ammo_phase phase;
     float timer;           /* seconds left in the current reload */

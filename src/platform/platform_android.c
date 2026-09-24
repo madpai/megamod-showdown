@@ -268,6 +268,7 @@ typedef struct {
      * their GPU copies, the posed body and how long it has turned. */
     int32_t  prev_char, prev_weap, prev_roster;
     int32_t  next_character;    /* a class's body for the next respawn; -2 none */
+    bool     power_fly;         /* flying by yourself (FLY): Goku, Superman */
     hta_gfx_mesh *gpu_prev_body, *gpu_prev_weap;
     hta_vertex *prev_posed;
     uint32_t prev_cap;
@@ -460,6 +461,8 @@ typedef struct {
     float    dry_cooldown;   /* stops an empty trigger clicking every frame */
     bool     hud_reload;
     bool     hud_melee;
+    bool     hud_fly;
+    bool     hud_ability;
     bool     hud_grenade;
     bool          have_mesh;
     bool          have_sky;
@@ -1148,6 +1151,18 @@ static void class_hold(hta_android *s)
     u->death_yaw = s->cam.yaw;
 }
 
+/* The local player's character stats: its health and shield maximums on
+ * the game's copy of your vitals, its run speeds on your own physics. */
+static void apply_my_body(hta_android *s)
+{
+    if (!s->game_on || s->me < 0) return;
+    hta_game_apply_body(&s->game, s->me);
+    hta_body_attr b = hta_game_body(&s->game, s->me);
+    hta_player_physics ph;
+    hta_game_body_physics(&s->game, b.speed, &ph);
+    hta_player_apply_physics(&s->player, &ph);
+}
+
 static void respawn(hta_android *s)
 {
     if (!s->spawn_count) return;
@@ -1168,6 +1183,12 @@ static void respawn(hta_android *s)
     s->cam.yaw = chosen.facing;
     s->cam.pitch = 0.0f;
 
+    /* Your character's health, shield and speed (and back on your feet). */
+    if (s->game_on && s->me >= 0) {
+        if (s->next_character != -2) { s->game.units[s->me].character = (int8_t)s->next_character; s->next_character = -2; }
+        apply_my_body(s);
+    }
+    s->power_fly = false;
     hta_vitals_reset(s->vit);
     /* You come back with what the map arms you with, not with whatever you
      * had scavenged. */
@@ -2621,6 +2642,7 @@ static void start_game(hta_android *s)
                 s->game.units[i].character = (int8_t)(n++ % s->game.character_count);
     if (s->game.classes) class_apply(s);
     s->game.spawn_protect = s->spawn_protect;
+    apply_my_body(s);
     /* The local player's health and shield move into the game, carrying
      * what the tags already gave them. */
     s->game.units[s->me].vitals = *s->vit;
@@ -2999,11 +3021,16 @@ static void game_events(hta_android *s)
         switch (e.kind) {
         case HTA_EV_FIRE:
             if (e.weapon < 0 || e.weapon >= HTA_GAME_MAX_WEAPONS) break;
-            if (e.a == s->me && s->game.weapons[e.weapon].vehicle)
+            {
+            /* A vehicle gun or a character's ability is the game's shot,
+             * even when it is ours: it shows and sounds from here. */
+            bool gamegun = s->game.weapons[e.weapon].vehicle || s->game.weapons[e.weapon].hidden;
+            if (e.a == s->me && gamegun)
                 shake_fire(s, s->game.weapons[e.weapon].def.firing_damage_id);
-            if (e.a != s->me || s->game.weapons[e.weapon].vehicle) tracer(s, e.a, e.weapon, e.pos, e.dir);
-            /* Our own rifle speaks for itself; a vehicle gun is the game's. */
-            if (e.a == s->me && !s->game.weapons[e.weapon].vehicle) break;
+            if (e.a != s->me || gamegun) tracer(s, e.a, e.weapon, e.pos, e.dir);
+            /* Our own rifle speaks for itself. */
+            if (e.a == s->me && !gamegun) break;
+            }
             if (s->game.weapons[e.weapon].vehicle &&
                 s->vfire_recipe[e.weapon] != HTA_PART_NO_RECIPE)
                 hta_particles_burst(&s->parts, s->vfire_recipe[e.weapon], e.pos, e.dir);
@@ -4496,9 +4523,11 @@ static void mirror_local(hta_android *s)
     if (!s->game_on || s->me<0 || s->me>=(int32_t)s->game.unit_count) return;
     hta_unit *local=&s->game.units[s->me];
     local->slot=s->held_slot&1u;
+    /* An imported weapon is its own roster entry, not its base's: by tag
+     * alone the broom went back to being a plasma pistol, for everyone. */
     for (unsigned slot=0;slot<2;slot++)
-        local->carry[slot].weapon=slot<s->held_count ?
-            hta_game_weapon_index(&s->game,s->held[slot]) : -1;
+        local->carry[slot].weapon=slot>=s->held_count ? -1 :
+            s->held_asset[slot]>=0 ? s->held_asset[slot] : hta_game_weapon_index(&s->game,s->held[slot]);
     local->carry[local->slot].ammo=s->ammo;
     unsigned other=local->slot^1u;
     if (other<HTA_CARRY_MAX && s->held_ammo_set[other]) local->carry[other].ammo=s->held_ammo[other];
@@ -5332,6 +5361,54 @@ Java_net_hta_halotrial_GameActivity_nativeHudSwap(JNIEnv *env, jclass cls)
     if (g_android) g_android->hud_swap = true;
 }
 
+/* The character's ability button, and how ready it is. */
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudAbility(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    if (g_android) g_android->hud_ability = true;
+}
+
+static _Atomic int g_ability_charge;     /* 0..1000 */
+/* Package manifests stay loaded for the match. Publish a pointer to their
+ * immutable label, so Java never reads a buffer while the game writes it. */
+static _Atomic(const char *) g_ability_name;
+
+JNIEXPORT jfloat JNICALL
+Java_net_hta_halotrial_GameActivity_nativeAbilityCharge(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    return (float)atomic_load(&g_ability_charge) / 1000.0f;
+}
+
+JNIEXPORT jstring JNICALL
+Java_net_hta_halotrial_GameActivity_nativeAbilityName(JNIEnv *env, jclass cls)
+{
+    (void)cls;
+    const char *name = atomic_load(&g_ability_name);
+    return (*env)->NewStringUTF(env, name ? name : "");
+}
+
+/* FLY: take off or come down, for a character that flies by itself. */
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudFly(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    if (g_android) g_android->hud_fly = true;
+}
+
+/* Which HUD buttons mean anything now, for the Java HUD: 1 can fly, 2 in
+ * the air, 4 the weapon zooms, 8 it reloads, 16 it is swung, 32 grenades
+ * in hand, 64 an ability is ready, 128 an ability exists. */
+static _Atomic int g_hud_caps;
+
+JNIEXPORT jint JNICALL
+Java_net_hta_halotrial_GameActivity_nativeHudCaps(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    return atomic_load(&g_hud_caps);
+}
+
 JNIEXPORT void JNICALL
 Java_net_hta_halotrial_GameActivity_nativeHudZoom(JNIEnv *env, jclass cls)
 {
@@ -5469,8 +5546,9 @@ static void vehicle_camera(hta_android *s)
 
 /* On a broom: out of your body and behind it, the way a Banshee's camera
  * rides, kept out of walls. Shots still leave from your eyes. Ours. */
-#define BROOM_CAM_BACK 1.7f
-#define BROOM_CAM_UP   0.35f
+#define BROOM_CAM_BACK  1.25f
+#define BROOM_CAM_UP    0.28f
+#define BROOM_CAM_RIGHT 0.28f   /* over the shoulder: you do not hide the aim */
 static void broom_camera(hta_android *s)
 {
     if (!s->player.fly || s->dead) return;
@@ -5478,7 +5556,11 @@ static void broom_camera(hta_android *s)
     float fwd[3];
     hta_camera_forward(&s->cam, fwd);
     float eye[3] = { s->cam.pos[0], s->cam.pos[1], s->cam.pos[2] };
-    float d[3] = { -fwd[0] * BROOM_CAM_BACK, -fwd[1] * BROOM_CAM_BACK, -fwd[2] * BROOM_CAM_BACK + BROOM_CAM_UP };
+    float right[3];
+    hta_camera_right(&s->cam, right);
+    float d[3] = { -fwd[0] * BROOM_CAM_BACK + right[0] * BROOM_CAM_RIGHT,
+                   -fwd[1] * BROOM_CAM_BACK + right[1] * BROOM_CAM_RIGHT,
+                   -fwd[2] * BROOM_CAM_BACK + BROOM_CAM_UP };
     float len = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
     if (len < 1e-4f) return;
     for (int k = 0; k < 3; k++) d[k] /= len;
@@ -5801,10 +5883,54 @@ void android_main(struct android_app *app)
         } else {
             /* A broom in hand: you fly (hta_player.fly), seated on it. */
             const hta_game_weapon *mount = held_imported(&state);
-            bool riding = mount && mount->mount && !state.dead && state.game_on;
+            bool broom = mount && mount->mount && !state.dead && state.game_on;
+            hta_body_attr body = hta_game_body(&state.game, state.me);
+            if (state.hud_fly) {
+                state.hud_fly = false;
+                if (body.can_fly && !broom && !state.dead) state.power_fly = !state.power_fly;
+            }
+            if (!body.can_fly || state.dead) state.power_fly = false;
+            bool riding = broom || state.power_fly;
             state.player.fly = riding;
-            state.player.fly_speed = riding ? mount->asset->fly_speed : 0.0f;
-            if (state.game_on && state.me >= 0) state.game.units[state.me].riding = riding;
+            state.player.fly_speed = broom ? mount->asset->fly_speed : riding ? body.fly_speed : 0.0f;
+            if (state.game_on && state.me >= 0) {
+                state.game.units[state.me].riding = riding;
+                state.game.units[state.me].flying = state.power_fly;
+            }
+            {
+                /* What the HUD should offer (nativeHudCaps). */
+                const hta_game_weapon *hw = held_imported(&state);
+                bool swung = hw && hw->melee_only;
+                /* The ability: fire it on its button, show how ready. */
+                float charge = state.game_on ? hta_game_ability_charge(&state.game, state.me) : -1.0f;
+                if (state.hud_ability) {
+                    state.hud_ability = false;
+                    if (charge >= 1.0f && !state.dead && (!state.net_enabled || state.net_hosting))
+                        hta_game_ability(&state.game, state.me);
+                }
+                if (charge >= 0.0f) {
+                    atomic_store(&g_ability_charge, (int)(charge * 1000.0f));
+                    const hta_unit *mu = &state.game.units[state.me];
+                    atomic_store(&g_ability_name, state.game.characters[mu->character]->ability_name);
+                } else {
+                    atomic_store(&g_ability_charge, 0);
+                    atomic_store(&g_ability_name, NULL);
+                }
+                /* A blow's push, onto your own body. */
+                if (state.game_on && state.me >= 0) {
+                    hta_unit *mu = &state.game.units[state.me];
+                    if (mu->knock[0] != 0.0f || mu->knock[1] != 0.0f || mu->knock[2] != 0.0f) {
+                        for (int k = 0; k < 3; k++) { state.player.velocity[k] += mu->knock[k]; mu->knock[k] = 0.0f; }
+                        state.player.on_ground = false;
+                    }
+                }
+                int caps = (charge >= 0.0f ? 128 : 0) | (charge >= 1.0f ? 64 : 0) |
+                           (body.can_fly && !broom ? 1 : 0) | (state.player.fly ? 2 : 0) |
+                           (state.weap.zoom_levels > 0 ? 4 : 0) |
+                           (!swung && state.ammo.recharge <= 0.0f && state.ammo.reserve_max > 0 ? 8 : 0) |
+                           (swung ? 16 : 0) | (state.nade_count > 0 ? 32 : 0);
+                atomic_store(&g_hud_caps, caps);
+            }
             hta_player_update(&state.player, &state.cam,
                 state.col.built ? &state.col : NULL, &in, dt);
         }

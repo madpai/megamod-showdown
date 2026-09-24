@@ -18,6 +18,7 @@ void hta_ammo_init(hta_ammo *a, const hta_weapon_def *w)
         if (w->rounds_per_shot > 0)    a->per_shot = w->rounds_per_shot;
         if (w->reload_time > 0.0f)     a->reload_time = w->reload_time;
         a->chamber_time = w->chamber_time;
+        a->recharge = w->recharge > 0.0f ? w->recharge : 0.0f;
         /* A magazine weapon reloads the whole magazine; a tag that says 0
          * (or something silly) would otherwise make reloading a no-op. */
         a->per_reload = (w->rounds_reloaded > 0) ? w->rounds_reloaded : a->mag_max;
@@ -64,6 +65,7 @@ bool hta_ammo_reload(hta_ammo *a)
 {
     if (!a) return false;
     a->reload_began = false;
+    if (a->recharge > 0.0f) return false;      /* it refills by itself */
     if (a->phase == HTA_AMMO_RELOADING) return false;
     if (a->loaded >= a->mag_max) return false;
     if (a->reserve <= 0) return false;
@@ -86,6 +88,11 @@ void hta_ammo_update(hta_ammo *a, float dt)
     if (!a) return;
     a->reload_done = false;
     a->reload_began = false;
+    if (a->recharge > 0.0f && a->loaded < a->mag_max) {
+        a->recharge_acc += a->recharge * dt;
+        while (a->recharge_acc >= 1.0f && a->loaded < a->mag_max) { a->loaded++; a->recharge_acc -= 1.0f; }
+        if (a->loaded >= a->mag_max) a->recharge_acc = 0.0f;
+    }
     if (a->phase != HTA_AMMO_RELOADING) return;
 
     a->timer -= dt;
