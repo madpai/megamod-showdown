@@ -264,6 +264,15 @@ typedef struct {
     float    killcam_fov;       /* the view's own, to zoom from */
     char     killcam_weapon[48];
     hta_camera killcam_cam;     /* the frozen view, held until the fade */
+    /* The class screen's character preview: which body and weapon are up,
+     * their GPU copies, the posed body and how long it has turned. */
+    int32_t  prev_char, prev_weap, prev_roster;
+    int32_t  next_character;    /* a class's body for the next respawn; -2 none */
+    hta_gfx_mesh *gpu_prev_body, *gpu_prev_weap;
+    hta_vertex *prev_posed;
+    uint32_t prev_cap;
+    float    prev_height, prev_time;
+    float    prev_world[HTA_OAL_MAX_BONES][12];
     float    ding_cool;         /* one ding per volley, not per pellet */
     struct { float pos[3]; float amount, age; int32_t victim; } dmg[16];
     /* A custom-class match holds you out of it until you have picked. */
@@ -345,6 +354,7 @@ typedef struct {
     uint32_t      flag_take_snd;
     hta_gfx_mesh *gpu_units[HTA_GAME_MAX_UNITS];
     hta_gfx_mesh *gpu_held[HTA_GAME_MAX_WEAPONS];
+    int8_t   gpu_unit_char[HTA_GAME_MAX_UNITS];   /* which body gpu_units[i] holds */
     hta_gfx_mesh *gpu_pools[HTA_GAME_MAX_POOLS];
     uint32_t      pool_recipe[HTA_GAME_MAX_POOLS];
     /* A vehicle going up, and sparks off a hull that is nearly gone. */
@@ -1182,6 +1192,10 @@ static void respawn(hta_android *s)
     s->killcam_unit = -1;
     s->killcam_phase = 0;
     atomic_store(&g_killcam_ready, 0);
+    if (s->game_on && s->me >= 0 && s->next_character != -2) {
+        s->game.units[s->me].character = (int8_t)s->next_character;
+        s->next_character = -2;
+    }
     if (s->game_on) {
         hta_game_revive(&s->game, s->me);
         hta_game_sync_local(&s->game, &s->player, &s->cam, held_roster(s));
@@ -1785,8 +1799,9 @@ static void catalog_build(hta_android *s)
         if (w > 0 && (size_t)w < sizeof(g_catalog) - len) len += (size_t)w;
     }
     for (uint32_t k = 0; k < s->imp_char_count; k++) {
-        int w = snprintf(g_catalog + len, sizeof(g_catalog) - len, "C\t%s\t%s\n", s->imp_char[k].name,
-                         s->imp_char[k].display);
+        /* A body and its default class: "C<TAB>id<TAB>name<TAB>primary<TAB>secondary". */
+        int w = snprintf(g_catalog + len, sizeof(g_catalog) - len, "C\t%s\t%s\t%s\t%s\n", s->imp_char[k].name,
+                         s->imp_char[k].display, s->imp_char[k].loadout[0], s->imp_char[k].loadout[1]);
         if (w > 0 && (size_t)w < sizeof(g_catalog) - len) len += (size_t)w;
     }
     atomic_store(&g_catalog_ready, 1);
@@ -1827,7 +1842,7 @@ Java_net_hta_halotrial_GameActivity_nativeSetLoadout(JNIEnv *env, jclass cls, js
 }
 
 /* A class picked in play: before your first spawn, or for the next one. */
-static struct { char cls[2][48]; } g_chosen;
+static struct { char cls[2][48]; char character[48]; } g_chosen;
 static _Atomic int g_chosen_ready;
 /* 1: held out until a class is picked; 2: the match has classes. */
 static _Atomic int g_class_state;
@@ -1840,12 +1855,17 @@ Java_net_hta_halotrial_GameActivity_nativeClassState(JNIEnv *env, jclass cls)
 }
 
 JNIEXPORT void JNICALL
-Java_net_hta_halotrial_GameActivity_nativeChooseClass(JNIEnv *env, jclass cls, jstring primary,
-                                                      jstring secondary)
+Java_net_hta_halotrial_GameActivity_nativeChooseClass(JNIEnv *env, jclass cls, jstring character,
+                                                      jstring primary, jstring secondary)
 {
     (void)cls;
     if (atomic_load(&g_chosen_ready)) return;
     const char *u;
+    g_chosen.character[0] = 0;
+    if (character && (u = (*env)->GetStringUTFChars(env, character, NULL))) {
+        snprintf(g_chosen.character, sizeof(g_chosen.character), "%s", u);
+        (*env)->ReleaseStringUTFChars(env, character, u);
+    }
     jstring in[2] = { primary, secondary };
     for (int k = 0; k < 2; k++) {
         g_chosen.cls[k][0] = 0;
@@ -1865,6 +1885,14 @@ static void class_poll(hta_android *s)
         if (on) {
             for (int k = 0; k < 2; k++) snprintf(s->my_class[k], sizeof(s->my_class[k]), "%s", g_chosen.cls[k]);
             class_apply(s);
+            /* The class's body: now, before the first spawn; at the next
+             * respawn when picked from the pause screen. */
+            int32_t body = -1;
+            for (uint32_t k = 0; k < s->game.character_count; k++)
+                if (!strcmp(s->game.characters[k]->name, g_chosen.character)) body = (int32_t)k;
+            snprintf(s->my_character, sizeof(s->my_character), "%s", g_chosen.character);
+            s->next_character = body;
+            if (s->choosing && s->me >= 0) s->game.units[s->me].character = (int8_t)body;
             if (s->choosing) {
                 s->choosing = false;
                 /* Through the black, in. */
@@ -2661,8 +2689,11 @@ static void game_gpu_upload(hta_android *s)
     char err[HTA_ERRLEN];
     for (uint32_t i = 0; i < s->game.unit_count; i++)
         if (s->gview.actor[i].loaded && !s->gpu_units[i])
+        {
             s->gpu_units[i] = hta_gfx_mesh_upload_dynamic_world(s->gfx,
                 hta_game_view_body_mesh(&s->gview, &s->game, i), err, sizeof(err));
+            s->gpu_unit_char[i] = s->game.units[i].character;
+        }
     for (uint32_t w = 0; w < s->game.weapon_count; w++)
         if (s->gview.have_weapon[w] && !s->gpu_held[w])
             s->gpu_held[w] = hta_gfx_mesh_upload(s->gfx, &s->gview.weapon_mesh[w], err, sizeof(err));
@@ -3226,6 +3257,15 @@ static uint32_t game_draw(hta_android *s, hta_gfx_dynamic *dyn, uint32_t n)
     for (uint32_t i = 0; i < s->game.unit_count && n < HTA_GFX_MAX_DYNAMIC; i++) {
         if ((int32_t)i == view_skip(s) || !s->gview.shown[i] || !s->gpu_units[i])
             continue;
+        if (s->gpu_unit_char[i] != s->game.units[i].character) {
+            /* A new body (a class pick, a joiner's model): its own mesh. */
+            char err[HTA_ERRLEN];
+            hta_gfx_mesh_free(s->gfx, s->gpu_units[i]);
+            s->gpu_units[i] = hta_gfx_mesh_upload_dynamic_world(s->gfx,
+                hta_game_view_body_mesh(&s->gview, &s->game, i), err, sizeof(err));
+            s->gpu_unit_char[i] = s->game.units[i].character;
+            if (!s->gpu_units[i]) continue;
+        }
         dyn[n].mesh = s->gpu_units[i];
         dyn[n].vertices = hta_game_view_body_vertices(&s->gview, &s->game, i);
         dyn[n].vertex_count = hta_game_view_body_mesh(&s->gview, &s->game, i)->vertex_count;
@@ -3744,6 +3784,125 @@ Java_net_hta_halotrial_GameActivity_nativeSetMenuArt(JNIEnv *env, jclass cls, ji
     if (px) (*env)->ReleaseIntArrayElements(env, argb, px, JNI_ABORT);
 }
 
+/* ------------------------------------------------ class preview */
+
+/* What the class screen wants shown: a character by package id ("" for the
+ * Spartan) holding a weapon by the name the game shows. Java writes it,
+ * the game thread reads it; `on` says whether a class screen is up. */
+static _Atomic int g_preview_on;
+static char g_preview_char[48], g_preview_weap[48];
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeSetPreview(JNIEnv *env, jclass cls, jstring character,
+                                                     jstring weapon, jint on)
+{
+    (void)cls;
+    const char *u;
+    if (character && (u = (*env)->GetStringUTFChars(env, character, NULL))) {
+        snprintf(g_preview_char, sizeof(g_preview_char), "%s", u);
+        (*env)->ReleaseStringUTFChars(env, character, u);
+    }
+    if (weapon && (u = (*env)->GetStringUTFChars(env, weapon, NULL))) {
+        snprintf(g_preview_weap, sizeof(g_preview_weap), "%s", u);
+        (*env)->ReleaseStringUTFChars(env, weapon, u);
+    }
+    atomic_store(&g_preview_on, on ? 1 : 0);
+}
+
+/* The body turning slowly in its idle, the class's primary in hand, on the
+ * right of the screen (the class list is on the left). Imported bodies
+ * only: the Spartan's comes from a loaded map, so the menu shows none. */
+static void preview_draw(hta_android *s, float dt)
+{
+    rebuild_gfx_if_size_changed(s);
+    if (!s->gfx) return;
+    char want_c[48], want_w[48];
+    snprintf(want_c, sizeof(want_c), "%s", g_preview_char);
+    snprintf(want_w, sizeof(want_w), "%s", g_preview_weap);
+    int32_t ci = -1;
+    for (uint32_t k = 0; k < s->imp_char_count; k++) if (!strcmp(s->imp_char[k].name, want_c)) ci = (int32_t)k;
+    int32_t wi = -1, ri = -1;
+    for (uint32_t k = 0; k < s->imp_weap_count && wi < 0; k++)
+        if (!strcasecmp(s->imp_weap[k].display, want_w)) wi = (int32_t)k;
+    if (wi < 0 && s->game_on)
+        for (uint32_t w = 0; w < s->game.weapon_count && ri < 0; w++)
+            if (!s->game.weapons[w].asset && !strcasecmp(s->game.weapons[w].display, want_w) &&
+                s->gpu_held[w]) ri = (int32_t)w;
+    char err[HTA_ERRLEN];
+    if (ci != s->prev_char) {
+        if (s->gpu_prev_body) { hta_gfx_mesh_free(s->gfx, s->gpu_prev_body); s->gpu_prev_body = NULL; }
+        s->prev_char = ci;
+        s->prev_time = 0.0f;
+        if (ci >= 0) {
+            const hta_oal_model *m = &s->imp_char[ci].models[0];
+            s->gpu_prev_body = hta_gfx_mesh_upload_dynamic_world(s->gfx, &m->mesh, err, sizeof(err));
+            if (s->prev_cap < m->mesh.vertex_count) {
+                free(s->prev_posed);
+                s->prev_posed = malloc(m->mesh.vertex_count * sizeof(hta_vertex));
+                s->prev_cap = s->prev_posed ? m->mesh.vertex_count : 0;
+            }
+            s->prev_height = 0.0f;
+            for (uint32_t v = 0; v < m->mesh.vertex_count; v++)
+                if (m->mesh.vertices[v].pos[2] > s->prev_height) s->prev_height = m->mesh.vertices[v].pos[2];
+        }
+    }
+    if (wi != s->prev_weap) {
+        if (s->gpu_prev_weap) { hta_gfx_mesh_free(s->gfx, s->gpu_prev_weap); s->gpu_prev_weap = NULL; }
+        s->prev_weap = wi;
+        if (wi >= 0)
+            s->gpu_prev_weap = hta_gfx_mesh_upload(s->gfx, &s->imp_weap[wi].models[0].mesh, err, sizeof(err));
+    }
+    s->prev_roster = ri;
+    s->prev_time += dt;
+    uint32_t w = 0, h = 0;
+    hta_gfx_extent(s->gfx, &w, &h);
+    hta_camera cam;
+    float root[12];
+    hta_preview_frame(s->prev_height, h ? (float)w / (float)h : 1.777f, 0.35f + s->prev_time * 0.5f, root, &cam);
+    hta_gfx_dynamic dyn;
+    memset(&dyn, 0, sizeof(dyn));
+    uint32_t nd = 0;
+    hta_gfx_instance inst;
+    uint32_t ni = 0;
+    if (ci >= 0 && s->gpu_prev_body && s->prev_posed) {
+        const hta_oal_model *m = &s->imp_char[ci].models[0];
+        int32_t idle = hta_oal_clip_find(m, "idle");
+        hta_oal_pose(m, idle, s->prev_time, s->prev_world);
+        hta_oal_skin(m, (const float (*)[12])s->prev_world, root, s->prev_posed);
+        dyn.mesh = s->gpu_prev_body; dyn.vertices = s->prev_posed;
+        dyn.vertex_count = m->mesh.vertex_count; dyn.lit = true;
+        nd = 1;
+        float m34[12];
+        bool held = false;
+        if (wi >= 0 && s->gpu_prev_weap) {
+            held = hta_imported_hold_matrix(m, (const float (*)[12])s->prev_world, root,
+                                            &s->imp_weap[wi].models[0], m34);
+            inst.mesh = s->gpu_prev_weap;
+        } else if (ri >= 0) {
+            held = hta_imported_halo_in_source_hand(m, (const float (*)[12])s->prev_world, root, m34);
+            inst.mesh = s->gpu_held[ri];
+        }
+        if (held) {
+            hta_oal_to_mat4(m34, inst.model);
+            inst.first_submesh = inst.submesh_count = 0;
+            inst.lit = true;
+            ni = 1;
+        }
+    }
+    hta_gfx_set_instances(s->gfx, &inst, ni);
+    /* Ours: a warm studio light on a dark, smoky ground. */
+    hta_scene sc;
+    memset(&sc, 0, sizeof(sc));
+    sc.light_dir[0] = 0.55f; sc.light_dir[1] = -0.35f; sc.light_dir[2] = 0.75f;
+    sc.light_color[0] = 0.95f; sc.light_color[1] = 0.85f; sc.light_color[2] = 0.75f;
+    sc.ambient[0] = 0.42f; sc.ambient[1] = 0.40f; sc.ambient[2] = 0.42f;
+    sc.clear[0] = 0.07f; sc.clear[1] = 0.05f; sc.clear[2] = 0.05f;
+    if (!hta_gfx_draw(s->gfx, &cam, &sc, NULL, NULL, NULL, nd ? &dyn : NULL, nd, NULL, NULL)) {
+        stop_gfx(s);
+        if (s->app->window) start_gfx(s);
+    }
+}
+
 /* One menu frame: the camera drifts, the words answer the finger, the
  * music plays. */
 static void menu_frame(hta_android *s, float dt)
@@ -3789,6 +3948,7 @@ static void menu_frame(hta_android *s, float dt)
     hta_audio_android_poll(&s->audio);
     hta_menu_update(&s->menu, dt);
     if (!s->has_window || !s->gfx) return;
+    if (atomic_load(&g_preview_on)) { preview_draw(s, dt); return; }
     rebuild_gfx_if_size_changed(s);
     if (!s->gfx) return;
     uint32_t w = 0, h = 0;
@@ -4104,6 +4264,9 @@ static void start_gfx(hta_android *s)
 
 static void stop_gfx(hta_android *s)
 {
+    if (s->gpu_prev_body) { hta_gfx_mesh_free(s->gfx, s->gpu_prev_body); s->gpu_prev_body = NULL; }
+    if (s->gpu_prev_weap) { hta_gfx_mesh_free(s->gfx, s->gpu_prev_weap); s->gpu_prev_weap = NULL; }
+    s->prev_char = s->prev_weap = s->prev_roster = -2;
     game_gpu_free(s);
     menu_gpu_free(s);
     for (int slot=0;slot<2;slot++)
@@ -5415,6 +5578,8 @@ void android_main(struct android_app *app)
     state.ivm_weapon = -1;
     state.ding_clip = state.kill_clip = state.freeze_clip = state.snap_clip = HTA_AUDIO_NO_CLIP;
     state.killcam_unit = -1;
+    state.prev_char = state.prev_weap = state.prev_roster = -2;
+    state.next_character = -2;
     g_android = &state;
     state.hud_ready = g_hud_wanted;
     char net_host[64]; bool net_hosting=false;
@@ -6666,6 +6831,10 @@ void android_main(struct android_app *app)
                 state.gpu_fx = hta_gfx_mesh_upload(state.gfx, &state.gun.mesh, err, sizeof(err));
         }
 
+        /* A class screen up: its character preview instead of the world. */
+        if (atomic_load(&g_preview_on) && state.has_window && state.gfx) {
+            preview_draw(&state, dt);
+        } else
         /* A frozen killcam keeps the last frame on screen: nothing drawn. */
         if (state.has_window && state.gfx &&
             !(state.killcam_phase == 2 && state.dead && state.dead_timer > HTA_DEATH_FADE_OUT)) {

@@ -87,6 +87,9 @@ typedef struct {
      * size on the 640x480 HUD canvas. Empty keeps the base weapon's. */
     char     crosshair[32];
     float    crosshair_size;
+    /* Characters: the default class, two weapon names as the game shows
+     * them ("AK-47", "pistol"); empty when the package names none. */
+    char     loadout[2][48];
     hta_oal_model models[HTA_OAL_MAX_MODELS];   /* weapon: [0] world, [1] view */
     uint32_t model_count;
     hta_oal_sound sounds[HTA_OAL_MAX_SOUNDS];

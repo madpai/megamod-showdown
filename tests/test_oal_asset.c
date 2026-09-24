@@ -100,10 +100,11 @@ int main(void)
     printf("oal asset tests\n");
     char err[256];
     static hta_oal_asset ch, wp, bad;
-    buf c = package("{\"kind\":\"character\",\"name\":\"guy\"}", 1, false);
+    buf c = package("{\"kind\":\"character\",\"loadout\":[\"AK-47\",\"pistol\"],\"name\":\"guy\"}", 1, false);
     CHECK(hta_oal_load_memory(c.d, c.n, &ch, err, sizeof(err)), "a character package loads");
     const hta_oal_model *m = &ch.models[0];
     CHECK(m->bone_count == 2 && !strcmp(m->bone_name[1], "ValveBiped.weapon_bone"), "bones and names read");
+    CHECK(!strcmp(ch.loadout[0], "AK-47") && !strcmp(ch.loadout[1], "pistol"), "a character's default loadout reads");
     CHECK(m->mesh.texture_count == 2 && m->mesh.submeshes[0].change_color &&
           m->mesh.textures[1].rgba[2] == HTA_OAL_TEAM_TINT, "a character gets its team-colour mask");
     int32_t idle = hta_oal_clip_find(m, "idle");

@@ -196,6 +196,18 @@ bool hta_oal_load_memory(const uint8_t *data, size_t size, hta_oal_asset *out, c
     json_str(j, ml, "crosshair", out->crosshair, sizeof(out->crosshair));
     out->crosshair_size = json_num(j, ml, "crosshair_size");
     {
+        /* "loadout":["primary","secondary"] */
+        const char *v = json_find(j, ml, "loadout");
+        for (int k = 0; v && k < 2; k++) {
+            while (v < j + ml && *v != '"' && *v != ']') v++;
+            if (v >= j + ml || *v != '"') break;
+            size_t n = 0;
+            for (v++; v < j + ml && *v != '"' && n + 1 < sizeof(out->loadout[k]); v++) out->loadout[k][n++] = *v;
+            out->loadout[k][n] = 0;
+            if (v < j + ml) v++;
+        }
+    }
+    {
         const char *v = json_find(j, ml, "view_model_mirrored");
         out->view_mirrored = v && !strncmp(v, "true", 4);
     }

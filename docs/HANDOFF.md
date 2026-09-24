@@ -185,7 +185,21 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **MEGAMOD SHOWDOWN app + hit feedback + killcam (this build, 2026-09-24):**
+> **Title-art menu + classes v2 (this build, 2026-09-24):**
+> 1. Main menu: the owner's cover art (ring and HALO logo gone), the
+>    menu words in cream/orange in the band on the right; Halo music kept.
+> 2. Classes are a CHARACTER + two weapons. Every character has a preset
+>    (its package's default loadout: Leet AK-47+pistol, Urban AR+pistol,
+>    Kleiner .357+shotgun, Alyx .357+plasma pistol, Spartan AR+pistol);
+>    up to 8 custom classes (+ NEW CUSTOM CLASS, then CHARACTER / PRIMARY /
+>    SECONDARY / DELETE). One screen serves match setup (MY CLASS), the
+>    pre-spawn picker and the pause screen's CHANGE CLASS. The selected
+>    class's character turns slowly on the right holding its primary (not
+>    the Spartan: Halo's body needs a loaded map). In a (CUSTOM) game the
+>    class's character is your body; a pause-screen change applies at your
+>    next respawn. The old three classes became CUSTOM 1-3.
+>
+> **MEGAMOD SHOWDOWN app + hit feedback + killcam (previous build, 2026-09-24):**
 > 0. It is a NEW app now (`net.megamod.showdown`, icon from the owner's
 >    cover art) on its own page, **http://100.89.1.14:8733/**, installing
 >    beside Open Halo's (8731 stays Open Halo's). First launch is a fresh

@@ -43,4 +43,11 @@ bool hta_imported_halo_in_source_hand(const hta_oal_model *body, const float (*w
  * "crouch rifle move-left" or "stand pistol airborne". */
 const char *hta_imported_role(const char *halo_base);
 
+/* The class screen's character preview: a body `height` tall standing at
+ * the origin, turned `yaw`, framed in the right part of a screen of this
+ * aspect (the left carries the menu). Writes the body's root and the
+ * camera. Ours. */
+#include "../engine/camera.h"
+void hta_preview_frame(float height, float aspect, float yaw, float root[12], hta_camera *cam);
+
 #endif

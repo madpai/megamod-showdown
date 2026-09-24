@@ -64,7 +64,7 @@ int main(int argc, char **argv)
             printf(" %s(%u@%.0f)", m->clips[c].role, m->clips[c].frames, m->clips[c].fps);
         printf("\n");
     }
-    const unsigned W = 640, H = 480;
+    const unsigned W = getenv("OAL_PREVIEW") ? 1040u : 640u, H = 480;
     hta_gfx *gfx = hta_gfx_create_offscreen(W, H, err, sizeof(err));
     if (!gfx) { fprintf(stderr, "renderer: %s\n", err); return 1; }
     hta_bsp_mesh ground;
@@ -77,7 +77,38 @@ int main(int argc, char **argv)
     static float world[HTA_OAL_MAX_BONES][12];
     char path[1024];
 
-    if (!strcmp(a.kind, "character")) {
+    if (!strcmp(a.kind, "character") && getenv("OAL_PREVIEW")) {
+        /* The class screen's framing: OAL_PREVIEW=yaw_degrees. */
+        const hta_oal_model *m = &a.models[0];
+        hta_gfx_mesh *gm = hta_gfx_mesh_upload_dynamic_world(gfx, &m->mesh, err, sizeof(err));
+        hta_gfx_mesh *gw = have_held ? hta_gfx_mesh_upload(gfx, &held.models[0].mesh, err, sizeof(err)) : NULL;
+        hta_vertex *posed = malloc(m->mesh.vertex_count * sizeof(hta_vertex));
+        float hi = 0.0f;
+        for (uint32_t v = 0; v < m->mesh.vertex_count; v++) if (m->mesh.vertices[v].pos[2] > hi) hi = m->mesh.vertices[v].pos[2];
+        float root[12];
+        hta_camera cam;
+        hta_preview_frame(hi, (float)W / H, strtof(getenv("OAL_PREVIEW"), NULL) / 57.29578f, root, &cam);
+        int32_t idle = hta_oal_clip_find(m, "idle");
+        hta_oal_pose(m, idle, 0.3f, world);
+        hta_oal_skin(m, (const float (*)[12])world, root, posed);
+        hta_gfx_dynamic dyn = { .mesh = gm, .vertices = posed, .vertex_count = m->mesh.vertex_count, .lit = true };
+        hta_gfx_instance inst; uint32_t ni = 0; float hand[12];
+        if (gw && hta_imported_hold_matrix(m, (const float (*)[12])world, root, &held.models[0], hand)) {
+            inst.mesh = gw; hta_oal_to_mat4(hand, inst.model);
+            inst.first_submesh = inst.submesh_count = 0; inst.lit = true; ni = 1;
+        }
+        hta_gfx_set_instances(gfx, &inst, ni);
+        hta_scene ps = scene; ps.clear[0] = 0.06f; ps.clear[1] = 0.05f; ps.clear[2] = 0.05f;
+        if (hta_gfx_draw(gfx, &cam, &ps, NULL, NULL, NULL, &dyn, 1, NULL, NULL) &&
+            hta_gfx_readback(gfx, px, (size_t)W * H * 4)) {
+            snprintf(path, sizeof(path), "%s_preview.ppm", argv[2]);
+            ppm(path, px, W, H); shots++;
+            printf("  preview: height %.2f wu\n", hi);
+        }
+        free(posed);
+        hta_gfx_mesh_free(gfx, gm);
+        if (gw) hta_gfx_mesh_free(gfx, gw);
+    } else if (!strcmp(a.kind, "character")) {
         const hta_oal_model *m = &a.models[0];
         hta_gfx_mesh *gm = hta_gfx_mesh_upload_dynamic_world(gfx, &m->mesh, err, sizeof(err));
         hta_gfx_mesh *gw = have_held ? hta_gfx_mesh_upload(gfx, &held.models[0].mesh, err, sizeof(err)) : NULL;

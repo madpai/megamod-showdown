@@ -1,4 +1,5 @@
 #include "imported.h"
+#include <math.h>
 #include <string.h>
 
 /* The body's hand, in order of preference: Source's weapon bone, its
@@ -120,4 +121,31 @@ bool hta_imported_halo_in_source_hand(const hta_oal_model *body, const float (*w
     hta_oal_mul(at, inv_bone, t);
     hta_oal_mul(t, inv_hfs, out);
     return true;
+}
+
+/* Framing, ours: the body fills about 70% of the view's height and stands
+ * at 72% of its width, the camera a touch above its middle. */
+#define PREVIEW_FOV    0.70f
+#define PREVIEW_FILL   0.80f
+#define PREVIEW_X      0.44f    /* screen x in NDC, -1 left .. 1 right */
+
+void hta_preview_frame(float height, float aspect, float yaw, float root[12], hta_camera *cam)
+{
+    if (height < 0.05f) height = 0.6f;
+    if (aspect < 0.2f) aspect = 16.0f / 9.0f;
+    float cy = cosf(yaw), sy = sinf(yaw);
+    const float r[12] = { cy, -sy, 0, 0,   sy, cy, 0, 0,   0, 0, 1, 0 };
+    memcpy(root, r, sizeof(r));
+    hta_camera_init(cam);
+    cam->fov_y = PREVIEW_FOV;
+    cam->aspect = aspect;
+    cam->znear = 0.02f; cam->zfar = 50.0f;
+    float t = tanf(PREVIEW_FOV * 0.5f);
+    float d = height * 0.5f / PREVIEW_FILL / t;
+    /* Looking down -X, +Y is screen right: step left so the body sits right. */
+    cam->pos[0] = d;
+    cam->pos[1] = -PREVIEW_X * d * t * aspect;
+    cam->pos[2] = height * 0.52f;
+    cam->yaw = 3.14159265f;
+    cam->pitch = 0.0f;
 }
