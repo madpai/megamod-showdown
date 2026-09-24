@@ -48,6 +48,41 @@ static void spawn_teams(const unsigned char *m, size_t ml, hta_spawn_point *sp, 
     }
 }
 
+/* "flag_points":[{"team":0,"position":[x,y,z]},...] -- Asset Lab's own
+ * order and spelling, runtime units. */
+static void flag_points(const unsigned char *m, size_t ml, hta_external_map *out)
+{
+    static const char key[]="\"flag_points\":[", team[]="\"team\":", pos[]="\"position\":[";
+    const unsigned char *end=m+ml, *at=NULL;
+    for(const unsigned char *p=m;p+sizeof(key)-1<=end;p++)
+        if(!memcmp(p,key,sizeof(key)-1)){at=p+sizeof(key)-1;break;}
+    for(int i=0;at && at<end && i<2;i++){
+        while(at<end && *at!='{' && *at!=']') at++;
+        if(at>=end || *at!='{') return;
+        const unsigned char *close=at;
+        while(close<end && *close!='}') close++;
+        if(close>=end) return;
+        int t=-1; float v[3]; bool got=false;
+        for(const unsigned char *p=at;p+sizeof(team)-1<=close;p++)
+            if(!memcmp(p,team,sizeof(team)-1)){
+                unsigned char c=p[sizeof(team)-1];
+                if(c=='0'||c=='1') t=c-'0';
+                break;
+            }
+        for(const unsigned char *p=at;p+sizeof(pos)-1<=close;p++)
+            if(!memcmp(p,pos,sizeof(pos)-1)){
+                char tmp[128]; size_t n=(size_t)(close-(p+sizeof(pos)-1));
+                if(n>=sizeof(tmp)) n=sizeof(tmp)-1;
+                memcpy(tmp,p+sizeof(pos)-1,n); tmp[n]=0;
+                got=sscanf(tmp,"%f , %f , %f",&v[0],&v[1],&v[2])==3 &&
+                    isfinite(v[0]) && isfinite(v[1]) && isfinite(v[2]);
+                break;
+            }
+        if(t>=0 && got && !out->has_flag[t]){ out->has_flag[t]=true; memcpy(out->flag[t],v,sizeof(v)); }
+        at=close+1;
+    }
+}
+
 bool hta_external_map_load(const char *path, hta_external_map *out, char *err, size_t errlen)
 {
     if(!path||!out)return fail(err,errlen,"invalid arguments");
@@ -148,6 +183,7 @@ bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external
     }
     at+=(size_t)sc*16;
     spawn_teams(data+64,ml,out->spawns,sc);
+    flag_points(data+64,ml,out);
     out->key=2166136261u;
     for(uint32_t i=0;i<ml;i++) out->key=(out->key^data[64+i])*16777619u;
     if(at!=size){fail(err,errlen,"unexpected trailing package bytes");goto done;}

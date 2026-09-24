@@ -181,7 +181,26 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Class picker, spawn protection, your own body (this build):**
+> **CTF_2FORT and three more weapons (this build, 2026-09-24):**
+> 1. MAP row: **CTF_2FORT** (TF2). Try CAPTURE THE FLAG and TEAM SLAYER.
+>    The flags stand in the intelligence rooms (from the map's
+>    item_teamflag). All sliding doors are imported OPEN (nothing opens a
+>    door here); the 3D skybox and additive light shafts are left out.
+>    It is heavy: 1.24M triangles (props at their LOD 1), 210 MB package,
+>    texture budget full. Report fps, load time (the first load builds
+>    the bot grid, ~9 s on the desktop, maybe 20-30 s on the phone, then
+>    cached), and anything you can walk through or fall out of.
+> 2. Class weapons now include **Rocket Launcher (TF2)** (4 rockets, x0.6
+>    Halo rocket damage), **Scattergun (TF2)** (6 shells) and **.357
+>    Magnum (HL2)** (6 rounds, x1.6 pistol damage). Check each in first
+>    person (TF2 Soldier/Scout arms, HEV hands) and held by bodies.
+> 3. Engine changes that touch every imported map (nav cache rebuilds once
+>    per map): the bot grid is twice as fine on imported maps (0.175 wu),
+>    looks under more than six stacked surfaces, and refuses links a body
+>    cannot fit through; a push out of a wall into the void is refused.
+>    Bots on 2fort fight (35 kills per 5 min) but have not captured yet.
+>
+> **Class picker, spawn protection, your own body (previous build):**
 > 1. Player model T_LEET: die, and the death camera now shows T_LEET
 >    toppling (it showed the Spartan corpse before -- the local player's
 >    death used its own Halo actor, not the game's body).
@@ -444,6 +463,13 @@ files. What in this engine they would replace:
     runtime lift, then a body stands 5 s and walks 5 s; it reports
     "bodies that fell out of the map". `htamatch` prints playable nodes;
     `HTA_DEBUG_UNITS=1` adds each bot's target, item and path.
+    More htamatch probes (added for 2fort, 2026-09-24):
+    `HTA_DEBUG_NAV=<start>` (paths from that start to every other, the
+    region that can reach it, whether each flag is reachable),
+    `HTA_DEBUG_NAV_NODES=1` (with it: every node of that region),
+    `HTA_DEBUG_PROBE="x0 x1 y z"` / `HTA_DEBUG_PROBEY="x y0 y1 z"` (floor,
+    headroom, the wall push and how deep the floor lies, along a line),
+    `HTA_DEBUG_TRACE=<unit>` (a unit's position ten times a second).
 - **Non-solid props**: group flag bit 0 (`HTA_EXTERNAL_GROUP_NO_COLLISION`)
   leaves a group out of `solid_indices`; collision is built from
   `hta_external_map_collision_view` on a 256-across grid

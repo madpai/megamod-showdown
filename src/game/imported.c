@@ -48,6 +48,24 @@ bool hta_imported_hold_matrix(const hta_oal_model *body, const float (*world)[12
         hta_oal_mul(root, t, out);
         return true;
     }
+    /* Or a weapon attachment by that name: a grip Asset Lab gave a world
+     * model that has no weapon bone of its own (HL2's .357). */
+    for (uint32_t wa = 0; wa < weapon->att_count; wa++) {
+        const hta_oal_attachment *w = &weapon->att[wa];
+        if (w->bone < 0 || (uint32_t)w->bone >= weapon->bone_count) continue;
+        float at[12];
+        int32_t bb = hta_oal_bone_find(body, w->name);
+        int32_t ba = bb < 0 ? hta_oal_attachment_find(body, w->name) : -1;
+        if (bb >= 0) memcpy(at, world[bb], sizeof(at));
+        else if (ba >= 0) hta_oal_mul(world[body->att[ba].bone], body->att[ba].local, at);
+        else continue;
+        float grip[12], inv[12], t[12];
+        hta_oal_mul(wbind[w->bone], w->local, grip);
+        hta_oal_invert(grip, inv);
+        hta_oal_mul(at, inv, t);
+        hta_oal_mul(root, t, out);
+        return true;
+    }
     /* No shared bone: the weapon model's origin at the body's hand, as
      * Source does when it cannot bone-merge. */
     return hta_imported_hand_frame(body, world, root, out);

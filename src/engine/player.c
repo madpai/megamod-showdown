@@ -897,6 +897,16 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
 
             float bx = p->pos[0], by = p->pos[1];
             hta_collision_depenetrate(col, &p->pos[0], &p->pos[1], p->pos[2], ph, p->radius);
+            /* Never pushed out into the void. A one-sided wall's corner
+             * (an imported map's outer wall has no back face) can shove a
+             * body through it into space with nothing under it at all; a
+             * push that leaves every floor behind is refused. A drop to
+             * any floor, however far down, is still allowed. */
+            if ((p->pos[0] != bx || p->pos[1] != by) &&
+                !hta_collision_ground(col, p->pos[0], p->pos[1], probe_z, &gz) &&
+                hta_collision_ground(col, bx, by, probe_z, &gz)) {
+                p->pos[0] = bx; p->pos[1] = by;
+            }
             /* Cancel velocity into the wall or the next frame sinks back in. */
             float pdx = p->pos[0] - bx, pdy = p->pos[1] - by;
             float plen2 = pdx * pdx + pdy * pdy;

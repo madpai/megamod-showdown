@@ -170,7 +170,8 @@ int main(int argc, char **argv)
     game.rng ^= seed * 0x9E3779B9u;
     hta_collision_set_slope(&col, game.phys.max_slope);
     double t0 = hta_time_seconds();
-    hta_nav_params prm = { game.phys.radius, game.phys.coll_stand, game.phys.max_slope, 1.0f };
+    hta_nav_params prm = { game.phys.radius, game.phys.coll_stand, game.phys.max_slope, 1.0f,
+                           oalmap ? HTA_NAV_CELL_FINE : 0.0f };
     if (!hta_nav_build(&nav, &col, bmin, bmax, &prm, err, sizeof(err))) {
         fprintf(stderr, "nav: %s\n", err); return 1;
     }
@@ -187,7 +188,89 @@ int main(int argc, char **argv)
         uint32_t np = 0;
         playable = hta_nav_playable(&nav, ext.spawns, ext.spawn_count, &np);
         printf("playable       %u of %u nodes reachable from a start and back\n", np, nav.node_count);
+        /* HTA_DEBUG_PROBE="x0 x1 y z": ground and headroom along x. */
+        /* HTA_DEBUG_PROBEY="x y0 y1 z": the same along y. */
+        if (getenv("HTA_DEBUG_PROBEY")) {
+            float x, y0, y1, z;
+            if (sscanf(getenv("HTA_DEBUG_PROBEY"), "%f %f %f %f", &x, &y0, &y1, &z) == 4)
+                for (float y = y0; y <= y1 + 1e-4f; y += 0.025f) {
+                    float g = -99.0f;
+                    bool on = hta_collision_ground(&col, x, y, z, &g);
+                    float px = x, py = y;
+                    if (on) hta_collision_depenetrate(&col, &px, &py, g, prm.height, prm.radius);
+                    printf("    probey y %.3f: ground %.3f pushed %.3f %.3f\n", y, g, px - x, py - y);
+                }
+        }
+        if (getenv("HTA_DEBUG_PROBE")) {
+            float x0, x1, y, z;
+            if (sscanf(getenv("HTA_DEBUG_PROBE"), "%f %f %f %f", &x0, &x1, &y, &z) == 4)
+                for (float x = x0; x <= x1 + 1e-4f; x += 0.05f) {
+                    float g = -99.0f, t = 0.0f, hit[3], nrm[3];
+                    bool on = hta_collision_ground(&col, x, y, z, &g);
+                    float o[3] = { x, y, g + 0.05f }, up[3] = { 0, 0, 1 };
+                    bool roof = on && hta_collision_ray(&col, o, up, 3.0f, &t, hit, nrm);
+                    int layers = 0;
+                    for (float from = z + 20.0f; layers < 16; layers++) {
+                        float lz;
+                        if (!hta_collision_ground(&col, x, y, from, &lz)) break;
+                        if (fabsf(lz - g) < 1e-3f) { layers++; break; }
+                        from = lz - 0.3f;
+                    }
+                    printf("    (floor is surface %d from the top)\n", layers);
+                    float px = x, py = y;
+                    if (on) hta_collision_depenetrate(&col, &px, &py, g, prm.height, prm.radius);
+                    printf("    probe x %.2f: ground %s %.3f, headroom %.2f, pushed to %.2f %.2f\n", x, on ? "at" : "none", g,
+                           roof ? t : 3.0f, px, py);
+                }
+        }
+        /* HTA_DEBUG_NAV: can the first start walk to each of the others? */
+        if (getenv("HTA_DEBUG_NAV")) {
+            static uint32_t route[65536];
+            uint32_t first = (uint32_t)atoi(getenv("HTA_DEBUG_NAV")) % ext.spawn_count;
+            uint32_t from = hta_nav_nearest(&nav, ext.spawns[first].position, 1.0f);
+            {
+                uint32_t *next = malloc(nav.node_count * sizeof(uint32_t));
+                uint32_t reach = next ? hta_nav_field(&nav, from, next) : 0;
+                float lo[3] = { 1e9f, 1e9f, 1e9f }, hi[3] = { -1e9f, -1e9f, -1e9f };
+                for (uint32_t i = 0; next && i < nav.node_count; i++) {
+                    if (next[i] == HTA_NAV_NONE) continue;
+                    float at[3]; hta_nav_pos(&nav, i, at);
+                    for (int c = 0; c < 3; c++) { if (at[c] < lo[c]) lo[c] = at[c]; if (at[c] > hi[c]) hi[c] = at[c]; }
+                    if (getenv("HTA_DEBUG_NAV_NODES")) printf("      node %.2f %.2f %.2f\n", at[0], at[1], at[2]);
+                }
+                printf("    %u nodes can reach start %u, within %.1f %.1f %.1f .. %.1f %.1f %.1f\n",
+                       reach, first, lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+                free(next);
+            }
+            for (uint32_t k = 1; k < ext.spawn_count; k++) {
+                uint32_t to = hta_nav_nearest(&nav, ext.spawns[k].position, 1.0f);
+                uint32_t len = from == HTA_NAV_NONE || to == HTA_NAV_NONE ? 0
+                             : hta_nav_path(&nav, from, to, route, 65536, 2000000);
+                uint32_t back = from == HTA_NAV_NONE || to == HTA_NAV_NONE ? 0
+                              : hta_nav_path(&nav, to, from, route, 65536, 2000000);
+                printf("    start %u -> %u (%.1f %.1f %.1f): %u nodes there, %u back\n", first, k,
+                       ext.spawns[k].position[0], ext.spawns[k].position[1], ext.spawns[k].position[2], len, back);
+            }
+        }
         hta_game_use_external(&game, ext.spawns, ext.spawn_count, &nav, playable);
+        for (int t = 0; t < 2; t++)
+            if (ext.has_flag[t]) hta_game_external_flag(&game, t, ext.flag[t], &nav, playable);
+        if (getenv("HTA_DEBUG_NAV"))
+            for (int t = 0; t < 2; t++) {
+                uint32_t *next = malloc(nav.node_count * sizeof(uint32_t));
+                uint32_t stand = hta_nav_nearest(&nav, game.flags[t].home, 2.0f);
+                uint32_t reach = next && stand != HTA_NAV_NONE ? hta_nav_field(&nav, stand, next) : 0;
+                uint32_t from_starts = 0;
+                for (uint32_t k = 0; next && k < ext.spawn_count; k++) {
+                    uint32_t s0 = hta_nav_nearest(&nav, ext.spawns[k].position, 1.0f);
+                    if (s0 != HTA_NAV_NONE && next[s0] != HTA_NAV_NONE) from_starts++;
+                }
+                printf("    flag %d: %u nodes can walk to it, %u of %u starts\n", t, reach, from_starts, ext.spawn_count);
+                free(next);
+            }
+        printf("flags          red %.1f %.1f %.1f%s, blue %.1f %.1f %.1f%s\n",
+               game.flags[0].home[0], game.flags[0].home[1], game.flags[0].home[2], ext.has_flag[0] ? " (map's)" : "",
+               game.flags[1].home[0], game.flags[1].home[1], game.flags[1].home[2], ext.has_flag[1] ? " (map's)" : "");
     }
     if (hta_pickups_load(&items, &cache)) {
         if (oalmap) hta_pickups_relocate(&items, &nav, playable);
@@ -313,6 +396,17 @@ int main(int argc, char **argv)
             game.units[1].eye.yaw = veh.cars[ride_car].yaw + 0.8f;
         }
         hta_game_update(&game, dt);
+        /* HTA_DEBUG_TRACE=unit: where it is, ten times a second. */
+        if (getenv("HTA_DEBUG_TRACE")) {
+            int tu = atoi(getenv("HTA_DEBUG_TRACE"));
+            static float next_trace;
+            if (t >= next_trace && tu >= 0 && tu < (int)game.unit_count) {
+                next_trace = t + 0.1f;
+                const hta_unit *u = &game.units[tu];
+                printf("    trace %.1f %s at %.2f %.2f %.2f ground %d alive %d\n", t, u->name,
+                       u->body.pos[0], u->body.pos[1], u->body.pos[2], u->body.on_ground, u->alive);
+            }
+        }
         hta_game_view_update(&view, &game, -1, dt);
         for (uint32_t c = 0; vehicles && c < veh.count; c++) {
             int32_t ds = hta_vehicles_driver_seat(&veh, c);

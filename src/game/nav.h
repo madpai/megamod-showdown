@@ -28,6 +28,10 @@
  * give two cells a body and a million nodes; a whole body width gives a
  * base doorway three cells and the whole of Blood Gulch about 150,000. */
 #define HTA_NAV_CELL 0.35f
+/* Imported maps: one biped radius. A TF2 doorway leaves a body's centre a
+ * band 0.175 wu wide, which rows 0.35 apart can miss entirely -- the door
+ * is then not there for a bot. Four times the nodes; built once per map. */
+#define HTA_NAV_CELL_FINE 0.175f
 #define HTA_NAV_MAX_LAYERS 6u
 #define HTA_NAV_NONE 0xFFFFFFFFu
 
@@ -71,6 +75,7 @@ typedef struct {
     float    height;        /* standing collision height */
     float    max_slope;     /* radians */
     float    max_drop;      /* world units; a fall further is not a path */
+    float    cell;          /* grid spacing; 0 is HTA_NAV_CELL */
 } hta_nav_params;
 
 /* Build over the collision mesh's bounds. `bmin`/`bmax` are the mesh

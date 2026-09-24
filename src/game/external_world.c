@@ -171,3 +171,13 @@ void hta_game_use_external(hta_game *g, const hta_spawn_point *spawns, uint32_t 
         f->present = true;
     }
 }
+
+void hta_game_external_flag(hta_game *g, int team, const float at[3],
+                            const hta_nav *n, const uint8_t *mask)
+{
+    if (!g || !at || team < 0 || team > 1) return;
+    hta_game_flag *f = &g->flags[team];
+    if (!nearest(n, mask, at, f->home)) return;
+    f->home_yaw = 0.0f;
+    f->present = true;
+}

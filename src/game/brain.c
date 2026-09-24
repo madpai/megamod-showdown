@@ -199,6 +199,14 @@ static void feet_for_blast(const hta_game *g, int32_t them, const hta_game_weapo
     aim[2] = t->body.pos[2] + 0.1f;
 }
 
+/* The same reach on a finer grid needs as many more expansions as it has
+ * nodes per area. */
+static uint32_t path_budget(const hta_nav *n)
+{
+    float k = n->cell > 0.05f ? HTA_NAV_CELL / n->cell : 1.0f;
+    return (uint32_t)((float)PATH_BUDGET * k * k);
+}
+
 static void plan_to(hta_game *g, int32_t me, hta_brain *b, const float to[3])
 {
     /* A search that fails has spent its whole budget -- a goal down a
@@ -212,7 +220,7 @@ static void plan_to(hta_game *g, int32_t me, hta_brain *b, const float to[3])
     if (from == HTA_NAV_NONE || goal == HTA_NAV_NONE) return;
     if (b->plan_wait > 0.0f && goal == b->plan_fail) return;
     b->goal = goal;
-    uint32_t n = hta_nav_path(g->nav, from, goal, b->path, HTA_BRAIN_PATH, PATH_BUDGET);
+    uint32_t n = hta_nav_path(g->nav, from, goal, b->path, HTA_BRAIN_PATH, path_budget(g->nav));
     if (!n) { b->goal = HTA_NAV_NONE; b->plan_wait = 1.0f; b->plan_fail = goal; return; }
     b->path_len = hta_nav_smooth(g->nav, b->path, n);
     b->path_i = b->path_len > 1 ? 1 : 0;
@@ -268,7 +276,7 @@ static void plan_drive(hta_game *g, int32_t me, hta_brain *b, const float to[3],
     uint32_t goal = hta_nav_nearest_wide(g->nav, to, DRIVE_TO, clear);
     if (from == HTA_NAV_NONE || goal == HTA_NAV_NONE) return;
     b->goal = goal;
-    uint32_t n = hta_nav_path_wide(g->nav, from, goal, b->path, HTA_BRAIN_PATH, PATH_BUDGET, clear);
+    uint32_t n = hta_nav_path_wide(g->nav, from, goal, b->path, HTA_BRAIN_PATH, path_budget(g->nav), clear);
     if (!n) { b->goal = HTA_NAV_NONE; return; }
     b->path_len = hta_nav_smooth_wide(g->nav, b->path, n, clear);
     b->path_i = b->path_len > 1 ? 1 : 0;

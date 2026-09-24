@@ -15,6 +15,10 @@ typedef struct {
      * HTA_EXTERNAL_GROUP_NO_COLLISION (Source's non-solid props). */
     uint32_t *solid_indices;
     uint32_t solid_index_count;
+    /* Where each team's flag stands, when the map says (TF2's
+     * item_teamflag, from the manifest's flag_points). */
+    bool  has_flag[2];
+    float flag[2][3];
 } hta_external_map;
 
 #define HTA_EXTERNAL_GROUP_NO_COLLISION 1u

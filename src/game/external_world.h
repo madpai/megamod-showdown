@@ -54,4 +54,9 @@ void hta_pickups_relocate(hta_pickups *p, const hta_nav *n, const uint8_t *mask)
 void hta_game_use_external(hta_game *g, const hta_spawn_point *spawns, uint32_t count,
                            const hta_nav *n, const uint8_t *mask);
 
+/* A team's flag where the map itself puts it (the walkable spot nearest
+ * `at`), in place of its starts' middle. */
+void hta_game_external_flag(hta_game *g, int team, const float at[3],
+                            const hta_nav *n, const uint8_t *mask);
+
 #endif

@@ -35,9 +35,12 @@ static void name(buf *b, const char *s, size_t field)
  * the triangle on the last bone, and an "idle" clip that turns the last
  * bone 90 degrees about Z when `turn`. `source_frame`: the last bone has a Source world model's weapon-bone
  * frame (rows 1 0 0 / 0 0 -1 / 0 1 0: 90 degrees about X), as CS:S's do. */
+static const char *grip_attachment;   /* one attachment on the last bone, identity */
+
 static void model(buf *b, int bones, const char *const *names, bool turn, bool source_frame)
 {
-    u32(b, 3); u32(b, 3); u32(b, 1); u32(b, 1); u32(b, (uint32_t)bones); u32(b, 0); u32(b, turn ? 1 : 0); u32(b, 0);
+    u32(b, 3); u32(b, 3); u32(b, 1); u32(b, 1); u32(b, (uint32_t)bones); u32(b, grip_attachment ? 1 : 0);
+    u32(b, turn ? 1 : 0); u32(b, 0);
     const float tri[3][3] = { { 1, 0, 1 }, { 0, 1, 1 }, { 0, 0, 1 } };
     for (int i = 0; i < 3; i++) {
         for (int k = 0; k < 3; k++) f32(b, tri[i][k] * (float)(bones - 1));
@@ -61,6 +64,12 @@ static void model(buf *b, int bones, const char *const *names, bool turn, bool s
         f32(b, 0); f32(b, 0); f32(b, i ? 1.0f : 0.0f);
         if (rx) { f32(b, sinf(0.7853982f)); f32(b, 0); f32(b, 0); f32(b, cosf(0.7853982f)); }
         else { f32(b, 0); f32(b, 0); f32(b, 0); f32(b, 1); }
+    }
+    if (grip_attachment) {
+        name(b, grip_attachment, 64);
+        u32(b, (uint32_t)(bones - 1));
+        const float id[12] = { 1,0,0,0, 0,1,0,0, 0,0,1,0 };
+        for (int k = 0; k < 12; k++) f32(b, id[k]);
     }
     if (turn) {
         name(b, "idle", 16);
@@ -154,6 +163,35 @@ int main(void)
         CHECK(fabsf(vo[0].pos[0] - vn[0].pos[0]) < 1e-4f && fabsf(vo[0].pos[1] + vn[0].pos[1]) < 1e-4f &&
               fabsf(vo[0].pos[2] - vn[0].pos[2]) < 1e-4f, "an animated mirrored view poses as the mirror image");
         hta_oal_free(&mir); free(mb.d);
+    }
+    {
+        /* A world model with no weapon bone, only a grip attachment named
+         * like the body's weapon bone (HL2's .357): merged by that. */
+        static hta_oal_asset pk;
+        static const char *const lone[2] = { "MAXSceneRoot", "Cylinder01" };
+        buf pb = { 0 };
+        const char *mf = "{\"base\":\"pistol\",\"kind\":\"weapon\",\"name\":\"pk\"}";
+        put(&pb, "OALA", 4); u32(&pb, 1); u32(&pb, (uint32_t)strlen(mf)); u32(&pb, 2); u32(&pb, 0);
+        uint8_t pad[12] = { 0 }; put(&pb, pad, 12); put(&pb, mf, strlen(mf));
+        grip_attachment = "ValveBiped.weapon_bone";
+        model(&pb, 2, lone, false, true);
+        grip_attachment = NULL;
+        model(&pb, 2, lone, true, true);
+        float h2[12];
+        CHECK(hta_oal_load_memory(pb.d, pb.n, &pk, err, sizeof(err)) && pk.models[0].att_count == 1 &&
+              hta_imported_hold_matrix(m, (const float (*)[12])world, root, &pk.models[0], h2),
+              "a grip attachment loads");
+        static float pw[HTA_OAL_MAX_BONES][12];
+        float g[12];
+        hta_oal_pose(&pk.models[0], -1, 0, pw);
+        hta_oal_mul(pw[1], pk.models[0].att[0].local, g);
+        float at2[12], want[12];
+        hta_oal_mul(h2, g, at2);
+        hta_oal_mul(root, world[1], want);
+        float d2 = 0;
+        for (int k = 0; k < 12; k++) d2 += fabsf(at2[k] - want[k]);
+        CHECK(d2 < 1e-4f, "and it lands on the body's weapon bone");
+        hta_oal_free(&pk); free(pb.d);
     }
     CHECK(!strcmp(hta_imported_role("crouch rifle move-left"), "crouch_move") &&
           !strcmp(hta_imported_role("stand pistol move-back"), "run_back") &&

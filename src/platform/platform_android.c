@@ -1585,8 +1585,8 @@ static void world_nav(hta_android *s)
     hta_player_physics_defaults(&phys);
     hta_player_physics_load(&phys, &s->cache, err, sizeof(err));
     hta_collision_set_slope(&s->col, phys.max_slope);
-    hta_nav_params prm = { phys.radius, phys.coll_stand, phys.max_slope, 1.0f };
-    uint32_t key = s->cache.crc32 ^ s->world_ext.key ^ (uint32_t)(prm.radius * 1e4f) ^
+    hta_nav_params prm = { phys.radius, phys.coll_stand, phys.max_slope, 1.0f, HTA_NAV_CELL_FINE };
+    uint32_t key = s->cache.crc32 ^ s->world_ext.key ^ (uint32_t)(prm.radius * 1e4f) ^ (uint32_t)(prm.cell * 1e5f) ^
                    ((uint32_t)(prm.height * 1e4f) << 8) ^ ((uint32_t)(prm.max_slope * 1e4f) << 16);
     char navpath[600] = "";
     const char *ext = s->app->activity->externalDataPath;
@@ -2373,6 +2373,10 @@ static void start_game(hta_android *s)
     if (s->world_loaded) {
         hta_game_use_external(&s->game, s->world_ext.spawns, s->world_ext.spawn_count,
                               s->nav.built ? &s->nav : NULL, s->world_playable);
+        for (int t = 0; t < 2; t++)
+            if (s->world_ext.has_flag[t])
+                hta_game_external_flag(&s->game, t, s->world_ext.flag[t],
+                                       s->nav.built ? &s->nav : NULL, s->world_playable);
         if (s->nav.built) s->game.nav = &s->nav;
         hta_log("[world] %u starts; flags %s", s->game.spawn_count,
                 s->game.flags[0].present && s->game.flags[1].present ? "at the team starts" : "none");

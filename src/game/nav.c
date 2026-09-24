@@ -16,6 +16,9 @@ static const int DIAG_B[8] = { -1, -1, -1, -1, 1, 2, 3, 0 };
 
 /* The ground query's own step allowance: a rise under this is a step. */
 #define NAV_STEP 0.18f
+/* Surfaces looked through per column, standable or not. Ours. */
+#define NAV_MAX_PROBES 24u
+
 /* Rays at knee and chest height between neighbours. */
 #define NAV_KNEE 0.25f
 /* World units of path at either end a car may spend on ground too narrow
@@ -120,7 +123,7 @@ bool hta_nav_build(hta_nav *n, const hta_collision *col_in,
     col.instances = NULL;
     col.instance_count = 0;
 
-    n->cell = HTA_NAV_CELL;
+    n->cell = p->cell > 0.05f ? p->cell : HTA_NAV_CELL;
     n->min[0] = bmin[0];
     n->min[1] = bmin[1];
     n->nx = (uint32_t)ceilf((bmax[0] - bmin[0]) / n->cell);
@@ -147,7 +150,12 @@ bool hta_nav_build(hta_nav *n, const hta_collision *col_in,
         float x = n->min[0] + ((float)cx + 0.5f) * n->cell;
         float y = n->min[1] + ((float)cy + 0.5f) * n->cell;
         float from = top;
-        for (uint32_t layer = 0; layer < HTA_NAV_MAX_LAYERS; layer++) {
+        /* Up to HTA_NAV_MAX_LAYERS floors a body can stand on, looking
+         * through as many surfaces above them as it takes: a TF2 base
+         * stacks roof, battlements, upper floors and their props over the
+         * spawn room, and counting those as layers left it out. */
+        uint32_t layer = 0;
+        for (uint32_t probe = 0; probe < NAV_MAX_PROBES && layer < HTA_NAV_MAX_LAYERS; probe++) {
             float z;
             if (!hta_collision_ground(&col, x, y, from, &z)) break;
             from = z - 0.3f;
@@ -167,6 +175,7 @@ bool hta_nav_build(hta_nav *n, const hta_collision *col_in,
                 if (!nn) { hta_nav_free(n); if (err) snprintf(err, errlen, "out of memory"); return false; }
                 n->nodes = nn;
             }
+            layer++;
             hta_nav_node *nd = &n->nodes[n->node_count++];
             memset(nd, 0, sizeof(*nd));
             nd->z = z;
@@ -213,6 +222,17 @@ bool hta_nav_build(hta_nav *n, const hta_collision *col_in,
             float c0[3] = { ax, ay, hi + p->height * 0.85f };
             float c1[3] = { bx, by, hi + p->height * 0.85f };
             if (blocked(&col, c0, c1)) continue;
+            /* And at the body's sides, not just its middle: a slatted
+             * railing or a row of posts lets the centre ray through a gap
+             * no body fits. Two more knee rays, a radius either side. */
+            {
+                float ddx = bx - ax, ddy = by - ay, dl = sqrtf(ddx*ddx + ddy*ddy);
+                float sx = dl > 1e-5f ? -ddy / dl * p->radius * 0.9f : 0.0f;
+                float sy = dl > 1e-5f ?  ddx / dl * p->radius * 0.9f : 0.0f;
+                float l0[3] = { ax + sx, ay + sy, k0[2] }, l1[3] = { bx + sx, by + sy, k1[2] };
+                float r0[3] = { ax - sx, ay - sy, k0[2] }, r1[3] = { bx - sx, by - sy, k1[2] };
+                if (blocked(&col, l0, l1) || blocked(&col, r0, r1)) continue;
+            }
             a->link[d] = best;
             n->link_count++;
         }
@@ -603,7 +623,7 @@ uint32_t hta_nav_random_wide(const hta_nav *n, uint32_t *rng, uint8_t clear)
 }
 
 #define NAV_MAGIC   0x4E415648u   /* "HVAN" */
-#define NAV_VERSION 3u  /* 2: built without the vehicles; 3: car clearance */
+#define NAV_VERSION 4u  /* 2: built without the vehicles; 3: car clearance; 4: floors under more than six surfaces, side rays */
 
 typedef struct {
     uint32_t magic, version, key, node_size;

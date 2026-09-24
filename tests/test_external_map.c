@@ -34,11 +34,14 @@ int main(void)
     /* The manifest's own "team" decides, not the Source class name. */
     {
         static const char man[]="{\"entities\":[{\"classname\":\"info_player_terrorist\",\"team\":0}],"
-            "\"spawn_points\":[{\"classname\":\"anything\",\"position\":[0,0,0],\"team\":1}]}";
+            "\"spawn_points\":[{\"classname\":\"anything\",\"position\":[0,0,0],\"team\":1}],"
+            "\"flag_points\":[{\"team\":1,\"position\":[1.5, -2.0, 0.25]}]}";
         size_t ml=sizeof(man)-1;unsigned char *w=malloc(n+ml);assert(w);
         memcpy(w,b,64);memcpy(w+64,man,ml);memcpy(w+64+ml,b+64,n-64);u32(w+8,(uint32_t)ml);
         assert(hta_external_map_load_memory(w,n+ml,&m,err,sizeof(err)));
         assert(m.spawn_count==1&&m.spawns[0].team_index==1&&m.key);
+        /* The map's own flag stand, blue's only. */
+        assert(!m.has_flag[0]&&m.has_flag[1]&&m.flag[1][0]==1.5f&&m.flag[1][1]==-2.0f&&m.flag[1][2]==0.25f);
         uint32_t key=m.key;hta_external_map_free(&m);
         w[64+ml-40]^=1;assert(hta_external_map_load_memory(w,n+ml,&m,err,sizeof(err))&&m.key!=key);
         hta_external_map_free(&m);free(w);
