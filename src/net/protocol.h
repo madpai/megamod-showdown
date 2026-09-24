@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define HTA_NET_MAGIC 0x31415448u /* "HTA1" on the wire */
-#define HTA_NET_VERSION 5u
+#define HTA_NET_VERSION 6u
 #define HTA_NET_HEADER 20u
 #define HTA_NET_MAX_PACKET 1200u
 #define HTA_NET_MAX_PLAYERS 8u
@@ -15,7 +15,7 @@
 #define HTA_NET_ENTITY_NAME 12u
 #define HTA_NET_ENTITY_BYTES 68u
 #define HTA_NET_WORLD_HEADER 86u
-#define HTA_NET_CONTROL_BYTES 29u
+#define HTA_NET_CONTROL_BYTES 32u
 #define HTA_NET_KILL_BYTES 102u
 #define HTA_NET_FX_BYTES 28u
 #define HTA_NET_PROJECTILE_BYTES 30u
@@ -96,6 +96,9 @@ typedef struct {
     char name[HTA_NET_ENTITY_NAME];
     uint8_t carry[2], slot, grenades, powerup; /* carry 255 means empty */
     uint16_t ammo_loaded, ammo_reserve; /* held weapon */
+    /* v6: the imported body it wears: 0 the cyborg, else the match's
+     * character index + 1. Rides in the kind byte's upper six bits. */
+    uint8_t character;
 } hta_net_entity;
 typedef struct {
     float time;
@@ -108,13 +111,17 @@ typedef struct {
 
 /* A player's requested controls, sampled repeatedly. The host applies
  * movement and fire; counters make one-shot actions survive packet loss. */
-enum { HTA_NET_JUMP=1, HTA_NET_TRIGGER=2, HTA_NET_DUCK=4, HTA_NET_ALT=8 };
+/* v6 HTA_NET_READY: the player has chosen a class and may be spawned. */
+enum { HTA_NET_JUMP=1, HTA_NET_TRIGGER=2, HTA_NET_DUCK=4, HTA_NET_ALT=8, HTA_NET_READY=16 };
 enum { HTA_NET_REJECT_FULL=1, HTA_NET_REJECT_MAP=2 };
 typedef struct {
     uint8_t id, flags, weapon_slot;
     float forward, right, yaw, pitch;
     uint16_t melee_count, grenade_count, reload_count, pickup_count;
     uint16_t action_count;    /* get in or out of a vehicle */
+    /* v6: the player's custom class (roster indices, 255 none) and body
+     * (0 the cyborg, else character index + 1). */
+    uint8_t loadout[2], character;
 } hta_net_control;
 
 /* Every vehicle the host runs, whole, at snapshot rate. Positions are
@@ -195,11 +202,13 @@ bool hta_net_drops_unpack(const uint8_t *src, size_t len, hta_net_drops *d);
  * hull (0..255 of full; 0 for a wreck). */
 #define HTA_NET_GAME_BYTES (8u + 2u * 11u + HTA_NET_MAX_VEHICLES)
 enum { HTA_NET_FLAG_HOME = 0, HTA_NET_FLAG_CARRIED, HTA_NET_FLAG_DROPPED };
+enum { HTA_NET_GAME_CLASSES = 1 };   /* players choose a class before spawning */
 typedef struct {
     uint8_t mode;              /* hta_game_mode */
     uint8_t score_limit;
     int16_t team_score[2];
     uint8_t winner_team;       /* 255: none or a draw */
+    uint8_t options;           /* v6: HTA_NET_GAME_CLASSES */
     struct {
         uint8_t present, state, carrier;   /* carrier 255: nobody */
         float pos[3], yaw;

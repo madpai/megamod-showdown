@@ -194,6 +194,9 @@ public class GameActivity extends NativeActivity {
     static native void nativeShellScreen(int screen);
     static native void nativeShellSound(int which);
     static native void nativeStartMatch(int[] config, String host, String name, String map);
+    /* 1: held out of a custom game until a class is picked; 2: the match has classes. */
+    static native int nativeClassState();
+    static native void nativeChooseClass(String primary, String secondary);
     /* Weapons a class may hold and imported bodies: "W\tname" and
      * "C\tid\tname" lines, once the menu has loaded. */
     static native String nativeCatalog();
@@ -235,7 +238,15 @@ public class GameActivity extends NativeActivity {
         /* hta_game_mode: free-for-all Slayer, Team Slayer, CTF. Solo only
          * until the LAN snapshot carries teams and flags. */
         private int gametype = 0, captures = 3;
-        private static final String[] GAMETYPES = { "SLAYER", "TEAM SLAYER", "CAPTURE THE FLAG" };
+        /* The three again as (CUSTOM): the same game, played with the
+         * classes. hta_game_mode is gametype % 3. */
+        private static final String[] GAMETYPES = { "SLAYER", "TEAM SLAYER", "CAPTURE THE FLAG",
+                "SLAYER (CUSTOM)", "TEAM SLAYER (CUSTOM)", "CTF (CUSTOM)" };
+        /* Seconds nobody can hurt you after a spawn, or until you fire. */
+        private int protect = 3;
+        /* The class picker, over the game: before your first spawn in a
+         * custom game (native holds you out), or from the pause screen. */
+        boolean pickerOpen;
         /* HTA_VROSTER_*: none, the map's defaults, all, or one kind. */
         private int vehicles = 2;
         private static final String[] VEHICLE_SETS = { "NONE", "DEFAULT", "ALL",
@@ -250,7 +261,6 @@ public class GameActivity extends NativeActivity {
         private final List<String> classWeapons = new ArrayList<>();
         private final String[][] classes = new String[3][2];
         private int myClass = 0;
-        private boolean classesOn = false;
         private int classReturn = 2;
         /* The rows of the match screens, rebuilt each time they are asked
          * for, and what tapping each does. */
@@ -304,7 +314,6 @@ public class GameActivity extends NativeActivity {
                 if (f.length >= 2 && f[0].equals("W") && !classWeapons.contains(f[1])) classWeapons.add(f[1]);
             }
             android.content.SharedPreferences prefs = owner.getSharedPreferences("hta", android.content.Context.MODE_PRIVATE);
-            classesOn = prefs.getBoolean("classes_on", false);
             myClass = Math.max(0, Math.min(2, prefs.getInt("class_sel", 0)));
             String[][] defaults = { { "assault rifle", "pistol" }, { "shotgun", "pistol" }, { "sniper rifle", "pistol" } };
             for (int c = 0; c < 3; c++)
@@ -314,7 +323,7 @@ public class GameActivity extends NativeActivity {
 
         private void saveClasses() {
             android.content.SharedPreferences.Editor e = owner.getSharedPreferences("hta", android.content.Context.MODE_PRIVATE).edit();
-            e.putBoolean("classes_on", classesOn).putInt("class_sel", myClass);
+            e.putInt("class_sel", myClass);
             for (int c = 0; c < 3; c++) for (int k = 0; k < 2; k++) e.putString("class" + c + "_" + k, classes[c][k]);
             e.apply();
         }
@@ -342,22 +351,23 @@ public class GameActivity extends NativeActivity {
             }
             row("MAP: " + mapName(maps.get(map)), this::cycleMap);
             row("GAME: " + GAMETYPES[gametype], () -> gametype = (gametype + 1) % GAMETYPES.length);
-            row("CUSTOM CLASSES: " + (classesOn ? "ON" : "OFF"), () -> { classesOn = !classesOn; saveClasses(); });
-            if (classesOn) {
+            if (gametype >= 3) {
                 row("MY CLASS: " + up(classes[myClass][0]) + " + " + up(classes[myClass][1]),
                     () -> { myClass = (myClass + 1) % 3; saveClasses(); });
                 row("EDIT CLASSES", () -> { classReturn = screen; open(7); });
             }
             row("BOTS: " + bots, () -> bots = (bots + 1) % 8);
             row("BOT SKILL: " + skillName(), () -> skill = (skill + 1) % 4);
-            row(gametype == 2 ? "CAPTURES TO WIN: " + (captures == 0 ? "NONE" : captures)
+            row(gametype % 3 == 2 ? "CAPTURES TO WIN: " + (captures == 0 ? "NONE" : captures)
                               : word(21, "KILLS TO WIN") + " " + (kills == 0 ? "NONE" : kills), () -> {
-                if (gametype == 2) captures = next(captures, new int[] { 1, 3, 5, 10, 0 });
+                if (gametype % 3 == 2) captures = next(captures, new int[] { 1, 3, 5, 10, 0 });
                 else kills = next(kills, new int[] { 0, 10, 25, 50, 100 });
             });
             row("TIME LIMIT: " + (minutes == 0 ? "NONE" : minutes + " MIN"),
                 () -> minutes = next(minutes, new int[] { 0, 10, 15, 20, 30, 45 }));
             row(word(22, "RESPAWN TIME") + " " + respawn + " SEC", () -> respawn = next(respawn, new int[] { 2, 5, 10, 15 }));
+            row("SPAWN PROTECTION: " + (protect == 0 ? "OFF" : protect + " SEC"),
+                () -> protect = next(protect, new int[] { 0, 2, 3, 5 }));
             row("VEHICLES: " + VEHICLE_SETS[vehicles], () -> vehicles = (vehicles + 1) % VEHICLE_SETS.length);
             row(word(12, "START GAME"), () -> { if (host) start(1, "127.0.0.1", maps.get(map)); else start(0, "", maps.get(map)); });
             row(word(18, "BACK"), this::back);
@@ -477,6 +487,66 @@ public class GameActivity extends NativeActivity {
             }
         }
 
+        /* CHOOSE YOUR CLASS: three classes, the chosen one's two slots,
+         * and SPAWN (DONE from the pause screen, for the next spawn). */
+        private static final float PICK_TOP = 0.28f, PICK_STEP = 0.085f;
+
+        private String[] pickerRows(boolean pending) {
+            return new String[] {
+                "CLASS 1: " + up(classes[0][0]) + " + " + up(classes[0][1]),
+                "CLASS 2: " + up(classes[1][0]) + " + " + up(classes[1][1]),
+                "CLASS 3: " + up(classes[2][0]) + " + " + up(classes[2][1]),
+                "PRIMARY: " + up(classes[myClass][0]),
+                "SECONDARY: " + up(classes[myClass][1]),
+                pending ? "SPAWN" : "DONE",
+            };
+        }
+
+        void drawPicker(Canvas c, int w, int h, boolean pending) {
+            findClasses();
+            float scale = Math.min(w, h);
+            float left = w * 0.18f, right = w * 0.82f;
+            c.drawRoundRect(left, h * 0.06f, right, h * 0.96f, 18f, 18f, panel);
+            title.setTextSize(scale * 0.065f);
+            c.drawText(pending ? "CHOOSE YOUR CLASS" : "CHANGE CLASS", w * 0.5f, h * 0.17f, title);
+            if (!pending) {
+                text.setTextSize(scale * 0.032f);
+                c.drawText("TAKES EFFECT WHEN YOU NEXT SPAWN", w * 0.5f, h * 0.23f, text);
+            }
+            String[] r = pickerRows(pending);
+            text.setTextSize(Math.min(scale * 0.046f, h * PICK_STEP * 0.55f));
+            for (int i = 0; i < r.length; i++) {
+                float y = h * (PICK_TOP + i * PICK_STEP + (i >= 3 ? 0.03f : 0f) + (i == 5 ? 0.03f : 0f));
+                int saved = row.getColor();
+                if (i == myClass) row.setColor(0xE02E6FB0);
+                else if (i == 5) row.setColor(0xE02A7A3A);
+                c.drawRoundRect(left + 12, y, right - 12, y + h * PICK_STEP * 0.86f, 8, 8, row);
+                row.setColor(saved);
+                c.drawText(r[i], w * 0.5f, y + h * PICK_STEP * 0.58f, text);
+            }
+        }
+
+        /* x, y as fractions of the view. */
+        void tapPicker(float x, float y, boolean pending) {
+            if (x < 0.18f || x > 0.82f) return;
+            for (int i = 0; i < 6; i++) {
+                float top = PICK_TOP + i * PICK_STEP + (i >= 3 ? 0.03f : 0f) + (i == 5 ? 0.03f : 0f);
+                if (y < top || y > top + PICK_STEP * 0.86f) continue;
+                nativeShellSound(1);
+                if (i < 3) myClass = i;
+                else if (i < 5) {
+                    int k = i - 3;
+                    classes[myClass][k] = nextWeapon(classes[myClass][k], classes[myClass][1 - k]);
+                } else {
+                    nativeChooseClass(classes[myClass][0], classes[myClass][1]);
+                    pickerOpen = false;
+                    if (!pending) nativeResume();
+                }
+                saveClasses();
+                return;
+            }
+        }
+
         void drawMainSolo(Canvas c, int w, int h) {
             // The Trial calls this slot CAMPAIGN. Until campaign maps work,
             // its action is a configurable solo Slayer match.
@@ -569,11 +639,11 @@ public class GameActivity extends NativeActivity {
             // Your look from Settings, and your class when the match has them.
             android.content.SharedPreferences prefs = owner.getSharedPreferences("hta", android.content.Context.MODE_PRIVATE);
             nativeSetLoadout(prefs.getString("player_model", ""), prefs.getBoolean("bot_models", false) ? 1 : 0,
-                    classesOn && mode != 2 ? 1 : 0, classes[myClass][0], classes[myClass][1]);
+                    gametype >= 3 && mode != 2 ? 1 : 0, classes[myClass][0], classes[myClass][1]);
             // A joiner plays whatever the host chose; the host's GAME says.
-            int type = mode == 2 ? 0 : gametype;
+            int type = mode == 2 ? 0 : gametype % 3;
             nativeStartMatch(new int[] { mode, bots, skill, type == 2 ? captures : kills, minutes, respawn,
-                    maxPlayers, port, vehicles, type }, host, serverName, world);
+                    maxPlayers, port, vehicles, type, protect }, host, serverName, world);
             screen = 0;
         }
 
@@ -822,12 +892,20 @@ public class GameActivity extends NativeActivity {
                     GameActivity.nativeMenuTouch(code, e.getX() / getWidth(), e.getY() / getHeight());
                 return true;
             }
+            int classState = GameActivity.nativeClassState();
+            if ((classState & 1) != 0 || (owner.shell.pickerOpen && (classState & 2) != 0)) {
+                if (e.getActionMasked() == MotionEvent.ACTION_UP && getWidth() > 0 && getHeight() > 0)
+                    owner.shell.tapPicker(e.getX() / getWidth(), e.getY() / getHeight(), (classState & 1) != 0);
+                invalidate();
+                return true;
+            }
             if (GameActivity.nativePaused() != 0) {
                 if (e.getActionMasked() == MotionEvent.ACTION_UP) {
                     float x = e.getX(), y = e.getY(), w = getWidth(), h = getHeight();
                     if (x > w * 0.35f && x < w * 0.65f) {
                         if (y > h * 0.44f && y < h * 0.56f) GameActivity.nativeResume();
                         else if (y > h * 0.60f && y < h * 0.72f) owner.backToMenu();
+                        else if ((classState & 2) != 0 && y > h * 0.76f && y < h * 0.88f) owner.shell.pickerOpen = true;
                     }
                 }
                 invalidate();
@@ -1101,8 +1179,16 @@ public class GameActivity extends NativeActivity {
                 postInvalidateDelayed(100);
                 return;
             }
+            int classState = GameActivity.nativeClassState();
+            if ((classState & 1) != 0 || (owner.shell.pickerOpen && (classState & 2) != 0)) {
+                c.drawRect(0, 0, getWidth(), getHeight(), boardBg);
+                owner.shell.drawPicker(c, getWidth(), getHeight(), (classState & 1) != 0);
+                postInvalidateDelayed(100);
+                return;
+            }
             if (GameActivity.nativePaused() != 0) {
-                /* Halo's pause: the world held behind a veil, two choices. */
+                /* Halo's pause: the world held behind a veil, two choices
+                 * (three when the match has classes). */
                 int w = getWidth(), h = getHeight();
                 c.drawRect(0, 0, w, h, boardBg);
                 c.drawText("PAUSED", w * 0.5f, h * 0.34f, banner);
@@ -1110,6 +1196,10 @@ public class GameActivity extends NativeActivity {
                 c.drawRect(w * 0.35f, h * 0.60f, w * 0.65f, h * 0.72f, pauseBtn);
                 c.drawText("RESUME GAME", w * 0.5f, h * 0.515f, label);
                 c.drawText("QUIT TO MAIN MENU", w * 0.5f, h * 0.675f, label);
+                if ((classState & 2) != 0) {
+                    c.drawRect(w * 0.35f, h * 0.76f, w * 0.65f, h * 0.88f, pauseBtn);
+                    c.drawText("CHANGE CLASS", w * 0.5f, h * 0.835f, label);
+                }
                 drawGame(c);
                 postInvalidateDelayed(100);
                 return;

@@ -144,6 +144,7 @@ bool hta_net_world_pack(uint8_t *dst, size_t cap, const hta_net_world *w, size_t
         const hta_net_entity *e=&w->entities[i];
         if (e->id>=HTA_NET_MAX_ENTITIES || seen[e->id] ||
             e->kind<HTA_NET_ENTITY_PLAYER || e->kind>HTA_NET_ENTITY_BOT ||
+            e->character>63 ||
             e->flags & ~127u || (e->weapon!=255 && e->weapon>23) ||
             e->peer_id>HTA_NET_MAX_PLAYERS || e->slot>1 ||
             (e->carry[0]!=255 && e->carry[0]>23) ||
@@ -162,7 +163,8 @@ bool hta_net_world_pack(uint8_t *dst, size_t cap, const hta_net_world *w, size_t
         }
         if (!namelen || namelen==HTA_NET_ENTITY_NAME) return false;
         uint8_t *p=dst+HTA_NET_WORLD_HEADER+(size_t)i*HTA_NET_ENTITY_BYTES;
-        p[0]=e->id; p[1]=e->kind; p[2]=e->flags; p[3]=e->weapon; p[4]=e->peer_id;
+        p[0]=e->id; p[1]=(uint8_t)(e->kind | (e->character << 2));
+        p[2]=e->flags; p[3]=e->weapon; p[4]=e->peer_id;
         for (unsigned k=0;k<9;k++) fw(p+5+k*4,values[k]);
         u16w(p+41,(uint16_t)e->score);
         u16w(p+43,(uint16_t)e->kills);
@@ -191,7 +193,8 @@ bool hta_net_world_unpack(const uint8_t *src, size_t len, hta_net_world *w)
     for (uint8_t i=0;i<tmp.count;i++) {
         const uint8_t *p=src+HTA_NET_WORLD_HEADER+(size_t)i*HTA_NET_ENTITY_BYTES;
         hta_net_entity *e=&tmp.entities[i];
-        e->id=p[0]; e->kind=p[1]; e->flags=p[2]; e->weapon=p[3]; e->peer_id=p[4];
+        e->id=p[0]; e->kind=p[1]&3u; e->character=(uint8_t)(p[1]>>2);
+        e->flags=p[2]; e->weapon=p[3]; e->peer_id=p[4];
         for (unsigned k=0;k<3;k++) e->pos[k]=fr(p+5+k*4);
         for (unsigned k=0;k<2;k++) e->velocity[k]=fr(p+17+k*4);
         e->yaw=fr(p+25); e->pitch=fr(p+29);
@@ -213,7 +216,9 @@ bool hta_net_world_unpack(const uint8_t *src, size_t len, hta_net_world *w)
 bool hta_net_control_pack(uint8_t *dst, size_t cap, const hta_net_control *c)
 {
     if (!dst || !c || cap<HTA_NET_CONTROL_BYTES || !c->id ||
-        c->id>HTA_NET_MAX_PLAYERS || c->flags & ~15u || c->weapon_slot>1 ||
+        c->id>HTA_NET_MAX_PLAYERS || c->flags & ~31u || c->weapon_slot>1 ||
+        (c->loadout[0]!=255 && c->loadout[0]>23) || (c->loadout[1]!=255 && c->loadout[1]>23) ||
+        c->character>63 ||
         !isfinite(c->forward) || fabsf(c->forward)>1.0f ||
         !isfinite(c->right) || fabsf(c->right)>1.0f ||
         !isfinite(c->yaw) || fabsf(c->yaw)>1000.0f ||
@@ -224,6 +229,7 @@ bool hta_net_control_pack(uint8_t *dst, size_t cap, const hta_net_control *c)
     u16w(dst+19,c->melee_count); u16w(dst+21,c->grenade_count);
     u16w(dst+23,c->reload_count); u16w(dst+25,c->pickup_count);
     u16w(dst+27,c->action_count);
+    dst[29]=c->loadout[0]; dst[30]=c->loadout[1]; dst[31]=c->character;
     return true;
 }
 
@@ -232,7 +238,7 @@ bool hta_net_control_unpack(const uint8_t *src, size_t len, hta_net_control *c)
     if (!src || !c || len!=HTA_NET_CONTROL_BYTES) return false;
     hta_net_control tmp={src[0],src[1],src[2],fr(src+3),fr(src+7),
         fr(src+11),fr(src+15),u16r(src+19),u16r(src+21),u16r(src+23),u16r(src+25),
-        u16r(src+27)};
+        u16r(src+27),{src[29],src[30]},src[31]};
     uint8_t check[HTA_NET_CONTROL_BYTES];
     if (!hta_net_control_pack(check,sizeof(check),&tmp)) return false;
     *c=tmp; return true;
@@ -477,7 +483,8 @@ bool hta_net_game_pack(uint8_t *dst, size_t cap, const hta_net_game *g)
     if (!dst || !g || cap<HTA_NET_GAME_BYTES || g->mode>2) return false;
     dst[0]=g->mode; dst[1]=g->score_limit;
     u16w(dst+2,(uint16_t)g->team_score[0]); u16w(dst+4,(uint16_t)g->team_score[1]);
-    dst[6]=g->winner_team; dst[7]=0;
+    if (g->options & ~1u) return false;
+    dst[6]=g->winner_team; dst[7]=g->options;
     for (unsigned t=0;t<2;t++) {
         uint8_t *o=dst+8+t*11;
         if (g->flag[t].present>1 || g->flag[t].state>HTA_NET_FLAG_DROPPED ||
@@ -504,7 +511,7 @@ bool hta_net_game_unpack(const uint8_t *src, size_t len, hta_net_game *g)
     memset(&tmp,0,sizeof(tmp));
     tmp.mode=src[0]; tmp.score_limit=src[1];
     tmp.team_score[0]=(int16_t)u16r(src+2); tmp.team_score[1]=(int16_t)u16r(src+4);
-    tmp.winner_team=src[6];
+    tmp.winner_team=src[6]; tmp.options=src[7];
     for (unsigned t=0;t<2;t++) {
         const uint8_t *in=src+8+t*11;
         tmp.flag[t].present=in[0]&1u; tmp.flag[t].state=(uint8_t)(in[0]>>1);

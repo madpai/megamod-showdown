@@ -606,6 +606,7 @@ static void spawn_unit(hta_game *g, int32_t idx)
     arm(g, u);
     u->flag = -1;
     u->alive = true;
+    u->protect = g->spawn_protect;
     u->spree = 0;
     u->last_attacker = HTA_GAME_NONE;
     u->powerup = HTA_ITEM_NONE;
@@ -632,6 +633,7 @@ void hta_game_revive(hta_game *g, int32_t idx)
     hta_unit *u = &g->units[idx];
     hta_game_unseat(g, idx);
     u->alive = true;
+    u->protect = g->spawn_protect;
     u->flag = -1;
     u->spree = 0;
     u->last_attacker = HTA_GAME_NONE;
@@ -863,8 +865,8 @@ void hta_game_hurt(hta_game *g, int32_t victim, int32_t attacker, float amount,
 {
     if (!g || victim < 0 || victim >= (int32_t)g->unit_count || amount <= 0.0f) return;
     hta_unit *v = &g->units[victim];
-    /* Nobody gets hurt in the postgame. */
-    if (!v->alive || g->over) return;
+    /* Nobody gets hurt in the postgame, nor just after coming back. */
+    if (!v->alive || g->over || v->protect > 0.0f) return;
     /* Nor by their own side. Ours: a gametype says, and bots do not check
      * their line of fire, so a team game would be a betrayal a minute. */
     if (g->teams && attacker >= 0 && attacker != victim &&
@@ -2640,6 +2642,7 @@ void hta_game_update(hta_game *g, float dt)
         hta_unit *u = &g->units[i];
         if (u->kind == HTA_UNIT_NONE) continue;
         u->since_attacked += dt;
+        if (u->protect > 0.0f) u->protect = u->fired ? 0.0f : u->protect - dt;
         if (u->multi_timer > 0.0f) u->multi_timer -= dt;
         if (!u->alive) {
             u->dead_for += dt;

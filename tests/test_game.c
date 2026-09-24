@@ -144,6 +144,23 @@ int main(int argc, char **argv)
     CHECK(feed, "in the Trial's words");
     for (int i = 0; i < 200 && !ub->alive; i++) hta_game_update(&g, 1.0f / 30.0f);
     CHECK(ub->alive, "and he is back after the respawn time");
+    {
+        /* Spawn protection: nobody hurts the fresh spawn until it runs out
+         * or the spawn fires first. */
+        g.spawn_protect = 2.0f;
+        hta_game_hurt(&g, b, a, 1000.0f, NULL);
+        hta_game_update(&g, 1.0f / 30.0f);
+        for (int i = 0; i < 200 && !ub->alive; i++) hta_game_update(&g, 1.0f / 30.0f);
+        float sh = ub->vitals.shield;
+        hta_game_hurt(&g, b, a, 10.0f, NULL);
+        CHECK(ub->alive && ub->protect > 0.0f && ub->vitals.shield == sh, "a fresh spawn is protected");
+        ub->fired = true;
+        hta_game_update(&g, 1.0f / 30.0f);
+        ub->fired = false;
+        hta_game_hurt(&g, b, a, 10.0f, NULL);
+        CHECK(ub->protect <= 0.0f && ub->vitals.shield < sh, "and firing gives the protection up");
+        g.spawn_protect = 0.0f;
+    }
     /* Blow yourself up. */
     float ctr[3];
     hta_game_centre(&g, a, ctr);

@@ -74,6 +74,14 @@ static void world_codec(void)
     assert(hta_net_control_pack(control_wire,sizeof(control_wire),&ctl));
     assert(hta_net_control_unpack(control_wire,sizeof(control_wire),&ctl2));
     assert((ctl2.flags&HTA_NET_ALT) && ctl2.action_count==41);
+    /* v6: a class and a body travel with the controls, and READY. */
+    ctl.flags|=HTA_NET_READY; ctl.loadout[0]=10; ctl.loadout[1]=255; ctl.character=3;
+    assert(hta_net_control_pack(control_wire,sizeof(control_wire),&ctl));
+    assert(hta_net_control_unpack(control_wire,sizeof(control_wire),&ctl2));
+    assert((ctl2.flags&HTA_NET_READY) && ctl2.loadout[0]==10 && ctl2.loadout[1]==255 && ctl2.character==3);
+    ctl.loadout[0]=24; assert(!hta_net_control_pack(control_wire,sizeof(control_wire),&ctl));
+    ctl.loadout[0]=10; ctl.character=64; assert(!hta_net_control_pack(control_wire,sizeof(control_wire),&ctl));
+    ctl.character=3;
     /* Vehicles: 32 of them, full, under the packet cap; values survive
      * their fixed point; bad values and trailing bytes are refused. */
     static hta_net_vehicles veh, veh2;
@@ -123,8 +131,10 @@ static void world_codec(void)
            !strcmp(b.entities[1].name,"Bot"));
     assert((b.entities[1].flags&HTA_NET_ENTITY_BLUE) && !(b.entities[0].flags&HTA_NET_ENTITY_BLUE));
     assert(!hta_net_world_unpack(payload,n-1,&b));
-    payload[HTA_NET_WORLD_HEADER+1]=9;
+    payload[HTA_NET_WORLD_HEADER+1]=3;   /* no such kind */
     assert(!hta_net_world_unpack(payload,n,&b));
+    payload[HTA_NET_WORLD_HEADER+1]=HTA_NET_ENTITY_PLAYER | (5 << 2);   /* v6: wearing character 4 */
+    assert(hta_net_world_unpack(payload,n,&b) && b.entities[0].character==5 && b.entities[0].kind==HTA_NET_ENTITY_PLAYER);
     payload[HTA_NET_WORLD_HEADER+1]=HTA_NET_ENTITY_PLAYER;
     payload[HTA_NET_WORLD_HEADER+47]=0x01;
     assert(!hta_net_world_unpack(payload,n,&b));
@@ -281,6 +291,10 @@ static void sessions(void)
     { uint8_t buf[HTA_NET_GAME_BYTES]; hta_net_game bad=gm; bad.flag[1].carrier=HTA_NET_MAX_ENTITIES;
       assert(!hta_net_game_pack(buf,sizeof(buf),&bad));
       bad=gm; bad.mode=7; assert(!hta_net_game_pack(buf,sizeof(buf),&bad));
+      bad=gm; bad.options=2; assert(!hta_net_game_pack(buf,sizeof(buf),&bad));
+      bad=gm; bad.options=HTA_NET_GAME_CLASSES; hta_net_game ok;
+      assert(hta_net_game_pack(buf,sizeof(buf),&bad) && hta_net_game_unpack(buf,sizeof(buf),&ok) &&
+             ok.options==HTA_NET_GAME_CLASSES);
       assert(hta_net_game_pack(buf,sizeof(buf),&gm)); buf[8]=0xFF;
       hta_net_game back; assert(!hta_net_game_unpack(buf,sizeof(buf),&back)); }
     hta_net_fx fx={.kind=HTA_NET_FX_FIRE,.entity=0,.weapon=1};

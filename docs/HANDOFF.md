@@ -181,10 +181,26 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Characters, AK-47 and custom classes (this build):**
+> **Class picker, spawn protection, your own body (this build):**
+> 1. Player model T_LEET: die, and the death camera now shows T_LEET
+>    toppling (it showed the Spartan corpse before -- the local player's
+>    death used its own Halo actor, not the game's body).
+> 2. GAME row now cycles SLAYER / TEAM SLAYER / CTF and the same three
+>    **(CUSTOM)**; the CUSTOM CLASSES row is gone (custom = classes).
+>    In a (CUSTOM) game you start held out of the match on **CHOOSE YOUR
+>    CLASS** (three classes, tap PRIMARY/SECONDARY to cycle, SPAWN). The
+>    pause screen gains **CHANGE CLASS** (applies at your next spawn).
+> 3. **SPAWN PROTECTION: OFF/2/3/5 SEC** (default 3, ours): no damage
+>    after a spawn until it runs out or you fire. No HUD marker yet.
+> 4. LAN (protocol v6, both phones need this build): a joiner to a
+>    (CUSTOM) game gets the picker and the host keeps them out until they
+>    pick; everyone sees each other's imported bodies; a joiner's class
+>    arms them. Weapon lists must match on both phones (same APK).
+>
+> **Characters, AK-47 and custom classes (previous build):**
 > 1. Settings: **Player model** (Spartan, T_LEET, CT_URBAN, KLEINER,
 >    ALYX) and **Bot models** (Spartans / imported bodies).
-> 2. SINGLEPLAYER or CREATE GAME: **CUSTOM CLASSES: ON**, then **EDIT
+> 2. SINGLEPLAYER or CREATE GAME: a (CUSTOM) game type, then **EDIT
 >    CLASSES** -- three classes, two weapons each, from every Trial weapon
 >    plus the **AK-47**. **MY CLASS** picks which you spawn with. Bots make
 >    up a class each life.
@@ -194,8 +210,6 @@ the section below, and update it every time.
 >    crouching, jumping, holding guns; team tint on imported bodies in team
 >    games; bodies toppling when killed; a dropped AK lying flat; frame
 >    rate with 7 imported bots.
-> Not in LAN yet: other phones see Spartans and joiners spawn with the
-> map's weapons (characters and classes are not in the protocol).
 >
 > **Phone result (2026-09-23):** CS_OFFICE and GM_CONSTRUCT run at 120
 > fps and are "almost complete with some problems" (parked by the owner).

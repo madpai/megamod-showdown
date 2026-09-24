@@ -275,6 +275,8 @@ typedef struct {
      * when the match has custom classes (-1: the map's own). */
     int8_t   character;
     int32_t  loadout[2];
+    /* Seconds of spawn protection left: no damage taken. Firing ends it. */
+    float    protect;
 
     uint32_t rng;
 } hta_unit;
@@ -373,6 +375,8 @@ typedef struct hta_game {
     /* Custom classes: each unit spawns with its own two weapons, bots with
      * a random pick of the class weapons. */
     bool            classes;
+    /* Spawn protection, seconds (0: off). Ours; Halo CE has none. */
+    float           spawn_protect;
     int             start_grenades, max_grenades;
 
     /* Rounds that fly, for units the game simulates: one pool per

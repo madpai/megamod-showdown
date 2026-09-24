@@ -160,6 +160,8 @@ typedef struct {
     bool          show_self;          /* our own body is on screen: third person */
     uint16_t      net_action_count;
     uint16_t      peer_action_seen[8];
+    /* A joiner in a custom-class game stays out until it says READY. */
+    bool          peer_ready[8];
     uint32_t      vehicles_applied_tick;
     uint32_t      game_applied_tick;
     double        vsnap_time;
@@ -249,6 +251,9 @@ typedef struct {
     bool     bots_imported;
     bool     classes;
     char     my_class[2][48];
+    /* A custom-class match holds you out of it until you have picked. */
+    bool     choosing;
+    float    spawn_protect;     /* seconds, from the match setup */
     /* The first-person view of an imported weapon. */
     hta_gfx_mesh *gpu_ivm;
     int32_t  ivm_weapon;        /* roster index it was uploaded for, -1 */
@@ -1031,6 +1036,33 @@ static void class_start(hta_android *s)
     if (n) s->start_count = n;
 }
 
+/* Your class: its two weapons by the names the menu showed. */
+static void class_apply(hta_android *s)
+{
+    int32_t pick[2] = { -1, -1 };
+    for (int k = 0; k < 2; k++)
+        for (uint32_t w = 0; w < s->game.weapon_count && pick[k] < 0; w++)
+            if (hta_game_class_weapon(&s->game, (int32_t)w) && s->my_class[k][0] &&
+                !strcasecmp(s->game.weapons[w].display, s->my_class[k])) pick[k] = (int32_t)w;
+    hta_game_set_loadout(&s->game, s->me, pick[0], pick[1]);
+    hta_log("[class] %s / %s -> roster %d / %d", s->my_class[0], s->my_class[1], (int)pick[0], (int)pick[1]);
+}
+
+/* Out of the match until a class is picked: dead to everyone, not drawn,
+ * the respawn clock stopped. */
+static void class_hold(hta_android *s)
+{
+    if (!s->game_on || !s->game.classes || s->me < 0) return;
+    s->choosing = true;
+    s->dead = true;
+    s->dead_timer = s->respawn_delay;
+    s->corpse_up = false;
+    hta_unit *u = &s->game.units[s->me];
+    u->alive = false;
+    u->dead_for = 1e4f;                       /* no body to show */
+    u->death_yaw = s->cam.yaw;
+}
+
 static void respawn(hta_android *s)
 {
     if (!s->spawn_count) return;
@@ -1702,6 +1734,57 @@ Java_net_hta_halotrial_GameActivity_nativeSetLoadout(JNIEnv *env, jclass cls, js
     g_loadout.classes = classes;
 }
 
+/* A class picked in play: before your first spawn, or for the next one. */
+static struct { char cls[2][48]; } g_chosen;
+static _Atomic int g_chosen_ready;
+/* 1: held out until a class is picked; 2: the match has classes. */
+static _Atomic int g_class_state;
+
+JNIEXPORT jint JNICALL
+Java_net_hta_halotrial_GameActivity_nativeClassState(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    return atomic_load(&g_class_state);
+}
+
+JNIEXPORT void JNICALL
+Java_net_hta_halotrial_GameActivity_nativeChooseClass(JNIEnv *env, jclass cls, jstring primary,
+                                                      jstring secondary)
+{
+    (void)cls;
+    if (atomic_load(&g_chosen_ready)) return;
+    const char *u;
+    jstring in[2] = { primary, secondary };
+    for (int k = 0; k < 2; k++) {
+        g_chosen.cls[k][0] = 0;
+        if (in[k] && (u = (*env)->GetStringUTFChars(env, in[k], NULL))) {
+            snprintf(g_chosen.cls[k], sizeof(g_chosen.cls[k]), "%s", u);
+            (*env)->ReleaseStringUTFChars(env, in[k], u);
+        }
+    }
+    atomic_store(&g_chosen_ready, 1);            /* publishes g_chosen */
+}
+
+/* The game side of it, once a frame: take a pick, and say where we stand. */
+static void class_poll(hta_android *s)
+{
+    bool on = s->game_on && s->game.classes;
+    if (atomic_load(&g_chosen_ready)) {
+        if (on) {
+            for (int k = 0; k < 2; k++) snprintf(s->my_class[k], sizeof(s->my_class[k]), "%s", g_chosen.cls[k]);
+            class_apply(s);
+            if (s->choosing) {
+                s->choosing = false;
+                /* Through the black, in. */
+                s->dead_timer = HTA_DEATH_FADE_OUT;
+            }
+        }
+        atomic_store(&g_chosen_ready, 0);
+    }
+    if (s->choosing && s->dead_timer < s->respawn_delay) s->dead_timer = s->respawn_delay;
+    atomic_store(&g_class_state, (s->choosing ? 1 : 0) | (on ? 2 : 0));
+}
+
 /* The imported weapons' sounds as mixer clips, once audio is up. */
 static void imported_sounds(hta_android *s)
 {
@@ -2187,6 +2270,7 @@ static bool load_map(hta_android *s)
         for (uint32_t i = 0; i < s->start_count; i++) { s->held[i] = s->start_weapon[i]; s->held_asset[i] = s->start_asset[i]; }
         s->held_slot = 0;
         for (uint32_t k = 0; k < HTA_CARRY_MAX; k++) s->held_ammo_set[k] = false;
+        class_hold(s);
     }
     /* Again, now the game's rounds exist: their detonations need particle
      * recipes built alongside the held weapon's. */
@@ -2370,16 +2454,8 @@ static void start_game(hta_android *s)
         for (uint32_t i = 0, n = 0; i < s->game.unit_count; i++)
             if (s->game.units[i].kind == HTA_UNIT_BOT)
                 s->game.units[i].character = (int8_t)(n++ % s->game.character_count);
-    /* Your class: its two weapons by the names the menu showed. */
-    if (s->game.classes) {
-        int32_t pick[2] = { -1, -1 };
-        for (int k = 0; k < 2; k++)
-            for (uint32_t w = 0; w < s->game.weapon_count && pick[k] < 0; w++)
-                if (hta_game_class_weapon(&s->game, (int32_t)w) && s->my_class[k][0] &&
-                    !strcasecmp(s->game.weapons[w].display, s->my_class[k])) pick[k] = (int32_t)w;
-        hta_game_set_loadout(&s->game, s->me, pick[0], pick[1]);
-        hta_log("[class] %s / %s -> roster %d / %d", s->my_class[0], s->my_class[1], (int)pick[0], (int)pick[1]);
-    }
+    if (s->game.classes) class_apply(s);
+    s->game.spawn_protect = s->spawn_protect;
     /* The local player's health and shield move into the game, carrying
      * what the tags already gave them. */
     s->game.units[s->me].vitals = *s->vit;
@@ -2846,11 +2922,24 @@ static hta_gfx_instance g_inst[HTA_GFX_MAX_INSTANCES];
 static uint32_t g_inst_count;
 
 /* The bodies, their guns and their rounds, onto the draw list. */
+/* Our own body is an imported one: it falls as itself, drawn from `gview`,
+ * rather than as the Spartan corpse. */
+static bool mine_imported(const hta_android *s)
+{
+    return s->game_on && s->me >= 0 && s->game.units[s->me].character >= 0;
+}
+
+/* Whose body `gview` leaves alone: ours, unless it is on screen. */
+static int32_t view_skip(const hta_android *s)
+{
+    return s->show_self || (s->dead && mine_imported(s)) ? -1 : s->me;
+}
+
 static uint32_t game_draw(hta_android *s, hta_gfx_dynamic *dyn, uint32_t n)
 {
     if (!s->game_on || !s->gfx) return n;
     for (uint32_t i = 0; i < s->game.unit_count && n < HTA_GFX_MAX_DYNAMIC; i++) {
-        if (((int32_t)i == s->me && !s->show_self) || !s->gview.shown[i] || !s->gpu_units[i])
+        if ((int32_t)i == view_skip(s) || !s->gview.shown[i] || !s->gpu_units[i])
             continue;
         dyn[n].mesh = s->gpu_units[i];
         dyn[n].vertices = hta_game_view_body_vertices(&s->gview, &s->game, i);
@@ -3160,6 +3249,7 @@ typedef struct {
     int  mode;               /* 0 solo, 1 host, 2 join */
     int  bots, skill, kills, minutes, respawn, max_players, port, vehicles;
     int  gametype;           /* hta_game_mode; solo only for now */
+    int  protect;            /* spawn protection, seconds; 0 none */
     char host[64];
     char name[HTA_NET_NAME];
     char map[HTA_NET_MAP];   /* "" Blood Gulch, else an imported map's name */
@@ -3175,14 +3265,15 @@ Java_net_hta_halotrial_GameActivity_nativeStartMatch(JNIEnv *env, jclass cls, ji
     if (atomic_load(&g_match_ready)) return;     /* one is already on its way */
     match_setup m;
     memset(&m, 0, sizeof(m));
-    jint v[10] = { 0, 3, 1, 25, 0, 5, 8, 32270, HTA_VROSTER_ALL, HTA_MODE_SLAYER };
+    jint v[11] = { 0, 3, 1, 25, 0, 5, 8, 32270, HTA_VROSTER_ALL, HTA_MODE_SLAYER, 0 };
     jsize n = cfg ? (*env)->GetArrayLength(env, cfg) : 0;
-    if (n > 10) n = 10;
+    if (n > 11) n = 11;
     if (n > 0) (*env)->GetIntArrayRegion(env, cfg, 0, n, v);
     m.mode = v[0]; m.bots = v[1]; m.skill = v[2]; m.kills = v[3];
     m.minutes = v[4]; m.respawn = v[5]; m.max_players = v[6]; m.port = v[7];
     m.vehicles = v[8];
     m.gametype = v[9];
+    m.protect = v[10];
     const char *u;
     if (host && (u = (*env)->GetStringUTFChars(env, host, NULL))) {
         snprintf(m.host, sizeof(m.host), "%s", u);
@@ -3298,6 +3389,9 @@ static void match_take(hta_android *s)
     s->game_mode = m.mode != 2 && m.gametype > 0 && m.gametype < HTA_MODE_COUNT
                  ? m.gametype : HTA_MODE_SLAYER;
     snprintf(s->world, sizeof(s->world), "%s", m.map);
+    /* Ours, and only off, 2, 3 or 5 from the menu: long enough to look
+     * round, short enough that camping the spawn is not a hiding place. */
+    s->spawn_protect = m.protect > 0 && m.protect <= 10 ? (float)m.protect : 0.0f;
     snprintf(s->my_character, sizeof(s->my_character), "%s", g_loadout.character);
     s->bots_imported = g_loadout.bots_imported != 0;
     s->classes = g_loadout.classes != 0;
@@ -3795,6 +3889,7 @@ static void net_host_peers(hta_android *s, double now)
             s->peer_melee_seen[i]=s->peer_grenade_seen[i]=0;
             s->peer_reload_seen[i]=s->peer_pickup_seen[i]=0;
             s->peer_action_seen[i]=0;
+            s->peer_ready[i]=false;
             continue;
         }
         if (p->player.id==s->net.id) {
@@ -3807,7 +3902,9 @@ static void net_host_peers(hta_android *s, double now)
             unit=hta_game_add(&s->game,HTA_UNIT_REMOTE,name,HTA_TEAM_AUTO);
             if (unit<0) continue;
             s->peer_unit[i]=(int8_t)unit;
-            hta_game_spawn(&s->game,unit);
+            s->peer_ready[i]=false;
+            if (!s->game.classes) hta_game_spawn(&s->game,unit);
+            else s->game.units[unit].dead_for=1e4f;   /* nobody there to see yet */
             game_gpu_upload(s);
             hta_log("[net] player %u joined game unit %d",p->player.id,unit);
         }
@@ -3820,6 +3917,21 @@ static void net_host_peers(hta_android *s, double now)
             continue;
         }
         const hta_net_control *c=&p->control;
+        /* Their look and their class, from their own menu. */
+        u->character=c->character && c->character<=s->game.character_count ? (int8_t)(c->character-1) : -1;
+        if (s->game.classes) {
+            int32_t a=c->loadout[0]==255 ? -1 : c->loadout[0], b=c->loadout[1]==255 ? -1 : c->loadout[1];
+            if (a!=u->loadout[0] || b!=u->loadout[1]) hta_game_set_loadout(&s->game,unit,a,b);
+            if (!s->peer_ready[i]) {
+                if (c->flags&HTA_NET_READY) {
+                    s->peer_ready[i]=true;
+                    if (!u->alive) u->respawn=0.0f;   /* in on the next tick */
+                } else {
+                    u->respawn=1.0f;                  /* still choosing */
+                    continue;
+                }
+            }
+        }
         in->move.move_forward=c->forward;
         in->move.move_right=c->right;
         in->move.jump=(c->flags&HTA_NET_JUMP)!=0;
@@ -3903,6 +4015,7 @@ static void net_host_world(hta_android *s)
         hta_net_entity *e=&w.entities[w.count++];
         e->id=(uint8_t)i;
         e->kind=u->kind==HTA_UNIT_BOT ? HTA_NET_ENTITY_BOT : HTA_NET_ENTITY_PLAYER;
+        e->character=u->character>=0 && u->character<63 ? (uint8_t)(u->character+1) : 0;
         e->peer_id=u->kind==HTA_UNIT_LOCAL ? s->net.id : 0;
         if (u->kind==HTA_UNIT_REMOTE)
             for (unsigned p=0;p<HTA_NET_MAX_PLAYERS;p++)
@@ -4015,6 +4128,7 @@ static void net_host_world(hta_android *s)
     static hta_net_game gm;
     memset(&gm,0,sizeof(gm));
     gm.mode=(uint8_t)(s->game.mode<HTA_MODE_COUNT ? s->game.mode : 0);
+    gm.options=s->game.classes ? HTA_NET_GAME_CLASSES : 0;
     gm.score_limit=(uint8_t)(s->game.score_limit>255 ? 255 : s->game.score_limit<0 ? 0 : s->game.score_limit);
     for (int t=0;t<2;t++) {
         int sc=s->game.team_score[t];
@@ -4186,14 +4300,18 @@ static void net_client_world(hta_android *s)
             hta_camera_init(&u->eye);
             u->vitals=s->game.vitals_template;
         }
+        bool fresh=u->kind==HTA_UNIT_NONE;
         u->kind=idx==s->me ? HTA_UNIT_LOCAL :
                 e->kind==HTA_NET_ENTITY_BOT ? HTA_UNIT_BOT : HTA_UNIT_REMOTE;
+        if (idx!=s->me)
+            u->character=e->character && e->character<=s->game.character_count ? (int8_t)(e->character-1) : -1;
         snprintf(u->name,sizeof(u->name),"%s",e->name);
         u->alive=(e->flags&HTA_NET_ENTITY_ALIVE)!=0;
         if (was_alive && !u->alive) {
             u->dead_for=0.0f;
             u->death_yaw=e->yaw;
-        } else if (!u->alive) u->dead_for+=0.05f;
+        } else if (fresh && !u->alive) u->dead_for=1e4f;   /* not yet in: no body */
+        else if (!u->alive) u->dead_for+=0.05f;
         u->score=e->score; u->kills=e->kills; u->deaths=e->deaths;
         u->fired=(e->flags&HTA_NET_ENTITY_FIRE)!=0;
         /* The motion tracker's "fired lately", kept here from the flag. */
@@ -4400,6 +4518,13 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
         hta_game_mirror_rules(&s->game,mode,gm->score_limit,sc,
                               gm->winner_team==255 ? -1 : gm->winner_team,fl);
         s->game_mode=(int)s->game.mode;
+        /* A custom-class game: pick one before the host lets you in. */
+        if ((gm->options&HTA_NET_GAME_CLASSES) && !s->game.classes) {
+            s->game.classes=true;
+            class_apply(s);
+            class_hold(s);
+            hta_log("[net] the host plays with classes");
+        }
         /* Hulls as the host has them, for our HULL readout and sparks. */
         for (uint32_t i=0;i<s->vehicles.count && i<HTA_NET_MAX_VEHICLES;i++) {
             s->game.vgun[i].hull_max=1.0f;
@@ -4430,6 +4555,14 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
         c.grenade_count=s->net_grenade_count;
         c.reload_count=s->net_reload_count;
         c.pickup_count=s->net_pickup_count;
+        if (s->game_on && s->me>=0) {
+            const hta_unit *mu=&s->game.units[s->me];
+            for (int k=0;k<2;k++)
+                c.loadout[k]=mu->loadout[k]>=0 && mu->loadout[k]<=23 ? (uint8_t)mu->loadout[k] : 255;
+            c.character=mu->character>=0 && mu->character<63 ? (uint8_t)(mu->character+1) : 0;
+            /* Ready once the host's rules are known and no class is pending. */
+            if (s->net.have_game && !s->choosing) c.flags|=HTA_NET_READY;
+        } else c.loadout[0]=c.loadout[1]=255;
         hta_net_client_control(&s->net,&c);
         hta_net_player p={0}; p.id=s->net.id; p.weapon=(uint8_t)s->held_slot;
         for (int k=0;k<3;k++) { p.pos[k]=s->player.pos[k]; p.velocity[k]=s->player.velocity[k]; }
@@ -5251,6 +5384,7 @@ void android_main(struct android_app *app)
                     state.death_pos[0], state.death_pos[1], state.death_pos[2]);
         }
         float fade = 0.0f;
+        class_poll(&state);
         if (state.dead) {
             state.dead_timer -= dt;
             /* Clear while you watch; black only over the last moment. */
@@ -6114,7 +6248,7 @@ void android_main(struct android_app *app)
                 hta_game_update(&state.game, dt);
                 game_events(&state);
             }
-            hta_game_view_update(&state.gview, &state.game, state.show_self ? -1 : state.me, dt);
+            hta_game_view_update(&state.gview, &state.game, view_skip(&state), dt);
             if (state.net_enabled && !state.net_hosting)
                 for (uint32_t i=0;i<state.game.unit_count;i++)
                     state.game.units[i].fired=state.game.units[i].meleed=
@@ -6261,7 +6395,7 @@ void android_main(struct android_app *app)
                 if (state.items_upload > 0) state.items_upload--;
                 dyncount++;
             }
-            if (state.corpse_up && state.gpu_corpse &&
+            if (state.corpse_up && state.gpu_corpse && !mine_imported(&state) &&
                 dyncount < HTA_GFX_MAX_DYNAMIC) {
                 dynlist[dyncount].mesh = state.gpu_corpse;
                 dynlist[dyncount].vertices = state.corpse.posed;
