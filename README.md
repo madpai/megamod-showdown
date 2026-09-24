@@ -1,6 +1,14 @@
 <div align="center">
 
-# Open Halo Project
+# MEGAMOD SHOWDOWN
+
+*A fork of the Open Halo Project: the same native Android engine, playing
+maps, characters and weapons imported from other games through
+[Open Asset Lab](https://github.com/madpai/open-asset-lab). Open Halo
+itself stays strictly Halo. No game content is included in this
+repository.*
+
+## Built on: Open Halo Project
 
 **Halo: Combat Evolved on Android, running natively.** A from-scratch engine that plays the
 free Halo Trial's **Blood Gulch** on your phone, built from your own copy of the game.

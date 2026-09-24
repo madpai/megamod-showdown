@@ -1,3 +1,24 @@
+# MEGAMOD SHOWDOWN (branch `halo-sandbox` of halo-trial-android)
+
+**This branch is MEGAMOD SHOWDOWN**, the owner's fork of Open Halo that plays
+imported content from other games (Source maps, characters, weapons via
+Open Asset Lab). Named 2026-09-24. Its GitHub home is the PRIVATE repo
+https://github.com/madpai/megamod-showdown (remote `megamod`; this branch
+tracks `megamod/main`). Push with `git push megamod halo-sandbox:main`.
+
+- **Never push this branch to `origin`** (Open Halo, public, strictly
+  Halo) and never cut Open Halo releases from it. The Open Halo rules
+  below about `origin`, `fp-animated-guns` and guest-APK releases apply to
+  Open Halo work only.
+- Imported packages (`.oalmap`, `.oalasset`) and Trial data are never
+  committed here either; they live in `~/assetlab-private/bundle` and go
+  only into the owner's personal APK.
+- Halo engine fixes that are not about imported content can be offered
+  to Open Halo separately (cherry-pick onto `fp-animated-guns`), with the
+  owner's say-so.
+
+The rest of this file is the shared engine's briefing.
+
 # halo-trial-android
 
 A native ARM64 Android engine for the **Halo: Combat Evolved Trial**, playing

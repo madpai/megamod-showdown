@@ -1,5 +1,9 @@
 # Halo Trial Android — handoff
 
+> **On branch `halo-sandbox` this is MEGAMOD SHOWDOWN** (private repo
+> madpai/megamod-showdown, remote `megamod`). See CLAUDE.md's top section
+> for where it pushes and what never goes to Open Halo.
+
 **Read this file. You should not need anything else to start.**
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
