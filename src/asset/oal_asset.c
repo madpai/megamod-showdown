@@ -178,7 +178,7 @@ bool hta_oal_load_memory(const uint8_t *data, size_t size, hta_oal_asset *out, c
     uint32_t version = u32(&r), ml = u32(&r), mc = u32(&r);
     if (version != 1) return fail(err, errlen, "unsupported OALASSET version");
     r.at = 32;
-    if (!mc || mc > HTA_OAL_MAX_MODELS || ml > 4u * 1024u * 1024u) return fail(err, errlen, "asset counts out of range");
+    if (mc > HTA_OAL_MAX_MODELS || ml > 4u * 1024u * 1024u) return fail(err, errlen, "asset counts out of range");
     const char *j = (const char *)take(&r, ml);
     if (!j) return fail(err, errlen, "truncated manifest");
     json_str(j, ml, "kind", out->kind, sizeof(out->kind));
@@ -199,7 +199,11 @@ bool hta_oal_load_memory(const uint8_t *data, size_t size, hta_oal_asset *out, c
         const char *v = json_find(j, ml, "view_model_mirrored");
         out->view_mirrored = v && !strncmp(v, "true", 4);
     }
-    if (strcmp(out->kind, "character") && strcmp(out->kind, "weapon")) return fail(err, errlen, "unknown asset kind");
+    if (strcmp(out->kind, "character") && strcmp(out->kind, "weapon") && strcmp(out->kind, "sounds"))
+        return fail(err, errlen, "unknown asset kind");
+    /* A character and a weapon have models; a sound pack (the hit and kill
+     * dings) has none. */
+    if (!strcmp(out->kind, "sounds") ? mc != 0 : mc == 0) return fail(err, errlen, "asset counts out of range");
     if (!strcmp(out->kind, "weapon") && (mc != 2 || !out->base[0])) return fail(err, errlen, "a weapon needs a world and a view model and a base");
     out->model_count = mc;
     for (uint32_t i = 0; i < mc; i++)

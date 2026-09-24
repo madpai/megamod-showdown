@@ -16,9 +16,11 @@
 # It used to sit in a session scratchpad under /tmp, which silently went stale.
 set -e
 cd "$(dirname "$0")/.."
-ROOT=${HTA_SERVE_ROOT:-$PWD/scratch/serve}
+# MEGAMOD SHOWDOWN has its own page, port and file names, so publishing it
+# never replaces Open Halo's build on :8731.
+ROOT=${HTA_SERVE_ROOT:-$PWD/scratch/serve-megamod}
 BIND=${HTA_SERVE_BIND:-100.89.1.14}
-PORT=${HTA_SERVE_PORT:-8731}
+PORT=${HTA_SERVE_PORT:-8733}
 export JAVA_HOME=${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk}
 export ANDROID_HOME=${ANDROID_HOME:-$HOME/android/sdk}
 GRADLE=${GRADLE:-$HOME/android/gradle-8.9/bin/gradle}
@@ -66,7 +68,7 @@ if [ "$BUILD" = 1 ]; then
       echo "bundling imported map $(basename "$f" .oalmap)"
     done
     # Imported characters and weapons (.oalasset), same private source.
-    for kind in characters weapons; do
+    for kind in characters weapons sounds; do
       for f in "$HTA_IMPORTED/$kind"/*.oalasset; do
         [ -f "$f" ] || continue
         mkdir -p "$STAGE/$kind"
@@ -82,7 +84,7 @@ fi
 [ -f "$APK" ] || { echo "no APK at $APK (run without --no-build)" >&2; exit 1; }
 
 mkdir -p "$ROOT/uploads"
-cp "$APK" "$ROOT/halo-trial-poc.apk"
+cp "$APK" "$ROOT/megamod-showdown.apk"
 
 # A guest needs the same code but must import their own Trial data. Build and
 # publish that variant alongside the owner's personal APK for multiplayer QA.
@@ -90,22 +92,22 @@ if [ "$BUILD" = 1 ] && [ "$WITH_ASSETS" = 1 ]; then
   echo "building asset-free guest APK…"
   (cd android && $GRADLE --no-daemon -q :app:clean :app:assembleDebug \
       -PhtaVersionCode="$(git rev-list --count HEAD)" -PhtaVersionName="$SOURCE")
-  if unzip -Z1 "$APK" | grep -qE '^assets/(maps|characters|weapons)/'; then
+  if unzip -Z1 "$APK" | grep -qE '^assets/(maps|characters|weapons|sounds)/'; then
     echo "guest APK unexpectedly contains Trial maps" >&2; exit 1
   fi
-  cp "$APK" "$ROOT/halo-trial-guest.apk"
+  cp "$APK" "$ROOT/megamod-showdown-guest.apk"
 fi
 
 # Hashes so the phone can confirm it got the build you meant.
 ( cd "$ROOT" && : > SHA256SUMS
-  for f in halo-trial-poc.apk halo-trial-guest.apk bloodgulch.map bitmaps.map sounds.map; do
+  for f in megamod-showdown.apk megamod-showdown-guest.apk bloodgulch.map bitmaps.map sounds.map; do
     [ -f "$f" ] && sha256sum "$f" >> SHA256SUMS
   done )
 
 [ -n "$TITLE" ] || TITLE=$(git log -1 --format=%s 2>/dev/null || echo "current build")
 COMMIT=$SOURCE
 STAMP=$(date '+%Y-%m-%d %H:%M')
-SIZE=$(du -h "$ROOT/halo-trial-poc.apk" | cut -f1)
+SIZE=$(du -h "$ROOT/megamod-showdown.apk" | cut -f1)
 
 if [ -n "$NOTES_FILE" ]; then
   NOTES=$(cat "$NOTES_FILE")
@@ -135,7 +137,7 @@ if ! (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | grep -q ":$PORT "; then
       --mirror "$PWD/scratch/uploads" >> scratch/serve.log 2>&1 &
   sleep 1
 else
-  RUNNING_ROOT=$(tr '\0' '\n' < "/proc/$(pgrep -f 'serve_poc.py' | head -1)/cmdline" 2>/dev/null \
+  RUNNING_ROOT=$(tr '\0' '\n' < "/proc/$(pgrep -f "serve_poc.py.*--port $PORT" | head -1)/cmdline" 2>/dev/null \
                  | grep -A1 -- --root | tail -1)
   if [ -n "$RUNNING_ROOT" ] && [ "$RUNNING_ROOT" != "$ROOT" ]; then
     echo "WARNING: a server is running with root $RUNNING_ROOT, not $ROOT." >&2

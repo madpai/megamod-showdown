@@ -201,6 +201,23 @@ int main(void)
           !strcmp(hta_imported_role("stand rifle airborne"), "air") &&
           !strcmp(hta_imported_role("stand rifle idle"), "idle"), "Halo stances map to roles");
 
+    {
+        /* A sound pack: no models, a sound by role. */
+        static hta_oal_asset sp;
+        const char *mf = "{\"kind\":\"sounds\",\"name\":\"ui\"}";
+        buf b = { 0 };
+        put(&b, "OALA", 4); u32(&b, 1); u32(&b, (uint32_t)strlen(mf)); u32(&b, 0); u32(&b, 0);
+        uint8_t pad[12] = { 0 }; put(&b, pad, 12); put(&b, mf, strlen(mf));
+        name(&b, "hit", 16); u32(&b, 44100); u32(&b, 1); u32(&b, 4);
+        int16_t pcm[4] = { 0, 1000, -1000, 0 }; put(&b, pcm, sizeof(pcm));
+        CHECK(hta_oal_load_memory(b.d, b.n, &sp, err, sizeof(err)) && sp.model_count == 0 &&
+              hta_oal_sound_find(&sp, "hit") && hta_oal_sound_find(&sp, "hit")->frames == 4,
+              "a sound pack loads with no models");
+        hta_oal_free(&sp);
+        memcpy(b.d + 32 + 9, "weapon", 6);   /* kind "sounds" -> "weapon" (same length) */
+        CHECK(!hta_oal_load_memory(b.d, b.n, &sp, err, sizeof(err)), "a weapon with no models is refused");
+        free(b.d);
+    }
     buf k = package("{\"kind\":\"vehicle\",\"name\":\"x\"}", 1, false);
     CHECK(!hta_oal_load_memory(k.d, k.n, &bad, err, sizeof(err)), "an unknown kind is refused");
     buf t = package("{\"kind\":\"character\",\"name\":\"guy\"}", 1, false);

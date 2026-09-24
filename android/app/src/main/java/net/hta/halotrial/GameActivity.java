@@ -172,6 +172,10 @@ public class GameActivity extends NativeActivity {
     static native String nativeVehicleText();
     static native void nativeHudAlt(boolean down);
     static native int nativeDamageFlash();
+    /* Damage you dealt, floating up: x, y (0..1 of the view), amount, opacity. */
+    static native float[] nativeDamageNumbers();
+    /* The killcam's still frame: "name<TAB>weapon<TAB>health%", "" when none. */
+    static native String nativeKillcam();
     static native int nativeNetStatus();
     /* Banner, place, kill feed and scoreboard, separated by 0x1E. */
     static native String nativeGameText();
@@ -769,11 +773,30 @@ public class GameActivity extends NativeActivity {
 
         private final GameActivity owner;
         private final Paint pauseBtn = new Paint(Paint.ANTI_ALIAS_FLAG);
+        /* Damage numbers: TF2's red-orange, bold, over a dark drop shadow. */
+        private final Paint dmgP = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint dmgShadow = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint killBg = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint killBig = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint killSmall = new Paint(Paint.ANTI_ALIAS_FLAG);
 
         HudOverlay(GameActivity a) {
             super(a);
             owner = a;
             pauseBtn.setColor(0xCC1C3A66);
+            dmgP.setColor(0xFFFF4A2A);
+            dmgP.setTypeface(Typeface.DEFAULT_BOLD);
+            dmgP.setTextAlign(Paint.Align.CENTER);
+            dmgShadow.setColor(0xFF000000);
+            dmgShadow.setTypeface(Typeface.DEFAULT_BOLD);
+            dmgShadow.setTextAlign(Paint.Align.CENTER);
+            killBg.setColor(0xD0201A18);
+            killBig.setColor(0xFFFF6A3A);
+            killBig.setTypeface(Typeface.DEFAULT_BOLD);
+            killBig.setTextAlign(Paint.Align.CENTER);
+            killSmall.setColor(0xFFE8DCC8);
+            killSmall.setTypeface(Typeface.DEFAULT_BOLD);
+            killSmall.setTextAlign(Paint.Align.CENTER);
             setClickable(true);
             ring.setStyle(Paint.Style.STROKE);
             ring.setStrokeWidth(4f);
@@ -1218,6 +1241,37 @@ public class GameActivity extends NativeActivity {
                         netStatus == 7 ? "MAPS DO NOT MATCH" :
                         netStatus == 8 ? "GAME IS FULL" : "NETWORK UNAVAILABLE";
                 c.drawText(connection, getWidth() * 0.5f, getHeight() * 0.135f, label);
+            }
+            float[] dmg = GameActivity.nativeDamageNumbers();
+            if (dmg != null && dmg.length >= 4) {
+                int w = getWidth(), h = getHeight();
+                dmgP.setTextSize(Math.min(w, h) * 0.055f);
+                for (int i = 0; i + 3 < dmg.length; i += 4) {
+                    int a = (int) (Math.max(0f, Math.min(1f, dmg[i + 3])) * 255);
+                    String t = "-" + Math.max(1, Math.round(dmg[i + 2]));
+                    float x = dmg[i] * w, y = dmg[i + 1] * h;
+                    dmgShadow.setTextSize(dmgP.getTextSize());
+                    dmgShadow.setAlpha(a * 3 / 4);
+                    c.drawText(t, x + 3, y + 3, dmgShadow);
+                    dmgP.setAlpha(a);
+                    c.drawText(t, x, y, dmgP);
+                }
+            }
+            String kc = GameActivity.nativeKillcam();
+            if (kc != null && !kc.isEmpty()) {
+                /* TF2's freeze panel: who, with what, and how hurt they were. */
+                String[] f = kc.split("\t", -1);
+                int w = getWidth(), h = getHeight();
+                float m = Math.min(w, h);
+                float bw = w * 0.42f, bh = m * 0.20f, bx = (w - bw) * 0.5f, by = h * 0.70f;
+                c.drawRoundRect(bx, by, bx + bw, by + bh, 14, 14, killBg);
+                killSmall.setTextSize(m * 0.035f);
+                killBig.setTextSize(m * 0.065f);
+                c.drawText("YOU WERE KILLED BY", w * 0.5f, by + bh * 0.28f, killSmall);
+                c.drawText(f[0], w * 0.5f, by + bh * 0.62f, killBig);
+                String sub = (f.length > 1 && !f[1].isEmpty() ? f[1] : "")
+                        + (f.length > 2 ? (f[1].isEmpty() ? "" : "  \u00b7  ") + f[2] + "% HEALTH LEFT" : "");
+                c.drawText(sub, w * 0.5f, by + bh * 0.88f, killSmall);
             }
             int hit = GameActivity.nativeDamageFlash();
             if (hit > 0) {

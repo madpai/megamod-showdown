@@ -130,7 +130,16 @@ public class SetupActivity extends Activity {
         status = tv("", 14, 0xFF8FB6FF, false);
         lanAddress = tv("", 14, 0xFF8FB6FF, false);
 
-        root.addView(tv("Halo: MP", 26, 0xFFE6E9EF, true));
+        // MEGAMOD SHOWDOWN's cover, badges and logo strip cropped off.
+        android.widget.ImageView cover = new android.widget.ImageView(this);
+        cover.setImageResource(R.drawable.megamod_cover);
+        cover.setAdjustViewBounds(true);
+        cover.setMaxHeight((int) (getResources().getDisplayMetrics().heightPixels * 0.8f));
+        cover.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        root.addView(cover, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        root.addView(space(12));
+        root.addView(tv("MEGAMOD SHOWDOWN", 26, 0xFFE6E9EF, true));
         root.addView(space(12));
         root.addView(tv(
                 "This app does not bundle any Halo files.\n"

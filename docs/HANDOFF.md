@@ -185,7 +185,20 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-> **Map polish + volume keys (this build, 2026-09-24):**
+> **MEGAMOD SHOWDOWN app + hit feedback + killcam (this build, 2026-09-24):**
+> 0. It is a NEW app now (`net.megamod.showdown`, icon from the owner's
+>    cover art) on its own page, **http://100.89.1.14:8733/**, installing
+>    beside Open Halo's (8731 stays Open Halo's). First launch is a fresh
+>    install: settings (player model, classes) start from defaults, and the
+>    bot grids rebuild once per map.
+> 1. Hit a player: TF2's ding (once per volley) and a red damage number
+>    floating off them (hits within 0.25 s add up). Kill: TF2's kill ding.
+> 2. Killcam: 1.3 s after you die (killed by someone else, respawn time
+>    of 3.5 s or more), the view swoops to your killer, zooms, freezes with
+>    TF2's freeze-cam sounds and a "YOU WERE KILLED BY" panel (their
+>    weapon, their health left). The freeze holds until the fade.
+>
+> **Map polish + volume keys (previous build, 2026-09-24):**
 > 1. Fences, hay, cobwebs, foliage and glass are see-through where their
 >    texture is (Source $alphatest / $translucent, drawn in the alpha
 >    pass). They were black cut-outs.

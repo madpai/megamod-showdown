@@ -251,6 +251,21 @@ typedef struct {
     bool     bots_imported;
     bool     classes;
     char     my_class[2][48];
+    /* Hit feedback: a ding when your shot lands, a louder one for a kill
+     * (TF2's own from the sound pack, else synthesized), and the damage
+     * floating up off whoever took it. */
+    hta_oal_asset ui_sounds;
+    uint32_t ding_clip, kill_clip, freeze_clip, snap_clip;
+    /* The killcam: after the fall, the view swoops to whoever killed you,
+     * zooming, and holds a still frame (TF2's freeze cam). */
+    int32_t  killcam_unit;      /* -1: none (no killer, or yourself) */
+    int      killcam_phase;     /* 0 waiting, 1 swooping, 2 frozen */
+    float    killcam_from[3];
+    float    killcam_fov;       /* the view's own, to zoom from */
+    char     killcam_weapon[48];
+    hta_camera killcam_cam;     /* the frozen view, held until the fade */
+    float    ding_cool;         /* one ding per volley, not per pellet */
+    struct { float pos[3]; float amount, age; int32_t victim; } dmg[16];
     /* A custom-class match holds you out of it until you have picked. */
     bool     choosing;
     float    spawn_protect;     /* seconds, from the match setup */
@@ -494,6 +509,10 @@ static _Atomic int g_damage_flash;
 static _Atomic int g_net_status;
 /* The pause screen is up: the world holds still and the HUD shows it. */
 static _Atomic int g_paused;
+/* The killcam's still frame, for the Java HUD: "name<TAB>weapon<TAB>health%". */
+static char g_killcam_text[128];
+static _Atomic int g_killcam_ready;
+
 /* Which submenu the Java overlay has up: 0 none (the main menu), 1 solo,
  * 2 multiplayer. It decides the camera shot and what BACK does. */
 static _Atomic int g_shell_screen;
@@ -1160,6 +1179,9 @@ static void respawn(hta_android *s)
     s->nade_count = s->nade_max;
 
     s->corpse_up = false;
+    s->killcam_unit = -1;
+    s->killcam_phase = 0;
+    atomic_store(&g_killcam_ready, 0);
     if (s->game_on) {
         hta_game_revive(&s->game, s->me);
         hta_game_sync_local(&s->game, &s->player, &s->cam, held_roster(s));
@@ -1679,6 +1701,17 @@ static void load_imported(hta_android *s)
     s->imported_loaded = true;
     AAssetManager *am = s->app->activity->assetManager;
     if (!am) return;
+    {
+        char err[HTA_ERRLEN];
+        AAsset *a = AAssetManager_open(am, "sounds/ui.oalasset", AASSET_MODE_BUFFER);
+        if (a) {
+            const void *buf = AAsset_getBuffer(a);
+            if (!buf || !hta_oal_load_memory((const uint8_t *)buf, (size_t)AAsset_getLength(a),
+                                             &s->ui_sounds, err, sizeof(err)))
+                hta_log("[imported] sounds/ui.oalasset: %s", err);
+            AAsset_close(a);
+        }
+    }
     static const char *const DIRS[2] = { "characters", "weapons" };
     for (int d = 0; d < 2; d++) {
         AAssetDir *dir = AAssetManager_openDir(am, DIRS[d]);
@@ -1844,9 +1877,37 @@ static void class_poll(hta_android *s)
     atomic_store(&g_class_state, (s->choosing ? 1 : 0) | (on ? 2 : 0));
 }
 
+/* A plain ding when no sound pack brings TF2's: E6 with its octave,
+ * struck and decaying; the kill is a rising pair. Ours. */
+static uint32_t synth_ding(hta_android *s, bool kill)
+{
+    enum { RATE = 44100, N = RATE / 4 };
+    static int16_t pcm[2][N];
+    int16_t *o = pcm[kill ? 1 : 0];
+    for (int i = 0; i < N; i++) {
+        float t = (float)i / RATE, v = 0.0f;
+        float f = kill && t > 0.09f ? 1760.0f : 1318.5f, t0 = kill && t > 0.09f ? t - 0.09f : t;
+        v = sinf(6.2831853f * f * t0) * expf(-t0 * 16.0f) + 0.45f * sinf(6.2831853f * 2.0f * f * t0) * expf(-t0 * 24.0f);
+        o[i] = (int16_t)(v * 0.4f * 32767.0f);
+    }
+    return hta_audio_add_clip(&s->audio, o, N, RATE, 1);
+}
+
 /* The imported weapons' sounds as mixer clips, once audio is up. */
 static void imported_sounds(hta_android *s)
 {
+    if (s->audio_ok && s->ding_clip == HTA_AUDIO_NO_CLIP) {
+        const hta_oal_sound *h = hta_oal_sound_find(&s->ui_sounds, "hit");
+        const hta_oal_sound *k = hta_oal_sound_find(&s->ui_sounds, "kill");
+        s->ding_clip = h ? hta_audio_add_clip(&s->audio, h->samples, h->frames, h->rate, (uint8_t)h->channels)
+                         : synth_ding(s, false);
+        s->kill_clip = k ? hta_audio_add_clip(&s->audio, k->samples, k->frames, k->rate, (uint8_t)k->channels)
+                         : synth_ding(s, true);
+        const hta_oal_sound *f = hta_oal_sound_find(&s->ui_sounds, "freeze");
+        const hta_oal_sound *p = hta_oal_sound_find(&s->ui_sounds, "snapshot");
+        if (f) s->freeze_clip = hta_audio_add_clip(&s->audio, f->samples, f->frames, f->rate, (uint8_t)f->channels);
+        if (p) s->snap_clip = hta_audio_add_clip(&s->audio, p->samples, p->frames, p->rate, (uint8_t)p->channels);
+    }
     static const char *const ROLES[2] = { "fire", "reload" };
     for (uint32_t k = 0; k < s->imp_weap_count && s->audio_ok; k++)
         for (int r = 0; r < 2; r++) {
@@ -2723,6 +2784,157 @@ static void item_message(hta_android *s, uint32_t tag, int rounds)
 }
 
 /* Everything the game did this frame, turned into sound, words and dust. */
+/* Damage numbers for the HUD: screen x, y (0..1 of the view), amount and
+ * opacity, four floats each, written by the game thread once a frame. */
+#define HTA_DMG_MAX 16
+static float g_dmg_screen[HTA_DMG_MAX * 4];
+static _Atomic int g_dmg_count;
+#define HTA_DMG_LIFE 1.1f       /* seconds a number floats. Ours, TF2-like */
+
+/* Your shot landed: the ding (once per volley -- a shotgun's pellets are
+ * one hit), and a number over whoever took it. Hits on the same body in
+ * quick succession add up in one number, as TF2's batching does. */
+static void hit_feedback(hta_android *s, int32_t victim, const float pos[3], float amount)
+{
+    if (s->ding_cool <= 0.0f && s->ding_clip != HTA_AUDIO_NO_CLIP) {
+        hta_audio_play(&s->audio, s->ding_clip, 0.8f);
+        s->ding_cool = 0.06f;
+    }
+    if (!(amount > 0.0f)) return;
+    int slot = -1;
+    for (int i = 0; i < HTA_DMG_MAX && slot < 0; i++)
+        if (s->dmg[i].amount > 0.0f && s->dmg[i].victim == victim && s->dmg[i].age < 0.25f) slot = i;
+    if (slot >= 0) {
+        s->dmg[slot].amount += amount;
+        s->dmg[slot].age = 0.0f;
+        return;
+    }
+    float oldest = -1.0f;
+    for (int i = 0; i < HTA_DMG_MAX; i++) {
+        if (s->dmg[i].amount <= 0.0f) { slot = i; break; }
+        if (s->dmg[i].age > oldest) { oldest = s->dmg[i].age; slot = i; }
+    }
+    float at[3] = { pos[0], pos[1], pos[2] };
+    if (victim < (int32_t)s->game.unit_count) {
+        /* Over the head, a little to the side, so it does not cover the aim. */
+        const hta_unit *v = &s->game.units[victim];
+        at[0] = v->body.pos[0]; at[1] = v->body.pos[1];
+        at[2] = v->body.pos[2] + v->body.phys.coll_stand + 0.1f;
+    }
+    memcpy(s->dmg[slot].pos, at, sizeof(at));
+    s->dmg[slot].amount = amount;
+    s->dmg[slot].age = 0.0f;
+    s->dmg[slot].victim = victim;
+}
+
+/* Age the numbers and put them on the screen for the Java HUD. */
+static void damage_numbers(hta_android *s, float dt)
+{
+    if (s->ding_cool > 0.0f) s->ding_cool -= dt;
+    hta_mat4 vp = hta_camera_view_proj(&s->cam);
+    int n = 0;
+    for (int i = 0; i < HTA_DMG_MAX; i++) {
+        if (s->dmg[i].amount <= 0.0f) continue;
+        s->dmg[i].age += dt;
+        if (s->dmg[i].age >= HTA_DMG_LIFE) { s->dmg[i].amount = 0.0f; continue; }
+        float p[4] = { s->dmg[i].pos[0], s->dmg[i].pos[1], s->dmg[i].pos[2] + s->dmg[i].age * 0.35f, 1.0f }, c[4];
+        hta_mat4_transform(&vp, p, c);
+        if (c[3] <= 0.05f) continue;                /* behind you */
+        float x = (c[0] / c[3] + 1.0f) * 0.5f, y = (c[1] / c[3] + 1.0f) * 0.5f;
+        if (x < -0.1f || x > 1.1f || y < -0.1f || y > 1.1f) continue;
+        float fade = s->dmg[i].age > HTA_DMG_LIFE * 0.6f
+                   ? 1.0f - (s->dmg[i].age - HTA_DMG_LIFE * 0.6f) / (HTA_DMG_LIFE * 0.4f) : 1.0f;
+        g_dmg_screen[n * 4 + 0] = x;
+        g_dmg_screen[n * 4 + 1] = y;
+        g_dmg_screen[n * 4 + 2] = s->dmg[i].amount;
+        g_dmg_screen[n * 4 + 3] = fade;
+        n++;
+    }
+    atomic_store(&g_dmg_count, n);
+}
+
+JNIEXPORT jfloatArray JNICALL
+Java_net_hta_halotrial_GameActivity_nativeDamageNumbers(JNIEnv *env, jclass cls)
+{
+    (void)cls;
+    int n = atomic_load(&g_dmg_count);
+    if (n < 0) n = 0;
+    if (n > HTA_DMG_MAX) n = HTA_DMG_MAX;
+    jfloatArray out = (*env)->NewFloatArray(env, n * 4);
+    if (out && n) (*env)->SetFloatArrayRegion(env, out, 0, n * 4, g_dmg_screen);
+    return out;
+}
+
+
+JNIEXPORT jstring JNICALL
+Java_net_hta_halotrial_GameActivity_nativeKillcam(JNIEnv *env, jclass cls)
+{
+    (void)cls;
+    return (*env)->NewStringUTF(env, atomic_load(&g_killcam_ready) ? g_killcam_text : "");
+}
+
+/* Ours, TF2-like: the body cam runs this long before the swoop; the swoop
+ * takes this; the frozen view is this much narrower. Too short a respawn
+ * for all of it and the killcam stands down. */
+#define KILLCAM_AT     1.3f
+#define KILLCAM_SWOOP  0.45f
+#define KILLCAM_ZOOM   0.5f
+#define KILLCAM_NEED   (KILLCAM_AT + KILLCAM_SWOOP + 1.0f + HTA_DEATH_FADE_OUT)
+
+static void killcam(hta_android *s, float dt)
+{
+    (void)dt;
+    if (s->killcam_unit < 0 || s->respawn_delay < KILLCAM_NEED || s->choosing) return;
+    const hta_unit *k = &s->game.units[s->killcam_unit];
+    if (k->kind == HTA_UNIT_NONE) { s->killcam_unit = -1; return; }
+    float gone = s->respawn_delay - s->dead_timer;
+    if (s->killcam_phase == 2) { s->cam = s->killcam_cam; return; }
+    if (gone < KILLCAM_AT) return;
+    if (s->killcam_phase == 0) {
+        memcpy(s->killcam_from, s->cam.pos, sizeof(s->killcam_from));
+        s->killcam_fov = s->cam.fov_y;
+        s->killcam_phase = 1;
+        if (s->freeze_clip != HTA_AUDIO_NO_CLIP) hta_audio_play(&s->audio, s->freeze_clip, 0.8f);
+    }
+    /* Their face, wherever they have got to by now. */
+    float face[3] = { k->body.pos[0], k->body.pos[1], k->body.pos[2] + k->body.eye_height * 0.9f };
+    float d[3] = { face[0] - s->killcam_from[0], face[1] - s->killcam_from[1], face[2] - s->killcam_from[2] };
+    float len = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
+    if (len < 1e-3f) return;
+    for (int i = 0; i < 3; i++) d[i] /= len;
+    /* Stop short of them, and short of any wall between. */
+    float stop = len * 0.3f;
+    if (stop < 1.2f) stop = len < 1.2f ? len : 1.2f;
+    if (stop > 3.0f) stop = 3.0f;
+    if (s->col.built) {
+        float back[3] = { -d[0], -d[1], -d[2] }, t = 0.0f, hit[3], nrm[3];
+        if (hta_collision_ray(&s->col, face, back, stop, &t, hit, nrm) && t * 0.8f < stop) stop = t * 0.8f;
+    }
+    float want[3] = { face[0] - d[0] * stop, face[1] - d[1] * stop, face[2] - d[2] * stop };
+    float f = (gone - KILLCAM_AT) / KILLCAM_SWOOP;
+    if (f > 1.0f) f = 1.0f;
+    float e = f * f * (3.0f - 2.0f * f);       /* ease in and out */
+    for (int i = 0; i < 3; i++) s->cam.pos[i] = s->killcam_from[i] + (want[i] - s->killcam_from[i]) * e;
+    float to[3] = { face[0] - s->cam.pos[0], face[1] - s->cam.pos[1], face[2] - s->cam.pos[2] };
+    float flat = sqrtf(to[0]*to[0] + to[1]*to[1]);
+    if (flat > 1e-4f || fabsf(to[2]) > 1e-4f) {
+        s->cam.yaw = atan2f(to[1], to[0]);
+        s->cam.pitch = atan2f(to[2], flat);
+    }
+    s->cam.fov_y = s->killcam_fov * (1.0f - (1.0f - KILLCAM_ZOOM) * e);
+    if (f >= 1.0f) {
+        /* Freeze on them: this frame is drawn once more (phase 2 skips the
+         * draws after it), and the HUD says who. */
+        s->killcam_phase = 2;
+        s->killcam_cam = s->cam;
+        if (s->snap_clip != HTA_AUDIO_NO_CLIP) hta_audio_play(&s->audio, s->snap_clip, 0.9f);
+        float hp = hta_vitals_health_fraction(&k->vitals) * 50.0f + hta_vitals_shield_fraction(&k->vitals) * 50.0f;
+        snprintf(g_killcam_text, sizeof(g_killcam_text), "%s\t%s\t%d", k->name, s->killcam_weapon,
+                 (int)(hp + 0.5f));
+        atomic_store(&g_killcam_ready, 1);
+    }
+}
+
 static void game_events(hta_android *s)
 {
     hta_game_event e;
@@ -2786,6 +2998,7 @@ static void game_events(hta_android *s)
             }
             break;
         case HTA_EV_HIT_UNIT: {
+            if (e.b == s->me && e.a >= 0 && e.a != s->me) hit_feedback(s, e.a, e.pos, e.amount);
             /* The body answers the round: the weapon's own impact on a
              * cyborg's shield while it holds, on armour after. Heard near
              * enough to matter. */
@@ -2839,6 +3052,15 @@ static void game_events(hta_android *s)
             }
             break;
         case HTA_EV_KILL:
+            if (e.b == s->me && e.a >= 0 && e.a != s->me && s->kill_clip != HTA_AUDIO_NO_CLIP)
+                hta_audio_play(&s->audio, s->kill_clip, 0.9f);
+            if (e.a == s->me && e.b >= 0 && e.b != s->me && e.b < (int32_t)s->game.unit_count) {
+                s->killcam_unit = e.b;
+                s->killcam_phase = 0;
+                s->killcam_weapon[0] = 0;
+                if (e.weapon >= 0 && (uint32_t)e.weapon < s->game.weapon_count)
+                    snprintf(s->killcam_weapon, sizeof(s->killcam_weapon), "%s", s->game.weapons[e.weapon].display);
+            }
             if (s->net_hosting && e.a>=0 && e.a<HTA_GAME_MAX_UNITS) {
                 hta_net_kill kill={0};
                 kill.victim=(uint8_t)e.a;
@@ -5139,6 +5361,8 @@ void android_main(struct android_app *app)
     state.move_pointer = state.look_pointer = -1;
     for (unsigned k = 0; k < HTA_CARRY_MAX; k++) state.held_asset[k] = state.start_asset[k] = -1;
     state.ivm_weapon = -1;
+    state.ding_clip = state.kill_clip = state.freeze_clip = state.snap_clip = HTA_AUDIO_NO_CLIP;
+    state.killcam_unit = -1;
     g_android = &state;
     state.hud_ready = g_hud_wanted;
     char net_host[64]; bool net_hosting=false;
@@ -5526,6 +5750,8 @@ void android_main(struct android_app *app)
             float want = -1.2f;
             state.cam.pitch += (want - state.cam.pitch) * f;
         }
+        /* Then, if someone did it, the swoop to them and the still frame. */
+        if (state.dead) killcam(&state, dt);
         /* Ammo gates the shot: hta_gun_fire spends the cooldown whether or
          * not the magazine could pay, so ask before pulling. */
         hta_ammo_update(&state.ammo, dt);
@@ -6061,6 +6287,7 @@ void android_main(struct android_app *app)
         hta_audio_android_poll(&state.audio);
         hta_viewmodel_update(&state.vm, dt);
         ivm_update(&state, dt);
+        damage_numbers(&state, dt);
         /* Throw a grenade.
          *
          * The arm goes first. Every weapon carries a `first-person
@@ -6387,7 +6614,9 @@ void android_main(struct android_app *app)
                 state.gpu_fx = hta_gfx_mesh_upload(state.gfx, &state.gun.mesh, err, sizeof(err));
         }
 
-        if (state.has_window && state.gfx) {
+        /* A frozen killcam keeps the last frame on screen: nothing drawn. */
+        if (state.has_window && state.gfx &&
+            !(state.killcam_phase == 2 && state.dead && state.dead_timer > HTA_DEATH_FADE_OUT)) {
             rebuild_gfx_if_size_changed(&state);
             if (!state.gfx) continue;
             hta_gfx_viewmodel vmdraw;

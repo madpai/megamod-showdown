@@ -6,7 +6,10 @@ android {
     ndkVersion = "28.0.13004108"
 
     defaultConfig {
-        applicationId = "net.hta.halotrial"
+        // MEGAMOD SHOWDOWN installs as its own app beside Open Halo's
+        // (net.hta.halotrial). The Java package, and so every JNI name,
+        // stays the shared engine's.
+        applicationId = "net.megamod.showdown"
         // AAudio is API 26. Vulkan 1.1 (required in the manifest) already put
         // the real floor well above 24, so this costs nothing we had.
         minSdk = 26

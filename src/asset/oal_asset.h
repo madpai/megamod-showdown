@@ -67,7 +67,7 @@ typedef struct {
 } hta_oal_sound;
 
 typedef struct {
-    char     kind[16];          /* "character" or "weapon" */
+    char     kind[16];          /* "character", "weapon" or "sounds" (no models) */
     char     name[48];          /* the package's id, e.g. "ak47" */
     char     display[48];       /* for menus; the name when the manifest gives none */
     /* Weapons: the Halo weapon it is built on (a tag path fragment, e.g.

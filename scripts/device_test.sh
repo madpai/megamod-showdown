@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")/.."
 ADB=${ADB:-$HOME/android/sdk/platform-tools/adb}
-PKG=net.hta.halotrial
+PKG=net.megamod.showdown   # MEGAMOD SHOWDOWN (Open Halo: net.hta.halotrial)
 APK=android/app/build/outputs/apk/debug/app-debug.apk
 
 $ADB wait-for-device

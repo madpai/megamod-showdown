@@ -18,7 +18,7 @@ cd "$(dirname "$0")/.."
 
 DEST=${HTA_BACKUP_DIR:-/mnt/media/backups/halo-trial-android}
 DATA=${HTA_DATA_ROOT:-$HOME/halo-trial-data}
-SERVE=${HTA_SERVE_ROOT:-$PWD/scratch/serve}
+SERVE=${HTA_SERVE_ROOT:-$PWD/scratch/serve-megamod}   # MEGAMOD SHOWDOWN's page
 TITLE=""
 [ "${1:-}" = "--title" ] && TITLE=${2:-}
 
@@ -27,7 +27,8 @@ if ! mountpoint -q /mnt/media 2>/dev/null && [ "${DEST#/mnt/media}" != "$DEST" ]
   echo "backup: /mnt/media is not mounted; skipped" >&2; exit 0
 fi
 [ -d "$PARENT" ] || { echo "backup: $PARENT does not exist; skipped" >&2; exit 0; }
-mkdir -p "$DEST/apks"
+APKS=$DEST/apks-megamod   # MEGAMOD SHOWDOWN builds, apart from Open Halo's apks/
+mkdir -p "$APKS"
 
 REV=$(git rev-parse --short HEAD)
 git diff --quiet HEAD 2>/dev/null || REV="$REV-dirty"
@@ -48,23 +49,23 @@ for f in "$DATA"/*[Tt]rial[Ss]etup*.exe "$HOME"/projects/*[Tt]rial[Ss]etup*.exe;
 done
 
 # 4. The published APKs, once per distinct build.
-if [ -f "$SERVE/halo-trial-poc.apk" ]; then
-  SUM=$(sha256sum "$SERVE/halo-trial-poc.apk" | cut -c1-12)
-  if ! grep -qs "$SUM" "$DEST/apks/INDEX"; then
+if [ -f "$SERVE/megamod-showdown.apk" ]; then
+  SUM=$(sha256sum "$SERVE/megamod-showdown.apk" | cut -c1-12)
+  if ! grep -qs "$SUM" "$APKS/INDEX"; then
     # Named for the commit the APK was built from, which the published
     # page records -- not whatever HEAD is now.
     BUILT=$(grep -o 'build [0-9a-f]\{7,\}[-a-z]*' "$SERVE/index.html" 2>/dev/null | head -1 | cut -d' ' -f2)
     REV=${BUILT:-$REV}
-    OUT="$DEST/apks/$STAMP-$REV"
+    OUT="$APKS/$STAMP-$REV"
     mkdir -p "$OUT"
-    cp "$SERVE/halo-trial-poc.apk" "$OUT/halo-trial-personal.apk"
-    [ -f "$SERVE/halo-trial-guest.apk" ] && cp "$SERVE/halo-trial-guest.apk" "$OUT/halo-trial-guest.apk"
+    cp "$SERVE/megamod-showdown.apk" "$OUT/megamod-showdown-personal.apk"
+    [ -f "$SERVE/megamod-showdown-guest.apk" ] && cp "$SERVE/megamod-showdown-guest.apk" "$OUT/megamod-showdown-guest.apk"
     [ -f "$SERVE/index.html" ] && cp "$SERVE/index.html" "$OUT/release-notes.html"
     (cd "$OUT" && sha256sum *.apk > SHA256SUMS)
     printf '%s  %s  %s  %s\n' "$STAMP" "$REV" "$SUM" \
-      "${TITLE:-$(git log -1 --format=%s)}" >> "$DEST/apks/INDEX"
-    ln -sfn "$STAMP-$REV" "$DEST/apks/latest"
-    echo "backup: build $REV archived as apks/$STAMP-$REV"
+      "${TITLE:-$(git log -1 --format=%s)}" >> "$APKS/INDEX"
+    ln -sfn "$STAMP-$REV" "$APKS/latest"
+    echo "backup: build $REV archived as apks-megamod/$STAMP-$REV"
   fi
 fi
 
@@ -75,8 +76,8 @@ map-bundled personal APK; never share or upload this folder).
 project/                   the working tree as of the last backup
 halo-trial-android.bundle  every branch: git clone halo-trial-android.bundle
 halo-trial-data/           the owner's own Trial files (installer/ too)
-apks/latest/               the newest build: halo-trial-personal.apk
-                           (maps inside) and halo-trial-guest.apk
+apks/latest/               the newest build: megamod-showdown-personal.apk
+                           (maps inside) and megamod-showdown-guest.apk
 apks/INDEX                 every archived build: date, commit, hash, title
 
 Last backup: $(date '+%Y-%m-%d %H:%M')  (commit $REV)
