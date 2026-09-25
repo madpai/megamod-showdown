@@ -25,3 +25,7 @@ local.properties
 *.7z
 maps/
 assets/halo/
+
+# Rendered frames from tools and tests: screenshots go to the GitHub media release, never git.
+/*.ppm
+/*.png
