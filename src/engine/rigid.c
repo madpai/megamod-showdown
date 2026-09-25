@@ -361,8 +361,11 @@ static uint32_t sphere_all(const hta_collision *c, const float p[3], float r,
     if (!c) return n;
     n = grid_sphere(c, p, r, ref, max_depth, out, n, max, tests);
     if (c->extra) n = sphere_all(c->extra, p, r, ref, max_depth, out, n, max, tests);
-    for (uint32_t i = 0; i < c->instance_count; i++) {
-        const hta_collision_instance *in = &c->instances[i];
+    uint32_t near[64];
+    uint32_t nn = c->instance_count ? hta_collision_instances_in(c, p[0] - r, p[1] - r, p[0] + r, p[1] + r, near, 64) : 0;
+    uint32_t nt = nn == HTA_INSTANCES_ALL ? c->instance_count : nn;
+    for (uint32_t ci = 0; ci < nt; ci++) {
+        const hta_collision_instance *in = &c->instances[nn == HTA_INSTANCES_ALL ? ci : near[ci]];
         if (!in->active || !in->grid || !in->grid->built) continue;
         float d[3] = { p[0]-in->pos[0], p[1]-in->pos[1], p[2]-in->pos[2] };
         if (dot3(d, d) > (in->radius + r) * (in->radius + r)) continue;

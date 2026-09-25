@@ -317,6 +317,64 @@ static void weather(const hta_collision *col)
     hta_fx_atlas_free(&atlas);
 }
 
+/* The instance index must change nothing but speed: every query answers
+ * the same with it as with the plain scan, over hundreds of props. */
+static void instance_index(hta_collision *col)
+{
+    hta_props P;
+    assert(hta_props_init(&P, 400));
+    uint32_t rng = 12345;
+#define RND() ((rng = rng * 1664525u + 1013904223u) >> 8) / 16777216.0f
+    for (int i = 0; i < 300; i++) {
+        float c[3] = { -18 + 36 * RND(), -18 + 36 * RND(), 0.3f + RND() }, h[3] = { 0.2f + 0.4f * RND(), 0.2f + 0.4f * RND(), 0.3f + 0.3f * RND() };
+        hta_props_add(&P, c, h, 6.28f * RND(), HTA_RMAT_WOOD, 0, (uint32_t)i + 1);
+    }
+    for (int i = 0; i < 300; i += 7) P.props[i].inst->active = false;      /* a few broken */
+    static hta_collision_instance merged[400];
+    col->instances = merged;
+    col->instance_count = hta_props_instances(&P, NULL, 0, merged, 400);
+    hta_instance_index ix;
+    memset(&ix, 0, sizeof(ix));
+    int mism = 0, hits = 0;
+    for (int q = 0; q < 4000; q++) {
+        float x = -20 + 40 * RND(), y = -20 + 40 * RND(), z = 3.0f * RND();
+        float dir[3] = { RND() - 0.5f, RND() - 0.5f, RND() - 0.6f };
+        float len = q % 10 == 0 ? 50.0f : 2.0f * RND();              /* mostly short, some long */
+        float o[3] = { x, y, z };
+        float r = 0.05f + 0.4f * RND();
+        float g0 = -99, g1 = -99, t0 = -1, t1 = -1, n0[3] = { 0 }, n1[3] = { 0 };
+        float dx0 = x, dy0 = y, dx1 = x, dy1 = y;
+        hta_contact c0[16], c1[16];
+        col->instance_index = NULL;
+        bool a0 = hta_collision_ground(col, x, y, z, &g0);
+        bool b0 = hta_collision_ray(col, o, dir, len, &t0, NULL, n0);
+        hta_collision_depenetrate(col, &dx0, &dy0, z, 0.6f, 0.2f);
+        uint32_t k0 = hta_collision_sphere(col, o, r, c0, 16);
+        assert(hta_collision_index_instances(col, &ix, 0.25f));
+        bool a1 = hta_collision_ground(col, x, y, z, &g1);
+        bool b1 = hta_collision_ray(col, o, dir, len, &t1, NULL, n1);
+        hta_collision_depenetrate(col, &dx1, &dy1, z, 0.6f, 0.2f);
+        uint32_t k1 = hta_collision_sphere(col, o, r, c1, 16);
+        hits += a0 && g0 > 0.01f;
+        if (a0 != a1 || g0 != g1 || b0 != b1 || t0 != t1 || dx0 != dx1 || dy0 != dy1 || k0 != k1) mism++;
+        for (uint32_t k = 0; k < k0 && k < k1; k++)
+            if (c0[k].depth != c1[k].depth) mism++;
+    }
+    printf("instance index: 4000 queries over %u props, %d on a prop top, %d mismatches\n",
+           col->instance_count, hits, mism);
+    assert(mism == 0 && hits > 100);
+    /* Stale: the grid's instances changed and it was not rebuilt -- scan all. */
+    uint32_t ids[8];
+    col->instance_count--;
+    assert(hta_collision_instances_in(col, 0, 0, 1, 1, ids, 8) == HTA_INSTANCES_ALL);
+    col->instance_count++;
+    assert(hta_collision_instances_in(col, 0, 0, 0.1f, 0.1f, ids, 8) != HTA_INSTANCES_ALL);
+    col->instances = NULL; col->instance_count = 0; col->instance_index = NULL;
+    hta_instance_index_free(&ix);
+    hta_props_free(&P);
+#undef RND
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -327,6 +385,7 @@ int main(void)
     sprites_and_splats(&col);
     gibs(&col);
     props(&col);
+    instance_index(&col);
     weather(&col);
     hta_collision_free(&col);
     puts("world fx OK");

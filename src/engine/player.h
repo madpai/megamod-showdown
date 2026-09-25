@@ -25,6 +25,24 @@ typedef struct hta_collision_instance {
     bool  active;
 } hta_collision_instance;
 
+/* A broad phase over a grid's placed instances: XY buckets, so a query
+ * looks at the few instances near it, not all of them. An imported map
+ * with 300 props made every ground probe 23x and debris stepping 3.4x
+ * slower without it. Built by the caller after it fills `instances`
+ * (every frame is fine: it is O(n)); a query whose grid's instances no
+ * longer match what it was built for scans them all, as before. */
+typedef struct hta_instance_index {
+    const hta_collision_instance *built_for;
+    uint32_t built_count;
+    float    min[2], cell;
+    uint32_t nx, ny;
+    uint32_t *cell_start;          /* nx*ny + 1 */
+    uint32_t *items;               /* instance indices, by cell */
+    uint32_t cells_cap, items_cap;
+    uint32_t *counts;              /* build scratch */
+} hta_instance_index;
+#define HTA_INSTANCES_ALL 0xFFFFFFFFu
+
 typedef struct hta_collision {
     /* uniform grid over XY; each cell lists triangle indices */
     float    min[2], cell;
@@ -45,7 +63,21 @@ typedef struct hta_collision {
      * `extra`: re-point after any hta_collision_build of this grid. */
     const hta_collision_instance *instances;
     uint32_t instance_count;
+    /* Optional broad phase over `instances`; borrowed, same caveat. */
+    const hta_instance_index *instance_index;
 } hta_collision;
+
+/* Index c->instances into `ix` and point c at it. Each instance is filed
+ * under every cell its bound (grown by `margin` wu, for anything that
+ * moves before the next rebuild) touches. False (and c left unindexed)
+ * only when memory runs out. */
+bool hta_collision_index_instances(hta_collision *c, hta_instance_index *ix, float margin);
+void hta_instance_index_free(hta_instance_index *ix);
+/* The instances that may touch the XY box [x0,x1]x[y0,y1]: indices into
+ * c->instances, each once. HTA_INSTANCES_ALL when there is no usable index
+ * or more than `cap` candidates: scan them all. */
+uint32_t hta_collision_instances_in(const hta_collision *c, float x0, float y0, float x1, float y1,
+                                    uint32_t *out, uint32_t cap);
 
 bool hta_collision_build(hta_collision *c, const hta_bsp_mesh *mesh);
 /* The same with `across` cells along the longer side (at most 255). An

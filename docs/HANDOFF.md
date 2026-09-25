@@ -268,6 +268,12 @@ Known risks in this build, most likely first:
   collision instances out); a car faster than a walk smashes any prop it
   overlaps instead (`hta_wfx_ram`, 60 damage per wu/s, ours). Worth a
   look: does ramming a crate feel right?
+- **Collision broad phase over placed instances** (props, vehicles) is new
+  in every ray, ground probe, push-out and debris contact. It is proven
+  equal to the old scan on 4000 random queries over 300 props (same
+  answers, same order), and it falls back to the scan when the list it
+  was built for changes. If something starts falling through a crate or a
+  Warthog, suspect it first: `state.col.instance_index = NULL` turns it off.
 - **Procedural sounds were judged by measurement and spectrogram only**
   (no one has listened yet). The bank takes ~55 ms to synthesise on a
   desktop core, once, at the first map load: a guessed 0.2-0.3 s on a

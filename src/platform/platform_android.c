@@ -526,6 +526,7 @@ typedef struct {
     hta_world_fx wfx;
     const void *wfx_world;            /* the mesh it was set up for */
     hta_wfx_audio wfx_audio;          /* procedural sounds for props, debris, gibs, weather */
+    hta_instance_index col_index;     /* broad phase over col_merged, rebuilt each frame */
     bool props_synced, props_count_warned;   /* LAN client: host's props applied */
     /* Vehicles' collision instances and the props', merged every frame
      * into the one list the world grid points at. */
@@ -7673,6 +7674,9 @@ void android_main(struct android_app *app)
                 state.col.instance_count = hta_props_instances(&state.wfx.props, state.vehicles.inst, nv,
                     state.col_merged, (uint32_t)(sizeof(state.col_merged) / sizeof(state.col_merged[0])));
                 state.col.instances = state.col_merged;
+                /* A broad phase over them: every ray, ground probe and
+                 * debris contact looks at the few near it, not all. */
+                hta_collision_index_instances(&state.col, &state.col_index, 0.25f);
             }
             /* Cars smash props they drive into (they do not collide). */
             for (uint32_t i = 0; state.wfx.props.count && state.vehicles.loaded && i < state.vehicles.count; i++) {

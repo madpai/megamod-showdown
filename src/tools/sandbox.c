@@ -138,6 +138,7 @@ typedef struct {
     /* sound: SDL out, the procedural bank */
     hta_audio     audio;
     hta_wfx_audio wfx_audio;
+    hta_instance_index col_index;
 } sandbox;
 
 static void reset_arena(sandbox *s)
@@ -345,6 +346,7 @@ static void step(sandbox *s, const hta_input *in, float dt)
     hta_player_input pi = { in->move_forward, in->move_right, in->look_yaw, in->look_pitch, in->jump, false, in->crouch };
     s->col.instances = s->merged;
     s->col.instance_count = hta_props_instances(&s->wfx.props, NULL, 0, s->merged, 300);
+    hta_collision_index_instances(&s->col, &s->col_index, 0.25f);
     hta_player_update(&s->player, &s->cam, &s->col, &pi, dt);
     if (in->fire_pressed) shoot(s);
     if (in->alt_pressed || in->key_pressed[SDL_SCANCODE_G]) throw_grenade(s);

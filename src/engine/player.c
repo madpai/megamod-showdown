@@ -185,6 +185,131 @@ static int32_t ground_tri(const hta_collision *c, float x, float y, float z_from
     return best_tri;
 }
 
+/* ---------------------------------------------------- instance index */
+
+void hta_instance_index_free(hta_instance_index *ix)
+{
+    if (!ix) return;
+    free(ix->cell_start); free(ix->items); free(ix->counts);
+    memset(ix, 0, sizeof(*ix));
+}
+
+static void ix_span(const hta_instance_index *ix, float x0, float y0, float x1, float y1,
+                    int *cx0, int *cy0, int *cx1, int *cy1)
+{
+    *cx0 = (int)floorf((x0 - ix->min[0]) / ix->cell); *cx1 = (int)floorf((x1 - ix->min[0]) / ix->cell);
+    *cy0 = (int)floorf((y0 - ix->min[1]) / ix->cell); *cy1 = (int)floorf((y1 - ix->min[1]) / ix->cell);
+    if (*cx0 < 0) *cx0 = 0;
+    if (*cy0 < 0) *cy0 = 0;
+    if (*cx1 >= (int)ix->nx) *cx1 = (int)ix->nx - 1;
+    if (*cy1 >= (int)ix->ny) *cy1 = (int)ix->ny - 1;
+}
+
+bool hta_collision_index_instances(hta_collision *c, hta_instance_index *ix, float margin)
+{
+    if (!c || !ix) return false;
+    c->instance_index = NULL;
+    ix->built_for = NULL;
+    uint32_t n = c->instance_count;
+    if (!n || !c->instances) return true;
+    float lo[2] = { INFINITY, INFINITY }, hi[2] = { -INFINITY, -INFINITY }, rsum = 0.0f;
+    for (uint32_t i = 0; i < n; i++) {
+        const hta_collision_instance *in = &c->instances[i];
+        float r = in->radius + margin;
+        for (int k = 0; k < 2; k++) {
+            lo[k] = fminf(lo[k], in->pos[k] - r);
+            hi[k] = fmaxf(hi[k], in->pos[k] + r);
+        }
+        rsum += in->radius;
+    }
+    /* Cells about four bounds across, and no more than 64 a side. */
+    float cell = fmaxf(1.0f, 4.0f * (rsum / (float)n + margin));
+    float span = fmaxf(hi[0] - lo[0], hi[1] - lo[1]);
+    if (span / cell > 64.0f) cell = span / 64.0f;
+    uint32_t nx = (uint32_t)((hi[0] - lo[0]) / cell) + 1u, ny = (uint32_t)((hi[1] - lo[1]) / cell) + 1u;
+    uint32_t cells = nx * ny;
+    if (cells + 1u > ix->cells_cap) {
+        uint32_t *a = realloc(ix->cell_start, (cells + 1u) * sizeof(uint32_t));
+        uint32_t *b = a ? realloc(ix->counts, (cells + 1u) * sizeof(uint32_t)) : NULL;
+        if (a) ix->cell_start = a;
+        if (b) ix->counts = b;
+        if (!a || !b) return false;
+        ix->cells_cap = cells + 1u;
+    }
+    ix->min[0] = lo[0]; ix->min[1] = lo[1]; ix->cell = cell; ix->nx = nx; ix->ny = ny;
+    memset(ix->counts, 0, (cells + 1u) * sizeof(uint32_t));
+    uint32_t total = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        for (uint32_t i = 0; i < n; i++) {
+            const hta_collision_instance *in = &c->instances[i];
+            float r = in->radius + margin;
+            int x0, y0, x1, y1;
+            ix_span(ix, in->pos[0] - r, in->pos[1] - r, in->pos[0] + r, in->pos[1] + r, &x0, &y0, &x1, &y1);
+            for (int cy = y0; cy <= y1; cy++)
+                for (int cx = x0; cx <= x1; cx++) {
+                    uint32_t ci = (uint32_t)cy * nx + (uint32_t)cx;
+                    if (pass == 0) { ix->counts[ci]++; total++; }
+                    else ix->items[ix->cell_start[ci] + ix->counts[ci]++] = i;
+                }
+        }
+        if (pass == 0) {
+            if (total > ix->items_cap) {
+                uint32_t *a = realloc(ix->items, total * sizeof(uint32_t));
+                if (!a) return false;
+                ix->items = a; ix->items_cap = total;
+            }
+            uint32_t at = 0;
+            for (uint32_t ci = 0; ci < cells; ci++) { ix->cell_start[ci] = at; at += ix->counts[ci]; ix->counts[ci] = 0; }
+            ix->cell_start[cells] = at;
+        }
+    }
+    ix->built_for = c->instances;
+    ix->built_count = n;
+    c->instance_index = ix;
+    return true;
+}
+
+uint32_t hta_collision_instances_in(const hta_collision *c, float x0, float y0, float x1, float y1,
+                                    uint32_t *out, uint32_t cap)
+{
+    const hta_instance_index *ix = c ? c->instance_index : NULL;
+    if (!ix || ix->built_for != c->instances || ix->built_count != c->instance_count || !ix->nx)
+        return HTA_INSTANCES_ALL;
+    int cx0, cy0, cx1, cy1;
+    ix_span(ix, x0, y0, x1, y1, &cx0, &cy0, &cx1, &cy1);
+    if (cx0 > cx1 || cy0 > cy1) return 0;
+    /* A box over much of the map (a long ray): the plain scan is cheaper. */
+    if ((uint32_t)((cx1 - cx0 + 1) * (cy1 - cy0 + 1)) > 32u) return HTA_INSTANCES_ALL;
+    uint32_t n = 0;
+    for (int cy = cy0; cy <= cy1; cy++)
+        for (int cx = cx0; cx <= cx1; cx++) {
+            uint32_t ci = (uint32_t)cy * ix->nx + (uint32_t)cx;
+            for (uint32_t j = ix->cell_start[ci]; j < ix->cell_start[ci + 1u]; j++) {
+                uint32_t id = ix->items[j], k = 0;
+                while (k < n && out[k] != id) k++;
+                if (k < n) continue;
+                if (n == cap) return HTA_INSTANCES_ALL;
+                out[n++] = id;
+            }
+        }
+    /* In instance order, as the plain scan visits them: pushes and contacts
+     * are order-dependent, and the index must change nothing but speed. */
+    for (uint32_t a = 1; a < n; a++) {
+        uint32_t v = out[a], b = a;
+        while (b > 0 && out[b - 1] > v) { out[b] = out[b - 1]; b--; }
+        out[b] = v;
+    }
+    return n;
+}
+
+/* Walks the instances a query may touch: `FOR_NEAR(c, x0, y0, x1, y1, i)`
+ * runs its body with `i` each candidate's index into c->instances. */
+#define FOR_NEAR(c, x0, y0, x1, y1, i) \
+    uint32_t near_##i[64]; \
+    uint32_t nn_##i = (c)->instance_count ? hta_collision_instances_in((c), (x0), (y0), (x1), (y1), near_##i, 64) : 0; \
+    uint32_t nt_##i = nn_##i == HTA_INSTANCES_ALL ? (c)->instance_count : nn_##i; \
+    for (uint32_t k_##i = 0, i = 0; k_##i < nt_##i && ((i = nn_##i == HTA_INSTANCES_ALL ? k_##i : near_##i[k_##i]), 1); k_##i++)
+
 static bool inst_ground(const hta_collision_instance *in, float x, float y, float from,
                         float *out_z, uint8_t *mat);
 uint8_t hta_collision_ground_material(const hta_collision *c,
@@ -196,7 +321,7 @@ uint8_t hta_collision_ground_material(const hta_collision *c,
     if (c->extra && hta_collision_ground(c->extra, x, y, z_from, &ez) && ez > z)
         return hta_collision_ground_material(c->extra, x, y, z_from);
     uint8_t best = t >= 0 && c->tri_material ? c->tri_material[t] : HTA_MATERIAL_NONE;
-    for (uint32_t i = 0; i < c->instance_count; i++) {
+    FOR_NEAR(c, x, y, x, y, i) {
         uint8_t m;
         if (inst_ground(&c->instances[i], x, y, z_from, &ez, &m) && ez > z) { z = ez; best = m; }
     }
@@ -639,7 +764,7 @@ bool hta_collision_ground(const hta_collision *c, float x, float y, float from,
     if (c->extra && hta_collision_ground(c->extra, x, y, from, &ez)) {
         z = found ? fmaxf(z, ez) : ez; found = true;
     }
-    for (uint32_t i = 0; i < c->instance_count; i++)
+    FOR_NEAR(c, x, y, x, y, i)
         if (inst_ground(&c->instances[i], x, y, from, &ez, NULL)) {
             z = found ? fmaxf(z, ez) : ez; found = true;
         }
@@ -671,7 +796,8 @@ void hta_collision_depenetrate(const hta_collision *c, float *x, float *y,
         hta_collision_depenetrate(c->extra, x, y, z, height, radius);
         moved = true;
     }
-    for (uint32_t i = 0; i < c->instance_count; i++) {
+    float reach = radius + 0.1f;
+    FOR_NEAR(c, *x - reach, *y - reach, *x + reach, *y + reach, i) {
         float ox = *x, oy = *y;
         inst_depenetrate(&c->instances[i], x, y, z, height, radius);
         if (ox != *x || oy != *y) moved = true;
@@ -693,7 +819,8 @@ bool hta_collision_ray_material(const hta_collision *c, const float orig[3],
         if (nrm) memcpy(nrm, en, sizeof(en));
         if (mat) *mat = em;
     }
-    for (uint32_t i = 0; i < c->instance_count; i++) {
+    float ex = orig[0] + dir[0] * t, ey = orig[1] + dir[1] * t;
+    FOR_NEAR(c, fminf(orig[0], ex), fminf(orig[1], ey), fmaxf(orig[0], ex), fmaxf(orig[1], ey), i) {
         const hta_collision_instance *in = &c->instances[i];
         if (!in->active || !in->grid || !in->grid->built) continue;
         /* Sphere cull: does the segment pass within the bound? */
