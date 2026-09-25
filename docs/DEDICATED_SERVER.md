@@ -14,7 +14,7 @@ connect to it exactly as they connect to a phone host today.
 | LAN discovery answers with the server's name, map and player cap | done |
 | JSON status file (players and their addresses, packets, uptime) | done |
 | `sim = scripted`: a stand-in match to test clients and reachability | done, a real joiner played it over UDP |
-| `sim = match`: the real game, headless | **stages S1-S3 below** |
+| `sim = match`: the real game, headless | **S1 written (host_net.c), awaiting a phone check; S2-S3 to do** |
 | Join password (protocol v10) | designed below; parsed, not enforced |
 | Rate limiting per address | designed below |
 
@@ -72,7 +72,16 @@ without touching Android-only state. Each stage keeps the phone build
 working and gets one phone check (a hosted LAN match) before the next --
 the same rule as docs/ENGINE_ARCHITECTURE.md.
 
-**S1 -- host networking out.** Move `net_begin` (host half), `net_host_peers`,
+**S1 -- host networking out.** *Status 2026-09-25: the per-tick half is
+done -- `hta_host_peers`, `hta_host_mirror_local`, `hta_host_world` in
+`src/app/host_net.c`, moved verbatim, with the GPU upload as a callback;
+`tests/test_host_net.c` joins over localhost, drives the unit, reads WORLD
+with no local player. Still in platform_android.c: `net_begin`'s host half
+and the scattered fx/kill sends (they sit inside game-event handling and
+move with S3). Note for S3: `hta_host_world` returns unless
+`s->net.connected` -- the phone host's own loopback client; a server has
+none, so that guard must become "hosting".*
+Originally: Move `net_begin` (host half), `net_host_peers`,
 `net_host_world` (WORLD, projectiles, vehicles, drops, GAME with props) and
 the scattered `hta_net_server_fx` / `_kill` sends into `src/app/host_net.c`
 taking `hta_session *`. What they do that is presentation -- the GPU upload
