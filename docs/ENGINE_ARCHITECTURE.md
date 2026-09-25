@@ -73,6 +73,17 @@ before the next, each leaving Android working.
    Android's (app, window, JNI, touch). New `src/app/session.h`. The loop
    still lives in `platform_android.c`, now reaching `s->session.*`.
    *Device check:* a normal match; nothing should differ.
+   *Done 2026-09-25, awaiting its device check.* Without renaming a single
+   use: `src/app/session.h` defines the match's fields once
+   (`HTA_SESSION_FIELDS`, 394 lines of state), and `hta_android` holds
+   them as an anonymous struct unioned with `hta_session session` -- one
+   layout, two spellings -- beside Android's own 25 (app, APK mappings,
+   window, touch, the Java HUD's raw buttons). `s->game` still compiles
+   everywhere; stage 2 onwards can take `&s->session`. A `_Static_assert`
+   pins the layout and `tests/test_session.c` keeps the header portable.
+   The split is made by `scripts/codemod/session_stage1.py`, which is
+   idempotent and re-runnable: a branch that added fields to the old flat
+   struct takes its own struct in the merge and re-runs it.
 2. **Input in.** `hta_session_frame(session, dt, const hta_input *in)`
    takes the device-neutral input `desktop_sdl.h` already defines; Android
    fills it from touch and the Java HUD. *Device check:* every control,

@@ -373,6 +373,17 @@ are this pass.
 >    person weapon. Without phones: `scripts/test_join.sh <map.oalmap>`
 >    runs `megamod-fakehost` (a scripted v9 host) against it.
 
+> 11. **Loop extraction stage 1** (engine refactor, no feature): play one
+>    normal round, host or solo. Nothing should differ at all. A crash at
+>    start, garbage on screen or a frozen match means the session/Android
+>    split broke something; roll back to 85e139b and say what happened.
+
+**For agents adding state to `hta_android`:** since stage 1, match state is
+declared in `src/app/session.h` (`HTA_SESSION_FIELDS`); Android-only state
+(window, touch, JNI) after the union in `hta_android`. On a merge conflict
+in that struct, take your flat struct and re-run
+`python3 scripts/codemod/session_stage1.py` -- it regenerates both.
+
 Known risks in this build, most likely first:
 - **The composed renderer on a real phone GPU.** It is new Vulkan code
   (offscreen targets, MSAA resolve, bloom passes) proven only on lavapipe.
