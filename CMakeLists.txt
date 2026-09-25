@@ -35,6 +35,8 @@ if(ANDROID)
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
+        src/game/world_fx.c
+        src/game/world_fx_gpu.c
         src/game/game.c
         src/game/brain.c
         src/game/view.c
@@ -87,6 +89,7 @@ else()
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
+        src/game/world_fx.c
         src/game/game.c
         src/game/brain.c
         src/game/view.c
@@ -124,7 +127,7 @@ else()
     # Host offscreen renderer: needs Vulkan loader + headers on the host.
     find_package(Vulkan QUIET)
     if(Vulkan_FOUND)
-        add_library(hta_gfx_host STATIC src/gfx/gfx_vulkan.c src/gfx/gfx_settings.c src/platform/platform_posix.c)
+        add_library(hta_gfx_host STATIC src/gfx/gfx_vulkan.c src/gfx/gfx_settings.c src/game/world_fx_gpu.c src/platform/platform_posix.c)
         target_include_directories(hta_gfx_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${Vulkan_INCLUDE_DIRS})
         target_link_libraries(hta_gfx_host PUBLIC ${Vulkan_LIBRARIES} m)
         target_compile_options(hta_gfx_host PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
@@ -283,6 +286,10 @@ else()
     add_executable(test_world_fx tests/test_world_fx.c)
     target_link_libraries(test_world_fx PRIVATE hta_engine m)
     add_test(NAME world_fx COMMAND test_world_fx)
+
+    add_executable(test_world_director tests/test_world_director.c)
+    target_link_libraries(test_world_director PRIVATE hta_engine m)
+    add_test(NAME world_director COMMAND test_world_director)
 
     add_executable(test_gfx_settings tests/test_gfx_settings.c)
     target_link_libraries(test_gfx_settings PRIVATE hta_engine m)
