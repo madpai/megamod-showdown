@@ -27,6 +27,7 @@ if(ANDROID)
         src/engine/audio.c
         src/engine/ammo.c
         src/engine/hud.c
+        src/engine/rigid.c
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
@@ -78,6 +79,7 @@ else()
         src/engine/actor.c
         src/engine/pickup.c
         src/engine/bot.c src/engine/viewmodel.c src/engine/audio.c src/engine/ammo.c src/engine/hud.c
+        src/engine/rigid.c
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
@@ -269,6 +271,10 @@ else()
     target_link_libraries(test_sound PRIVATE hta_engine m)
     add_test(NAME sound COMMAND test_sound)
 
+
+    add_executable(test_rigid tests/test_rigid.c)
+    target_link_libraries(test_rigid PRIVATE hta_engine m)
+    add_test(NAME rigid COMMAND test_rigid)
 
     add_executable(test_gfx_settings tests/test_gfx_settings.c)
     target_link_libraries(test_gfx_settings PRIVATE hta_engine m)
