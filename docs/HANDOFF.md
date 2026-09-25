@@ -187,6 +187,12 @@ the section below, and update it every time.
 **NEXT SESSION -- start here (written 2026-09-25 evening for the local
 session on 2026-09-26).** State of play:
 
+- **Direction (owner, 2026-09-25): desktop parity plus an agent harness
+  is the priority** -- `docs/DESKTOP_AGENT.md` is the plan (it absorbs the
+  loop extraction and the server's S2-S3). After S1's phone check, step 1
+  there (input in) is next. Content work and `src/game/` changes are fine
+  meanwhile; gameplay changes inside `platform_android.c` wait.
+
 - `main` should be at `3cf8e96` (hitch timing in SEND REPORT), published
   by Codex on Friday evening; `scratch/WEEKEND.md` says whether it was.
   If it was not: merge, verify, publish per the Friday prompt (fast-forward

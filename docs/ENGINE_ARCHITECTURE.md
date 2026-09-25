@@ -58,6 +58,9 @@ A platform provides, and the game consumes nothing else:
 
 ## The one big piece: the game loop
 
+*Order of work now lives in docs/DESKTOP_AGENT.md (desktop parity and the
+agent harness), which merges these stages with the server's.*
+
 The match -- session state, the per-frame order of simulation, networking
 and drawing -- lives in `platform_android.c` (7,600 lines), in
 `hta_android` and `android_main`. Until it moves, a PC build of *Megamod*
