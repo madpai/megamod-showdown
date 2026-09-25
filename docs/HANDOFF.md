@@ -184,6 +184,21 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-25 lit office comparison.** The six canonical bundled maps remain
+unlit and contain the breakables, windows and map rain listed below. Exactly
+one additional package, `cs_office_lit.oalmap`, appears in the menu as
+**CS_OFFICE LIT** beside **CS_OFFICE**. It has the same gameplay content plus
+two baked lightmap pages. Host validation found 40/40 usable spawns and no
+falls. Matching views were 23–28% darker with lighting, and the office
+interiors looked coherent. Compare the same hallway and office on the phone:
+the lit version should have darker corners and local light from fixtures,
+without black seams or unreadably dark rooms. The other five lit candidates
+remain private outside the bundle. A LAN guest needs the matching new
+package, including `cs_office_lit.oalmap` when hosting that variant; the
+map check refuses a different package.
+Dust2 and Compound's private lit candidates vary too much between sampled
+spawns for a phone comparison; do not bundle them yet.
+
 **2026-09-25 gameplay map update.** The six canonical private bundle maps
 were re-imported without baked lightmaps, validated with
 `open-halo-map-test` (all spawns usable, no falls, no missing dependencies),

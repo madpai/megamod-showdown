@@ -375,6 +375,8 @@ public class GameActivity extends NativeActivity {
         private String mapName(String id) {
             if (id.equals("bloodgulch")) return "BLOOD GULCH";
             if (id.equals("imported")) return "IMPORTED MAP";
+            if (id.endsWith("_lit"))
+                return id.substring(0, id.length() - 4).toUpperCase(java.util.Locale.ROOT) + " LIT";
             return id.toUpperCase(java.util.Locale.ROOT);
         }
 
