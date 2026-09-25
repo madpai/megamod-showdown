@@ -9,6 +9,35 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## 2026-09-25 (later) -- LAN agrees on gibs and props; bots see props; collections; breakable brushes (cloud)
+
+The owner is remote: no phone tests until a local agent publishes
+(`docs/LOCAL_AGENT.md`, written for that). So this pass was the work that
+host tests can prove.
+
+- **Why a joiner disagreed.** Gibbing was decided on the host from its
+  blast bookkeeping, which a client never has; props took damage from the
+  client's own copies of the replicated shots, so a crate could break on
+  one phone and not the other, and their 30 s respawn clocks drifted
+  apart. Fix: the host is the only authority for both. KILL gained the
+  gibbed flag, strength and blast centre (v9); GAME gained a broken bit
+  per prop. A client's props are `remote`: they chip and throw debris but
+  never break or respawn except by `hta_props_apply_mask`. The first sync
+  after joining is quiet, or joining mid-match would set off every barrel
+  already blown.
+- **Gibbed flag vs packet order.** The KILL can arrive before the WORLD
+  that shows the death, so the client clears `gibbed` only on a
+  dead-to-alive transition, never on "alive" alone.
+- **Bots and props.** The nav grid is static; props block nodes through a
+  per-node count, synced from `hta_props.version` (global, so a reload
+  never repeats a value a stale grid remembers).
+- **Asset Lab.** Collections, nested ones included (Steam file type 2 --
+  checked live against a real GMod collection). Its first items were
+  multi-GB "effects" packs, hence skipping entity/tool/effects addons.
+  func_breakable brushes needed their own groups: the importer merged
+  consecutive faces of one material, so a window's first faces could
+  join the wall before it; a `split` flag starts a fresh run.
+
 ## 2026-09-25 -- Engine session: presets, a composed renderer, debris, gibs, weather, PC (cloud)
 
 Built in a cloud container: no phone, no Trial data, lavapipe for Vulkan,

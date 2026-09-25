@@ -1,7 +1,7 @@
 # Halo Trial Android — handoff
 
-> **On branch `halo-sandbox` this is MEGAMOD SHOWDOWN** (private repo
-> madpai/megamod-showdown, remote `megamod`). See CLAUDE.md's top section
+> **On branch `halo-sandbox` this is MEGAMOD SHOWDOWN** (repo
+> madpai/megamod-showdown, remote `megamod`, **public since 2026-09-25**). See CLAUDE.md's top section
 > for where it pushes and what never goes to Open Halo.
 
 **Read this file. You should not need anything else to start.**
@@ -10,14 +10,16 @@ want the *why* behind something, and search it by symptom.
 
 **Date of this revision:** 2026-09-25 (engine session: video settings and a new
 renderer path, rigid-body debris, destructible props, gibs, weather, PC
-window + sandbox; Asset Lab Workshop search/import). Built in a cloud
+window + sandbox; Asset Lab Workshop search/import. Second pass, same day:
+LAN replication of gibs and props (protocol v9), bots walk round props,
+Workshop collections, breakable brushes). Built in a cloud
 container on branch `claude/vibrant-euler-xwhpy5` of `megamod` (no phone, no
 Trial data there): **merge it into `halo-sandbox`, run `verify.sh` with
 `HTA_MAP`, publish, then test** -- see CURRENT TESTING OBJECTIVE.
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Branches -- read this first:**
-- `halo-sandbox` is **MEGAMOD SHOWDOWN**. Push this branch only to private
-  remote `megamod`, as `main`; never push it to Open Halo's public `origin`.
+- `halo-sandbox` is **MEGAMOD SHOWDOWN**. Push this branch only to the
+  (now public) remote `megamod`, as `main`; never push it to Open Halo's public `origin`.
   Its sideload page is port 8733. LAN builds must match protocol versions.
 - `fp-animated-guns` -> GitHub `main`: **strictly Halo**. The owner said
   imported-map work must not ship there. Codex's explorer commit
@@ -31,8 +33,10 @@ Trial data there): **merge it into `halo-sandbox`, run `verify.sh` with
 2. On `halo-sandbox`, inspect `scratch/serve-megamod/` and
    `scratch/serve-megamod/uploads/` for the published build and new phone
    screenshots. The current personal APK is at
-   **http://100.89.1.14:8733/**. Protocol is **v8** (35-byte controls).
-   An older APK cannot join this one.
+   **http://100.89.1.14:8733/**. Protocol is **v9** (gibs and props
+   replicated) from branch `claude/vibrant-euler-xwhpy5`; an older APK
+   cannot join it. To build and publish a cloud branch, follow
+   `docs/LOCAL_AGENT.md`.
 3. Run the **CURRENT TESTING OBJECTIVE** below on the phone. Host checks
    passed for the restaurant map, the head restore, and the game rules.
    Device look of flight, the beam, citizen fists, Harry's flyby tune, and
@@ -180,12 +184,13 @@ the section below, and update it every time.
 ## CURRENT TESTING OBJECTIVE
 
 **This session (2026-09-25), branch `claude/vibrant-euler-xwhpy5`.** Nothing
-here has been on a phone yet. It was built and tested in a cloud container:
-host suite 35/35 (Release too), `test_gfx_render` on lavapipe with the
-Vulkan validation layer silent, the arm64 `.so` and the debug APK build. The
-Trial-data tests (`test_game`, `test_biped`, ...) SKIPPED there -- run
-`HTA_MAP=... scripts/verify.sh` before publishing. `test_game` gained a
-check that a blast death carries the blast.
+here has been on a phone yet. The owner is remote: a local agent merges the
+branch, runs `verify.sh` with `HTA_MAP` and publishes (`docs/LOCAL_AGENT.md`).
+Cloud checks: host suite 35/35 (Release too), `test_gfx_render` on lavapipe
+with the Vulkan validation layer silent, `ndkcheck`, the arm64 `.so` and the
+debug APK build. The Trial-data tests SKIPPED there -- `verify.sh` with
+`HTA_MAP` is their first run. `test_game` gained a check that a blast death
+carries the blast.
 
 > 0. **SETTINGS → VIDEO & EFFECTS** (new): Graphics (Auto, Classic, Potato,
 >    Low, Medium, High, Ultra), Gore (Off, Chunks, Full), Weather (Map
@@ -213,15 +218,21 @@ check that a blast death carries the blast.
 >    around you, fog thickening, lightning flashes and a rumble after. Under
 >    a roof (the bases) no rain should fall. Try Snow and Sandstorm too.
 > 6. **Breakable props on an imported map** (re-convert a map with the new
->    Asset Lab first: its `prop_physics` crates and barrels become
->    breakable). Shoot a crate: chips, then it bursts into pieces and you
->    can walk where it stood; it comes back after 30 s. An explosive barrel
->    blows up and hurts people near it. A map with `func_precipitation`
->    brings its own weather.
-> 7. **LAN.** A joining phone sees corpses where the host sees gibs
->    (gibbing is not replicated yet), but it does get detonation debris,
->    wreck panels, its own weather, and props breaking under the replicated
->    shots and blasts. Say what else differs.
+>    Asset Lab first: its `prop_physics` crates and barrels, and now its
+>    `func_breakable` windows and boards, become breakable). Shoot a crate:
+>    chips, then it bursts into pieces and you can walk where it stood; it
+>    comes back after 30 s. An explosive barrel blows up and hurts people
+>    near it. A map with `func_precipitation` brings its own weather.
+> 7. **Bots and props.** On a map with crates, bots should path round a
+>    whole crate (not walk into it) and through where a broken one stood.
+>    `logcat | grep '\[nav\]'` says how many nodes the props block.
+> 8. **LAN (both phones on this build, protocol v9).** A rocket kill on the
+>    host: the joiner sees the same body come apart, no corpse left behind,
+>    and the victim whole again when it respawns. Shoot a crate on the
+>    joiner: it chips but breaks only when the host says (a moment later,
+>    at worst), and both phones agree on which props are broken and when
+>    they come back. Join a match already in progress: props broken before
+>    you joined are already gone, with no burst of explosions on joining.
 
 Known risks in this build, most likely first:
 - **The composed renderer on a real phone GPU.** It is new Vulkan code
@@ -230,14 +241,25 @@ Known risks in this build, most likely first:
   the log says why.
 - **Frame time on the phone at High/Ultra.** Measured nowhere yet. Auto
   picks conservatively (Mali-G7x → Medium, Adreno 7xx → High).
-- Gibs are not replicated: a LAN joiner sees a corpse where the host sees
-  chunks. Props break per device (the host's decides damage).
-- Bots' nav grid does not know about props: a bot may walk into a crate
-  until it breaks.
+- **LAN props on a joiner lag the host by up to one GAME packet (50 ms)
+  plus the link.** The joiner never breaks a prop itself, so a shot that
+  breaks it shows chips first and the burst when the host's word arrives.
+  Props past 512 on one map are not replicated (the joiner leaves them
+  whole). A joiner with a different package of the same map would
+  disagree -- the map check should refuse it; the log says "[net] the host
+  has N props, we have M" if not.
+- **Gib replication** throws the joiner's own chunks (same strength and
+  direction as the host's, not the same pieces). Gore Off on the joiner
+  keeps a corpse even when the host gibbed it.
+- A CTF flag-stand field is worked out at match start; a crate that breaks
+  later still steers flag runners round where it stood (slightly longer
+  paths, never through a whole one).
 - Vehicles do not collide with props (vehicle terrain queries leave
   collision instances out); a car faster than a walk smashes any prop it
   overlaps instead (`hta_wfx_ram`, 60 damage per wu/s, ours). Worth a
   look: does ramming a crate feel right?
+- Breakable brushes (`func_breakable`) are tested on a synthetic BSP only;
+  the first real map with windows is the first real test.
 
 Previous checkpoint (2026-09-24), still worth covering:
 
@@ -1157,6 +1179,10 @@ wrong, this list is the first place to look — they are all one constant.
 | Elder Wand | 8 charges, 2.2/s; projectile damage x2.1 | stronger, slower wizard wand; same Workshop model/sound |
 | Daedric Sword | 1.6 swings/s; melee damage x2.3; knockback 1.8 wu/s | Skyrim Sweps world/view models; TF2 sword swing sound; invented combat balance |
 | CS:S M4A1 balance | 10 shots/s, 30+90 rounds; Halo AR damage x1.45, 3.1 s reload | model/sound from CS:S; damage and reload timing adapted for this game |
+| `HTA_NET_MAX_PROPS` | 512 | props replicated in GAME (one bit each); a map with more leaves the rest whole on joiners |
+| KILL gib strength | 0..4.25 in 1/60ths | the blast fraction on the wire; ours |
+| Nav prop block | box grown by the biped radius; floors from 0.3 wu below its bottom to its top | which nodes a whole prop takes away from bots; ours |
+| `func_breakable` blast | explodemagnitude capped at 300; radius 3 wu | Source's magnitude read as damage; radius ours |
 | `HTA_VM_KEY_FRACTION` | 0.35 | when a clip "does its thing" if `key frame` is 0 |
 | `HTA_BOT_RESPAWN` | 5 s | how long a body lies there |
 | `HTA_ITEMS_UPLOAD_FRAMES` | 8 | ≥ any swapchain image count |
