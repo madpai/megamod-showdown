@@ -9,6 +9,45 @@ Reach for it when you hit something that smells like it has been hit before,
 and search it by symptom: `grep -in "upside down"`, `grep -in "washed out"`,
 `grep -in "18 fps"`.
 
+## 2026-09-25 -- Engine session: presets, a composed renderer, debris, gibs, weather, PC (cloud)
+
+Built in a cloud container: no phone, no Trial data, lavapipe for Vulkan,
+NDK r28 and the SDK installed there for `ndkcheck`, the arm64 link and a
+debug APK. Everything below is host-verified only.
+
+`test_external_map` aborted with `free(): invalid pointer` in a Release
+build. The collision grid was never built: the test builds it inside
+`assert()`, and Release defines NDEBUG. Every test had been a no-op in any
+Release build; verify.sh does not set a build type, so it never showed.
+
+The renderer keeps its old direct path byte for byte (a test compares the
+neutral composed path against it within 2/255). The composed path renders
+the world into a scene target sized for the ceiling scale, so dynamic
+resolution only moves the viewport. First ACES attempt lifted every
+mid-tone (the sky went pale, Ultra differed from legacy by 21/255 on
+average); pre-scaling by 0.72 puts mid-grey back. Fog went in the forward
+shader, not post: it then works with MSAA and without post, fades additive
+light instead of tinting it, and the sky and viewmodel opt out through the
+unused `light_dir.w`.
+
+Rigid bodies took four tries to land a box flat. Corner spheres at half the
+smallest extent made a cube a ball that rocked on its edge forever; at 20%
+a thin plank's corners sank past their own radius and it fell through the
+floor (closest-point tests cannot see a probe that is under the surface --
+plane tests facing the body's centre can); and a box landing 0.7 degrees
+off flat span to 3.2 rad/s because one edge touched a substep before the
+other. Speculative contacts fixed the last. A rolling ball ran at 65% of
+5/7 g sin a until the settle-damping was limited to slow bodies. Gib
+throws at 7 wu/s put a head 36 m in the air.
+
+Asset Lab: the 2026 Workshop page is React with hashed class names; its
+results are escaped JSON in `window.SSR` (total_count, results in order),
+which is what is read. Modern Garry's Mod playermodels are MDL v49, whose
+VTX strip-group headers are 33 bytes, not 25 -- found by building
+'Superman: The Animated Series' (3563673673) end to end. It then rendered
+black: a cel-shading outline shell (inside-out black copy of the body)
+that Source culls to a rim and we draw whole. Dropped for now.
+
 ## 2026-09-24 -- Head in the collar, citizen fists, McRonalds
 
 Superman's missing head in flight was not the jump clip deleting geometry.
