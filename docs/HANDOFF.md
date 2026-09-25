@@ -217,6 +217,12 @@ session on 2026-09-26).** State of play:
   lands on top. If that match breaks -- a joiner never gets a unit, cannot
   move, is invisible, or stutters -- revert those two commits; 3cf8e96 is
   the known-good.
+- **Also on the branch, phone-neutral:** the plan (`f4631ae`,
+  docs/DESKTOP_AGENT.md) and the agent harness in `megamod-sandbox`
+  (`e1dd496`: control channel, event log, playtests; the `playtest`
+  skill). None of it is in the Android build. Try it first thing -- it is
+  how you will test on the desktop from now on:
+  `python3 tests/playtest/sandbox_barrels.py build-host/megamod-sandbox --render`.
 
 **2026-09-25 SEND REPORT and dedicated server build.** First pause a
 normal match and tap SEND REPORT (test 12). The pause screen should say
