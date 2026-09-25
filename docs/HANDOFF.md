@@ -1289,6 +1289,19 @@ wrong, this list is the first place to look — they are all one constant.
 
 ## Tools
 
+**Sanitizers** (2026-09-25: the whole host suite is clean under ASan and
+UBSan; the only report is lavapipe's own leaks in `test_gfx_render`):
+
+```
+cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined"
+cmake --build build-asan -j8 && (cd build-asan && ASAN_OPTIONS=detect_leaks=0 ctest -j4)
+```
+
+`test_net_fuzz` throws 400,000 garbage packets at every LAN decoder; it
+means most under ASan. Run it after any change to `src/net/protocol.c`.
+`megamod-sfxdump DIR` writes the procedural sound bank as WAVs.
+
 **README screenshots** live on the GitHub pre-release `media`, never in
 git. To refresh one, render it (e.g. `htamenu ui.map --width 1600 --height
 900 --time 6`, `htaview ... --fp idle --eye X Y Z --yaw D`, `htamatch
