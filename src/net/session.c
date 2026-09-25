@@ -1,4 +1,5 @@
 #include "session.h"
+#include <netinet/in.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -33,6 +34,7 @@ bool hta_net_server_open_bind(hta_net_server *s, const char *ip, uint16_t port)
     if (!s) return false;
     memset(s,0,sizeof(*s)); s->udp.fd=-1;
     s->info.max_players=HTA_NET_MAX_PLAYERS;
+    s->rate_per_s=HTA_NET_RATE_PER_S; s->rate_burst=HTA_NET_RATE_BURST;
     return hta_udp_open_bind(&s->udp,ip,port);
 }
 void hta_net_server_close(hta_net_server *s)
@@ -172,14 +174,47 @@ static void server_packet(hta_net_server *s, const hta_udp_addr *from,
     }
 }
 
+/* One token from this packet's source, or false: over its rate. A new
+ * source takes the slot of the one heard from longest ago (spoofed
+ * addresses can churn the table; that only ever resets someone to a full
+ * bucket, never locks them out). */
+static bool rate_allow(hta_net_server *s, const hta_udp_addr *from, double now)
+{
+    if (s->rate_per_s<=0.0f) return true;
+    uint32_t ip=0;
+    if (from->addr.ss_family==AF_INET)
+        ip=((const struct sockaddr_in *)&from->addr)->sin_addr.s_addr;
+    hta_net_rate_source *r=NULL, *oldest=&s->rate[0];
+    for (unsigned i=0;i<HTA_NET_RATE_SOURCES;i++) {
+        hta_net_rate_source *c=&s->rate[i];
+        if (c->used && c->ip==ip) { r=c; break; }
+        if (!c->used || (oldest->used && c->last<oldest->last)) oldest=c;
+    }
+    if (!r) {
+        r=oldest; r->used=true; r->ip=ip; r->tokens=s->rate_burst; r->last=now;
+    }
+    double dt=now-r->last;
+    if (dt>0) {
+        double t=r->tokens+dt*s->rate_per_s;
+        r->tokens=(float)(t>s->rate_burst ? s->rate_burst : t);
+        r->last=now;
+    }
+    if (r->tokens<1.0f) return false;
+    r->tokens-=1.0f;
+    return true;
+}
+
 void hta_net_server_pump(hta_net_server *s, double now)
 {
     if (!s || s->udp.fd<0) return;
     uint8_t wire[HTA_NET_MAX_PACKET+1]; hta_udp_addr from;
-    for (unsigned i=0;i<64;i++) {
+    /* Up to 1024 a call: dropping a flood is cheap, so drain it rather
+     * than let it sit in front of the players' packets. */
+    for (unsigned i=0;i<1024;i++) {
         int n=hta_udp_recv(&s->udp,wire,sizeof(wire),&from);
         if (n<0) break;
         s->stats.packets_in++; s->stats.bytes_in+=(unsigned)n;
+        if (!rate_allow(s,&from,now)) { s->stats.limited++; continue; }
         hta_net_packet p;
         if (!hta_net_unpack(wire,(size_t)n,&p)) { s->stats.invalid++; continue; }
         server_packet(s,&from,&p,now);

@@ -7,6 +7,7 @@ typedef struct {
     uint64_t packets_in, packets_out, bytes_in, bytes_out;
     uint64_t invalid, dropped, snapshots_in, snapshots_out, events_in, events_out;
     uint64_t worlds_in, worlds_out;
+    uint64_t limited;           /* server: dropped unread, over a source's rate */
     double ping_ms;
 } hta_net_stats;
 
@@ -29,6 +30,17 @@ typedef struct {
     hta_net_pending_kill pending_kills[16];
 } hta_net_peer;
 
+/* Per-source rate limiting (docs/DEDICATED_SERVER.md): a token bucket per
+ * IPv4 address, checked before a packet is decoded, so a flood costs one
+ * table lookup a packet. Per address, not per port, so one sender cannot
+ * dodge it by spraying ports -- which means players behind one router
+ * share a budget: the default fits all 8 at the ~50 packets/s a phone or
+ * PC joiner sends, with room to spare. */
+#define HTA_NET_RATE_SOURCES 32u
+#define HTA_NET_RATE_PER_S 600.0f
+#define HTA_NET_RATE_BURST 1200.0f
+typedef struct { uint32_t ip; float tokens; double last; bool used; } hta_net_rate_source;
+
 typedef struct {
     hta_udp udp;
     hta_net_peer peers[HTA_NET_MAX_PLAYERS];
@@ -47,6 +59,9 @@ typedef struct {
     /* What DISCOVER is told. max_players also caps who HELLO lets in;
      * hta_net_server_open sets it to HTA_NET_MAX_PLAYERS. */
     hta_net_info info;
+    /* Rate limiting; hta_net_server_open sets the defaults, 0 turns it off. */
+    float rate_per_s, rate_burst;
+    hta_net_rate_source rate[HTA_NET_RATE_SOURCES];
 } hta_net_server;
 
 /* Looking for servers: DISCOVER out to one or more addresses (a broadcast

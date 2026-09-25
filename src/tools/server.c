@@ -63,12 +63,12 @@ static void write_status(const hta_server_config *c, const hta_net_server *s, co
     if (!f) return;
     fprintf(f, "{\"name\":\"%s\",\"protocol\":%u,\"bind\":\"%s\",\"port\":%u,\"map\":\"%s\","
                "\"sim\":\"%s\",\"uptime_s\":%.0f,\"players\":%u,\"max_players\":%u,"
-               "\"packets_in\":%llu,\"packets_out\":%llu,\"invalid\":%llu,\"peers\":[",
+               "\"packets_in\":%llu,\"packets_out\":%llu,\"invalid\":%llu,\"rate_limited\":%llu,\"peers\":[",
             c->name, HTA_NET_VERSION, bound[0] ? bound : "all", c->port, map,
             c->sim == HTA_SERVER_SIM_SCRIPTED ? "scripted" : "match", uptime,
             hta_net_server_count(s), c->max_players,
             (unsigned long long)s->stats.packets_in, (unsigned long long)s->stats.packets_out,
-            (unsigned long long)s->stats.invalid);
+            (unsigned long long)s->stats.invalid, (unsigned long long)s->stats.limited);
     bool first = true;
     for (unsigned i = 0; i < HTA_NET_MAX_PLAYERS; i++) {
         const hta_net_peer *p = &s->peers[i];

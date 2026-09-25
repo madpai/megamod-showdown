@@ -16,7 +16,7 @@ connect to it exactly as they connect to a phone host today.
 | `sim = scripted`: a stand-in match to test clients and reachability | done, a real joiner played it over UDP |
 | `sim = match`: the real game, headless | **S1 written (host_net.c), awaiting a phone check; S2-S3 to do** |
 | Join password (protocol v10) | designed below; parsed, not enforced |
-| Rate limiting per address | designed below |
+| Rate limiting per address | done: 600 packets/s, burst 1200, per IPv4 source; `rate_limited` in the status file |
 
 ## Running it
 
@@ -41,8 +41,8 @@ fix its `ExecStart` path to where the repo lives on that machine).
 
 `--check` prints the address it resolved and refuses (with the interface
 list) when the machine has no such address -- it never falls back to
-listening everywhere. Do not port-forward to it until v10's password and
-rate limiting are in (below).
+listening everywhere. Do not port-forward to it until v10's password is in (below); rate
+limiting is.
 
 ### The config
 
@@ -121,11 +121,24 @@ screen gains a password field (Java) and INFO a `password required` flag so
 LAN browsers show a lock. Bump `HTA_NET_VERSION` to 10; v9 and v10 refuse
 each other, as always.
 
-**Rate limiting.** In `session.c`'s server pump: a token bucket per source
-address (say 200 packets/s, burst 400) and a cap of 4 unauthenticated
-HELLOs per address per 10 s; over-limit packets are dropped before
-decoding and counted in `stats.dropped`. `test_net_fuzz` already proves the
-decoders survive garbage; this bounds the cost of volume.
+**Rate limiting (done 2026-09-25).** `hta_net_server_pump` keeps a token
+bucket per source IPv4 address (32 sources, the longest-silent evicted),
+600 packets/s with a burst of 1200, checked before a packet is decoded;
+over-limit packets are counted in `stats.limited` (`rate_limited` in the
+status file and in SEND REPORT) and dropped. The pump now drains up to 1024
+packets a call so a flood cannot sit in front of players' packets. Why per
+address and those numbers: a phone or the PC joiner sends ~20 CONTROL+STATE
+pairs a second, ~50 packets/s with pings and events; players behind one
+router share an address, so the budget fits all 8 of them with headroom,
+and one sender cannot escape it by spraying ports. What it does not stop:
+spoofed source addresses (each gets a fresh bucket) and a flood big enough
+to fill the link itself -- that is what keeping `bind` off the open
+internet, or a password plus a provider's DDoS filtering, is for. The
+separate cap on unauthenticated HELLOs in the first design was dropped: a
+rejected client retries HELLO 4 times a second, which a cap tight enough
+to matter would have misread as an attack; the bucket covers it.
+`tests/test_net_rate.c` floods, refills, runs a real client through a
+minute unlimited, and turns it off.
 
 **Also before a port-forward:** a public server's status file should not be
 served publicly (it lists player addresses); DISCOVER answers only on

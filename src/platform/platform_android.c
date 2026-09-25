@@ -3589,6 +3589,7 @@ static size_t report_native(const hta_android *s, char *buf, size_t cap)
     hta_json_int(&j, "bytes_out", (long long)ns->bytes_out);
     hta_json_int(&j, "invalid", (long long)ns->invalid);
     hta_json_int(&j, "dropped", (long long)ns->dropped);
+    hta_json_int(&j, "rate_limited", (long long)ns->limited);
     if (s->net_hosting) hta_json_int(&j, "peers", hta_net_server_count(&s->host_server));
     hta_json_end_object(&j);
 
