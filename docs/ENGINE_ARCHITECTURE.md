@@ -90,6 +90,11 @@ before the next, each leaving Android working.
    `desktop_sdl`, with a small native menu (map, class, host/join) in place
    of the Java overlay. LAN play between a phone and a PC falls out of the
    shared protocol.
+   *Started 2026-09-25:* the joiner half already runs on PC.
+   `game/net_view` is the protocol-level joiner with no platform in it
+   (CONTROL out; WORLD, KILL, FX and GAME in, into the world effects), and
+   `megamod-join` draws it with the engine's effects and sound. A PC can
+   join a phone's match today; hosting from a PC waits for stage 5.
 
 Stages 1 and 2 are mechanical and the right next step. Each is one
 publish and one phone test. Do not merge stages to save a publish.

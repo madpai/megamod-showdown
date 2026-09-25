@@ -290,6 +290,18 @@ are this pass.
 >    at worst), and both phones agree on which props are broken and when
 >    they come back. Join a match already in progress: props broken before
 >    you joined are already gone, with no burst of explosions on joining.
+> 10. **The PC joins a phone** (new, no APK change: desktop only). Host a
+>    LAN match on the phone, then on the desktop:
+>    `build-host/megamod-join <phone IP> --map <Trial>/bloodgulch.map`
+>    (add `--oalmap ~/assetlab-private/bundle/<map>.oalmap` when the phone
+>    hosts an imported map: the SAME package, or the map check refuses it).
+>    The PC is a player on the phone: the phone's screen shows it moving
+>    and shooting, and the PC sees the phone's player and bots as Spartans,
+>    the host's gibs, blasts, broken props, weather and their sounds. The
+>    title bar carries score, ping and the kill feed. Not drawn on PC yet:
+>    projectiles in flight, vehicles, dropped weapons, flags, HUD, first-
+>    person weapon. Without phones: `scripts/test_join.sh <map.oalmap>`
+>    runs `megamod-fakehost` (a scripted v9 host) against it.
 
 Known risks in this build, most likely first:
 - **The composed renderer on a real phone GPU.** It is new Vulkan code
@@ -1403,6 +1415,9 @@ cmake --build build-asan -j8 && (cd build-asan && ASAN_OPTIONS=detect_leaks=0 ct
 `test_net_fuzz` throws 400,000 garbage packets at every LAN decoder; it
 means most under ASan. Run it after any change to `src/net/protocol.c`.
 `megamod-sfxdump DIR` writes the procedural sound bank as WAVs.
+`megamod-join <host> [--map T] [--oalmap M]` joins a LAN match from the PC;
+`megamod-fakehost` is a scripted v9 host to test joiners with (and
+`scripts/test_join.sh <map.oalmap>` runs the two together).
 
 **README screenshots** live on the GitHub pre-release `media`, never in
 git. To refresh one, render it (e.g. `htamenu ui.map --width 1600 --height
