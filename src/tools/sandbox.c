@@ -13,8 +13,10 @@
  * F4 gore, F5 dynamic resolution, F11 fullscreen, R reset the arena. */
 #include "engine/camera.h"
 #include "engine/player.h"
+#include "game/world_fx_audio.h"
 #include "game/world_fx_gpu.h"
 #include "gfx/gfx.h"
+#include "platform/audio_sdl.h"
 #include "platform/desktop_sdl.h"
 #include <SDL.h>
 #include <math.h>
@@ -133,6 +135,9 @@ typedef struct {
     float    shake;
     int      weather;
     hta_quality preset;
+    /* sound: SDL out, the procedural bank */
+    hta_audio     audio;
+    hta_wfx_audio wfx_audio;
 } sandbox;
 
 static void reset_arena(sandbox *s)
@@ -270,6 +275,7 @@ static void explode(sandbox *s, const float at[3], float damage, float radius)
                 hta_gib_desc g = { .strength = st };
                 memcpy(g.pos, c, 12); memcpy(g.from, at, 12);
                 hta_gibs_spawn(&s->wfx.rigid, &s->wfx.fx, &g, s->video.gib_level);
+                hta_wfx_push_cue(&s->wfx, HTA_WFX_CUE_GIB, HTA_RMAT_FLESH, c, st, false);
             }
         }
     }
@@ -469,6 +475,12 @@ int main(int argc, char **argv)
     hta_gfx *g = hta_desktop_gfx(d);
     upload(&s, g);
     printf("sandbox: %s, preset %s\n", hta_gfx_device_name(g), hta_quality_name(v.preset));
+    /* Sound: none on a box without a device, and that is fine. */
+    if (hta_audio_sdl_start(&s.audio, err, sizeof err)) {
+        if (hta_wfx_audio_init(&s.wfx_audio, &s.audio, 0x5A7Du))
+            printf("sandbox: audio %u Hz, %.1f MB of procedural sound\n", s.audio.out_rate,
+                   (double)s.wfx_audio.bank.bytes / 1048576.0);
+    } else fprintf(stderr, "sandbox: silent (%s)\n", err);
     hta_input in;
     memset(&in, 0, sizeof in);
     double t0 = hta_desktop_time(d), title_at = 0;
@@ -507,6 +519,7 @@ int main(int argc, char **argv)
         }
         if (in.key_pressed[SDL_SCANCODE_R]) reset_arena(&s);
         step(&s, &in, dt);
+        hta_wfx_audio_update(&s.wfx_audio, &s.wfx, &s.cam, dt, false);
         if (!frame(&s, g, dt)) {
             uint32_t w, h;
             hta_desktop_size(d, &w, &h);
@@ -522,6 +535,11 @@ int main(int argc, char **argv)
             title_at = now; frames = 0;
         }
     }
+    hta_audio_sdl_stop();
+    if (s.wfx_audio.ready)
+        printf("sandbox: %u sounds played, %u voices stolen, %u requests dropped\n", s.wfx_audio.played,
+               s.audio.stolen, (unsigned)atomic_load(&s.audio.dropped));
+    hta_wfx_audio_free(&s.wfx_audio);
     hta_wfx_gpu_free(&s.wfx, g);
     if (s.gpu_boxes) hta_gfx_mesh_free(g, s.gpu_boxes);
     if (s.gpu_world) hta_gfx_mesh_free(g, s.gpu_world);

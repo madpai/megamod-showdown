@@ -226,7 +226,17 @@ carries the blast.
 > 7. **Bots and props.** On a map with crates, bots should path round a
 >    whole crate (not walk into it) and through where a broken one stood.
 >    `logcat | grep '\[nav\]'` says how many nodes the props block.
-> 8. **LAN (both phones on this build, protocol v9).** A rocket kill on the
+> 8. **Sound for what Halo has none for** (new, synthesised, no assets):
+>    a crate splinters, glass shatters and tinkles, a barrel clangs then
+>    booms, concrete crunches; debris knocks as it lands (a few per frame at
+>    most); a gib is a wet burst; Storm brings rain and wind that fade in and
+>    drop under a roof. Halo's own grenade and wreck sounds are unchanged
+>    (not doubled). Listen for: anything too loud against gunfire, a
+>    machine-gun of knocks from a pile of debris, a click where the rain
+>    loop wraps (every 3 s). `logcat | grep 'procedural sound'`. On PC:
+>    `build-host/megamod-sandbox --weather storm`; `megamod-sfxdump DIR`
+>    writes every sound as a WAV to judge them by ear.
+> 9. **LAN (both phones on this build, protocol v9).** A rocket kill on the
 >    host: the joiner sees the same body come apart, no corpse left behind,
 >    and the victim whole again when it respawns. Shoot a crate on the
 >    joiner: it chips but breaks only when the host says (a moment later,
@@ -258,6 +268,10 @@ Known risks in this build, most likely first:
   collision instances out); a car faster than a walk smashes any prop it
   overlaps instead (`hta_wfx_ram`, 60 damage per wu/s, ours). Worth a
   look: does ramming a crate feel right?
+- **Procedural sounds were judged by measurement and spectrogram only**
+  (no one has listened yet). The bank takes ~55 ms to synthesise on a
+  desktop core, once, at the first map load: a guessed 0.2-0.3 s on a
+  phone. It adds 1.8 MB of RAM and 36 of the mixer's 512 clip slots.
 - Breakable brushes (`func_breakable`) are tested on a synthetic BSP only;
   the first real map with windows is the first real test.
 
@@ -1183,6 +1197,9 @@ wrong, this list is the first place to look — they are all one constant.
 | KILL gib strength | 0..4.25 in 1/60ths | the blast fraction on the wire; ours |
 | Nav prop block | box grown by the biped radius; floors from 0.3 wu below its bottom to its top | which nodes a whole prop takes away from bots; ours |
 | `func_breakable` blast | explodemagnitude capped at 300; radius 3 wu | Source's magnitude read as damage; radius ours |
+| Procedural sound range | full at 2 wu, silent at 60 wu (blasts 120, knocks 24) | world_fx_audio.c; ours |
+| Debris knocks | from 1.2 wu/s, at most 3 per frame and one per 30 ms | world_fx.c / world_fx_audio.c; ours |
+| Ambience gains | rain 0.3, wind 0.35 of full; under a roof rain x0.35, wind x0.4 | world_fx_audio.c / world_fx.c; ours |
 | `HTA_VM_KEY_FRACTION` | 0.35 | when a clip "does its thing" if `key frame` is 0 |
 | `HTA_BOT_RESPAWN` | 5 s | how long a body lies there |
 | `HTA_ITEMS_UPLOAD_FRAMES` | 8 | ≥ any swapchain image count |

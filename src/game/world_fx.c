@@ -1,6 +1,7 @@
 #include "world_fx.h"
 #include <ctype.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Pool sizes. Sprites are cheap (a quad) but blend; debris is a lit box.
@@ -13,6 +14,25 @@ static uint32_t sprite_slots(const hta_gfx_settings *s)
 static uint32_t weather_drops(const hta_gfx_settings *s)
 {
     return s->weather_density > 0.0f ? 3000u : 1u;
+}
+
+void hta_wfx_push_cue(hta_world_fx *w, hta_wfx_cue_kind k, uint8_t material, const float pos[3],
+                      float strength, bool echo)
+{
+    if (!w || !pos || w->cue_count >= HTA_WFX_MAX_CUES) return;     /* a flood: the rest would be inaudible anyway */
+    hta_wfx_cue *c = &w->cues[w->cue_count++];
+    c->kind = (uint8_t)k; c->material = material; c->echo = echo;
+    memcpy(c->pos, pos, sizeof(c->pos));
+    c->strength = strength;
+}
+
+bool hta_wfx_pop_cue(hta_world_fx *w, hta_wfx_cue *out)
+{
+    if (!w || !w->cue_count) return false;
+    if (out) *out = w->cues[0];
+    w->cue_count--;
+    memmove(w->cues, w->cues + 1, w->cue_count * sizeof(w->cues[0]));
+    return true;
 }
 
 bool hta_wfx_init(hta_world_fx *w, const hta_collision *col, const hta_gfx_settings *s)
@@ -40,6 +60,8 @@ void hta_wfx_free(hta_world_fx *w)
     hta_weather_free(&w->weather);
     hta_fx_free(&w->fx);
     hta_rigid_free(&w->rigid);
+    free(w->prop_was_broken);
+    w->prop_was_broken = NULL; w->prop_seen_cap = 0; w->cue_count = 0;
     w->ready = false;
 }
 
@@ -68,6 +90,7 @@ void hta_wfx_reset(hta_world_fx *w)
     for (uint32_t i = 0; i < w->fx.alpha_slots + w->fx.add_slots; i++) w->fx.pool[i].active = false;
     memset(w->weather.roof_known, 0, sizeof(w->weather.roof_known));
     w->weather.live = 0;
+    w->cue_count = 0;
 }
 
 static void apply_weather(hta_world_fx *w)
@@ -86,6 +109,7 @@ void hta_wfx_load_map(hta_world_fx *w, const hta_external_map *m, float respawn)
     if (!w || !w->ready) return;
     uint32_t chunks = w->props.chunks_per_break;
     hta_props_free(&w->props);
+    w->prop_seen_cap = 0;              /* a new set: whatever it holds now is not news */
     uint32_t n = m ? m->breakable_count : 0;
     hta_props_init(&w->props, n > 256 ? n : 256);
     w->props.chunks_per_break = chunks ? chunks : 10;
@@ -150,6 +174,7 @@ void hta_wfx_choose_weather(hta_world_fx *w, int choice)
 static void detonation(hta_world_fx *w, const float pos[3], const float nrm[3], float radius)
 {
     float r = radius > 0.1f ? radius : 1.0f;
+    hta_wfx_push_cue(w, HTA_WFX_CUE_BLAST, HTA_RMAT_DIRT, pos, r, true);
     hta_rigid_blast(&w->rigid, pos, r * 2.0f, 2.5f + r);
     hta_props_blast(&w->props, pos, 60.0f * r, r * 1.5f, &w->rigid, &w->fx);
     float up[3] = { 0, 0, 1 };
@@ -177,6 +202,7 @@ static void detonation(hta_world_fx *w, const float pos[3], const float nrm[3], 
 /* A wrecked hull sheds panels. */
 static void wreck(hta_world_fx *w, const float pos[3])
 {
+    hta_wfx_push_cue(w, HTA_WFX_CUE_BLAST, HTA_RMAT_METAL, pos, 2.0f, true);
     hta_rigid_blast(&w->rigid, pos, 4.0f, 5.0f);
     hta_fx_burst(&w->fx, HTA_BURST_SPARKS, pos, NULL, 30);
     hta_fx_burst(&w->fx, HTA_BURST_DUST, pos, NULL, 10);
@@ -213,6 +239,7 @@ void hta_wfx_game_event(hta_world_fx *w, const hta_game_event *e, const hta_game
         /* A body's height: its standing eye plus a little. */
         d.height = u->body.eye_height > 0.1f ? u->body.eye_height * 1.12f : 0.7f;
         hta_gibs_spawn(&w->rigid, &w->fx, &d, w->gib_level);
+        if (w->gib_level) hta_wfx_push_cue(w, HTA_WFX_CUE_GIB, HTA_RMAT_FLESH, e->pos, d.strength, false);
         w->gibbed++;
         break;
     }
@@ -267,9 +294,58 @@ void hta_wfx_net_fx(hta_world_fx *w, hta_wfx_net_kind kind, const float pos[3], 
         if (dir) memcpy(d.from, dir, sizeof(d.from));
         hta_gibs_should(amount, &d.strength);
         hta_gibs_spawn(&w->rigid, &w->fx, &d, w->gib_level);
+        if (w->gib_level) hta_wfx_push_cue(w, HTA_WFX_CUE_GIB, HTA_RMAT_FLESH, pos, d.strength, false);
         break;
     }
     }
+}
+
+/* A prop that has broken since last frame is heard: its material's break,
+ * and a blast for an explosive one. A quiet sync (joining mid-match) and
+ * a respawn are silent. */
+static void props_heard(hta_world_fx *w)
+{
+    hta_props *p = &w->props;
+    if (p->count > w->prop_seen_cap) {
+        uint8_t *n = realloc(w->prop_was_broken, p->count);
+        if (!n) return;
+        memset(n + w->prop_seen_cap, 0, p->count - w->prop_seen_cap);
+        for (uint32_t i = w->prop_seen_cap; i < p->count; i++) n[i] = p->props[i].broken;
+        w->prop_was_broken = n;
+        w->prop_seen_cap = p->count;
+    }
+    bool quiet = p->quiet_version == p->version;
+    for (uint32_t i = 0; i < p->count; i++) {
+        bool now = p->props[i].broken;
+        if (now && !w->prop_was_broken[i] && !quiet) {
+            hta_wfx_push_cue(w, HTA_WFX_CUE_BREAK, p->props[i].material, p->props[i].centre, 1.0f, false);
+            if (p->props[i].explosive)
+                hta_wfx_push_cue(w, HTA_WFX_CUE_BLAST, HTA_RMAT_METAL, p->props[i].centre, p->props[i].blast_radius, false);
+        }
+        w->prop_was_broken[i] = now;
+    }
+}
+
+void hta_wfx_ambience(const hta_world_fx *w, const float ear[3], float *rain, float *wind)
+{
+    float r = 0.0f, wd = 0.0f;
+    if (w && w->ready) {
+        float k = w->weather.intensity;
+        switch (w->weather.kind) {
+        case HTA_WEATHER_RAIN: r = k; wd = 0.15f * k; break;
+        case HTA_WEATHER_STORM: r = k; wd = 0.6f * k; break;
+        case HTA_WEATHER_SNOW: wd = 0.35f * k; break;
+        case HTA_WEATHER_ASH: wd = 0.2f * k; break;
+        case HTA_WEATHER_SANDSTORM: wd = k; break;
+        default: break;
+        }
+        /* Under a roof: rain drums on it, softer, and the wind drops. */
+        if (ear && (r > 0.0f || wd > 0.0f) && !hta_weather_open(&w->weather, ear[0], ear[1], ear[2])) {
+            r *= 0.35f; wd *= 0.4f;
+        }
+    }
+    if (rain) *rain = r > 1.0f ? 1.0f : r;
+    if (wind) *wind = wd > 1.0f ? 1.0f : wd;
 }
 
 void hta_wfx_update(hta_world_fx *w, float dt, const hta_camera *cam)
@@ -278,15 +354,30 @@ void hta_wfx_update(hta_world_fx *w, float dt, const hta_camera *cam)
     hta_rigid_step(&w->rigid, dt);
     hta_gibs_update(&w->rigid, &w->fx, dt, w->gib_level);
     /* Hard knocks: sparks off metal, dust off stone. */
+    uint32_t knocks = 0;
     for (uint32_t i = 0; i < w->rigid.impact_count; i++) {
         const hta_rigid_impact *im = &w->rigid.impacts[i];
+        /* The hardest few are heard; a pile settling is not a drum roll. */
+        if (im->speed >= 1.2f && knocks < HTA_WFX_KNOCKS_PER_FRAME) {
+            hta_wfx_push_cue(w, HTA_WFX_CUE_KNOCK, im->material, im->point, im->speed, false);
+            knocks++;
+        }
         if (im->speed < 2.0f) continue;
         if (im->material == HTA_RMAT_METAL) hta_fx_burst(&w->fx, HTA_BURST_SPARKS, im->point, im->normal, 3);
         else if (im->material == HTA_RMAT_CONCRETE) hta_fx_burst(&w->fx, HTA_BURST_DUST, im->point, im->normal, 1);
     }
     hta_fx_update(&w->fx, dt);
     hta_props_update(&w->props, dt);
+    props_heard(w);
     if (cam) hta_weather_update(&w->weather, dt, cam, &w->fx);
+    /* Thunder: heard once as it arrives (the platform still takes it for
+     * the camera shake with hta_weather_thunder). */
+    if (w->weather.thunder_ready && !w->thunder_heard) {
+        float at[3] = { 0, 0, 0 };
+        if (cam) memcpy(at, cam->pos, sizeof(at));
+        hta_wfx_push_cue(w, HTA_WFX_CUE_THUNDER, 0, at, w->weather.thunder_gain, false);
+    }
+    w->thunder_heard = w->weather.thunder_ready;
     /* Sprites are lit by the flash too. */
     w->fx.light = 1.0f + w->weather.flash;
 }

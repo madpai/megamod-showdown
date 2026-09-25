@@ -28,6 +28,26 @@
 
 struct hta_gfx_mesh;
 
+/* Sounds the effects call for, as cues a platform plays (world_fx_audio.c
+ * with the procedural bank, or anything else). `echo` marks one the game
+ * already makes a sound for (a Halo grenade's own detonation), so a
+ * platform with game sounds skips it and one without plays it. */
+typedef enum {
+    HTA_WFX_CUE_BREAK = 1,   /* a prop broke; material says what it was */
+    HTA_WFX_CUE_KNOCK,       /* debris landed; strength = closing speed, wu/s */
+    HTA_WFX_CUE_GIB,
+    HTA_WFX_CUE_BLAST,       /* strength = radius, wu */
+    HTA_WFX_CUE_THUNDER,     /* strength = loudness 0..1 */
+} hta_wfx_cue_kind;
+typedef struct {
+    uint8_t kind, material;  /* hta_wfx_cue_kind, hta_rigid_material */
+    bool    echo;
+    float   pos[3];
+    float   strength;
+} hta_wfx_cue;
+#define HTA_WFX_MAX_CUES 32u
+#define HTA_WFX_KNOCKS_PER_FRAME 3u
+
 /* Weather choice from the SETTINGS screen: AUTO follows the map. */
 #define HTA_WFX_WEATHER_AUTO (-1)
 
@@ -48,6 +68,12 @@ typedef struct {
     float frame_ms;                     /* smoothed */
     float dynres_timer;
     hta_gfx_settings dynres;            /* a scratch copy whose scale moves */
+    /* sound cues since the last pop */
+    hta_wfx_cue cues[HTA_WFX_MAX_CUES];
+    uint32_t    cue_count;
+    uint8_t    *prop_was_broken;        /* per prop, to hear it break */
+    uint32_t    prop_seen_cap;
+    bool        thunder_heard;
     /* diagnostics */
     uint32_t gibbed, broken;
 } hta_world_fx;
@@ -86,6 +112,15 @@ void hta_wfx_net_fx(hta_world_fx *w, hta_wfx_net_kind kind, const float pos[3], 
                     float amount);
 
 void hta_wfx_update(hta_world_fx *w, float dt, const hta_camera *cam);
+
+/* A cue from the caller, for effects it made itself (gibs it spawned). */
+void hta_wfx_push_cue(hta_world_fx *w, hta_wfx_cue_kind k, uint8_t material, const float pos[3],
+                      float strength, bool echo);
+/* The next sound cue, oldest first. */
+bool hta_wfx_pop_cue(hta_world_fx *w, hta_wfx_cue *out);
+/* How loud the weather is where the listener stands, 0..1 each: rain (on
+ * the roof, muffled, when under one) and wind. */
+void hta_wfx_ambience(const hta_world_fx *w, const float ear[3], float *rain, float *wind);
 
 /* How this frame's scene should differ: fog pulled toward the weather's,
  * and a lightning flash. Writes a per-frame copy of the settings (for

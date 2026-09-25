@@ -333,6 +333,7 @@ void hta_props_apply_mask(hta_props *p, const uint8_t *mask, uint32_t count,
             breaks(p, i, from, 2.0f, w, fx, !w && !fx);
         } else respawn(p, i);
     }
+    if (!w && !fx) p->quiet_version = p->version;
 }
 
 bool hta_props_pop(hta_props *p, hta_prop_event *out)

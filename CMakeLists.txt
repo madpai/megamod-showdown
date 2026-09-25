@@ -32,10 +32,12 @@ if(ANDROID)
         src/engine/gore.c
         src/engine/props.c
         src/engine/weather.c
+        src/engine/sfx.c
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
         src/game/world_fx.c
+        src/game/world_fx_audio.c
         src/game/world_fx_gpu.c
         src/game/game.c
         src/game/brain.c
@@ -85,11 +87,11 @@ else()
         src/engine/actor.c
         src/engine/pickup.c
         src/engine/bot.c src/engine/viewmodel.c src/engine/audio.c src/engine/ammo.c src/engine/hud.c
-        src/engine/rigid.c src/engine/fx.c src/engine/gore.c src/engine/props.c src/engine/weather.c
+        src/engine/rigid.c src/engine/fx.c src/engine/gore.c src/engine/props.c src/engine/weather.c src/engine/sfx.c
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
-        src/game/world_fx.c
+        src/game/world_fx.c src/game/world_fx_audio.c
         src/game/game.c
         src/game/brain.c
         src/game/view.c
@@ -164,8 +166,8 @@ else()
                 message(STATUS "host SDL2 found: htaplay will be built")
                 # The desktop platform layer (window, Vulkan surface, input,
                 # pacing) and the data-free sandbox on top of it.
-                add_library(hta_desktop STATIC src/platform/desktop_sdl.c)
-                target_link_libraries(hta_desktop PUBLIC hta_gfx_host PkgConfig::SDL2)
+                add_library(hta_desktop STATIC src/platform/desktop_sdl.c src/platform/audio_sdl.c)
+                target_link_libraries(hta_desktop PUBLIC hta_gfx_host hta_engine PkgConfig::SDL2)
                 target_compile_options(hta_desktop PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
                 add_executable(megamod-sandbox src/tools/sandbox.c)
                 target_link_libraries(megamod-sandbox PRIVATE hta_desktop hta_gfx_host hta_engine m)
@@ -291,6 +293,12 @@ else()
     target_link_libraries(test_rigid PRIVATE hta_engine m)
     add_test(NAME rigid COMMAND test_rigid)
 
+    # The procedural sound bank as WAV files, to listen to.
+    add_executable(megamod-sfxdump src/tools/sfxdump.c)
+    target_link_libraries(megamod-sfxdump PRIVATE hta_engine m)
+    add_executable(test_sfx tests/test_sfx.c)
+    target_link_libraries(test_sfx PRIVATE hta_engine m)
+    add_test(NAME sfx COMMAND test_sfx)
     add_executable(test_world_fx tests/test_world_fx.c)
     target_link_libraries(test_world_fx PRIVATE hta_engine m)
     add_test(NAME world_fx COMMAND test_world_fx)

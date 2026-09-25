@@ -54,6 +54,7 @@
 #include "../game/imported.h"
 #include "../asset/oal_asset.h"
 #include "../gfx/gfx_settings.h"
+#include "../game/world_fx_audio.h"
 #include "../game/world_fx_gpu.h"
 
 #include <android/log.h>
@@ -524,6 +525,7 @@ typedef struct {
     size_t  video_cfg_len;
     hta_world_fx wfx;
     const void *wfx_world;            /* the mesh it was set up for */
+    hta_wfx_audio wfx_audio;          /* procedural sounds for props, debris, gibs, weather */
     bool props_synced, props_count_warned;   /* LAN client: host's props applied */
     /* Vehicles' collision instances and the props', merged every frame
      * into the one list the world grid points at. */
@@ -7644,6 +7646,11 @@ void android_main(struct android_app *app)
                             hta_wfx_parse_weather(state.video_cfg, state.video_cfg_len));
                         hta_wfx_gpu_upload(&state.wfx, state.gfx);
                     }
+                    /* The sounds Halo has none for: breaking props, debris
+                     * landing, gibs, rain and wind. Synthesised, no assets. */
+                    if (state.audio_ok && !state.wfx_audio.ready &&
+                        hta_wfx_audio_init(&state.wfx_audio, &state.audio, 0x5A7Du))
+                        hta_log("[wfx] %.1f MB of procedural sound", (double)state.wfx_audio.bank.bytes / 1048576.0);
                 } else {
                     hta_wfx_reset(&state.wfx);
                 }
@@ -7699,6 +7706,8 @@ void android_main(struct android_app *app)
             hta_scene drawscene = state.scene;
             if (state.wfx.ready) {
                 hta_wfx_update(&state.wfx, dt, &state.cam);
+                /* Halo plays its own detonations and wrecks: skip those echoes. */
+                hta_wfx_audio_update(&state.wfx_audio, &state.wfx, &state.cam, dt, true);
                 hta_gfx_settings look;
                 hta_wfx_frame_look(&state.wfx, &state.video, &look,
                                    drawscene.ambient, drawscene.light_color);

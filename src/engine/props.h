@@ -62,6 +62,9 @@ typedef struct {
     /* Changes whenever a prop is added, breaks or comes back; unique
      * across every hta_props (a reload never repeats an old value). */
     uint32_t version;
+    /* The version a quiet hta_props_apply_mask left: what changed then was
+     * not seen happen (a join), so nothing should be heard of it. */
+    uint32_t quiet_version;
 } hta_props;
 
 bool hta_props_init(hta_props *p, uint32_t cap);
