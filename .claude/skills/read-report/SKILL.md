@@ -19,6 +19,15 @@ server: `scratch/serve-megamod/reports/` (`latest.json` is the newest).
 2. Then read the JSON itself for what the summary leaves out:
    - `native.frames.{session,last_minute,this_minute}`: p50/p95/p99, hitches.
      60 fps is 16.7 ms; a p99 far above p95 means stutter, not slowness.
+     `native.frames.hitches` (builds after 13dfb40) says when each of the
+     last 8 frames over 50 ms began, in seconds since the match started:
+     all in the first second or two is loading (pipelines, uploads), not
+     gameplay.
+   - First, what was the phone doing? `native.net`: `hosting` false with an
+     `id` means it had joined someone -- often the scripted `megamod-server`
+     (test 13), a near-empty scene that is no performance baseline. A
+     `player_pos` far below the map's ground while airborne means it fell
+     out of the world.
    - `native.video`: preset, `settings` (the exact key=value in effect),
      composed or direct, render scale (dynamic resolution lowers it).
    - `device.thermal` / `power_save`: a throttling phone explains a slow run.

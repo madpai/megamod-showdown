@@ -56,6 +56,13 @@ the Trial's, anything else a `<name>.oalmap` in `map_dir`), `map_dir`,
 `spawn_protect`, `classes`, `duplicate_heroes`, `tick_rate` (20-120),
 `status_file`, `sim` (match, scripted).
 
+**Known limit of `sim = scripted`:** it has no map, so it puts every
+joiner at (-4, -6, 0) and trusts the joiner's reported position after
+that. On Blood Gulch that point is probably not on the canyon floor: the
+first phone test (report of 13dfb40) showed the player airborne at exactly
+(-4.00, -6.00, -111.85), falling. It proves reachability and the protocol,
+not play; S3 replaces it with the real match and the map's spawn points.
+
 ## Getting the real match in: stages S1-S3
 
 The host simulation lives in `src/platform/platform_android.c`. Loop

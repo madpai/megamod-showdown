@@ -14,7 +14,7 @@ static void hist_add(hta_frame_hist *h, float ms)
     h->count++;
     h->sum_ms += ms;
     if (ms > h->max_ms) h->max_ms = ms;
-    if (ms > 50.0f) h->hitches++;
+    if (ms > HTA_FRAME_HITCH_MS) h->hitches++;
 }
 
 void hta_frame_stats_reset(hta_frame_stats *s)
@@ -28,6 +28,15 @@ void hta_frame_stats_add(hta_frame_stats *s, float frame_ms)
     hist_add(&s->session, frame_ms);
     hist_add(&s->minute, frame_ms);
     s->minute_ms += frame_ms > 0.0f ? frame_ms : 0.0f;
+    if (frame_ms > HTA_FRAME_HITCH_MS) {
+        uint32_t k = s->hitch_next % HTA_FRAME_HITCH_LOG;
+        s->hitch_log[k].at_s = (float)(s->elapsed_ms / 1000.0);   /* when the slow frame began */
+        s->hitch_log[k].ms = frame_ms;
+        s->hitch_log[k].frame = s->frame;
+        s->hitch_next++;
+    }
+    if (frame_ms > 0.0f) s->elapsed_ms += frame_ms;
+    s->frame++;
     if (s->minute_ms >= 60000.0) {
         s->last_minute = s->minute;
         memset(&s->minute, 0, sizeof(s->minute));
@@ -189,4 +198,19 @@ size_t hta_json_finish(hta_json *j)
     while (j->depth > 0) close_level(j, '}');
     raw(j, "}", 1);
     return j->len;
+}
+
+void hta_json_hitches(hta_json *j, const char *key, const hta_frame_stats *s)
+{
+    hta_json_array(j, key);
+    uint32_t n = s->hitch_next < HTA_FRAME_HITCH_LOG ? s->hitch_next : HTA_FRAME_HITCH_LOG;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t k = (s->hitch_next - n + i) % HTA_FRAME_HITCH_LOG;
+        hta_json_object(j, NULL);
+        hta_json_num(j, "at_s", s->hitch_log[k].at_s);
+        hta_json_num(j, "ms", s->hitch_log[k].ms);
+        hta_json_int(j, "frame", (long long)s->hitch_log[k].frame);
+        hta_json_end_object(j);
+    }
+    hta_json_end_array(j);
 }

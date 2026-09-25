@@ -42,6 +42,24 @@ int main(void)
     for (int i = 0; i < 3000; i++) hta_frame_stats_add(&fs, 16.6f);
     for (int i = 0; i < 30; i++) hta_frame_stats_add(&fs, 70.0f);
     hta_frame_stats_add(&fs, 400.0f);
+    /* The hitch log keeps the last 8 of the 31, with when they began:
+     * 3000 frames of 16.6 ms, then 30 of 70 ms, then the 400 ms one. */
+    assert(fs.hitch_next == 31u);
+    assert(fs.frame == 3031u);
+    {
+        uint32_t last = (fs.hitch_next - 1u) % HTA_FRAME_HITCH_LOG;
+        assert(fs.hitch_log[last].ms == 400.0f && fs.hitch_log[last].frame == 3030u);
+        assert(fabsf(fs.hitch_log[last].at_s - (3000.0f * 0.0166f + 30.0f * 0.070f)) < 0.01f);
+        char hb[1024];
+        hta_json hj;
+        hta_json_init(&hj, hb, sizeof(hb));
+        hta_json_object(&hj, NULL);
+        hta_json_hitches(&hj, "hitches", &fs);
+        size_t hn = hta_json_finish(&hj);
+        assert(hj.ok && hn > 0);
+        assert(strstr(hb, "\"frame\":3023") && strstr(hb, "\"ms\":400"));  /* oldest kept, newest */
+        assert(!strstr(hb, "\"frame\":3022}"));
+    }
     hta_frame_stats_add(&fs, NAN);                   /* ignored */
     assert(fs.session.count == 3031 && fs.session.hitches == 31);
     assert(fabsf(hta_frame_hist_percentile(&fs.session, 50) - 17.0f) < 0.01f);

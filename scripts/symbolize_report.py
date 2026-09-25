@@ -81,6 +81,10 @@ def main() -> int:
         if h and h.get("count"):
             print(f"frames {k}: {h['fps_mean']:.1f} fps mean, p50 {h['p50_ms']} ms, p95 {h['p95_ms']} ms, "
                   f"p99 {h['p99_ms']} ms, max {h['max_ms']:.0f} ms, {h['hitches_over_50ms']} hitches")
+    hs = f.get("hitches") or []
+    if hs:
+        print(f"hitches ({f.get('match_s', 0):.0f} s into the match): "
+              + ", ".join(f"{x['ms']:.0f} ms at {x['at_s']:.1f} s" for x in hs))
     m = n.get("match", {})
     if m:
         print(f"match: {m.get('map')} mode {m.get('mode')}, {m.get('units')} units, phase {n.get('phase')}")

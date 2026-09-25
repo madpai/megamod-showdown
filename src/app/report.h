@@ -18,6 +18,8 @@
 /* Frame times in 0.5 ms bins up to 100 ms, then one bin for "longer". */
 #define HTA_FRAME_BINS 201u
 #define HTA_FRAME_BIN_MS 0.5f
+#define HTA_FRAME_HITCH_MS 50.0f
+#define HTA_FRAME_HITCH_LOG 8u
 
 typedef struct {
     uint32_t bins[HTA_FRAME_BINS];
@@ -31,6 +33,12 @@ typedef struct {
     hta_frame_hist minute;      /* the current minute ... */
     hta_frame_hist last_minute; /* ... and the one before it, whole */
     double   minute_ms;         /* how far into the current minute */
+    /* When the slow frames happened: a max of 423 ms says nothing about
+     * whether it was the first frame after loading or a firefight. */
+    double   elapsed_ms;        /* since the match started */
+    uint32_t frame;             /* frames since the match started */
+    struct { float at_s, ms; uint32_t frame; } hitch_log[HTA_FRAME_HITCH_LOG];
+    uint32_t hitch_next;        /* next slot in the ring; total hitches logged */
 } hta_frame_stats;
 
 void  hta_frame_stats_reset(hta_frame_stats *s);
@@ -58,6 +66,9 @@ void hta_json_str(hta_json *j, const char *key, const char *v);
 void hta_json_num(hta_json *j, const char *key, double v);
 void hta_json_int(hta_json *j, const char *key, long long v);
 void hta_json_bool(hta_json *j, const char *key, bool v);
+/* The last HTA_FRAME_HITCH_LOG hitches, oldest first, as
+ * "key": [{ "at_s", "ms", "frame" }, ...]. */
+void hta_json_hitches(hta_json *j, const char *key, const hta_frame_stats *s);
 /* A frame histogram as { count, mean, p50, p90, p95, p99, max, hitches,
  * fps_mean, over_16ms, over_33ms } -- the numbers an agent compares. */
 void hta_json_frames(hta_json *j, const char *key, const hta_frame_hist *h);

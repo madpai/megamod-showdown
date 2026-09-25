@@ -3555,6 +3555,8 @@ static size_t report_native(const hta_android *s, char *buf, size_t cap)
     hta_json_frames(&j, "session", &s->frame_stats.session);
     hta_json_frames(&j, "last_minute", &s->frame_stats.last_minute);
     hta_json_frames(&j, "this_minute", &s->frame_stats.minute);
+    hta_json_num(&j, "match_s", s->frame_stats.elapsed_ms / 1000.0);
+    hta_json_hitches(&j, "hitches", &s->frame_stats);
     hta_json_end_object(&j);
 
     hta_json_object(&j, "audio");
