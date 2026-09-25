@@ -524,6 +524,7 @@ typedef struct {
     size_t  video_cfg_len;
     hta_world_fx wfx;
     const void *wfx_world;            /* the mesh it was set up for */
+    bool props_synced, props_count_warned;   /* LAN client: host's props applied */
     /* Vehicles' collision instances and the props', merged every frame
      * into the one list the world grid points at. */
     hta_collision_instance col_merged[HTA_VEHICLE_MAX + 256];
@@ -3419,6 +3420,14 @@ static void game_events(hta_android *s)
                     kill.text[k]=(char)(ch>=32 && ch<127 ? ch : '?'); k++;
                 }
                 kill.text[k]=0;
+                if (e.a<(int32_t)s->game.unit_count && s->game.units[e.a].gibbed) {
+                    kill.flags=HTA_NET_KILL_GIBBED;
+                    kill.amount=e.amount>4.25f ? 4.25f : e.amount>0.0f ? e.amount : 0.0f;
+                    for (int c=0;c<3;c++) {
+                        kill.pos[c]=fminf(fmaxf(e.pos[c],-99999.0f),99999.0f);
+                        kill.from[c]=fminf(fmaxf(e.dir[c],-99999.0f),99999.0f);
+                    }
+                }
                 hta_net_server_kill(&s->host_server,&kill,s->last_time);
             }
             if (e.b == s->me && e.a != s->me) {
@@ -5081,6 +5090,8 @@ static void net_host_world(hta_android *s)
         gm.hull[i]=!s->vehicles.cars[i].active ? 0 :
                    (uint8_t)(h*254.0f+1.0f>255.0f ? 255.0f : h*254.0f+1.0f);
     }
+    if (s->wfx.ready)
+        gm.prop_count=(uint16_t)hta_props_broken_mask(&s->wfx.props,gm.prop_broken,HTA_NET_MAX_PROPS);
     hta_net_server_game(&s->host_server,&gm);
 }
 
@@ -5240,6 +5251,9 @@ static void net_client_world(hta_android *s)
             class_hold(s);
         snprintf(u->name,sizeof(u->name),"%s",e->name);
         u->alive=(e->flags&HTA_NET_ENTITY_ALIVE)!=0;
+        /* Back in: whole again. The KILL may beat the WORLD that shows the
+         * death, so only a respawn clears it. */
+        if (!was_alive && u->alive) u->gibbed=false;
         if (was_alive && !u->alive) {
             u->dead_for=0.0f;
             u->death_yaw=e->yaw;
@@ -5402,6 +5416,19 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
     hta_net_kill kill;
     while (hta_net_client_pop_kill(&s->net,&kill)) {
         if (s->net_hosting) continue;
+        /* The host blew this body apart: hide the corpse, throw the same
+         * gibs it did (as hard, from the same blast). Our own gore setting
+         * decides how much of it we draw. */
+        if ((kill.flags&HTA_NET_KILL_GIBBED) && kill.victim<s->game.unit_count &&
+            s->wfx.ready && s->wfx.gib_level>0) {
+            s->game.units[kill.victim].gibbed=true;
+            hta_game_event ge;
+            memset(&ge,0,sizeof(ge));
+            ge.kind=HTA_EV_KILL; ge.a=kill.victim; ge.b=kill.killer==255 ? -1 : kill.killer;
+            ge.amount=kill.amount;
+            memcpy(ge.pos,kill.pos,sizeof(ge.pos)); memcpy(ge.dir,kill.from,sizeof(ge.dir));
+            hta_wfx_game_event(&s->wfx,&ge,&s->game);
+        }
         if (kill.killer==s->me && kill.victim!=s->me &&
             kill.victim<s->game.unit_count) {
             char line[96];
@@ -5412,6 +5439,7 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
     if (s->net_hosting) net_host_peers(s,now);
     if (!s->net.connected) {
         s->net_spawned=false; s->remote_visible=false;
+        s->props_synced=false;
         if (!s->net_hosting) {
             s->world_applied_tick=0;
             s->projectile_applied_tick=0;
@@ -5459,6 +5487,18 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
         if (mode!=s->game.mode) hta_log("[net] the host plays mode %d",(int)mode);
         hta_game_mirror_rules(&s->game,mode,gm->score_limit,sc,
                               gm->winner_team==255 ? -1 : gm->winner_team,fl);
+        /* The host's props: what it broke breaks here, what it rebuilt
+         * comes back. The first sync after joining is quiet. */
+        if (s->wfx.ready) {
+            if (gm->prop_count!=s->wfx.props.count && !s->props_count_warned) {
+                hta_log("[net] the host has %u props, we have %u",gm->prop_count,s->wfx.props.count);
+                s->props_count_warned=true;
+            }
+            bool first=!s->props_synced;
+            hta_props_apply_mask(&s->wfx.props,gm->prop_broken,gm->prop_count,
+                                 first ? NULL : &s->wfx.rigid,first ? NULL : &s->wfx.fx);
+            s->props_synced=true;
+        }
         s->game.allow_duplicate_heroes = (gm->options & HTA_NET_GAME_DUPLICATES) != 0;
         s->allow_duplicate_heroes = s->game.allow_duplicate_heroes;
         s->game_mode=(int)s->game.mode;
@@ -7597,11 +7637,14 @@ void android_main(struct android_app *app)
                 /* An imported map's breakables and weather. Props come back
                  * after 30 s (ours) so a long match keeps its cover. */
                 hta_wfx_load_map(&state.wfx, state.world_loaded ? &state.world_ext : NULL, 30.0f);
+                state.props_synced = state.props_count_warned = false;
                 if (state.wfx.props.count)
                     hta_log("[wfx] %u breakable props, weather %s", state.wfx.props.count,
                             hta_weather_name(state.wfx.weather.kind));
                 state.wfx_world = state.mesh.vertices;
             }
+            /* A LAN client breaks and rebuilds props only as the host says. */
+            state.wfx.props.remote = state.net_enabled && !state.net_hosting;
             /* Props are solid while whole: their instances ride with the
              * vehicles' in the grid everyone collides with. */
             if (state.wfx.ready && state.wfx.props.count) {

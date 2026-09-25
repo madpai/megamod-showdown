@@ -178,8 +178,17 @@ static void shatter(hta_props *p, uint32_t i, const float from[3], float force,
     }
 }
 
+static void respawn(hta_props *p, uint32_t i)
+{
+    hta_prop *pr = &p->props[i];
+    pr->broken = false;
+    pr->health = pr->max_health;
+    pr->inst->active = true;
+    event(p, HTA_PROP_EV_RESPAWNED, i, pr->centre, 0, 0);
+}
+
 static bool breaks(hta_props *p, uint32_t i, const float from[3], float force,
-                   hta_rigid_world *w, hta_fx *fx)
+                   hta_rigid_world *w, hta_fx *fx, bool quiet)
 {
     hta_prop *pr = &p->props[i];
     pr->broken = true;
@@ -187,7 +196,7 @@ static bool breaks(hta_props *p, uint32_t i, const float from[3], float force,
     pr->respawn_in = pr->respawn_time;
     shatter(p, i, from, force, w, fx);
     event(p, HTA_PROP_EV_BROKE, i, pr->centre, 0, 0);
-    if (pr->explosive) event(p, HTA_PROP_EV_EXPLODED, i, pr->centre, pr->blast_damage, pr->blast_radius);
+    if (pr->explosive && !quiet) event(p, HTA_PROP_EV_EXPLODED, i, pr->centre, pr->blast_damage, pr->blast_radius);
     return true;
 }
 
@@ -206,10 +215,11 @@ bool hta_props_damage(hta_props *p, uint32_t i, float amount, const float point[
             HTA_BURST_BLOOD, HTA_BURST_DUST };
         hta_fx_burst(fx, pr->material < HTA_RMAT_COUNT ? chip[pr->material] : HTA_BURST_DUST, point, d, 3);
     }
+    if (p->remote) { pr->health = pr->max_health; return false; }
     if (pr->health > 0.0f) return false;
     /* Overkill throws harder; a rifle round barely pushes a crate apart. */
     float force = 0.8f + fminf(-pr->health / pr->max_health, 2.0f) * 2.0f;
-    return breaks(p, i, from ? from : pr->centre, force, w, fx);
+    return breaks(p, i, from ? from : pr->centre, force, w, fx, false);
 }
 
 void hta_props_blast(hta_props *p, const float centre[3], float damage, float radius,
@@ -224,12 +234,12 @@ void hta_props_blast(hta_props *p, const float centre[3], float damage, float ra
         float dist = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
         float reach = dist - fminf(pr->half[0], fminf(pr->half[1], pr->half[2]));
         if (reach < 0.0f) reach = 0.0f;
-        if (reach >= radius) continue;
+        if (reach >= radius || p->remote) continue;
         float f = 1.0f - reach / radius;
         pr->health -= damage * f;
         if (pr->health <= 0.0f) {
             float force = 1.5f + 5.0f * f;
-            breaks(p, i, centre, force, w, fx);
+            breaks(p, i, centre, force, w, fx, false);
         }
     }
     /* Chunks already lying about get thrown too. */
@@ -284,13 +294,37 @@ void hta_props_update(hta_props *p, float dt)
     if (!p) return;
     for (uint32_t i = 0; i < p->count; i++) {
         hta_prop *pr = &p->props[i];
-        if (!pr->broken || pr->respawn_time <= 0.0f) continue;
+        if (p->remote || !pr->broken || pr->respawn_time <= 0.0f) continue;
         pr->respawn_in -= dt;
         if (pr->respawn_in > 0.0f) continue;
-        pr->broken = false;
-        pr->health = pr->max_health;
-        pr->inst->active = true;
-        event(p, HTA_PROP_EV_RESPAWNED, i, pr->centre, 0, 0);
+        respawn(p, i);
+    }
+}
+
+uint32_t hta_props_broken_mask(const hta_props *p, uint8_t *mask, uint32_t max)
+{
+    if (!p || !mask) return 0;
+    uint32_t n = p->count < max ? p->count : max;
+    memset(mask, 0, (max + 7u) / 8u);
+    for (uint32_t i = 0; i < n; i++)
+        if (p->props[i].broken) mask[i / 8u] |= (uint8_t)(1u << (i % 8u));
+    return n;
+}
+
+void hta_props_apply_mask(hta_props *p, const uint8_t *mask, uint32_t count,
+                          hta_rigid_world *w, hta_fx *fx)
+{
+    if (!p || !mask) return;
+    for (uint32_t i = 0; i < count && i < p->count; i++) {
+        hta_prop *pr = &p->props[i];
+        bool want = (mask[i / 8u] >> (i % 8u)) & 1u;
+        if (want == pr->broken) continue;
+        if (want) {
+            /* We never saw what broke it: burst it from just below. */
+            float from[3] = { pr->centre[0], pr->centre[1], pr->centre[2] - pr->half[2] - 0.5f };
+            pr->health = 0.0f;
+            breaks(p, i, from, 2.0f, w, fx, !w && !fx);
+        } else respawn(p, i);
     }
 }
 

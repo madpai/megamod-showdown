@@ -212,6 +212,52 @@ static void props(hta_collision *col)
     assert(hta_props_pop(&P, &e) && e.kind == HTA_PROP_EV_RESPAWNED);
     col->instances = NULL; col->instance_count = 0;
 
+    /* LAN: the host's mask says the barrel is broken; a client with the
+     * same props, remote, breaks it with the same events and nothing it
+     * does locally breaks or restores a prop. */
+    {
+        uint8_t mask[64];
+        memset(mask, 0xAA, sizeof(mask));
+        assert(hta_props_broken_mask(&P, mask, 512) == 2);
+        assert(mask[0] == (1u << barrel) && mask[1] == 0);
+        hta_props Q;
+        assert(hta_props_init(&Q, 8));
+        hta_props_add(&Q, c, h, 0.4f, HTA_RMAT_WOOD, 0, 42);
+        hta_props_add(&Q, c2, h2, 0, HTA_RMAT_METAL, 30, 43);
+        Q.props[barrel].explosive = true;
+        Q.props[barrel].blast_damage = 100; Q.props[barrel].blast_radius = 3;
+        Q.props[crate].respawn_time = 1.0f;
+        Q.remote = true;
+        assert(!hta_props_damage(&Q, crate, 500, c, from, &w, &fx) && !Q.props[crate].broken);
+        hta_props_blast(&Q, c, 500, 5, &w, &fx);
+        assert(!Q.props[crate].broken && !Q.props[barrel].broken && Q.event_count == 0);
+        hta_props_apply_mask(&Q, mask, 2, &w, &fx);
+        assert(Q.props[barrel].broken && !Q.props[barrel].inst->active && !Q.props[crate].broken);
+        bool broke = false, boom = false;
+        while (hta_props_pop(&Q, &e)) { broke |= e.kind == HTA_PROP_EV_BROKE; boom |= e.kind == HTA_PROP_EV_EXPLODED; }
+        assert(broke && boom);
+        /* The same mask again changes nothing. */
+        hta_props_apply_mask(&Q, mask, 2, &w, &fx);
+        assert(Q.event_count == 0);
+        /* The host breaks the crate and restores the barrel. */
+        mask[0] = (uint8_t)(1u << crate);
+        hta_props_apply_mask(&Q, mask, 2, &w, &fx);
+        assert(Q.props[crate].broken && !Q.props[barrel].broken && Q.props[barrel].inst->active);
+        /* Remote: no local respawn however long it waits. */
+        hta_props_update(&Q, 10.0f);
+        assert(Q.props[crate].broken);
+        /* A count short of the props leaves the rest alone. */
+        memset(mask, 0, sizeof(mask));
+        hta_props_apply_mask(&Q, mask, 0, &w, &fx);
+        assert(Q.props[crate].broken);
+        /* A quiet sync: the barrel breaks, but raises no explosion. */
+        while (hta_props_pop(&Q, &e)) {}
+        mask[0] = (uint8_t)((1u << crate) | (1u << barrel));
+        hta_props_apply_mask(&Q, mask, 2, NULL, NULL);
+        assert(Q.props[barrel].broken && hta_props_pop(&Q, &e) && e.kind == HTA_PROP_EV_BROKE && Q.event_count == 0);
+        hta_props_free(&Q);
+    }
+
     hta_fx_free(&fx);
     hta_rigid_free(&w);
     hta_props_free(&P);

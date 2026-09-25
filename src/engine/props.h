@@ -55,6 +55,10 @@ typedef struct {
     hta_prop_event events[HTA_PROP_MAX_EVENTS];
     uint32_t event_count;
     uint32_t chunks_per_break;      /* scaled by the debris budget */
+    /* A LAN client: the host decides what breaks and respawns. Damage
+     * still chips and blasts still throw, but nothing breaks or comes
+     * back here except through hta_props_set_broken. */
+    bool remote;
 } hta_props;
 
 bool hta_props_init(hta_props *p, uint32_t cap);
@@ -80,6 +84,17 @@ bool hta_props_ray(const hta_props *p, const float orig[3], const float dir[3], 
 
 void hta_props_update(hta_props *p, float dt);
 bool hta_props_pop(hta_props *p, hta_prop_event *out);
+
+/* Replication. The host writes one bit per prop (bit i of byte i/8) into
+ * `mask` and returns how many it wrote (<= max). A client applies the
+ * host's mask: a prop the host broke shatters here with the same events
+ * (BROKE, EXPLODED) a local break raises, one it restored respawns;
+ * props past `count` are left alone. With no `w` and no `fx` it is a
+ * quiet sync (joining a match in progress): BROKE and RESPAWNED only, no
+ * chunks and no explosions. */
+uint32_t hta_props_broken_mask(const hta_props *p, uint8_t *mask, uint32_t max);
+void hta_props_apply_mask(hta_props *p, const uint8_t *mask, uint32_t count,
+                          hta_rigid_world *w, hta_fx *fx);
 
 /* A caller-owned merged instance list: vehicles first, then props.
  * Returns the count written (<= cap). */

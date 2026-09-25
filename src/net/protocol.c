@@ -260,9 +260,18 @@ bool hta_net_kill_pack(uint8_t *dst, size_t cap, const hta_net_kill *k)
         n++;
     }
     if (!n || n==sizeof(k->text)) return false;
+    if (k->flags & ~HTA_NET_KILL_GIBBED || !isfinite(k->amount) ||
+        k->amount<0.0f || k->amount>4.25f) return false;
     hta_net_u32_write(dst,k->id);
     dst[4]=k->victim; dst[5]=k->killer;
     memset(dst+6,0,96); memcpy(dst+6,k->text,n);
+    dst[102]=k->flags;
+    dst[103]=(uint8_t)lroundf(k->amount*60.0f);
+    for (unsigned i=0;i<3;i++) {
+        if (!isfinite(k->pos[i]) || fabsf(k->pos[i])>100000.0f ||
+            !isfinite(k->from[i]) || fabsf(k->from[i])>100000.0f) return false;
+        fw(dst+104+i*4,k->pos[i]); fw(dst+116+i*4,k->from[i]);
+    }
     return true;
 }
 bool hta_net_kill_unpack(const uint8_t *src, size_t len, hta_net_kill *k)
@@ -271,6 +280,8 @@ bool hta_net_kill_unpack(const uint8_t *src, size_t len, hta_net_kill *k)
     hta_net_kill tmp={0};
     tmp.id=hta_net_u32_read(src); tmp.victim=src[4]; tmp.killer=src[5];
     memcpy(tmp.text,src+6,96);
+    tmp.flags=src[102]; tmp.amount=(float)src[103]/60.0f;
+    for (unsigned i=0;i<3;i++) { tmp.pos[i]=fr(src+104+i*4); tmp.from[i]=fr(src+116+i*4); }
     uint8_t check[HTA_NET_KILL_BYTES];
     if (!hta_net_kill_pack(check,sizeof(check),&tmp) || memcmp(check,src,len)) return false;
     *k=tmp; return true;
@@ -506,6 +517,16 @@ bool hta_net_game_pack(uint8_t *dst, size_t cap, const hta_net_game *g)
         o[10]=0;
     }
     memcpy(dst+30,g->hull,HTA_NET_MAX_VEHICLES);
+    if (g->prop_count>HTA_NET_MAX_PROPS) return false;
+    uint8_t *pr=dst+30+HTA_NET_MAX_VEHICLES;
+    u16w(pr,g->prop_count);
+    /* Bits past the count are zero, so one map state has one encoding. */
+    for (unsigned i=0;i<HTA_NET_MAX_PROPS/8u;i++) {
+        unsigned lo=i*8u;
+        uint8_t keep=lo>=g->prop_count ? 0 : g->prop_count-lo>=8u ? 0xFFu :
+                     (uint8_t)((1u<<(g->prop_count-lo))-1u);
+        pr[2+i]=g->prop_broken[i]&keep;
+    }
     return true;
 }
 
@@ -525,6 +546,8 @@ bool hta_net_game_unpack(const uint8_t *src, size_t len, hta_net_game *g)
         tmp.flag[t].yaw=(float)(int16_t)u16r(in+8)/VQ_ANGLE;
     }
     memcpy(tmp.hull,src+30,HTA_NET_MAX_VEHICLES);
+    tmp.prop_count=u16r(src+30+HTA_NET_MAX_VEHICLES);
+    memcpy(tmp.prop_broken,src+32+HTA_NET_MAX_VEHICLES,HTA_NET_MAX_PROPS/8u);
     uint8_t check[HTA_NET_GAME_BYTES];
     if (!hta_net_game_pack(check,sizeof(check),&tmp) || memcmp(check,src,len)) return false;
     *g=tmp; return true;

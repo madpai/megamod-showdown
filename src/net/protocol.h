@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define HTA_NET_MAGIC 0x31415448u /* "HTA1" on the wire */
-#define HTA_NET_VERSION 8u
+#define HTA_NET_VERSION 9u
 #define HTA_NET_HEADER 20u
 #define HTA_NET_MAX_PACKET 1200u
 #define HTA_NET_MAX_PLAYERS 8u
@@ -16,7 +16,7 @@
 #define HTA_NET_ENTITY_BYTES 68u
 #define HTA_NET_WORLD_HEADER 86u
 #define HTA_NET_CONTROL_BYTES 35u
-#define HTA_NET_KILL_BYTES 102u
+#define HTA_NET_KILL_BYTES 128u
 #define HTA_NET_FX_BYTES 28u
 #define HTA_NET_PROJECTILE_BYTES 30u
 #define HTA_NET_MAX_PROJECTILES 32u
@@ -146,10 +146,16 @@ typedef struct {
     hta_net_vehicle cars[HTA_NET_MAX_VEHICLES];
 } hta_net_vehicles;
 
+/* v9: a kill says whether the body came apart, how hard (the game's
+ * blast fraction) and from where, so every screen gibs the same corpse. */
+enum { HTA_NET_KILL_GIBBED = 1 };
 typedef struct {
     uint32_t id;
     uint8_t victim, killer; /* killer 255 means environment/suicide */
     char text[96];
+    uint8_t flags;          /* HTA_NET_KILL_GIBBED */
+    float amount;           /* 0..4 on the wire in 1/60ths */
+    float pos[3], from[3];  /* where it died; the blast's centre */
 } hta_net_kill;
 
 /* HTA_NET_FX_WRECK: a vehicle blew up; `weapon` is the car. */
@@ -203,7 +209,10 @@ bool hta_net_drops_unpack(const uint8_t *src, size_t len, hta_net_drops *d);
 /* The game's rules and state beside WORLD, which is full: the mode, both
  * teams' scores, each flag's state, carrier and place, and each vehicle's
  * hull (0..255 of full; 0 for a wreck). */
-#define HTA_NET_GAME_BYTES (8u + 2u * 11u + HTA_NET_MAX_VEHICLES)
+/* v9: and which of the map's destructible props are broken, one bit
+ * each, in the order both sides loaded them from the same map. */
+#define HTA_NET_MAX_PROPS 512u
+#define HTA_NET_GAME_BYTES (8u + 2u * 11u + HTA_NET_MAX_VEHICLES + 2u + HTA_NET_MAX_PROPS / 8u)
 enum { HTA_NET_FLAG_HOME = 0, HTA_NET_FLAG_CARRIED, HTA_NET_FLAG_DROPPED };
 enum { HTA_NET_GAME_CLASSES = 1, HTA_NET_GAME_DUPLICATES = 2 };
 typedef struct {
@@ -217,6 +226,8 @@ typedef struct {
         float pos[3], yaw;
     } flag[2];
     uint8_t hull[HTA_NET_MAX_VEHICLES];
+    uint16_t prop_count;       /* <= HTA_NET_MAX_PROPS */
+    uint8_t prop_broken[HTA_NET_MAX_PROPS / 8u];
 } hta_net_game;
 bool hta_net_game_pack(uint8_t *dst, size_t cap, const hta_net_game *g);
 bool hta_net_game_unpack(const uint8_t *src, size_t len, hta_net_game *g);

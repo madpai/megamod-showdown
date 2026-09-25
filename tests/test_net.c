@@ -61,6 +61,19 @@ static void world_codec(void)
     assert(kill2.id==7 && !strcmp(kill2.text,kill.text));
     kill_wire[6]=1;
     assert(!hta_net_kill_unpack(kill_wire,sizeof(kill_wire),&kill2));
+    /* v9: a gibbing kill carries how hard and from where. */
+    kill.flags=HTA_NET_KILL_GIBBED; kill.amount=1.5f;
+    kill.pos[0]=3.25f; kill.pos[2]=0.4f; kill.from[0]=2.0f; kill.from[1]=-1.0f;
+    assert(hta_net_kill_pack(kill_wire,sizeof(kill_wire),&kill));
+    assert(hta_net_kill_unpack(kill_wire,sizeof(kill_wire),&kill2));
+    assert(kill2.flags==HTA_NET_KILL_GIBBED && fabsf(kill2.amount-1.5f)<0.01f &&
+           kill2.pos[0]==3.25f && kill2.from[1]==-1.0f);
+    { hta_net_kill bad=kill; bad.amount=9.0f; assert(!hta_net_kill_pack(kill_wire,sizeof(kill_wire),&bad));
+      bad=kill; bad.flags=2; assert(!hta_net_kill_pack(kill_wire,sizeof(kill_wire),&bad));
+      bad=kill; bad.pos[1]=NAN; assert(!hta_net_kill_pack(kill_wire,sizeof(kill_wire),&bad));
+      assert(hta_net_kill_pack(kill_wire,sizeof(kill_wire),&kill)); kill_wire[102]=4;
+      assert(!hta_net_kill_unpack(kill_wire,sizeof(kill_wire),&kill2)); }
+    kill.flags=0; kill.amount=0; memset(kill.pos,0,sizeof(kill.pos)); memset(kill.from,0,sizeof(kill.from));
     hta_net_control ctl={.id=2,.flags=HTA_NET_TRIGGER|HTA_NET_DUCK,
         .weapon_slot=1,.forward=0.5f,.right=-1.0f,.yaw=1.5f,.pitch=-0.3f,
         .melee_count=3,.grenade_count=2,.reload_count=1}, ctl2;
@@ -288,6 +301,8 @@ static void sessions(void)
     gm.flag[1].present=1; gm.flag[1].state=HTA_NET_FLAG_CARRIED; gm.flag[1].carrier=3;
     for (unsigned i=0;i<HTA_NET_MAX_VEHICLES;i++) gm.hull[i]=255;
     gm.hull[4]=0; gm.hull[5]=100;
+    /* v9: three hundred props, the first and the last broken. */
+    gm.prop_count=300; gm.prop_broken[0]=1; gm.prop_broken[299/8]=(uint8_t)(1u<<(299%8));
     assert(hta_net_server_game(&s,&gm));
     assert(!hta_net_server_game(&s,&gm)); /* once per server tick */
     hta_net_client_pump(&b,2.3058);
@@ -295,6 +310,8 @@ static void sessions(void)
            b.game.flag[0].state==HTA_NET_FLAG_DROPPED && fabsf(b.game.flag[0].pos[0]+12.5f)<0.01f &&
            fabsf(b.game.flag[0].yaw+2.0f)<0.001f && b.game.flag[1].carrier==3 &&
            b.game.hull[4]==0 && b.game.hull[5]==100 && b.game.hull[6]==255);
+    assert(b.game.prop_count==300 && b.game.prop_broken[0]==1 &&
+           b.game.prop_broken[37]==(uint8_t)(1u<<3) && b.game.prop_broken[38]==0);
     { uint8_t buf[HTA_NET_GAME_BYTES]; hta_net_game bad=gm; bad.flag[1].carrier=HTA_NET_MAX_ENTITIES;
       assert(!hta_net_game_pack(buf,sizeof(buf),&bad));
       bad=gm; bad.mode=7; assert(!hta_net_game_pack(buf,sizeof(buf),&bad));
@@ -302,6 +319,11 @@ static void sessions(void)
       bad=gm; bad.options=HTA_NET_GAME_CLASSES | HTA_NET_GAME_DUPLICATES; hta_net_game ok;
       assert(hta_net_game_pack(buf,sizeof(buf),&bad) && hta_net_game_unpack(buf,sizeof(buf),&ok) &&
              ok.options==(HTA_NET_GAME_CLASSES | HTA_NET_GAME_DUPLICATES));
+      bad=gm; bad.prop_count=HTA_NET_MAX_PROPS+1; assert(!hta_net_game_pack(buf,sizeof(buf),&bad));
+      /* A bit past the count is never on the wire, and one there is refused. */
+      bad=gm; bad.prop_broken[40]=0xFF; assert(hta_net_game_pack(buf,sizeof(buf),&bad) &&
+          hta_net_game_unpack(buf,sizeof(buf),&ok) && ok.prop_broken[40]==0);
+      buf[32+HTA_NET_MAX_VEHICLES+40]=1; assert(!hta_net_game_unpack(buf,sizeof(buf),&ok));
       assert(hta_net_game_pack(buf,sizeof(buf),&gm)); buf[8]=0xFF;
       hta_net_game back; assert(!hta_net_game_unpack(buf,sizeof(buf),&back)); }
     hta_net_fx fx={.kind=HTA_NET_FX_FIRE,.entity=0,.weapon=1};
