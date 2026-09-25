@@ -1,3 +1,34 @@
+## 2026-09-25 — local LAN v9 merge, publication and owner feedback
+
+Both clean worktrees fast-forwarded to the cloud branch: Megamod
+`fb9c035`, Asset Lab `5a0c8c4`. Confirmed the procedural audio update,
+`HTA_NET_VERSION 9`, and Workshop collection submission. The first local
+Trial-data gate for the second cloud pass passed 80/80, including the host
+suite, real Blood Gulch data, offscreen renderer, Android build and asset
+boundary. Asset Lab passed 61/61 synthetic tests.
+
+The bundled private maps initially had no breakables. Reconverted
+de_dust2 with the current importer and the owner's CS:S client content,
+without optional v2 lightmaps. The new v1 package has 75 breakables
+(40 metal, 26 wood, 9 glass), zero missing dependencies, and passed the
+real-map host loader/render test: 40/40 usable spawns, zero bodies falling
+out. Its package and previews stayed outside both public repositories.
+
+Published personal and asset-free guest APKs as build `ac90e21` on the
+Tailscale sideload page, with release notes for Classic graphics, LAN v9,
+gibs, prop-aware bots and procedural sound. Both served APK checksums
+passed; the de_dust2 package inside the personal APK matched the private
+bundle copy. The local backup archived this build. Pushed Megamod and
+Asset Lab to their respective public `main` branches after confirming no
+Trial maps, imported packages or Workshop source files were in history.
+
+The owner then reported that everything seemed to work fine for this
+session. No defect, device measurement, screenshot, or item-by-item test
+result was part of that report, so this is recorded as a broad successful
+phone pass.
+The optional lightmapped McRonalds v2 package remains host-tested but not
+bundled or phone-tested; a future build can compare its indoor brightness.
+
 ## 2026-09-25 — procedural flight polish and verified content expansion
 
 Replaced the fixed idle tilt with smoothed flight pitch/bank and procedural

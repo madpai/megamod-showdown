@@ -8,30 +8,21 @@
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-25 (engine session: video settings and a new
-renderer path, rigid-body debris, destructible props, gibs, weather, PC
-window + sandbox; Asset Lab Workshop search/import. Second pass, same day:
-LAN replication of gibs and props (protocol v9), bots walk round props,
-Workshop collections, breakable brushes). Built in a cloud
-container on branch `claude/vibrant-euler-xwhpy5` of `megamod` (no phone, no
-Trial data there): **merge it into `halo-sandbox`, run `verify.sh` with
-`HTA_MAP`, publish, then test** -- see CURRENT TESTING OBJECTIVE.
+**Date of this revision:** 2026-09-25. The cloud engine and LAN v9 work is
+merged, verified against the owner's Trial data, and published as build
+`ac90e21`. The owner reports that this session's build seems to work fine;
+no specific device measurements or feature-by-feature results were supplied.
+See CURRENT TESTING OBJECTIVE for what remains open.
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Branches -- read this first:**
 - `halo-sandbox` is **MEGAMOD SHOWDOWN**. Push this branch only to public
   remote `megamod`, as `main`; never push it to Open Halo's public `origin`.
 
-**Cloud second pass (merged into this tree afterwards, NOT in the APK
-published at 12:28).** The first local merge picked up only the cloud's
-first pass. This tree adds: LAN protocol **v9** (gibs and prop breaks
-replicated), bots walking round props, procedural sound for props, debris,
-gibs and weather, a collision broad phase over props/vehicles, and a LAN
-decoder fuzz test. The cloud checked it with the host suite (37/37, also
-under ASan/UBSan), `ndkcheck` and the arm64 APK build -- but **not** with
-Trial data: run `verify.sh` with `HTA_MAP` and publish again. Both phones
-need the new build for LAN (v8 and v9 refuse each other). Items 7-9 below
-are this pass.
-  Its sideload page is port 8733. LAN builds must match protocol versions.
+- Protocol **v9** is in build `ac90e21`: gibs and prop breaks replicate;
+  bots route around intact props; procedural sounds cover props, debris,
+  gibs and weather; collision uses a broad phase over placed instances.
+  Both phones need v9 for LAN (v8 and v9 refuse each other). The sideload
+  page is port 8733.
 - `fp-animated-guns` -> GitHub `main`: **strictly Halo**. The owner said
   imported-map work must not ship there. Codex's explorer commit
   `2189479` was reverted on `main` (`4979acb`, 2026-09-23, verify 76/76);
@@ -44,14 +35,13 @@ are this pass.
 2. On `halo-sandbox`, inspect `scratch/serve-megamod/` and
    `scratch/serve-megamod/uploads/` for the published build and new phone
    screenshots. The current personal APK is at
-   **http://100.89.1.14:8733/**. Protocol is **v9** (gibs and props
-   replicated) from branch `claude/vibrant-euler-xwhpy5`; an older APK
+   **http://100.89.1.14:8733/**. Published build `ac90e21` uses protocol
+   **v9** (gibs and props replicated); an older APK
    cannot join it. To build and publish a cloud branch, follow
    `docs/LOCAL_AGENT.md`.
-3. Run the **CURRENT TESTING OBJECTIVE** below on the phone. Host checks
-   passed for the restaurant map, the head restore, and the game rules.
-   Device look of flight, the beam, citizen fists, Harry's flyby tune, and
-   McRonalds still need a phone pass.
+3. Read the **CURRENT TESTING OBJECTIVE** below. The owner broadly reports
+   the v9 build working, without separate results for each checklist item.
+   Keep the targeted open checks there for the next relevant build.
 4. Keep game code on public `megamod/main` and importer code on public
    Open Asset Lab `main`. Source packages stay in `~/assetlab-private/`.
    For a Halo-only task, switch to `fp-animated-guns` and read that branch's
@@ -194,6 +184,23 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**Owner feedback, 2026-09-25:** "all seems to work fine for this session."
+This is a broad phone report on the published v9 build `ac90e21`, not a
+separate pass/fail record for every item below. No defects were reported.
+The personal and guest APKs are on http://100.89.1.14:8733/; both published
+checksums matched. Host verification was 80/80 with Trial data, Asset Lab
+61/61, and the private de_dust2 package contains 75 breakables with 40/40
+usable host spawns. The code and documentation are pushed to their public
+repositories; Trial data and converted packages remain private.
+
+**Next device objective:** On a future build that bundles an OALMAP v2 map,
+compare its indoor baked-lightmap brightness with the current v1 map on the
+phone. The v2 McRonalds package passed host rendering but is not bundled, so
+there is no phone result for it. For any new LAN build, repeat a short v9
+host/join check with both phones on the same version and matching imported
+packages. The detailed v9 checklist below is a regression reference; do not
+infer that each case was individually exercised from the broad report.
+
 **2026-09-25 LAN v9 local verification.** The second cloud pass is on
 `halo-sandbox`. The full gate passed 80/80 with the owner's Trial data;
 Asset Lab passed 61/61 tests. The private de_dust2 package was reconverted
@@ -217,7 +224,7 @@ jointed ragdoll. On an imported map, optional OALMAP v2 lightmaps now load;
 McRonalds converted with two pages and passed 4/4 host spawns and rendering.
 Check indoor brightness on a phone before replacing a bundled v1 map.
 
-**Cloud engine/effects phone pass.** Nothing here has been on a phone yet.
+**Earlier cloud engine/effects host pass.** At that point nothing had been on a phone.
 The merged tree passed the complete local verification gate, including Trial
 data, offscreen rendering and the Android build. `test_game` checks that a
 blast death carries the blast.
@@ -314,8 +321,9 @@ Known risks in this build, most likely first:
   answers, same order), and it falls back to the scan when the list it
   was built for changes. If something starts falling through a crate or a
   Warthog, suspect it first: `state.col.instance_index = NULL` turns it off.
-- **Procedural sounds were judged by measurement and spectrogram only**
-  (no one has listened yet). The bank takes ~55 ms to synthesise on a
+- **Procedural sounds had cloud measurement and spectrogram checks.** The
+  owner's broad phone report includes no itemized listening result. The bank
+  takes ~55 ms to synthesise on a
   desktop core, once, at the first map load: a guessed 0.2-0.3 s on a
   phone. It adds 1.8 MB of RAM and 36 of the mixer's 512 clip slots.
 - Breakable brushes (`func_breakable`) are tested on a synthetic BSP only;
