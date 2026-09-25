@@ -18,6 +18,13 @@ android {
         versionCode = (providers.gradleProperty("htaVersionCode").orNull ?: "1").toInt()
         versionName = "0.2-" + (providers.gradleProperty("htaVersionName").orNull ?: "dev")
 
+        // Where SEND REPORT posts (the owner's sideload server, set by
+        // publish_apk.sh for the personal build only). Empty: reports are
+        // saved on the device and not sent.
+        val reportUrl = providers.gradleProperty("htaReportUrl").orNull ?: ""
+        buildConfigField("String", "REPORT_URL", "\"" + reportUrl.replace("\"", "") + "\"")
+        buildConfigField("boolean", "PERSONAL", (providers.gradleProperty("htaAssetsDir").orNull != null).toString())
+
         // Modern ARM64 only, per the brief. No fat APK.
         ndk { abiFilters += listOf("arm64-v8a") }
 
@@ -40,6 +47,8 @@ android {
         release { isMinifyEnabled = false }
         debug   { isJniDebuggable = true }
     }
+
+    buildFeatures { buildConfig = true }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

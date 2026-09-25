@@ -14,6 +14,7 @@ to any agent -- read the one that matches the task:
 | Merge or pull in another branch | `.claude/skills/merge-branch/SKILL.md` |
 | Put a build on the owner's phone | `.claude/skills/publish/SKILL.md` |
 | Convert or re-import a map | `.claude/skills/convert-map/SKILL.md` |
+| Read what the phone measured (SEND REPORT, crashes) | `.claude/skills/read-report/SKILL.md` |
 
 Match state goes in `src/app/session.h` (`HTA_SESSION_FIELDS`), Android-only
 state in `hta_android` after the union (see merge-branch for conflicts).

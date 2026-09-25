@@ -81,13 +81,19 @@ if [ "$BUILD" = 1 ]; then
       done
     done
     PROPS="$PROPS -PhtaAssetsDir=$STAGE"
+    # SEND REPORT posts to this page's /report: the owner's build only.
+    PROPS="$PROPS -PhtaReportUrl=http://$BIND:$PORT/report"
     echo "bundling the owner's Trial data from $HTA_DATA (personal build)"
   fi
   (cd android && $GRADLE --no-daemon -q :app:assembleDebug $PROPS)
 fi
 [ -f "$APK" ] || { echo "no APK at $APK (run without --no-build)" >&2; exit 1; }
 
-mkdir -p "$ROOT/uploads"
+mkdir -p "$ROOT/uploads" "$ROOT/symbols"
+# The unstripped native library, per build: a crash report's lib+offsets
+# become functions and lines with scripts/symbolize_report.py.
+SYM=$(ls -t android/app/build/intermediates/cxx/Debug/*/obj/arm64-v8a/libhta_native.so 2>/dev/null | head -1)
+if [ -n "$SYM" ]; then cp "$SYM" "$ROOT/symbols/libhta_native-$SOURCE.so"; echo "kept symbols for $SOURCE"; fi
 # Materialize the copy before Gradle cleans its source; verify before
 # replacing the served APK so a failed read cannot publish a broken file.
 cp --reflink=never "$APK" "$ROOT/megamod-showdown.apk.tmp"

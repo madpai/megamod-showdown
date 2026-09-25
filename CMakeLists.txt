@@ -33,6 +33,7 @@ if(ANDROID)
         src/engine/props.c
         src/engine/weather.c
         src/engine/sfx.c
+        src/app/report.c
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
@@ -314,6 +315,10 @@ else()
     # The procedural sound bank as WAV files, to listen to.
     add_executable(megamod-sfxdump src/tools/sfxdump.c)
     target_link_libraries(megamod-sfxdump PRIVATE hta_engine m)
+    add_executable(test_report tests/test_report.c src/app/report.c)
+    target_include_directories(test_report PRIVATE src)
+    target_link_libraries(test_report PRIVATE m)
+    add_test(NAME report COMMAND test_report)
     add_executable(test_session tests/test_session.c)
     target_link_libraries(test_session PRIVATE hta_engine m)
     add_test(NAME session COMMAND test_session)

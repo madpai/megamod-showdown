@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Private Tailscale-only PoC server: APK/map download + screenshot upload.
+"""Private Tailscale-only PoC server: APK/map download + screenshot upload,
+and diagnostics reports from the app's SEND REPORT (POST /report, JSON):
+they land in <root>/reports/ (latest.json is the newest) for an agent to read.
 
 Binds only to the given address (Tailscale IP). Never listens on 0.0.0.0.
 Uploads land in <root>/uploads/ and are also mirrored to --mirror if set.
@@ -16,6 +18,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 MAX_BYTES = 20 * 1024 * 1024
+MAX_REPORT_BYTES = 4 * 1024 * 1024
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".gif"}
 NAME_OK = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -109,8 +112,23 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _report(self) -> None:
+        try:
+            n = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            n = 0
+        if n <= 0 or n > MAX_REPORT_BYTES:
+            self._send(413, b"report too large (4 MB max)")
+            return
+        code, msg = save_report(self.root, self.rfile.read(n), self.mirror)
+        sys.stderr.write(msg + "\n")
+        self._send(code, (msg + "\n").encode())
+
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0]
+        if path == "/report":
+            self._report()
+            return
         if path != "/upload":
             self._send(404, b"not found")
             return
@@ -146,6 +164,31 @@ class Handler(BaseHTTPRequestHandler):
         msg = f"saved {name} ({len(data)} bytes)\n"
         sys.stderr.write(msg)
         self._send(200, msg.encode())
+
+
+def save_report(root: Path, body: bytes, mirror: Path | None = None) -> tuple[int, str]:
+    """Stores one SEND REPORT upload. Returns (HTTP status, message)."""
+    import json
+    if not body or len(body) > MAX_REPORT_BYTES:
+        return 413, "report empty or over 4 MB"
+    try:
+        doc = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as e:
+        return 400, f"not JSON: {e}"
+    if not isinstance(doc, dict) or doc.get("kind") != "megamod-report":
+        return 400, "not a megamod report"
+    build = NAME_OK.sub("_", str(doc.get("build", {}).get("version", "unknown")))[:40]
+    reason = NAME_OK.sub("_", str(doc.get("reason", "report")))[:16]
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    name = f"{stamp}-{reason}-{build}.json"
+    for base in (root, mirror):
+        if base is None:
+            continue
+        d = base / "reports"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / name).write_bytes(body)
+        (d / "latest.json").write_bytes(body)
+    return 200, f"saved report {name} ({len(body)} bytes)"
 
 
 def main() -> int:

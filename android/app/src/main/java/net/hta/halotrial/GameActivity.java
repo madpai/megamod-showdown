@@ -70,6 +70,9 @@ public class GameActivity extends NativeActivity {
             android.util.Log.w("hta", "menu art: " + t);
         }
         super.onCreate(savedInstanceState);
+        // Diagnostics: record Java crashes, and send what the last run left.
+        Report.installJavaCrashHandler(this);
+        Report.sendPendingCrash(this);
         exploreExternal = getIntent().getIntExtra("explore_external", 0) != 0;
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         // The volume keys move the media volume, which is what the game
@@ -209,6 +212,8 @@ public class GameActivity extends NativeActivity {
     /* The killcam's still frame: "name<TAB>weapon<TAB>health%", "" when none. */
     static native String nativeKillcam();
     static native int nativeNetStatus();
+    /* The native half of a diagnostics report, as JSON (see Report.java). */
+    static native String nativeReport();
     /* Banner, place, kill feed and scoreboard, separated by 0x1E. */
     static native String nativeGameText();
     /* 1 while the main menu is up: the overlay draws no controls and hands
@@ -1239,6 +1244,9 @@ public class GameActivity extends NativeActivity {
                         else if (y > h * 0.60f && y < h * 0.72f) owner.backToMenu();
                         else if ((classState & 2) != 0 && y > h * 0.76f && y < h * 0.88f) owner.shell.pickerOpen = true;
                     }
+                    /* SEND REPORT, top right: what this phone measured, for an agent. */
+                    if (x > w * 0.72f && x < w * 0.97f && y > h * 0.04f && y < h * 0.14f)
+                        Report.send(owner, "button", false);
                 }
                 invalidate();
                 return true;
@@ -1531,6 +1539,10 @@ public class GameActivity extends NativeActivity {
                 c.drawRect(w * 0.35f, h * 0.60f, w * 0.65f, h * 0.72f, pauseBtn);
                 c.drawText("RESUME GAME", w * 0.5f, h * 0.515f, label);
                 c.drawText("QUIT TO MAIN MENU", w * 0.5f, h * 0.675f, label);
+                c.drawRect(w * 0.72f, h * 0.04f, w * 0.97f, h * 0.14f, pauseBtn);
+                c.drawText("SEND REPORT", w * 0.845f, h * 0.105f, label);
+                if (!Report.lastStatus.isEmpty())
+                    c.drawText(Report.lastStatus, w * 0.5f, h * 0.95f, label);
                 if ((classState & 2) != 0) {
                     c.drawRect(w * 0.35f, h * 0.76f, w * 0.65f, h * 0.88f, pauseBtn);
                     c.drawText("CHANGE CHARACTER", w * 0.5f, h * 0.835f, label);

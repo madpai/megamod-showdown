@@ -62,6 +62,7 @@
 #include "../game/world_fx.h"
 #include "../game/world_fx_audio.h"
 #include "../game/world_fx_gpu.h"
+#include "report.h"
 
 #define HTA_SND_MAX_BANK  192u
 #define HTA_SND_MAX_PERMS   8u
@@ -462,6 +463,10 @@
     /* Vehicles' collision instances and the props', merged every frame                        \
      * into the one list the world grid points at. */                                          \
     hta_collision_instance col_merged[HTA_VEHICLE_MAX + 256];                                  \
+    /* Diagnostics (app/report.h): frame times for the report, and when                        \
+     * the session began. */                                                                   \
+    hta_frame_stats frame_stats;                                                               \
+    double        started_at;                                                                  \
 
 typedef struct hta_session {
     HTA_SESSION_FIELDS

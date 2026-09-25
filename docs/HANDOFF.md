@@ -387,6 +387,12 @@ are this pass.
 >    start, garbage on screen or a frozen match means the session/Android
 >    split broke something; roll back to 85e139b and say what happened.
 
+> 12. **SEND REPORT** (new): pause, tap SEND REPORT (top right); the
+>    bottom line says REPORT SENT. An agent reads it with the `read-report`
+>    skill (`scratch/serve-megamod/reports/latest.json`). Crash test: after
+>    any crash, reopening the app sends a crash report on its own. The
+>    guest APK saves reports on the phone only (no server in its build).
+
 **For agents adding state to `hta_android`:** since stage 1, match state is
 declared in `src/app/session.h` (`HTA_SESSION_FIELDS`); Android-only state
 (window, touch, JNI) after the union in `hta_android`. On a merge conflict

@@ -13,6 +13,10 @@
  */
 #include "platform.h"
 #include "../app/session.h"
+#include "../app/report.h"
+#include <dlfcn.h>
+#include <signal.h>
+#include <unwind.h>
 #include "../engine/engine.h"
 #include "../engine/camera.h"
 #include "../engine/player.h"
@@ -76,6 +80,9 @@
 #include <math.h>
 
 #define TAG "halo-trial-android"
+
+/* Diagnostics: what the game was doing, for a crash record (see report_native). */
+static const char *volatile g_phase = "start";   /* what the game was doing */
 
 void hta_log(const char *fmt, ...)
 {
@@ -1887,6 +1894,7 @@ static void imported_sounds(hta_android *s)
 
 static bool load_map(hta_android *s)
 {
+    g_phase = "loading map";
     if (!find_map(s)) return false;
     load_imported(s);
     imported_sounds(s);
@@ -2456,6 +2464,8 @@ static void nav_props(hta_android *s)
 }
 static void start_game(hta_android *s)
 {
+    g_phase = "starting match";
+    hta_frame_stats_reset(&s->frame_stats);
     char err[HTA_ERRLEN];
     const hta_resource_map *bm = s->bitmaps_ok ? &s->bitmaps_rm : NULL;
     if (!hta_game_load(&s->game, &s->cache, bm, &s->col, err, sizeof(err))) {
@@ -3386,6 +3396,230 @@ static void game_text(hta_android *s, float dt)
                                   x, y, t, metres, on ? 1 : 0, (int)f->state);
         }
     }
+}
+
+/* ---------------------------------------------------------- diagnostics
+ * What the phone measured, for an agent to read: the native half of a
+ * report (GameActivity adds the device, memory, thermal state and log, and
+ * posts it to the sideload server), and a crash record written from the
+ * signal handler that the next launch sends. */
+
+static char   g_crash_path[512];
+static uintptr_t g_lib_base;
+static char   g_altstack[64 * 1024];
+
+typedef struct { uintptr_t pc[48]; int n; } crash_frames;
+
+static _Unwind_Reason_Code crash_unwind(struct _Unwind_Context *ctx, void *arg)
+{
+    crash_frames *f = arg;
+    uintptr_t pc = _Unwind_GetIP(ctx);
+    if (pc && f->n < 48) f->pc[f->n++] = pc;
+    return f->n < 48 ? _URC_NO_REASON : _URC_END_OF_STACK;
+}
+
+/* Async-signal-safe formatting: no stdio in a signal handler. */
+static size_t put_str(char *b, size_t at, size_t cap, const char *s)
+{
+    while (*s && at + 1 < cap) b[at++] = *s++;
+    return at;
+}
+static size_t put_hex(char *b, size_t at, size_t cap, uintptr_t v)
+{
+    char t[20];
+    int n = 0;
+    do { t[n++] = "0123456789abcdef"[v & 15u]; v >>= 4; } while (v && n < 16);
+    at = put_str(b, at, cap, "0x");
+    while (n && at + 1 < cap) b[at++] = t[--n];
+    return at;
+}
+static size_t put_dec(char *b, size_t at, size_t cap, long v)
+{
+    char t[24];
+    int n = 0;
+    if (v < 0) { at = put_str(b, at, cap, "-"); v = -v; }
+    do { t[n++] = (char)('0' + v % 10); v /= 10; } while (v && n < 22);
+    while (n && at + 1 < cap) b[at++] = t[--n];
+    return at;
+}
+
+static void crash_handler(int sig, siginfo_t *info, void *uctx)
+{
+    static char b[4096];
+    size_t at = 0, cap = sizeof(b);
+    at = put_str(b, at, cap, "signal ");
+    at = put_dec(b, at, cap, sig);
+    at = put_str(b, at, cap, sig == SIGSEGV ? " SIGSEGV" : sig == SIGABRT ? " SIGABRT" : sig == SIGBUS ? " SIGBUS" :
+                              sig == SIGFPE ? " SIGFPE" : sig == SIGILL ? " SIGILL" : "");
+    at = put_str(b, at, cap, "\ncode ");
+    at = put_dec(b, at, cap, info ? info->si_code : 0);
+    at = put_str(b, at, cap, "\nfault_addr ");
+    at = put_hex(b, at, cap, info ? (uintptr_t)info->si_addr : 0);
+    at = put_str(b, at, cap, "\nphase ");
+    at = put_str(b, at, cap, g_phase ? g_phase : "?");
+    at = put_str(b, at, cap, "\nlib_base ");
+    at = put_hex(b, at, cap, g_lib_base);
+#if defined(__aarch64__)
+    if (uctx) {
+        const ucontext_t *uc = uctx;
+        at = put_str(b, at, cap, "\npc ");
+        at = put_hex(b, at, cap, (uintptr_t)uc->uc_mcontext.pc);
+        at = put_str(b, at, cap, "\nlr ");
+        at = put_hex(b, at, cap, (uintptr_t)uc->uc_mcontext.regs[30]);
+    }
+#else
+    (void)uctx;
+#endif
+    crash_frames f;
+    f.n = 0;
+    _Unwind_Backtrace(crash_unwind, &f);
+    at = put_str(b, at, cap, "\nframes");
+    for (int i = 0; i < f.n; i++) {
+        at = put_str(b, at, cap, "\n  ");
+        at = put_hex(b, at, cap, f.pc[i]);
+        if (g_lib_base && f.pc[i] >= g_lib_base) {
+            at = put_str(b, at, cap, " lib+");
+            at = put_hex(b, at, cap, f.pc[i] - g_lib_base);
+        }
+    }
+    at = put_str(b, at, cap, "\n");
+    int fd = g_crash_path[0] ? open(g_crash_path, O_WRONLY | O_CREAT | O_TRUNC, 0600) : -1;
+    if (fd >= 0) { ssize_t w = write(fd, b, at); (void)w; close(fd); }
+    /* Let Android record its own tombstone too. */
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+static void crash_guard_install(const char *dir)
+{
+    if (!dir || !dir[0]) return;
+    snprintf(g_crash_path, sizeof(g_crash_path), "%s/crash-native.txt", dir);
+    Dl_info di;
+    if (dladdr((void *)crash_guard_install, &di)) g_lib_base = (uintptr_t)di.dli_fbase;
+    stack_t ss = { .ss_sp = g_altstack, .ss_size = sizeof(g_altstack), .ss_flags = 0 };
+    sigaltstack(&ss, NULL);                 /* so a stack overflow is caught too */
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = crash_handler;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&sa.sa_mask);
+    int sigs[] = { SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL };
+    for (unsigned i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++) sigaction(sigs[i], &sa, NULL);
+    hta_log("[report] crash guard on: %s (lib base %p)", g_crash_path, (void *)g_lib_base);
+}
+
+/* The native half of a report, as JSON. Read from the UI thread while the
+ * game runs: a snapshot, not a transaction -- fine for diagnostics. */
+static size_t report_native(const hta_android *s, char *buf, size_t cap)
+{
+    hta_json j;
+    hta_json_init(&j, buf, cap);
+    double now = hta_time_seconds();
+    hta_json_int(&j, "protocol", HTA_NET_VERSION);
+    hta_json_num(&j, "uptime_s", s->started_at > 0 ? now - s->started_at : 0);
+    hta_json_str(&j, "phase", g_phase);
+
+    hta_json_object(&j, "match");
+    hta_json_bool(&j, "on", s->game_on);
+    hta_json_str(&j, "map", s->world[0] ? s->world : "bloodgulch");
+    hta_json_int(&j, "map_key", s->world_loaded ? (long long)s->world_ext.key : 0);
+    hta_json_int(&j, "map_crc", (long long)s->cache.crc32);
+    hta_json_int(&j, "mode", s->game.mode);
+    hta_json_int(&j, "units", s->game.unit_count);
+    hta_json_int(&j, "bots", s->bot_count);
+    hta_json_bool(&j, "me_alive", s->game_on && s->me >= 0 && s->game.units[s->me].alive);
+    hta_json_int(&j, "score_red", s->game.team_score[0]);
+    hta_json_int(&j, "score_blue", s->game.team_score[1]);
+    hta_json_array(&j, "player_pos");
+    for (int k = 0; k < 3; k++) hta_json_num(&j, NULL, s->player.pos[k]);
+    hta_json_end_array(&j);
+    hta_json_end_object(&j);
+
+    hta_json_object(&j, "video");
+    char cfg[1024];
+    hta_gfx_settings_format(&s->video, cfg, sizeof(cfg));
+    hta_json_str(&j, "preset", hta_quality_name(s->video.preset));
+    hta_json_bool(&j, "auto", s->video_auto);
+    hta_json_str(&j, "settings", cfg);
+    if (s->gfx) {
+        hta_json_str(&j, "gpu", hta_gfx_device_name(s->gfx));
+        hta_json_bool(&j, "composed", hta_gfx_is_composed(s->gfx));
+        hta_json_num(&j, "render_scale", hta_gfx_render_scale(s->gfx));
+        hta_json_int(&j, "msaa", hta_gfx_msaa(s->gfx));
+    }
+    hta_json_int(&j, "window_w", s->win_w);
+    hta_json_int(&j, "window_h", s->win_h);
+    hta_json_end_object(&j);
+
+    hta_json_object(&j, "frames");
+    hta_json_frames(&j, "session", &s->frame_stats.session);
+    hta_json_frames(&j, "last_minute", &s->frame_stats.last_minute);
+    hta_json_frames(&j, "this_minute", &s->frame_stats.minute);
+    hta_json_end_object(&j);
+
+    hta_json_object(&j, "audio");
+    hta_json_bool(&j, "ok", s->audio_ok);
+    hta_json_bool(&j, "running", hta_audio_android_running());
+    hta_json_int(&j, "out_rate", s->audio.out_rate);
+    hta_json_int(&j, "clips", s->audio.clip_count);
+    hta_json_int(&j, "voices", hta_audio_active_voices(&s->audio));
+    hta_json_int(&j, "started", s->audio.started);
+    hta_json_int(&j, "stolen", s->audio.stolen);
+    hta_json_int(&j, "dropped", (long long)atomic_load(&s->audio.dropped));
+    hta_json_bool(&j, "procedural", s->wfx_audio.ready);
+    hta_json_int(&j, "procedural_played", s->wfx_audio.played);
+    hta_json_end_object(&j);
+
+    hta_json_object(&j, "net");
+    hta_json_bool(&j, "enabled", s->net_enabled);
+    hta_json_bool(&j, "hosting", s->net_hosting);
+    hta_json_bool(&j, "connected", s->net.connected);
+    hta_json_int(&j, "id", s->net.id);
+    hta_json_int(&j, "reject_reason", s->net.reject_reason);
+    const hta_net_stats *ns = s->net_hosting ? &s->host_server.stats : &s->net.stats;
+    hta_json_num(&j, "ping_ms", s->net.stats.ping_ms);
+    hta_json_int(&j, "packets_in", (long long)ns->packets_in);
+    hta_json_int(&j, "packets_out", (long long)ns->packets_out);
+    hta_json_int(&j, "bytes_in", (long long)ns->bytes_in);
+    hta_json_int(&j, "bytes_out", (long long)ns->bytes_out);
+    hta_json_int(&j, "invalid", (long long)ns->invalid);
+    hta_json_int(&j, "dropped", (long long)ns->dropped);
+    if (s->net_hosting) hta_json_int(&j, "peers", hta_net_server_count(&s->host_server));
+    hta_json_end_object(&j);
+
+    hta_json_object(&j, "effects");
+    hta_json_bool(&j, "ready", s->wfx.ready);
+    if (s->wfx.ready) {
+        uint32_t broken = 0;
+        for (uint32_t i = 0; i < s->wfx.props.count; i++) broken += s->wfx.props.props[i].broken;
+        hta_json_int(&j, "debris", hta_rigid_active(&s->wfx.rigid));
+        hta_json_int(&j, "debris_cap", s->wfx.rigid.cap);
+        hta_json_int(&j, "sprites", hta_fx_live(&s->wfx.fx));
+        hta_json_int(&j, "props", s->wfx.props.count);
+        hta_json_int(&j, "props_broken", broken);
+        hta_json_bool(&j, "props_remote", s->wfx.props.remote);
+        hta_json_str(&j, "weather", hta_weather_name(s->wfx.weather.kind));
+        hta_json_num(&j, "weather_intensity", s->wfx.weather.intensity);
+        hta_json_int(&j, "gib_level", s->wfx.gib_level);
+        hta_json_int(&j, "gibbed", s->wfx.gibbed);
+    }
+    hta_json_int(&j, "collision_instances", s->col.instance_count);
+    hta_json_bool(&j, "collision_indexed", s->col.instance_index != NULL);
+    hta_json_int(&j, "nav_nodes", s->nav.node_count);
+    hta_json_int(&j, "nav_blocked", s->nav.blocked_nodes);
+    hta_json_end_object(&j);
+
+    return hta_json_finish(&j);
+}
+
+JNIEXPORT jstring JNICALL
+Java_net_hta_halotrial_GameActivity_nativeReport(JNIEnv *env, jclass cls)
+{
+    (void)cls;
+    static char buf[16384];
+    if (!g_android) return (*env)->NewStringUTF(env, "{}");
+    report_native(g_android, buf, sizeof(buf));
+    return (*env)->NewStringUTF(env, buf);
 }
 
 JNIEXPORT jstring JNICALL
@@ -6031,6 +6265,8 @@ void android_main(struct android_app *app)
     state.prev_char = state.prev_weap = state.prev_roster = -2;
     state.next_character = -2;
     g_android = &state;
+    state.started_at = hta_time_seconds();
+    crash_guard_install(app->activity->externalDataPath);
     state.hud_ready = g_hud_wanted;
     char net_host[64]; bool net_hosting=false;
     read_net_host(app,net_host,&net_hosting);
@@ -7601,6 +7837,7 @@ void android_main(struct android_app *app)
             hta_gfx_set_instances(state.gfx, g_inst, g_inst_count);
             hta_camera drawcam = state.cam;
             hta_shake_apply(&state.shake, &drawcam);
+            g_phase = "draw";
             if (!hta_gfx_draw(state.gfx, &drawcam, &drawscene, state.gpu_mesh,
                               state.gpu_sky, state.gpu_fx,
                               dynlist, dyncount,
@@ -7611,6 +7848,8 @@ void android_main(struct android_app *app)
                 if (app->window) start_gfx(&state);
             }
             state.frames++;
+            hta_frame_stats_add(&state.frame_stats, dt * 1000.0f);
+            g_phase = "frame";
             state.fps_accum += dt;
             state.fps_frames++;
             if (driving && state.my_car >= 0) {
