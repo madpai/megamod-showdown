@@ -198,14 +198,19 @@ session on 2026-09-26).** State of play:
   someone). The 13dfb40 report was taken on the scripted server and is no
   baseline. Look at `native.frames.hitches`: hitches only in the first
   second or two are loading; mid-match ones are worth chasing first.
-- **The cloud branch has one commit beyond 3cf8e96: S1 (host networking
-  moved to `src/app/host_net.c`).** It is verbatim (only the function
+- **The cloud branch has two commits beyond 3cf8e96**, both for one
+  phone check together: `95e4933` per-source rate limiting in the server
+  pump (the phone host runs it too; `rate_limited` in SEND REPORT's `net`
+  should stay 0 in a normal LAN match -- anything else means the limit is
+  wrong, say so), and **S1 (`5caa7e6`, host networking moved to
+  `src/app/host_net.c`).** It is verbatim (only the function
   names and the GPU-upload callback changed), host-tested
   (`test_host_net`) and NDK-checked, but **not run on a phone**. Merge it
   only as its own publish, with the owner doing one hosted LAN match (or
   a phone host plus `megamod-join` from the desktop) before anything else
   lands on top. If that match breaks -- a joiner never gets a unit, cannot
-  move, or is invisible -- revert that commit; 3cf8e96 is the known-good.
+  move, is invisible, or stutters -- revert those two commits; 3cf8e96 is
+  the known-good.
 
 **2026-09-25 SEND REPORT and dedicated server build.** First pause a
 normal match and tap SEND REPORT (test 12). The pause screen should say
