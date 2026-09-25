@@ -49,6 +49,7 @@ if(ANDROID)
         src/asset/weapon.c
         src/asset/anim.c
         src/asset/model.c
+        src/gfx/gfx_settings.c
         src/gfx/gfx_vulkan.c
         src/platform/platform_android.c
         src/platform/audio_android.c
@@ -85,7 +86,8 @@ else()
         src/game/view.c
         src/game/menu.c
         src/asset/cache.c src/asset/bsp.c src/asset/external_map.c src/asset/oal_asset.c src/asset/bitmap.c src/asset/sound.c src/asset/ogg.c src/asset/effect.c src/asset/dialogue.c src/asset/strings.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
-        src/asset/anim.c src/asset/model.c src/asset/font.c)
+        src/asset/anim.c src/asset/model.c src/asset/font.c
+        src/gfx/gfx_settings.c)
     target_include_directories(hta_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(hta_engine PRIVATE -Wall -Wextra)
 
@@ -260,7 +262,23 @@ else()
     target_link_libraries(test_sound PRIVATE hta_engine m)
     add_test(NAME sound COMMAND test_sound)
 
+
+    add_executable(test_gfx_settings tests/test_gfx_settings.c)
+    target_link_libraries(test_gfx_settings PRIVATE hta_engine m)
+    add_test(NAME gfx_settings COMMAND test_gfx_settings)
+
     add_executable(mkfixture tests/mkfixture.c tests/fixture.c)
     target_include_directories(mkfixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(mkfixture PRIVATE m)
+
+    # Tests call side-effecting functions inside assert(). A Release build
+    # defines NDEBUG, which compiled those calls out and left the tests
+    # passing on garbage (test_external_map freed an unbuilt grid). Keep
+    # asserts live in every test, whatever the build type.
+    get_property(hta_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(t IN LISTS hta_targets)
+        if(t MATCHES "^test_")
+            target_compile_options(${t} PRIVATE -UNDEBUG)
+        endif()
+    endforeach()
 endif()
