@@ -43,6 +43,15 @@ bool hta_imported_halo_in_source_hand(const hta_oal_model *body, const float (*w
  * "crouch rifle move-left" or "stand pistol airborne". */
 const char *hta_imported_role(const char *halo_base);
 
+/* Aim a joint-to-child segment in model space, rotating its entire subtree.
+ * Missing bones are a safe no-op. Weight blends the angular correction. */
+bool hta_imported_point_limb(const hta_oal_model *m, float (*world)[12],
+                              const char *joint, const char *child,
+                              const float direction[3], float weight);
+/* Original procedural flight/beam poses for ValveBiped hero skeletons. */
+void hta_imported_hero_pose(const hta_oal_model *m, float (*world)[12],
+                            float cruise, float attack, int style);
+
 /* The class screen's character preview: a body `height` tall standing at
  * the origin, turned `yaw`, framed in the right part of a screen of this
  * aspect (the left carries the menu). Writes the body's root and the

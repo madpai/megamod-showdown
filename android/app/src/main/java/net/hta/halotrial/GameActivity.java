@@ -358,7 +358,13 @@ public class GameActivity extends NativeActivity {
             try {
                 String[] bundled = owner.getAssets().list("maps");
                 if (bundled != null) for (String f : bundled)
-                    if (f.endsWith(".oalmap")) maps.add(f.substring(0, f.length() - 7));
+                    if (f.endsWith(".oalmap")) {
+                        String id = f.substring(0, f.length() - 7);
+                        /* McRonalds played badly (conveyors, a glass placeholder,
+                         * a dining room that does not read as an arena). */
+                        if (id.equals("mcdonalds") || id.equals("mcronalds")) continue;
+                        maps.add(id);
+                    }
             } catch (java.io.IOException ignored) { }
             java.io.File dir = owner.getExternalFilesDir(null);
             if (dir == null) dir = owner.getFilesDir();
@@ -368,7 +374,6 @@ public class GameActivity extends NativeActivity {
 
         private String mapName(String id) {
             if (id.equals("bloodgulch")) return "BLOOD GULCH";
-            if (id.equals("mcdonalds")) return "MCRONALDS";
             if (id.equals("imported")) return "IMPORTED MAP";
             return id.toUpperCase(java.util.Locale.ROOT);
         }

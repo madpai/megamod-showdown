@@ -1,6 +1,6 @@
 # Halo Trial Android — handoff
 
-> **On branch `halo-sandbox` this is MEGAMOD SHOWDOWN** (private repo
+> **On branch `halo-sandbox` this is MEGAMOD SHOWDOWN** (public repo
 > madpai/megamod-showdown, remote `megamod`). See CLAUDE.md's top section
 > for where it pushes and what never goes to Open Halo.
 
@@ -37,7 +37,7 @@ Trial data there): **merge it into `halo-sandbox`, run `verify.sh` with
    passed for the restaurant map, the head restore, and the game rules.
    Device look of flight, the beam, citizen fists, Harry's flyby tune, and
    McRonalds still need a phone pass.
-4. Keep game code on private `megamod/main` and importer code on public
+4. Keep game code on public `megamod/main` and importer code on public
    Open Asset Lab `main`. Source packages stay in `~/assetlab-private/`.
    For a Halo-only task, switch to `fp-animated-guns` and read that branch's
    handoff before applying its publication rules.
@@ -67,7 +67,7 @@ from a tag.
 - Project code is **GPLv3**.
 - Git author on this repo is **`Phase2 <schultz0@proton.me>`**.
 - **Push after every commit** (the owner's standing instruction since
-  2026-09-23). On this branch push only to private `megamod/main`; the
+  2026-09-23). On this branch push only to public `megamod/main`; the
   `origin`/Open Halo release rules below apply to `fp-animated-guns` only.
   On 2026-09-23 the history was
   rewritten to remove the Trial's decoded title theme (`in_p0-6.wav`,
@@ -148,7 +148,7 @@ the drive is not mounted. The owner wants this copy current at all times --
 run it by hand after work that is not published. It holds Trial data: it
 is private and never goes anywhere else.
 
-**GitHub.** This Megamod branch pushes only to private `megamod/main`:
+**GitHub.** This Megamod branch pushes only to public `megamod/main`:
 `git push megamod halo-sandbox:main`. The APK is published on the private
 Tailscale sideload page, not attached to the public Open Halo repository.
 `origin` is the public Open Halo repository and `fp-animated-guns` tracks
@@ -179,13 +179,22 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-**This session (2026-09-25), branch `claude/vibrant-euler-xwhpy5`.** Nothing
-here has been on a phone yet. It was built and tested in a cloud container:
-host suite 35/35 (Release too), `test_gfx_render` on lavapipe with the
-Vulkan validation layer silent, the arm64 `.so` and the debug APK build. The
-Trial-data tests (`test_game`, `test_biped`, ...) SKIPPED there -- run
-`HTA_MAP=... scripts/verify.sh` before publishing. `test_game` gained a
-check that a blast death carries the blast.
+**2026-09-25 merged build.** Local gameplay and importer work is now on top of
+the cloud engine/effects and Workshop changes. Full game verification passed
+80/80 with the owner's Trial map; Asset Lab passed 57 synthetic tests. The
+corpse proxy sweeps against walls and floors, bounces and settles on support,
+and resumes after a shove. Test a rocket kill near a wall or ledge and watch
+the body until it stops. With Gore Off, the corpse should remain visible;
+with Gore Full, a blast death should use the new gib effects. Check both a
+local player and bots, and a LAN guest. This is still one rigid proxy, not a
+jointed ragdoll. On an imported map, optional OALMAP v2 lightmaps now load;
+McRonalds converted with two pages and passed 4/4 host spawns and rendering.
+Check indoor brightness on a phone before replacing a bundled v1 map.
+
+**Cloud engine/effects phone pass.** Nothing here has been on a phone yet.
+The merged tree passed the complete local verification gate, including Trial
+data, offscreen rendering and the Android build. `test_game` checks that a
+blast death carries the blast.
 
 > 0. **SETTINGS → VIDEO & EFFECTS** (new): Graphics (Auto, Classic, Potato,
 >    Low, Medium, High, Ultra), Gore (Off, Chunks, Full), Weather (Map
@@ -239,10 +248,64 @@ Known risks in this build, most likely first:
   overlaps instead (`hta_wfx_ram`, 60 damage per wu/s, ours). Worth a
   look: does ramming a crate feel right?
 
-Previous checkpoint (2026-09-24), still worth covering:
 
-**Phone test (2026-09-24), game `91a1679`.**
-Personal and
+**2026-09-25 follow-up — flight pose polish, Compound and two characters.**
+**Published:** Flight polish, Compound and new characters, `ed4585f-dirty`,
+at http://100.89.1.14:8733/. Both APK checksums verified; full gate 80/80. Goku/Superman/Iron Man use
+original procedural arm/head poses plus smoothed cruise pitch and strafe bank;
+hover and beam attacks blend back toward upright. Test acceleration, braking,
+strafe, firing, landing and respawn. Superman's head must stay attached.
+Guest ability FX now briefly hold the matching remote attack pose.
+Pose constants are authored tuning: 8/s exponential blend, 0.10-radian hover
+pitch plus up to 1.15 cruise lean adjusted by gaze, 0.30-radian bank limit,
+hip pivot at half standing collision height and 75% head counter-tilt.
+Guest attack-pose hold is clamped to 0.25–0.50 seconds between FX packets.
+
+Compound (cs_compound) adds an outdoor warehouse arena. All 33 starts passed
+host grounding/walking checks; zero bodies fell out. Complete imported
+geometry spans 78.4 x 87.5 world units (not a measured traversable area).
+All 184 materials resolve without placeholders; no water faces. GPU allocation
+in the host map test: 189.2 MiB. Eight bots using the new characters produced
+24 kills in 60 seconds. Inspect rooftops, stairs and the yard on phone.
+Port was tested but withheld: bots can reach its seabed without water physics.
+Baked lighting remains unsupported on existing imported packages; new breakable prop support requires reconversion.
+
+Chell: pistol + fists, 1x health, 0.25x shields, 1x damage, 1.25x speed.
+Combine Elite: plasma rifle + shotgun, 1.4x health, 0.5x shields, 1x damage,
+1x speed. Both have complete imported locomotion/weapon stance clips and no
+new instant-kill special. These stats are invented initial tuning. Combine
+has real source hurt/death sounds; pain is limited to once per 1.5 seconds,
+spatialized for other units. Check these on host and LAN guest. Chell does
+not have a portal mechanic in this build.
+
+Previous combat fixes below remain included. Proper baked map lighting and
+articulated ragdolls are still the next substantial engine work.
+
+
+**Previous build: Hero kit ownership and ability balance (2026-09-24,
+`ed4585f-dirty`, published to http://100.89.1.14:8733/).**
+Personal and guest APK checksums verified; full gate 80/80.
+
+**Review and combat follow-up:** see
+[MEGAMOD_REVIEW.md](MEGAMOD_REVIEW.md) for the prioritized engine/content audit.
+Flight steering now caps combined input at the character's configured speed;
+try forward + strafe + ascend at several camera pitches and then gentle analog
+movement. Check both hero flight and broom flight. Desktop `htamatch` lighting
+now matches the Android imported-character fallback. These are small fixes;
+proper flight poses, jointed ragdolls and map lightmaps remain outstanding.
+Added fixes for the owner's later reports: character bots retain their authored
+kits; innate powers no longer become loot. Beams spend one damage budget over
+the channel without basic-attack multipliers, shouts have capped damage, and
+abilities recover for at least ten seconds after ending. New balance numbers
+are documented in the review; projectile salvos still need tuning.
+Phone test: Goku/Superman/Iron Man/Harry should require tracking rather than
+kill on first contact; Dragonborn should throw a healthy human without an
+instant kill. Check recovery on both LAN host and guest. Kill heroes and
+confirm no dropped Ki Bolts/Repulsors/Fists and no bot kit swapping. The review
+also lists the larger engine/content work still outstanding.
+
+
+**This session's phone test (2026-09-24), game `91a1679`.** Personal and
 guest APKs go to **http://100.89.1.14:8733/**. Protocol **v8**.
 The personal APK adds `mcdonalds.oalmap` (menu name MCRONALDS) and replaces
 the Heavy fist viewmodel with Garry's Mod citizen arms. Previous checkpoint

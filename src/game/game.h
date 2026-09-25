@@ -245,6 +245,8 @@ typedef struct {
     bool     riding;           /* in the air: on a broom, or flying by itself */
     bool     flying;           /* flying by itself (Goku, Superman); the platform's for the local player */
     float    knock[3];         /* a blow's push not yet taken by the body (the local player's is the platform's) */
+    float    tumble, tumble_rate; /* corpse pitch, radians, and how fast it is spinning */
+    float    stagger;          /* seconds a hard hit keeps flight from cancelling the shove */
     float    ability_active, ability_tick;
     float    ability_cool;     /* seconds until the character's ability is ready */
     float    respawn;         /* seconds until back, while dead */
@@ -482,6 +484,11 @@ int32_t hta_game_add_character(hta_game *g, const hta_oal_asset *a);
 
 /* May this roster weapon go in a custom class? Hand-held, not the flag. */
 bool hta_game_class_weapon(const hta_game *g, int32_t weapon);
+/* Character bots keep their authored kit; ordinary units may scavenge.
+ * Hidden abilities are never inventory weapons. */
+bool hta_game_can_equip(const hta_game *g, int32_t unit, int32_t weapon);
+/* Recovery after an ability's channel, shared by authority and client HUD. */
+float hta_game_ability_cooldown(const hta_game *g, int32_t unit);
 
 /* What `unit` spawns with when the match has custom classes. -1 for a slot
  * leaves the map's own weapon there. Takes effect at its next spawn. */

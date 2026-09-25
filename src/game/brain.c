@@ -324,7 +324,7 @@ static int32_t pick_item(hta_game *g, int32_t me, int32_t skip)
         switch (c->kind) {
         case HTA_ITEM_WEAPON: {
             int32_t wi = hta_game_weapon_index(g, c->tag_id);
-            int v = wi >= 0 ? want(&g->weapons[wi]) : 0;
+            int v = hta_game_can_equip(g, me, wi) ? want(&g->weapons[wi]) : 0;
             if (v > have) value = (float)(v - have) * 3.0f;
             break;
         }
@@ -1128,14 +1128,15 @@ void hta_brain_think(struct hta_game *g, int32_t me, hta_brain *b, float dt)
      * the map's, or one somebody dropped. */
     {
         int32_t dr = hta_game_drop_near(g, u->body.pos, HTA_DROP_REACH);
-        if (dr >= 0 && want(&g->weapons[g->drops[dr].weapon]) > want(w)) in->pickup = true;
+        if (dr >= 0 && hta_game_can_equip(g, me, g->drops[dr].weapon) &&
+            want(&g->weapons[g->drops[dr].weapon]) > want(w)) in->pickup = true;
     }
     if (g->items) {
         int32_t ws = hta_pickups_at_kind(g->items, u->body.pos, HTA_ITEM_WEAPON);
         const hta_item_choice *c = hta_pickups_item(g->items, ws);
         if (c) {
             int32_t wi = hta_game_weapon_index(g, c->tag_id);
-            if (wi >= 0 && want(&g->weapons[wi]) > want(w)) in->pickup = true;
+            if (hta_game_can_equip(g, me, wi) && want(&g->weapons[wi]) > want(w)) in->pickup = true;
         }
     }
 

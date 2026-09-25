@@ -98,6 +98,25 @@ static buf package(const char *manifest, int models, bool weapon)
 
 int main(void)
 {
+    {
+        hta_oal_model rig = {0};
+        char names[4][64] = {"shoulder", "elbow", "hand", "head"};
+        int32_t parents[4] = {-1,0,1,-1};
+        float pose[4][12] = {{1,0,0,0,0,1,0,0,0,0,1,0},
+                            {1,0,0,0,0,1,0,0,0,0,1,1},
+                            {1,0,0,0,0,1,0,0,0,0,1,2},
+                            {1,0,0,0,0,1,0,0,0,0,1,3}};
+        rig.bone_count=4; rig.bone_name=names; rig.parent=parents;
+        float forward[3]={1,0,0}, back[3]={-1,0,0}, zero[3]={0};
+        CHECK(hta_imported_point_limb(&rig,pose,"shoulder","elbow",forward,1), "procedural limb can aim forward");
+        CHECK(fabsf(pose[1][3]-1)<1e-5f && fabsf(pose[2][3]-2)<1e-5f && fabsf(pose[2][11])<1e-5f,
+              "aim rotates descendants and preserves limb lengths");
+        CHECK(pose[3][11]==3 && pose[3][3]==0, "arm posing leaves the head attached and untouched");
+        CHECK(hta_imported_point_limb(&rig,pose,"shoulder","elbow",back,1) && fabsf(pose[2][3]+2)<1e-5f,
+              "opposite limb direction remains finite");
+        CHECK(!hta_imported_point_limb(&rig,pose,"missing","elbow",forward,1) &&
+              !hta_imported_point_limb(&rig,pose,"shoulder","elbow",zero,1), "unsupported rigs and zero directions are safe");
+    }
     printf("oal asset tests\n");
     char err[256];
     static hta_oal_asset ch, wp, bad;

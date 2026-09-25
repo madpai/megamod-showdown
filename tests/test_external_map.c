@@ -32,6 +32,22 @@ int main(void)
     assert(hta_collision_ground(&col,.2f,.2f,.1f,&z)&&z==0);
     assert(m.spawns[0].team_index==HTA_EXTERNAL_TEAM_ANY);
     hta_collision_free(&col);hta_external_map_free(&m);
+    {
+        /* V2 extends each group with a checked lightmap texture index. */
+        size_t group=64+120+12;
+        unsigned char v2[sizeof(b)+4];
+        memcpy(v2,b,group+16); u32(v2+4,2); u32(v2+group+16,0);
+        memcpy(v2+group+20,b+group+16,n-group-16);
+        assert(hta_external_map_load_memory(v2,sizeof(v2),&m,err,sizeof(err)));
+        assert(m.mesh.submeshes[0].lightmap_tex==0 && m.solid_index_count==3);
+        hta_external_map_free(&m);
+        u32(v2+group+16,1);
+        assert(!hta_external_map_load_memory(v2,sizeof(v2),&m,err,sizeof(err)));
+        u32(v2+group+16,UINT32_MAX);
+        assert(hta_external_map_load_memory(v2,sizeof(v2),&m,err,sizeof(err)));
+        assert(m.mesh.submeshes[0].lightmap_tex==UINT32_MAX);
+        hta_external_map_free(&m);
+    }
     /* The manifest's own "team" decides, not the Source class name. */
     {
         static const char man[]="{\"entities\":[{\"classname\":\"info_player_terrorist\",\"team\":0}],"

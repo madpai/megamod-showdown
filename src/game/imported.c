@@ -2,6 +2,75 @@
 #include <math.h>
 #include <string.h>
 
+bool hta_imported_point_limb(const hta_oal_model *m, float (*world)[12],
+                              const char *joint, const char *child,
+                              const float direction[3], float weight)
+{
+    if (!m || !world || !m->parent || !direction || weight <= 0.0f) return false;
+    int32_t j = hta_oal_bone_find(m, joint), e = hta_oal_bone_find(m, child);
+    if (j < 0 || e < 0 || m->parent[e] != j) return false;
+    float from[3], to[3], pivot[3], fl = 0.0f, tl = 0.0f;
+    for (int k = 0; k < 3; k++) {
+        pivot[k] = world[j][k*4+3];
+        from[k] = world[e][k*4+3] - pivot[k]; to[k] = direction[k];
+        fl += from[k]*from[k]; tl += to[k]*to[k];
+    }
+    if (fl < 1e-10f || tl < 1e-10f) return false;
+    for (int k = 0; k < 3; k++) { from[k] /= sqrtf(fl); to[k] /= sqrtf(tl); }
+    float dot = fmaxf(-1.0f, fminf(1.0f, from[0]*to[0]+from[1]*to[1]+from[2]*to[2]));
+    float axis[3] = {from[1]*to[2]-from[2]*to[1], from[2]*to[0]-from[0]*to[2], from[0]*to[1]-from[1]*to[0]};
+    float al = sqrtf(axis[0]*axis[0]+axis[1]*axis[1]+axis[2]*axis[2]);
+    if (al < 1e-5f) {
+        if (dot > 0.0f) return true;
+        /* A deterministic perpendicular axis also handles straight limbs. */
+        float ref[3] = {0,0,1};
+        if (fabsf(from[2]) > 0.9f) { ref[1]=1; ref[2]=0; }
+        axis[0]=from[1]*ref[2]-from[2]*ref[1];
+        axis[1]=from[2]*ref[0]-from[0]*ref[2];
+        axis[2]=from[0]*ref[1]-from[1]*ref[0];
+        al=sqrtf(axis[0]*axis[0]+axis[1]*axis[1]+axis[2]*axis[2]);
+    }
+    for (int k = 0; k < 3; k++) axis[k] /= al;
+    float angle = acosf(dot)*fminf(weight,1.0f), c=cosf(angle), s=sinf(angle), t=1-c;
+    float x=axis[0], y=axis[1], z=axis[2];
+    float r[12]={t*x*x+c,t*x*y-s*z,t*x*z+s*y,0,
+                 t*x*y+s*z,t*y*y+c,t*y*z-s*x,0,
+                 t*x*z-s*y,t*y*z+s*x,t*z*z+c,0};
+    for (int k=0;k<3;k++) r[k*4+3]=pivot[k]-r[k*4]*pivot[0]-r[k*4+1]*pivot[1]-r[k*4+2]*pivot[2];
+    for (uint32_t b=0;b<m->bone_count;b++) {
+        int32_t p=(int32_t)b;
+        for (uint32_t steps=0;p>=0 && (uint32_t)p<m->bone_count && steps<m->bone_count;steps++) {
+            if (p==j) {
+                float posed[12]; hta_oal_mul(r,world[b],posed);
+                memcpy(world[b],posed,sizeof(posed)); break;
+            }
+            p=m->parent[p];
+        }
+    }
+    return true;
+}
+
+void hta_imported_hero_pose(const hta_oal_model *m, float (*world)[12],
+                            float cruise, float attack, int style)
+{
+    const char *upper[2]={"ValveBiped.Bip01_R_UpperArm","ValveBiped.Bip01_L_UpperArm"};
+    const char *lower[2]={"ValveBiped.Bip01_R_Forearm","ValveBiped.Bip01_L_Forearm"};
+    const char *hand[2]={"ValveBiped.Bip01_R_Hand","ValveBiped.Bip01_L_Hand"};
+    for (int side=0;side<2;side++) {
+        /* Ki: both arms ahead. Heat vision: one leading fist. Armour:
+         * arms trail beside the torso, palms providing thrust. */
+        float dir[3]={0.08f,side ? 0.12f : -0.12f,style==3 ? -1.0f : 1.0f};
+        if (style==0 && side==1) dir[2]=-1.0f;
+        hta_imported_point_limb(m,world,upper[side],lower[side],dir,cruise);
+        hta_imported_point_limb(m,world,lower[side],hand[side],dir,cruise);
+        if (style!=0 && attack>0.0f) {
+            float aim[3]={1.0f,side ? -0.10f : 0.10f,0.1f};
+            hta_imported_point_limb(m,world,upper[side],lower[side],aim,attack);
+            hta_imported_point_limb(m,world,lower[side],hand[side],aim,attack);
+        }
+    }
+}
+
 static int name_eq(const char *a, const char *b)
 {
     if (!a || !b) return 0;

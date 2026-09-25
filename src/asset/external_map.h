@@ -1,4 +1,5 @@
-/* Open Asset Lab .oalmap v1 runtime adapter. Caller owns mesh and spawn array. */
+/* Open Asset Lab .oalmap v1/v2 runtime adapter. V2 adds a lightmap texture
+ * index to each material group; vertices retain the same lightmap UV fields. */
 #ifndef HTA_EXTERNAL_MAP_H
 #define HTA_EXTERNAL_MAP_H
 #include "bsp.h"

@@ -2,7 +2,7 @@
 
 **This branch is MEGAMOD SHOWDOWN**, the owner's fork of Open Halo that plays
 imported content from other games (Source maps, characters, weapons via
-Open Asset Lab). Named 2026-09-24. Its GitHub home is the PRIVATE repo
+Open Asset Lab). Named 2026-09-24. Its GitHub home is the PUBLIC repo
 https://github.com/madpai/megamod-showdown (remote `megamod`; this branch
 tracks `megamod/main`). Push with `git push megamod halo-sandbox:main`.
 

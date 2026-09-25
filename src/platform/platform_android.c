@@ -182,6 +182,11 @@ typedef struct {
     uint32_t      wtrail[HTA_GAME_MAX_WEAPONS], ptrail[HTA_GAME_MAX_POOLS], laser_trail;
     uint32_t hero_trail[6], hero_ring[6], hero_core, hero_sound[6], flight_clip;
     float hero_sound_time[HTA_GAME_MAX_UNITS];
+    float hero_bark_time[HTA_GAME_MAX_UNITS];
+    const char *bark_name[12];
+    uint32_t bark_clip[12];
+    int bark_count;
+    hta_gfx_mesh *gpu_gibs;
     /* Rounds each shooter has fired since its last tracer (the trigger's
      * `projectiles between contrails`); the last slot is ours on foot. */
     uint8_t       since_tracer[HTA_GAME_MAX_UNITS + 1];
@@ -248,6 +253,8 @@ typedef struct {
 #define HTA_MAX_IMPORTED 32
     hta_oal_asset imp_char[HTA_MAX_IMPORTED];
     uint32_t imp_char_count;
+    uint32_t imp_voice[HTA_MAX_IMPORTED][2]; /* authored hurt/death clips */
+    float character_voice_time[HTA_GAME_MAX_UNITS];
     hta_oal_asset imp_weap[HTA_MAX_IMPORTED];
     uint32_t imp_weap_count;
     uint32_t imp_clip[HTA_MAX_IMPORTED][2];      /* audio: fire, reload */
@@ -1798,6 +1805,7 @@ static void load_imported(hta_android *s)
                 uint32_t k = s->imp_weap_count++;
                 s->imp_clip[k][0] = s->imp_clip[k][1] = HTA_AUDIO_NO_CLIP;
             } else {
+                s->imp_voice[s->imp_char_count][0] = s->imp_voice[s->imp_char_count][1] = HTA_AUDIO_NO_CLIP;
                 s->imp_char_count++;
             }
             hta_log("[imported] %s '%s' (%s), %u models", slot->kind, slot->name, slot->display, slot->model_count);
@@ -2024,58 +2032,196 @@ static uint32_t synth_ding(hta_android *s, bool kill)
     return hta_audio_add_clip(&s->audio, o, N, RATE, 1);
 }
 
-/* A bass-heavy roar. Overlapping plays during a sustained beam are the
- * volume; the sample itself stays under full scale so two layers clip
- * instead of five. */
+/* The mixer keeps the pointer. Freeing the buffer after add_clip was a
+ * use-after-free the moment a voice played it. */
+static int16_t *keep_pcm(int16_t *p)
+{
+    static int16_t *bag[24];
+    static int n;
+    if (p && n < 24) bag[n++] = p;
+    return p;
+}
+
+static float sat(float x)
+{
+    float y = tanhf(x);
+    if (y > 0.98f) y = 0.98f;
+    if (y < -0.98f) y = -0.98f;
+    return y;
+}
+
+static float nz(uint32_t *s)
+{
+    *s = *s * 1664525u + 1013904223u;
+    return ((int)(*s >> 16) - 32768) / 32768.0f;
+}
+
+/* A glottal buzz through three formants. Original, not a recording. */
+static float vowel(float *ph, float f0, float f1, float f2, float f3,
+                   float *q1, float *q2, float *q3, float rate, float breath, uint32_t *rng)
+{
+    *ph += f0 / rate;
+    if (*ph >= 1.0f) *ph -= floorf(*ph);
+    float g = 0.0f;
+    if (*ph < 0.40f) g = 0.5f * (1.0f - cosf(3.14159265f * (*ph / 0.40f)));
+    else if (*ph < 0.58f) g = 0.5f * (1.0f + cosf(3.14159265f * ((*ph - 0.40f) / 0.18f)));
+    *q1 += f1 / rate; *q2 += f2 / rate; *q3 += f3 / rate;
+    float v = (0.62f * sinf(*q1 * 6.2831853f) + 0.28f * sinf(*q2 * 6.2831853f) +
+               0.12f * sinf(*q3 * 6.2831853f)) * (0.25f + 0.75f * g);
+    if (breath > 0.0f) v += breath * nz(rng) * (0.35f + 0.65f * g);
+    return v;
+}
+
+/* A steady roar. The old one was a rising chirp, which is why every beam
+ * sounded like a screech once a few copies overlapped. Pitch stays put and
+ * the layers thicken. */
 static uint32_t synth_power(hta_android *s, int color)
 {
     enum { RATE = 22050, N = RATE * 9 / 10 };
     int16_t *pcm = malloc((size_t)N * sizeof(*pcm));
     if (!pcm) return HTA_AUDIO_NO_CLIP;
     uint32_t noise = 0x458ace1u + (uint32_t)color * 97u;
-    float f0 = 32.0f + (float)color * 6.0f;
-    float f1 = 110.0f + (float)color * 40.0f;
+    float f0 = 42.0f + (float)color * 7.0f;
+    float f1 = 96.0f + (float)color * 18.0f;
+    float f2 = 180.0f + (float)color * 22.0f;
+    float p0 = 0.0f, p1 = 0.0f, p2 = 0.0f;
+    float dur = (float)N / (float)RATE;
     for (int i = 0; i < N; i++) {
         float t = (float)i / (float)RATE;
-        float env = 1.0f - t / ((float)N / (float)RATE);
-        env *= env;
-        float atk = t < 0.012f ? t / 0.012f : 1.0f;
+        float env = t < 0.012f ? t / 0.012f : 1.0f;
+        env *= 0.78f + 0.22f * sinf(6.2831853f * (5.0f + (float)color) * t);
+        env *= 0.62f + 0.38f * (1.0f - t / dur);
+        float vib = 1.0f + 0.012f * sinf(6.2831853f * 5.5f * t);
+        p0 += f0 * vib / (float)RATE;
+        p1 += f1 * vib / (float)RATE;
+        p2 += f2 / (float)RATE;
         noise = noise * 1664525u + 1013904223u;
-        float n = ((float)(noise >> 16) - 32768.0f) / 32768.0f;
-        float bass = sinf(6.2831853f * (f0 * t + 6.0f * t * t));
-        float mid = sinf(6.2831853f * (f1 * t + 70.0f * t * t));
-        float v = (0.62f * bass + 0.2f * mid + 0.3f * n * expf(-t * 3.5f)) * env * atk;
-        if (v > 0.95f) v = 0.95f;
-        if (v < -0.95f) v = -0.95f;
-        pcm[i] = (int16_t)(v * 32767.0f);
+        float n = ((int)(noise >> 16) - 32768) / 32768.0f;
+        float crackle = n * (color == 0 ? 0.34f : 0.16f);
+        float v = 0.58f * sinf(p0 * 6.2831853f) + 0.30f * sinf(p1 * 6.2831853f) +
+                  0.14f * sinf(p2 * 6.2831853f) + crackle;
+        pcm[i] = (int16_t)(sat(v * env * 1.55f) * 32767.0f);
     }
     uint32_t clip = hta_audio_add_clip(&s->audio, pcm, N, RATE, 1);
-    free(pcm);
+    keep_pcm(pcm);
     return clip;
 }
 
-/* An original flying tune: a major lift and a step down, not anyone's
- * film theme. Quarter notes at 120, four seconds, so the loop lands on
- * the first note. */
-static uint32_t synth_flight(hta_android *s)
+/* One shout at the start of an ability. 0 heat grunt, 1 the ki call,
+ * 2 a repulsor lock, 3 a deep roar, 4 a boom, 5 a struck chord. */
+static uint32_t synth_shout(hta_android *s, int kind)
 {
-    enum { RATE = 22050, NOTE = RATE / 2, COUNT = 8, N = NOTE * COUNT };
-    static const float hz[COUNT] = { 392.0f, 493.9f, 587.3f, 784.0f,
-                                     659.3f, 523.3f, 440.0f, 392.0f };
+    enum { RATE = 22050 };
+    int N = kind == 1 ? RATE * 11 / 10 : kind == 0 ? RATE : RATE * 7 / 10;
     int16_t *pcm = malloc((size_t)N * sizeof(*pcm));
     if (!pcm) return HTA_AUDIO_NO_CLIP;
+    float ph = 0.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f, sweep = 0.0f;
+    uint32_t rng = 0x51u * (uint32_t)(kind + 3);
+    float dur = (float)N / (float)RATE;
     for (int i = 0; i < N; i++) {
-        int note = i / NOTE;
-        float u = (float)(i % NOTE) / (float)NOTE;
-        float env = u < 0.04f ? u / 0.04f : u > 0.82f ? (1.0f - u) / 0.18f : 1.0f;
         float t = (float)i / (float)RATE;
-        float f = hz[note];
-        float v = (0.55f * sinf(6.2831853f * f * t) + 0.18f * sinf(6.2831853f * f * 2.0f * t) +
-                   0.08f * sinf(6.2831853f * f * 3.0f * t)) * env;
-        pcm[i] = (int16_t)(v * 26000.0f);
+        float env = t < 0.015f ? t / 0.015f : (dur - t) < 0.06f ? (dur - t) / 0.06f : 1.0f;
+        float v = 0.0f;
+        if (kind == 1) {
+            float f0, f1, f2, f3, breath, amp;
+            if (t < 0.08f)      { f0 = 120; f1 = 700; f2 = 1500; f3 = 2400; breath = 0.75f; amp = 0.55f; }
+            else if (t < 0.26f) { f0 = 155; f1 = 800; f2 = 1150; f3 = 2500; breath = 0.04f; amp = 1.00f; }
+            else if (t < 0.34f) { f0 = 140; f1 = 420; f2 = 1400; f3 = 2200; breath = 0.02f; amp = 0.40f; }
+            else if (t < 0.52f) { f0 = 175; f1 = 520; f2 = 1900; f3 = 2600; breath = 0.04f; amp = 1.05f; }
+            else if (t < 0.60f) { f0 = 160; f1 = 600; f2 = 1500; f3 = 2400; breath = 0.60f; amp = 0.50f; }
+            else if (t < 0.82f) { f0 = 195; f1 = 820; f2 = 1200; f3 = 2550; breath = 0.05f; amp = 1.20f; }
+            else if (t < 0.90f) { f0 = 180; f1 = 430; f2 = 1300; f3 = 2200; breath = 0.02f; amp = 0.45f; }
+            else                { f0 = 220; f1 = 840; f2 = 1180; f3 = 2600; breath = 0.06f; amp = 1.35f; }
+            v = vowel(&ph, f0, f1, f2, f3, &q1, &q2, &q3, (float)RATE, breath, &rng) * amp;
+            v += 0.22f * sinf(6.2831853f * 72.0f * t);
+        } else if (kind == 0) {
+            float f0 = 92.0f + 6.0f * sinf(6.2831853f * 4.0f * t);
+            v = vowel(&ph, f0, 620, 1080, 2300, &q1, &q2, &q3, (float)RATE, 0.18f, &rng) * 1.25f;
+            v += 0.35f * sinf(6.2831853f * 48.0f * t);
+        } else if (kind == 2) {
+            float f = t < 0.18f ? 160.0f + 280.0f * (t / 0.18f) : 70.0f;
+            sweep += f / (float)RATE;
+            float hit = t > 0.18f ? expf(-(t - 0.18f) * 7.0f) : 0.0f;
+            v = (t < 0.18f ? 0.50f : 0.0f) * sinf(sweep * 6.2831853f);
+            v += hit * (0.85f * sinf(6.2831853f * 52.0f * t) +
+                        0.40f * sinf(sweep * 6.2831853f * 2.41f) +
+                        0.22f * sinf(sweep * 6.2831853f * 3.73f) +
+                        0.28f * nz(&rng));
+        } else if (kind == 3) {
+            float f0 = 78.0f + 10.0f * sinf(6.2831853f * 6.0f * t);
+            v = vowel(&ph, f0, 480, 900, 2200, &q1, &q2, &q3, (float)RATE, 0.28f, &rng) * 1.35f;
+        } else if (kind == 5) {
+            float e = expf(-t * 2.6f);
+            v = e * (0.55f * sinf(6.2831853f * 523.25f * t) +
+                     0.40f * sinf(6.2831853f * 659.25f * t) +
+                     0.32f * sinf(6.2831853f * 783.99f * t) +
+                     0.18f * sinf(6.2831853f * 1046.5f * t));
+            v += 0.20f * nz(&rng) * expf(-t * 16.0f);
+        } else {
+            float e = expf(-t * 2.2f);
+            v = e * (0.75f * sinf(6.2831853f * 44.0f * t) + 0.30f * sinf(6.2831853f * 88.0f * t));
+            v += 0.40f * nz(&rng) * expf(-t * 5.0f);
+            v += 0.18f * expf(-t * 3.5f) * sinf(6.2831853f * 740.0f * t);
+        }
+        pcm[i] = (int16_t)(sat(v * env * 1.2f) * 32767.0f);
+    }
+    uint32_t clip = hta_audio_add_clip(&s->audio, pcm, (uint32_t)N, RATE, 1);
+    keep_pcm(pcm);
+    return clip;
+}
+
+static void add_bark(hta_android *s, const char *name, int kind)
+{
+    if (s->bark_count >= 12) return;
+    uint32_t c = synth_shout(s, kind);
+    if (c == HTA_AUDIO_NO_CLIP) return;
+    s->bark_name[s->bark_count] = name;
+    s->bark_clip[s->bark_count] = c;
+    s->bark_count++;
+}
+
+/* An original broom anthem in 3/4: bells, a string pad and a bass drum.
+ * Loud on purpose. It is not a film theme. The loop is crossfaded so the
+ * join is not a click. */
+static uint32_t synth_flight(hta_android *s)
+{
+    enum { RATE = 22050, BEAT = RATE * 2 / 5, BARS = 4, BEATS = 3 * BARS, N = BEAT * BEATS, X = 600 };
+    static const float mel[BEATS] = {
+        523.25f, 659.25f, 783.99f,
+        880.00f, 783.99f, 659.25f,
+        698.46f, 587.33f, 523.25f,
+        587.33f, 493.88f, 523.25f
+    };
+    static const float root[BARS] = { 130.81f, 110.00f, 87.31f, 130.81f };
+    int16_t *pcm = malloc((size_t)N * sizeof(*pcm));
+    if (!pcm) return HTA_AUDIO_NO_CLIP;
+    float pm = 0.0f, pb = 0.0f, ps = 0.0f;
+    for (int i = 0; i < N; i++) {
+        int beat = i / BEAT;
+        int bar = beat / 3;
+        float u = (float)(i % BEAT) / (float)BEAT;
+        if (i % BEAT == 0) pm = 0.0f;
+        float f = mel[beat];
+        pm += f / (float)RATE;
+        pb += root[bar] / (float)RATE;
+        ps += (f * 0.5f) / (float)RATE;
+        float bell = expf(-u * 5.2f) * (0.58f * sinf(pm * 6.2831853f) +
+                                        0.24f * sinf(pm * 6.2831853f * 2.76f) +
+                                        0.10f * sinf(pm * 6.2831853f * 5.04f));
+        float bow = 0.26f * (0.55f * sinf(ps * 6.2831853f) +
+                             0.20f * sinf(ps * 6.2831853f * 2.0f) +
+                             0.08f * sinf(ps * 6.2831853f * 3.0f));
+        float kick = (beat % 3 == 0) ? expf(-u * 12.0f) * sinf(pb * 6.2831853f) * 0.70f
+                                     : 0.16f * sinf(pb * 6.2831853f);
+        pcm[i] = (int16_t)(sat((bell + bow + kick) * 1.45f) * 32767.0f);
+    }
+    for (int i = 0; i < X; i++) {
+        float a = (float)i / (float)X;
+        int j = N - X + i;
+        pcm[j] = (int16_t)((1.0f - a) * (float)pcm[j] + a * (float)pcm[i]);
     }
     uint32_t clip = hta_audio_add_clip(&s->audio, pcm, N, RATE, 1);
-    free(pcm);
+    keep_pcm(pcm);
     return clip;
 }
 
@@ -2085,6 +2231,14 @@ static void imported_sounds(hta_android *s)
     if (s->audio_ok && s->ding_clip == HTA_AUDIO_NO_CLIP) {
         for(int c=0;c<6;c++) s->hero_sound[c]=synth_power(s,c);
         s->flight_clip = synth_flight(s);
+        add_bark(s, "superman64", 0);
+        add_bark(s, "goku", 1);
+        add_bark(s, "iron_man", 2);
+        add_bark(s, "dragonborn", 3);
+        add_bark(s, "dumbledore", 4);
+        add_bark(s, "harry", 5);
+        add_bark(s, "master_chief", 4);
+        add_bark(s, "scout", 3);
         const hta_oal_sound *h = hta_oal_sound_find(&s->ui_sounds, "hit");
         const hta_oal_sound *k = hta_oal_sound_find(&s->ui_sounds, "kill");
         s->ding_clip = h ? hta_audio_add_clip(&s->audio, h->samples, h->frames, h->rate, (uint8_t)h->channels)
@@ -2097,6 +2251,13 @@ static void imported_sounds(hta_android *s)
         if (p) s->snap_clip = hta_audio_add_clip(&s->audio, p->samples, p->frames, p->rate, (uint8_t)p->channels);
     }
     static const char *const ROLES[2] = { "fire", "reload" };
+    static const char *const VOICES[2] = { "hurt", "death" };
+    for (uint32_t k=0;k<s->imp_char_count && s->audio_ok;k++)
+        for (int r=0;r<2;r++) {
+            if (s->imp_voice[k][r]!=HTA_AUDIO_NO_CLIP) continue;
+            const hta_oal_sound *snd=hta_oal_sound_find(&s->imp_char[k],VOICES[r]);
+            if (snd) s->imp_voice[k][r]=hta_audio_add_clip(&s->audio,snd->samples,snd->frames,snd->rate,(uint8_t)snd->channels);
+        }
     for (uint32_t k = 0; k < s->imp_weap_count && s->audio_ok; k++)
         for (int r = 0; r < 2; r++) {
             if (s->imp_clip[k][r] != HTA_AUDIO_NO_CLIP) continue;
@@ -2850,7 +3011,11 @@ static void start_game(hta_android *s)
     const float white[3]={1,1,.92f};
     s->hero_core=hta_contrails_add_energy(&s->trails,white,.22f,.4f);
     s->laser_trail=s->hero_trail[0];
-    for(int k=0;k<HTA_GAME_MAX_UNITS;k++) s->hero_sound_time[k]=-10.0f;
+    for(int k=0;k<HTA_GAME_MAX_UNITS;k++) {
+        s->hero_sound_time[k]=-10.0f;
+        s->character_voice_time[k]=-10.0f;
+        s->hero_bark_time[k]=-10.0f;
+    }
     if (hta_contrails_build(&s->trails, err, sizeof(err))) hta_log("[game] %s", err);
     /* The practice target is gone: there are real people to shoot now. */
     if (bots > 0) hta_bot_free(&s->bot);
@@ -2876,6 +3041,8 @@ static void game_gpu_upload(hta_android *s)
             s->gpu_held[w] = hta_gfx_mesh_upload(s->gfx, &s->gview.weapon_mesh[w], err, sizeof(err));
     if (s->trails.loaded && !s->gpu_trails)
         s->gpu_trails = hta_gfx_mesh_upload_dynamic(s->gfx, &s->trails.mesh, err, sizeof(err));
+    if (!s->gpu_gibs && hta_game_view_gib_mesh(&s->gview))
+        s->gpu_gibs = hta_gfx_mesh_upload_dynamic(s->gfx, hta_game_view_gib_mesh(&s->gview), err, sizeof(err));
     for (uint32_t p = 0; p < s->game.pool_count; p++)
         if (s->game.pools[p].mesh.index_count && !s->gpu_pools[p])
             s->gpu_pools[p] = hta_gfx_mesh_upload_dynamic_world(s->gfx,
@@ -2891,6 +3058,7 @@ static void game_gpu_free(hta_android *s)
     for (uint32_t p = 0; p < HTA_GAME_MAX_POOLS; p++)
         if (s->gpu_pools[p]) { hta_gfx_mesh_free(s->gfx, s->gpu_pools[p]); s->gpu_pools[p] = NULL; }
     if (s->gpu_trails) { hta_gfx_mesh_free(s->gfx, s->gpu_trails); s->gpu_trails = NULL; }
+    if (s->gpu_gibs) { hta_gfx_mesh_free(s->gfx, s->gpu_gibs); s->gpu_gibs = NULL; }
     if (s->gpu_ivm) { hta_gfx_mesh_free(s->gfx, s->gpu_ivm); s->gpu_ivm = NULL; }
     s->ivm_weapon = -1;
 }
@@ -2970,11 +3138,29 @@ static void hero_fx(hta_android *s, int32_t shooter, const hta_oal_asset *hero,
                                    (uint32_t)unit * 16u + 4u + (uint32_t)(i + 2), from, tip);
         }
     }
-    if (s->game.time - s->hero_sound_time[unit] < (beam ? 0.28f : 0.15f)) return;
-    s->hero_sound_time[unit] = s->game.time;
+    bool throttled = s->game.time - s->hero_sound_time[unit] < (beam ? 0.28f : 0.15f);
     float gain = 1.0f, pan = 0.0f;
-    if (s->audio_ok && (shooter == s->me || world_voice(s, from, 1.0f, &gain, &pan)))
-        hta_audio_play_pan(&s->audio, s->hero_sound[color], gain, pan);
+    bool heard = s->audio_ok && (shooter == s->me || world_voice(s, from, 1.0f, &gain, &pan));
+    if (!throttled) {
+        s->hero_sound_time[unit] = s->game.time;
+        if (heard) hta_audio_play_pan(&s->audio, s->hero_sound[color], gain, pan);
+    }
+    /* The call happens once, at the start. Retriggering it every tick of a
+     * beam stuttered the word. */
+    const hta_unit *vu = shooter >= 0 && shooter < HTA_GAME_MAX_UNITS ? &s->game.units[shooter] : NULL;
+    bool opening = vu && (hero->ability_duration <= 0.2f ||
+                          vu->ability_active > hero->ability_duration - 0.08f);
+    if (heard && opening && s->game.time - s->hero_bark_time[unit] > 0.5f) {
+        for (int i = 0; i < s->bark_count; i++)
+            if (s->bark_name[i] && !strcmp(s->bark_name[i], hero->name)) {
+                s->hero_bark_time[unit] = s->game.time;
+                hta_audio_play_pan(&s->audio, s->bark_clip[i], gain * 1.2f, pan);
+                break;
+            }
+    }
+    if (throttled) return;
+    if (pulse) hta_game_view_debris(&s->gview, from, dir, 5, 4.5f);
+    if (beam) hta_game_view_debris(&s->gview, end, dir, 3, 3.0f);
     if (!beam) {
         float move = pulse ? 0.28f : 0.1f, rot = pulse ? 0.08f : 0.03f;
         hta_damage_shake kick = { .radius = { 3.0f, 24.0f }, .shake_time = 0.65f,
@@ -3110,6 +3296,25 @@ static void item_message(hta_android *s, uint32_t tag, int rounds)
 static float g_dmg_screen[HTA_DMG_MAX * 4];
 static _Atomic int g_dmg_count;
 #define HTA_DMG_LIFE 1.1f       /* seconds a number floats. Ours, TF2-like */
+
+static void character_voice(hta_android *s, int32_t unit, bool death)
+{
+    if (!s->audio_ok || unit<0 || (uint32_t)unit>=s->game.unit_count) return;
+    const hta_unit *u=&s->game.units[unit];
+    if (u->character<0 || (uint32_t)u->character>=s->game.character_count) return;
+    if (!death && (u->vitals.health<=0.0f || s->game.time-s->character_voice_time[unit]<1.5f)) return;
+    for (uint32_t k=0;k<s->imp_char_count;k++) {
+        if (s->game.characters[u->character]!=&s->imp_char[k]) continue;
+        uint32_t clip=s->imp_voice[k][death ? 1 : 0];
+        if (clip==HTA_AUDIO_NO_CLIP) return;
+        float gain=0.85f,pan=0.0f,at[3];
+        hta_game_centre(&s->game,unit,at);
+        if (unit!=s->me && !world_voice(s,at,0.85f,&gain,&pan)) return;
+        hta_audio_play_pan(&s->audio,clip,gain,pan);
+        s->character_voice_time[unit]=s->game.time;
+        return;
+    }
+}
 
 /* Your shot landed: the ding (once per volley -- a shotgun's pellets are
  * one hit), and a number over whoever took it. Hits on the same body in
@@ -3327,9 +3532,12 @@ static void game_events(hta_android *s)
                     hta_particles_burst(&s->parts, s->pool_recipe[e.pool], e.pos, e.dir);
                 if (pl->blast_radius > 0.0f)
                     hta_gun_add_mark(&s->gun, e.pos, e.dir, pl->blast_radius);
+                if (pl->blast_damage > 20.0f)
+                    hta_game_view_debris(&s->gview, e.pos, e.dir, 6, 5.5f);
             }
             break;
         case HTA_EV_HIT_UNIT: {
+            character_voice(s,e.a,false);
             if (e.b == s->me && e.a >= 0 && e.a != s->me) hit_feedback(s, e.a, e.pos, e.amount);
             /* The body answers the round: the weapon's own impact on a
              * cyborg's shield while it holds, on armour after. Heard near
@@ -3400,6 +3608,7 @@ static void game_events(hta_android *s)
             }
             break;
         case HTA_EV_KILL:
+            character_voice(s,e.a,true);
             if (e.b == s->me && e.a >= 0 && e.a != s->me && s->kill_clip != HTA_AUDIO_NO_CLIP)
                 hta_audio_play(&s->audio, s->kill_clip, 0.9f);
             if (e.a == s->me && e.b >= 0 && e.b != s->me && e.b < (int32_t)s->game.unit_count) {
@@ -5271,6 +5480,7 @@ static void net_client_world(hta_android *s)
         if (u->alive &&
             e->health+e->shield < u->vitals.health+u->vitals.shield-0.01f) {
             u->hurt=true;
+            if (e->health>0.0f) character_voice(s,idx,false);
             if (idx==s->me) {
                 u->vitals.took_damage=true;
                 if (u->vitals.shield>0.0f && e->shield<=0.0f)
@@ -5360,6 +5570,13 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
             !(fx.kind==HTA_NET_FX_FIRE && fx.weapon<s->game.weapon_count &&
               (s->game.weapons[fx.weapon].vehicle || s->game.weapons[fx.weapon].hidden))) continue;
         if (fx.kind==HTA_NET_FX_FIRE && fx.weapon<s->game.weapon_count) {
+            if (fx.entity<s->game.unit_count && s->game.weapons[fx.weapon].hero) {
+                int c=s->game.units[fx.entity].character;
+                if (c>=0 && (uint32_t)c<s->game.character_count) {
+                    float interval=s->game.characters[c]->ability_interval;
+                    s->gview.oal_power_time[fx.entity]=fmaxf(0.25f,fminf(interval*1.5f,0.5f));
+                }
+            }
             tracer(s,fx.entity==255 ? -1 : (int32_t)fx.entity,fx.weapon,fx.pos,fx.dir);
             if (!s->unit_fire_known[fx.weapon]) {
                 s->unit_fire_known[fx.weapon]=1;
@@ -5402,6 +5619,7 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
     hta_net_kill kill;
     while (hta_net_client_pop_kill(&s->net,&kill)) {
         if (s->net_hosting) continue;
+        character_voice(s,(int32_t)kill.victim,true);
         if (kill.killer==s->me && kill.victim!=s->me &&
             kill.victim<s->game.unit_count) {
             char line[96];
@@ -6032,9 +6250,9 @@ static void flight_music(hta_android *s)
     float d[3] = { u->body.pos[0] - s->cam.pos[0], u->body.pos[1] - s->cam.pos[1],
                    u->body.pos[2] + 0.6f - s->cam.pos[2] };
     float dist = sqrtf(d[0]*d[0] + d[1]*d[1] + d[2]*d[2]);
-    float g = dist < 6.0f ? 0.9f : 0.9f * (6.0f / dist) * (1.0f - dist / FLIGHT_HEAR);
-    if (g < 0.05f) g = 0.05f;
-    if ((int32_t)best == s->me) g = 0.55f;
+    float g = dist < 10.0f ? 1.35f : 1.35f * (10.0f / dist) * (1.0f - dist / FLIGHT_HEAR);
+    if (g < 0.08f) g = 0.08f;
+    if ((int32_t)best == s->me) g = 1.55f;
     float pan = 0.0f;
     if (dist > 0.05f) {
         float right[3];
@@ -6331,7 +6549,10 @@ void android_main(struct android_app *app)
                 if (body.can_fly && !broom && !state.dead) state.power_fly = !state.power_fly;
             }
             if (!body.can_fly || state.dead) state.power_fly = false;
-            bool riding = broom || state.power_fly;
+            if (state.game_on && state.me >= 0 && state.game.units[state.me].stagger > 0.0f)
+                state.power_fly = false;
+            bool knocked = state.game_on && state.me >= 0 && state.game.units[state.me].stagger > 0.0f;
+            bool riding = (broom && !knocked) || state.power_fly;
             state.player.fly = riding;
             state.player.fly_speed = broom ? mount->asset->fly_speed : riding ? body.fly_speed : 0.0f;
             if (state.game_on && state.me >= 0) {
@@ -6355,7 +6576,9 @@ void android_main(struct android_app *app)
                         else {
                             state.net_ability_count++;
                             hta_unit *mu=&state.game.units[state.me];
-                            mu->ability_cool=state.game.characters[mu->character]->ability_cooldown;
+                            const hta_oal_asset *hero=state.game.characters[mu->character];
+                            mu->ability_cool=hta_game_ability_cooldown(&state.game,state.me) +
+                                fmaxf(0.0f,fminf(hero->ability_duration,4.0f));
                         }
                     }
                 }
@@ -6371,8 +6594,14 @@ void android_main(struct android_app *app)
                 if (state.game_on && state.me >= 0) {
                     hta_unit *mu = &state.game.units[state.me];
                     if (mu->knock[0] != 0.0f || mu->knock[1] != 0.0f || mu->knock[2] != 0.0f) {
+                        float kx = mu->knock[0], ky = mu->knock[1], kz = mu->knock[2];
                         for (int k = 0; k < 3; k++) { state.player.velocity[k] += mu->knock[k]; mu->knock[k] = 0.0f; }
                         state.player.on_ground = false;
+                        if (kx * kx + ky * ky + kz * kz > 16.0f) {
+                            state.power_fly = false;
+                            state.player.fly = false;
+                            if (mu->stagger < 0.75f) mu->stagger = 0.75f;
+                        }
                     }
                 }
                 int caps = (charge >= 0.0f ? 128 : 0) | (charge >= 1.0f ? 64 : 0) |
@@ -6382,7 +6611,11 @@ void android_main(struct android_app *app)
                            (swung ? 16 : 0) | (state.nade_count > 0 ? 32 : 0);
                 atomic_store(&g_hud_caps, caps);
             }
-            hta_player_update(&state.player, &state.cam,
+            if (state.dead) {
+                hta_player_corpse_update(&state.player,state.col.built ? &state.col : NULL,state.player.gravity,dt);
+                for (int k=0;k<3;k++) state.cam.pos[k]=state.player.pos[k];
+                state.cam.pos[2]+=state.player.eye_height;
+            } else hta_player_update(&state.player, &state.cam,
                 state.col.built ? &state.col : NULL, &in, dt);
         }
         vehicle_status(&state, seated, near_car, near_seat);
@@ -6541,6 +6774,17 @@ void android_main(struct android_app *app)
         }
         hta_hud_set_fade(&state.hud, fade);
         /* Outside yourself, watching the body. */
+        if (state.dead && state.me >= 0 && state.me < (int32_t)state.game.unit_count &&
+            state.game.units[state.me].gibbed)
+            state.corpse_up = false;
+        if (state.dead) {
+            /* Still travelling: the camera stays on the body instead of the
+             * spot the hit landed. */
+            float spd = fabsf(state.player.velocity[2]) +
+                        hypotf(state.player.velocity[0], state.player.velocity[1]);
+            if (!state.player.on_ground || spd > 0.6f)
+                for (int k = 0; k < 3; k++) state.death_pos[k] = state.player.pos[k];
+        }
         if (state.dead && state.corpse_up) {
             hta_actor_update(&state.corpse, dt);
             hta_actor_place(&state.corpse, state.death_pos, state.corpse.yaw);
@@ -7653,6 +7897,20 @@ void android_main(struct android_app *app)
                     float tg;
                     if (hta_weather_thunder(&state.wfx.weather, &tg)) shake_thunder(&state, tg);
                 }
+            }
+
+            if (!state.gpu_gibs && hta_game_view_gib_mesh(&state.gview)) {
+                char err[HTA_ERRLEN];
+                state.gpu_gibs = hta_gfx_mesh_upload_dynamic(state.gfx,
+                    hta_game_view_gib_mesh(&state.gview), err, sizeof(err));
+            }
+            if (state.gpu_gibs && dyncount < HTA_GFX_MAX_DYNAMIC) {
+                const hta_bsp_mesh *gm = hta_game_view_gib_mesh(&state.gview);
+                dynlist[dyncount].mesh = state.gpu_gibs;
+                dynlist[dyncount].vertices = gm ? gm->vertices : NULL;
+                dynlist[dyncount].vertex_count = gm ? gm->vertex_count : 0;
+                dynlist[dyncount].vertex_color = true;
+                dyncount++;
             }
             g_inst_count = 0;
             dyncount = game_draw(&state, dynlist, dyncount);
