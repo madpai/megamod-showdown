@@ -9,7 +9,7 @@ static uint32_t u32(const unsigned char *p) { return (uint32_t)p[0]|((uint32_t)p
 static float f32(const unsigned char *p) { uint32_t v=u32(p); float f; memcpy(&f,&v,4); return f; }
 static bool take(size_t *at, size_t n, size_t size) { if (n>size-*at) return false; *at+=n; return true; }
 static bool fail(char *err,size_t n,const char *s) { if(err && n) snprintf(err,n,"%s",s); return false; }
-void hta_external_map_free(hta_external_map *m) { if(!m)return; hta_bsp_free(&m->mesh); free(m->spawns); free(m->solid_indices); memset(m,0,sizeof(*m)); }
+void hta_external_map_free(hta_external_map *m) { if(!m)return; hta_bsp_free(&m->mesh); free(m->spawns); free(m->solid_indices); free(m->breakables); free(m->submesh_breakable); memset(m,0,sizeof(*m)); }
 
 void hta_external_map_collision_view(const hta_bsp_mesh *render, const hta_external_map *m,
                                      hta_bsp_mesh *view)
@@ -46,6 +46,116 @@ static void spawn_teams(const unsigned char *m, size_t ml, hta_spawn_point *sp, 
             }
         at=close+1;
     }
+}
+
+/* ---- breakables and weather: Asset Lab's canonical JSON (sorted keys,
+ * compact separators), scanned rather than parsed -- the same approach
+ * as the spawns and flags. ---- */
+
+static const unsigned char *find(const unsigned char *p, const unsigned char *end, const char *key)
+{
+    size_t n = strlen(key);
+    for (; p + n <= end; p++) if (!memcmp(p, key, n)) return p + n;
+    return NULL;
+}
+
+/* The end of the object or array opening at *p ('{' or '['), balanced;
+ * strings are skipped so a brace inside a name does not count. */
+static const unsigned char *balanced(const unsigned char *p, const unsigned char *end)
+{
+    int depth = 0;
+    bool str = false;
+    for (; p < end; p++) {
+        if (str) { if (*p == '\\') p++; else if (*p == '"') str = false; continue; }
+        if (*p == '"') str = true;
+        else if (*p == '{' || *p == '[') depth++;
+        else if (*p == '}' || *p == ']') { if (--depth == 0) return p; }
+    }
+    return NULL;
+}
+
+static bool num_after(const unsigned char *p, const unsigned char *end, const char *key, float *out)
+{
+    const unsigned char *v = find(p, end, key);
+    if (!v) return false;
+    char buf[32]; size_t n = 0;
+    while (v < end && n + 1 < sizeof(buf) && (strchr("+-.0123456789eE", *v) && *v)) buf[n++] = (char)*v++;
+    buf[n] = 0;
+    if (!n) return false;
+    *out = strtof(buf, NULL);
+    return isfinite(*out);
+}
+
+static bool vec3_after(const unsigned char *p, const unsigned char *end, const char *key, float out[3])
+{
+    const unsigned char *v = find(p, end, key);
+    if (!v) return false;
+    for (int k = 0; k < 3; k++) {
+        char buf[32]; size_t n = 0;
+        while (v < end && (*v == ',' || *v == ' ')) v++;
+        while (v < end && n + 1 < sizeof(buf) && *v && strchr("+-.0123456789eE", *v)) buf[n++] = (char)*v++;
+        buf[n] = 0;
+        if (!n) return false;
+        out[k] = strtof(buf, NULL);
+        if (!isfinite(out[k])) return false;
+    }
+    return true;
+}
+
+static void breakables(const unsigned char *m, size_t ml, hta_external_map *out)
+{
+    const unsigned char *end = m + ml, *at = find(m, end, "\"breakables\":[");
+    if (!at) return;
+    const unsigned char *close = balanced(at - 1, end);
+    if (!close) return;
+    uint32_t n = 0;
+    for (const unsigned char *p = at; p < close; p++) if (*p == '{' && p[1] == '"' && find(p, close, "\"bounds\"")) {
+        const unsigned char *e = balanced(p, close);
+        if (!e) break;
+        n++; p = e;
+    }
+    if (!n || n > 4096) return;
+    out->breakables = calloc(n, sizeof(*out->breakables));
+    if (!out->breakables) return;
+    uint32_t i = 0;
+    for (const unsigned char *p = at; p < close && i < n; p++) {
+        if (*p != '{') continue;
+        const unsigned char *e = balanced(p, close);
+        if (!e) break;
+        hta_external_breakable *b = &out->breakables[i];
+        const unsigned char *bounds = find(p, e, "\"bounds\":");
+        if (bounds && vec3_after(bounds, e, "\"max\":[", b->max) && vec3_after(bounds, e, "\"min\":[", b->min)) {
+            static const struct { const char *name; uint8_t mat; } mats[] = {
+                { "\"material\":\"wood\"", 0 }, { "\"material\":\"metal\"", 1 },
+                { "\"material\":\"concrete\"", 2 }, { "\"material\":\"glass\"", 3 } };
+            for (size_t k = 0; k < sizeof(mats) / sizeof(mats[0]); k++)
+                if (find(p, e, mats[k].name)) b->material = mats[k].mat;
+            num_after(p, e, "\"health\":", &b->health);
+            b->explosive = find(p, e, "\"explosive\":true") != NULL;
+            num_after(p, e, "\"blast_damage\":", &b->blast_damage);
+            num_after(p, e, "\"blast_radius\":", &b->blast_radius);
+            i++;
+        }
+        p = e;
+    }
+    out->breakable_count = i;
+}
+
+static void weather(const unsigned char *m, size_t ml, hta_external_map *out)
+{
+    out->weather = -1;
+    const unsigned char *end = m + ml, *at = find(m, end, "\"weather\":{");
+    if (!at) return;
+    const unsigned char *e = balanced(at - 1, end);
+    if (!e) return;
+    static const char *kinds[] = { "rain", "storm", "snow", "ash", "sandstorm" };
+    for (int k = 0; k < 5; k++) {
+        char key[40];
+        snprintf(key, sizeof(key), "\"kind\":\"%s\"", kinds[k]);
+        if (find(at, e, key)) out->weather = k + 1;
+    }
+    out->weather_intensity = 1.0f;
+    num_after(at, e, "\"intensity\":", &out->weather_intensity);
 }
 
 /* "flag_points":[{"team":0,"position":[x,y,z]},...] -- Asset Lab's own
@@ -144,7 +254,8 @@ bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external
     out->mesh.submesh_count=gc;
     uint32_t end=0;
     out->solid_indices=malloc((size_t)ic*4);
-    if(!out->solid_indices){fail(err,errlen,"out of memory");goto done;}
+    out->submesh_breakable=calloc(gc,sizeof(uint16_t));
+    if(!out->solid_indices||!out->submesh_breakable){fail(err,errlen,"out of memory");goto done;}
     for(uint32_t i=0;i<gc;i++){
         const unsigned char *p=data+at+i*16;
         uint32_t first=u32(p),count=u32(p+4),tex=u32(p+8),flags=u32(p+12);
@@ -152,6 +263,7 @@ bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external
         hta_submesh *s=&out->mesh.submeshes[i];hta_submesh_init(s);
         s->first_index=first;s->index_count=count;s->albedo_tex=tex;
         if(flags&HTA_EXTERNAL_GROUP_ALPHA) s->draw_mode=HTA_DRAW_ALPHA;   /* fences, foliage, glass */
+        if(flags&HTA_EXTERNAL_GROUP_BREAKABLE) out->submesh_breakable[i]=(uint16_t)((flags>>8)&0xFFFFu);
         if(!(flags&HTA_EXTERNAL_GROUP_NO_COLLISION)){
             memcpy(out->solid_indices+out->solid_index_count,out->mesh.indices+first,(size_t)count*4);
             out->solid_index_count+=count;
@@ -185,6 +297,10 @@ bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external
     at+=(size_t)sc*16;
     spawn_teams(data+64,ml,out->spawns,sc);
     flag_points(data+64,ml,out);
+    breakables(data+64,ml,out);
+    weather(data+64,ml,out);
+    /* A group naming a breakable the manifest does not list is plain scenery. */
+    for(uint32_t i=0;i<gc;i++) if(out->submesh_breakable[i]>out->breakable_count) out->submesh_breakable[i]=0;
     out->key=2166136261u;
     for(uint32_t i=0;i<ml;i++) out->key=(out->key^data[64+i])*16777619u;
     if(at!=size){fail(err,errlen,"unexpected trailing package bytes");goto done;}

@@ -1,6 +1,7 @@
 #include "asset/external_map.h"
 #include "engine/player.h"
 #include <assert.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +44,7 @@ int main(void)
         /* The map's own flag stand, blue's only. */
         assert(!m.has_flag[0]&&m.has_flag[1]&&m.flag[1][0]==1.5f&&m.flag[1][1]==-2.0f&&m.flag[1][2]==0.25f);
         assert(m.mesh.submeshes[0].draw_mode==HTA_DRAW_OPAQUE);
+        assert(m.breakable_count==0&&m.weather==-1&&m.submesh_breakable[0]==0);
         uint32_t key0=m.key;hta_external_map_free(&m);
         /* Group flag bit 1: drawn alpha-blended. */
         size_t g=64+ml+3*40+3*4;
@@ -52,6 +54,28 @@ int main(void)
         w[g+12]&=(unsigned char)~HTA_EXTERNAL_GROUP_ALPHA;
         uint32_t key=m.key;hta_external_map_free(&m);
         w[64+ml-40]^=1;assert(hta_external_map_load_memory(w,n+ml,&m,err,sizeof(err))&&m.key!=key);
+        hta_external_map_free(&m);free(w);
+    }
+    /* Breakables and weather from the manifest, the group's breakable bits. */
+    {
+        static const char man[]="{\"breakables\":[{\"blast_damage\":150.0,\"blast_radius\":3.0,\"bounds\":{\"max\":[1.5,2,0.75],"
+            "\"min\":[0.5,-1e-1,0]},\"classname\":\"prop_physics\",\"explosive\":true,\"health\":35.0,\"index\":0,"
+            "\"material\":\"metal\",\"model\":\"models/{odd}/barrel.mdl\"}],\"weather\":{\"intensity\":0.7,\"kind\":\"storm\","
+            "\"source\":\"func_precipitation\"}}";
+        size_t ml=sizeof(man)-1;unsigned char *w=malloc(n+ml);assert(w);
+        memcpy(w,b,64);memcpy(w+64,man,ml);memcpy(w+64+ml,b+64,n-64);u32(w+8,(uint32_t)ml);
+        size_t g=64+ml+3*40+3*4;
+        u32(w+g+12,HTA_EXTERNAL_GROUP_BREAKABLE|(1u<<8));
+        assert(hta_external_map_load_memory(w,n+ml,&m,err,sizeof(err)));
+        assert(m.breakable_count==1&&m.submesh_breakable[0]==1);
+        const hta_external_breakable *br=&m.breakables[0];
+        assert(br->material==1&&br->explosive&&br->health==35.0f&&br->blast_radius==3.0f);
+        assert(br->min[0]==0.5f&&fabsf(br->min[1]+0.1f)<1e-6f&&br->max[1]==2.0f&&br->max[2]==0.75f);
+        assert(m.weather==2&&fabsf(m.weather_intensity-0.7f)<1e-6f);
+        hta_external_map_free(&m);
+        /* A group naming a breakable the manifest lacks is scenery. */
+        u32(w+g+12,HTA_EXTERNAL_GROUP_BREAKABLE|(5u<<8));
+        assert(hta_external_map_load_memory(w,n+ml,&m,err,sizeof(err))&&m.submesh_breakable[0]==0);
         hta_external_map_free(&m);free(w);
     }
     f=fopen(path,"r+b");assert(f);fseek(f,4,SEEK_SET);unsigned char bad[4]={2,0,0,0};assert(fwrite(bad,1,4,f)==4);fclose(f);

@@ -78,6 +78,9 @@ hta_gfx_mesh *hta_gfx_mesh_upload_dynamic(hta_gfx *g, const hta_bsp_mesh *mesh,
 hta_gfx_mesh *hta_gfx_mesh_upload_dynamic_world(hta_gfx *g, const hta_bsp_mesh *mesh,
                                                 char *err, size_t errlen);
 void hta_gfx_mesh_free(hta_gfx *g, hta_gfx_mesh *m);
+/* Changes how one submesh draws from the next frame on: HTA_DRAW_SKIP
+ * hides it (a broken prop), any other mode draws it that way again. */
+void hta_gfx_mesh_set_draw_mode(hta_gfx_mesh *m, uint32_t submesh, uint8_t mode);
 
 /* The first-person view. `vertices` (optional) replaces the mesh's vertex data
  * for this frame; the copy happens behind the frame fence. `offset` shifts the

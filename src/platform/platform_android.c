@@ -524,6 +524,9 @@ typedef struct {
     size_t  video_cfg_len;
     hta_world_fx wfx;
     const void *wfx_world;            /* the mesh it was set up for */
+    /* Vehicles' collision instances and the props', merged every frame
+     * into the one list the world grid points at. */
+    hta_collision_instance col_merged[HTA_VEHICLE_MAX + 256];
 } hta_android;
 
 static hta_android *g_android;
@@ -5375,6 +5378,11 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
             uint32_t sound=hta_projectile_impact_sound(&s->cache,proj,fx.material);
             if (sound) play_tag_at(s,sound,fx.pos,0.8f);
             hta_gun_add_mark(&s->gun,fx.pos,fx.dir,HTA_MARK_SIZE);
+            /* The same round, on a joining phone: props chip and break here
+             * too (host and client each run their own props; see HANDOFF). */
+            hta_game_event hw={.kind=HTA_EV_HIT_WORLD,.a=-1,.material=fx.material};
+            for (int k=0;k<3;k++) { hw.pos[k]=fx.pos[k]; hw.dir[k]=fx.dir[k]; }
+            hta_wfx_game_event(&s->wfx,&hw,&s->game);
         } else if (fx.kind==HTA_NET_FX_WRECK) {
             wreck_fx(s,fx.pos);
             hta_wfx_net_fx(&s->wfx,HTA_WFX_NET_WRECK,fx.pos,fx.dir,0.0f);
@@ -7586,7 +7594,42 @@ void android_main(struct android_app *app)
                 } else {
                     hta_wfx_reset(&state.wfx);
                 }
+                /* An imported map's breakables and weather. Props come back
+                 * after 30 s (ours) so a long match keeps its cover. */
+                hta_wfx_load_map(&state.wfx, state.world_loaded ? &state.world_ext : NULL, 30.0f);
+                if (state.wfx.props.count)
+                    hta_log("[wfx] %u breakable props, weather %s", state.wfx.props.count,
+                            hta_weather_name(state.wfx.weather.kind));
                 state.wfx_world = state.mesh.vertices;
+            }
+            /* Props are solid while whole: their instances ride with the
+             * vehicles' in the grid everyone collides with. */
+            if (state.wfx.ready && state.wfx.props.count) {
+                uint32_t nv = state.vehicles.loaded ? state.vehicles.count : 0u;
+                state.col.instance_count = hta_props_instances(&state.wfx.props, state.vehicles.inst, nv,
+                    state.col_merged, (uint32_t)(sizeof(state.col_merged) / sizeof(state.col_merged[0])));
+                state.col.instances = state.col_merged;
+            }
+            /* What broke or came back: hide or show its triangles, and an
+             * explosive one is a real blast (the host's game hurts people). */
+            {
+                hta_prop_event pe;
+                while (state.wfx.ready && hta_props_pop(&state.wfx.props, &pe)) {
+                    uint32_t tag = state.wfx.props.props[pe.prop].user;
+                    for (uint32_t i = 0; tag && state.gpu_mesh && i < state.mesh.submesh_count &&
+                                         state.world_loaded && state.world_ext.submesh_breakable; i++)
+                        if (state.world_ext.submesh_breakable[i] == tag)
+                            hta_gfx_mesh_set_draw_mode(state.gpu_mesh, i,
+                                pe.kind == HTA_PROP_EV_RESPAWNED ? state.mesh.submeshes[i].draw_mode : HTA_DRAW_SKIP);
+                    if (pe.kind == HTA_PROP_EV_EXPLODED) {
+                        if (state.game_on && (!state.net_enabled || state.net_hosting))
+                            hta_game_blast(&state.game, -1, pe.pos, pe.damage, pe.radius * 0.3f, pe.radius);
+                        hta_props_blast(&state.wfx.props, pe.pos, pe.damage, pe.radius,
+                                        &state.wfx.rigid, &state.wfx.fx);
+                        hta_fx_burst(&state.wfx.fx, HTA_BURST_SPARKS, pe.pos, NULL, 40);
+                        shake_thunder(&state, 0.8f);
+                    }
+                }
             }
             hta_scene drawscene = state.scene;
             if (state.wfx.ready) {

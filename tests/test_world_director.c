@@ -106,6 +106,52 @@ int main(void)
     /* The frame look never changes what would rebuild the renderer. */
     assert(look.msaa == nofog.msaa && look.post == nofog.post && look.render_scale == nofog.render_scale);
 
+    /* An imported map's breakables become solid props; a bullet event on
+     * one chips it and enough of them break it; its weather applies. */
+    {
+        hta_external_breakable br[2];
+        memset(br, 0, sizeof(br));
+        br[0].min[0] = 4; br[0].min[1] = -0.3f; br[0].min[2] = 0; br[0].max[0] = 4.6f; br[0].max[1] = 0.3f; br[0].max[2] = 0.6f;
+        br[0].material = 0; br[0].health = 30;
+        br[1] = br[0]; br[1].min[1] = 5; br[1].max[1] = 5.6f; br[1].material = 1; br[1].explosive = true;
+        hta_external_map em;
+        memset(&em, 0, sizeof(em));
+        em.breakables = br; em.breakable_count = 2; em.weather = HTA_WEATHER_SNOW; em.weather_intensity = 0.4f;
+        hta_gfx_settings s2;
+        hta_gfx_settings_preset(&s2, HTA_QUALITY_MEDIUM);
+        hta_wfx_free(&w);
+        assert(hta_wfx_init(&w, &col, &s2));
+        hta_wfx_load_map(&w, &em, 30.0f);
+        assert(w.props.count == 2 && w.props.props[0].user == 1 && w.props.props[1].explosive);
+        assert(w.props.props[0].respawn_time == 30.0f && w.props.props[0].max_health == 30.0f);
+        assert(w.weather.kind == HTA_WEATHER_SNOW && fabsf(w.weather.intensity - 0.4f) < 1e-6f);
+        /* Solid: merged into the grid, the ground over it is its top. */
+        hta_collision_instance merged[8];
+        col.instances = merged;
+        col.instance_count = hta_props_instances(&w.props, NULL, 0, merged, 8);
+        float gz;
+        assert(hta_collision_ground(&col, 4.3f, 0, 3, &gz) && fabsf(gz - 0.6f) < 1e-3f);
+        /* A round hits its west face: the event carries the surface normal. */
+        hta_game_event hit;
+        memset(&hit, 0, sizeof(hit));
+        hit.kind = HTA_EV_HIT_WORLD; hit.pos[0] = 4.0f; hit.pos[2] = 0.3f; hit.dir[0] = -1.0f;
+        hta_wfx_game_event(&w, &hit, NULL);
+        assert(!w.props.props[0].broken && w.props.props[0].health < 30.0f);
+        hta_wfx_game_event(&w, &hit, NULL);
+        hta_wfx_game_event(&w, &hit, NULL);
+        assert(w.props.props[0].broken && hta_rigid_active(&w.rigid) > 0);
+        hta_prop_event pe;
+        assert(hta_props_pop(&w.props, &pe) && pe.kind == HTA_PROP_EV_BROKE && w.props.props[pe.prop].user == 1);
+        /* A hit on open ground touches no prop. */
+        hit.pos[0] = -10.0f;
+        hta_wfx_game_event(&w, &hit, NULL);
+        assert(!w.props.props[1].broken && w.props.props[1].health == w.props.props[1].max_health);
+        col.instances = NULL; col.instance_count = 0;
+        /* No map: no props, clear skies. */
+        hta_wfx_load_map(&w, NULL, 0);
+        assert(w.props.count == 0 && w.map_weather == HTA_WEATHER_CLEAR);
+    }
+
     hta_wfx_free(&w);
     hta_collision_free(&col);
     puts("world director OK");

@@ -1781,6 +1781,11 @@ hta_gfx_mesh *hta_gfx_mesh_upload_dynamic_world(hta_gfx *g, const hta_bsp_mesh *
     return upload_mesh(g, mesh, slots, true, err, errlen);
 }
 
+void hta_gfx_mesh_set_draw_mode(hta_gfx_mesh *m, uint32_t submesh, uint8_t mode)
+{
+    if (m && submesh < m->submesh_count) m->submeshes[submesh].draw_mode = mode;
+}
+
 void hta_gfx_mesh_free(hta_gfx *g, hta_gfx_mesh *m)
 {
     if (!g || !m) return;

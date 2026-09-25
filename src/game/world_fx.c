@@ -81,6 +81,38 @@ static void apply_weather(hta_world_fx *w)
     hta_weather_set(&w->weather, k, I > 0.0f ? I : 1.0f, wind);
 }
 
+void hta_wfx_load_map(hta_world_fx *w, const hta_external_map *m, float respawn)
+{
+    if (!w || !w->ready) return;
+    uint32_t chunks = w->props.chunks_per_break;
+    hta_props_free(&w->props);
+    uint32_t n = m ? m->breakable_count : 0;
+    hta_props_init(&w->props, n > 256 ? n : 256);
+    w->props.chunks_per_break = chunks ? chunks : 10;
+    static const hta_rigid_material mat[4] = { HTA_RMAT_WOOD, HTA_RMAT_METAL, HTA_RMAT_CONCRETE, HTA_RMAT_GLASS };
+    for (uint32_t i = 0; i < n; i++) {
+        const hta_external_breakable *b = &m->breakables[i];
+        float c[3], h[3];
+        for (int k = 0; k < 3; k++) {
+            c[k] = 0.5f * (b->min[k] + b->max[k]);
+            h[k] = 0.5f * (b->max[k] - b->min[k]);
+            if (h[k] < 0.02f) h[k] = 0.02f;         /* a flat model still needs a box */
+        }
+        uint32_t p = hta_props_add(&w->props, c, h, 0.0f, mat[b->material < 4 ? b->material : 0],
+                                   b->health, i + 1u);   /* user: the submesh tag */
+        if (p == UINT32_MAX) continue;
+        hta_prop *pr = &w->props.props[p];
+        pr->respawn_time = respawn;
+        pr->explosive = b->explosive;
+        pr->blast_damage = b->blast_damage > 0 ? b->blast_damage : 150.0f;
+        pr->blast_radius = b->blast_radius > 0 ? b->blast_radius : 3.0f;
+    }
+    if (m && m->weather >= 1 && m->weather < HTA_WEATHER_COUNT)
+        hta_wfx_set_map_weather(w, (hta_weather_kind)m->weather, m->weather_intensity);
+    else
+        hta_wfx_set_map_weather(w, HTA_WEATHER_CLEAR, 0.0f);
+}
+
 void hta_wfx_set_map_weather(hta_world_fx *w, hta_weather_kind k, float intensity)
 {
     if (!w) return;
@@ -179,6 +211,19 @@ void hta_wfx_game_event(hta_world_fx *w, const hta_game_event *e, const hta_game
     case HTA_EV_WRECK:
         wreck(w, e->pos);
         break;
+    case HTA_EV_HIT_WORLD: {
+        /* A round that struck a prop: `dir` is the surface normal, so
+         * look back along it for the face that was hit. */
+        if (!w->props.count) break;
+        float o[3] = { e->pos[0] + e->dir[0] * 0.05f, e->pos[1] + e->dir[1] * 0.05f, e->pos[2] + e->dir[2] * 0.05f };
+        float d[3] = { -e->dir[0], -e->dir[1], -e->dir[2] }, t, n[3];
+        uint32_t p;
+        if (hta_props_ray(&w->props, o, d, 0.12f, &p, &t, n)) {
+            float from[3] = { e->pos[0] + e->dir[0], e->pos[1] + e->dir[1], e->pos[2] + e->dir[2] };
+            hta_props_damage(&w->props, p, HTA_WFX_BULLET_DAMAGE, e->pos, from, &w->rigid, &w->fx);
+        }
+        break;
+    }
     case HTA_EV_HIT_UNIT:
         /* A little blood from a hit that got through, at full gore. */
         if (w->gib_level >= 2 && g && e->a >= 0 && (uint32_t)e->a < g->unit_count &&

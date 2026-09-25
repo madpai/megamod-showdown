@@ -24,6 +24,7 @@
 #include "../engine/weather.h"
 #include "../gfx/gfx_settings.h"
 #include "game.h"
+#include "../asset/external_map.h"
 
 struct hta_gfx_mesh;
 
@@ -58,6 +59,13 @@ void hta_wfx_free(hta_world_fx *w);
 void hta_wfx_settings(hta_world_fx *w, const hta_gfx_settings *s);
 /* The map changed (same collision grid object, new contents): clear it all. */
 void hta_wfx_reset(hta_world_fx *w);
+
+/* An imported map's breakables become props (whole, solid, each its own
+ * collision instance) and its weather the map weather. Props respawn after
+ * `respawn` seconds (0: never). Replaces any props already set. */
+void hta_wfx_load_map(hta_world_fx *w, const hta_external_map *m, float respawn);
+/* Damage per bullet to a prop, ours. */
+#define HTA_WFX_BULLET_DAMAGE 12.0f
 
 /* The map's own weather (from its package) and the player's choice. */
 void hta_wfx_set_map_weather(hta_world_fx *w, hta_weather_kind k, float intensity);
