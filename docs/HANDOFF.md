@@ -16,7 +16,7 @@ Trial data there): **merge it into `halo-sandbox`, run `verify.sh` with
 `HTA_MAP`, publish, then test** -- see CURRENT TESTING OBJECTIVE.
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Branches -- read this first:**
-- `halo-sandbox` is **MEGAMOD SHOWDOWN**. Push this branch only to private
+- `halo-sandbox` is **MEGAMOD SHOWDOWN**. Push this branch only to public
   remote `megamod`, as `main`; never push it to Open Halo's public `origin`.
   Its sideload page is port 8733. LAN builds must match protocol versions.
 - `fp-animated-guns` -> GitHub `main`: **strictly Halo**. The owner said
