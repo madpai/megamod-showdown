@@ -184,6 +184,37 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-25 PC joiner and private map review.** Cloud commits `8b7162b`
+and `f5a32e0` are merged and pushed to `megamod/main`. Verification passed
+80/80 with the owner's Trial data. `scripts/test_join.sh` connected the PC
+joiner to the fake host with the real Trial map and de_dust2 package; it saw
+three gibbed kills and five broken props.
+
+Six owner maps were re-imported with Asset Lab `--lightmaps`. Every v2
+package loaded and every spawn was usable, but same-spawn renders were
+37–52% darker than the bundled maps. Several had abrupt dark lighting edges.
+All six v2 packages remain private beside their old packages for follow-up;
+**none passed the lighting gate, so none replaces a bundled map in this
+phone build.** The phone's imported maps still have no newly added
+breakables, breakable windows, map weather, or baked lighting. The candidate
+features and measured spawn brightness are:
+
+| Map | Props | Breakable brushes/windows | Weather | Lightmap pages | Usable spawns | Brightness change |
+|---|---:|---:|---|---:|---:|---:|
+| de_dust2 | 75 | 0 | none | 2 | 40/40 | -52% |
+| cs_office | 226 | 14 windows | none | 2 | 40/40 | -47% |
+| de_aztec | 16 | 0 | rain | 3 | 40/40 | -37% |
+| cs_compound | 113 | 7, including 3 windows | none | 2 | 33/33 | -42% |
+| ctf_2fort | 14 | 0 | none | 6 | 32/32 | -48% |
+| gm_construct | 4 | 0 | none | 3 | 33/33 | -45% |
+
+**Next phone checks:** Test 10 below: join a phone-hosted LAN match from the
+PC with `megamod-join` and confirm both sides see movement, shots, and
+effects. For an imported map, use the same package on both devices. When a
+v2 map eventually replaces a bundled map, every LAN guest needs that new
+package; the map check refuses the old one. Breakable windows and map rain
+are candidate features only, pending a lighting fix and another host review.
+
 **Owner feedback, 2026-09-25:** "all seems to work fine for this session."
 This is a broad phone report on the published v9 build `ac90e21`, not a
 separate pass/fail record for every item below. No defects were reported.
@@ -193,13 +224,13 @@ checksums matched. Host verification was 80/80 with Trial data, Asset Lab
 usable host spawns. The code and documentation are pushed to their public
 repositories; Trial data and converted packages remain private.
 
-**Next device objective:** On a future build that bundles an OALMAP v2 map,
-compare its indoor baked-lightmap brightness with the current v1 map on the
-phone. The v2 McRonalds package passed host rendering but is not bundled, so
-there is no phone result for it. For any new LAN build, repeat a short v9
-host/join check with both phones on the same version and matching imported
-packages. The detailed v9 checklist below is a regression reference; do not
-infer that each case was individually exercised from the broad report.
+**Earlier next-device objective:** A v2 McRonalds package passed host
+rendering but was not bundled. The six active maps were then checked above
+and retained as v1 because of the measured lighting loss. For any new LAN
+build, repeat a short v9 host/join check with both phones on the same
+version and matching imported packages. The detailed v9 checklist below is
+a regression reference; do not infer that each case was individually
+exercised from the broad report.
 
 **2026-09-25 LAN v9 local verification.** The second cloud pass is on
 `halo-sandbox`. The full gate passed 80/80 with the owner's Trial data;
