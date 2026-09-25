@@ -184,6 +184,15 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-25 loop extraction stage 1 phone check.** On the newly published
+personal build, first play one normal solo or hosted round on a familiar
+map (test 11 below). Movement, combat, bots, scoring, respawn and the round
+ending should behave as before this refactor. Report any crash or changed
+match behaviour, including the map and action that triggered it. Then
+continue the map and LAN checks below if that round is normal. Stage 1
+only moved match state into `hta_session`; it intentionally adds no game
+feature. The existing LAN package match rule still applies.
+
 **2026-09-25 lit office comparison.** The six canonical bundled maps remain
 unlit and contain the breakables, windows and map rain listed below. Exactly
 one additional package, `cs_office_lit.oalmap`, appears in the menu as
