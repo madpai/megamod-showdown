@@ -184,6 +184,17 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-25 SEND REPORT and dedicated server build.** First pause a
+normal match and tap SEND REPORT (test 12). The pause screen should say
+REPORT SENT; the server should receive a report with frame, video, device,
+audio and network measurements. If the button fails or the report is
+missing, note the message on screen and whether the phone can reach the
+Tailscale sideload page. Next, if desired, JOIN the desktop's scripted
+`megamod-server` on its printed 100.x address (test 13). It should show a
+stand-in match with four scripted bots; this tests reachability, not the
+real headless match. Keep test 11's normal-round regression check in this
+build too. LAN guests still need the same build and map packages.
+
 **2026-09-25 loop extraction stage 1 phone check.** On the newly published
 personal build, first play one normal solo or hosted round on a familiar
 map (test 11 below). Movement, combat, bots, scoring, respawn and the round
