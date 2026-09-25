@@ -118,7 +118,7 @@ else()
     # Host offscreen renderer: needs Vulkan loader + headers on the host.
     find_package(Vulkan QUIET)
     if(Vulkan_FOUND)
-        add_library(hta_gfx_host STATIC src/gfx/gfx_vulkan.c src/platform/platform_posix.c)
+        add_library(hta_gfx_host STATIC src/gfx/gfx_vulkan.c src/gfx/gfx_settings.c src/platform/platform_posix.c)
         target_include_directories(hta_gfx_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${Vulkan_INCLUDE_DIRS})
         target_link_libraries(hta_gfx_host PUBLIC ${Vulkan_LIBRARIES} m)
         target_compile_options(hta_gfx_host PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
@@ -135,6 +135,13 @@ else()
         target_link_libraries(open-halo-map-test PRIVATE hta_engine hta_gfx_host m)
         add_executable(open-halo-asset-test src/tools/open_halo_asset_test.c)
         target_link_libraries(open-halo-asset-test PRIVATE hta_engine hta_gfx_host m)
+
+        # The renderer's own pictures, on a synthetic scene. Skips (77)
+        # when there is no Vulkan device; lavapipe is enough.
+        add_executable(test_gfx_render tests/test_gfx_render.c)
+        target_link_libraries(test_gfx_render PRIVATE hta_gfx_host hta_engine m)
+        add_test(NAME gfx_render COMMAND test_gfx_render)
+        set_tests_properties(gfx_render PROPERTIES SKIP_RETURN_CODE 77)
 
         add_executable(htaview src/tools/htaview.c)
         target_link_libraries(htaview PRIVATE hta_engine hta_gfx_host m)
