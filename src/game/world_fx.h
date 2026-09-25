@@ -64,6 +64,11 @@ void hta_wfx_reset(hta_world_fx *w);
  * collision instance) and its weather the map weather. Props respawn after
  * `respawn` seconds (0: never). Replaces any props already set. */
 void hta_wfx_load_map(hta_world_fx *w, const hta_external_map *m, float respawn);
+/* A vehicle at `pos` (bounding radius, speed in wu/s) runs into props:
+ * vehicles do not collide with props (their terrain queries leave
+ * instances out), so a prop they overlap breaks instead, thrown ahead.
+ * Below a walking pace nothing happens. */
+void hta_wfx_ram(hta_world_fx *w, const float pos[3], const float vel[3], float radius);
 /* Damage per bullet to a prop, ours. */
 #define HTA_WFX_BULLET_DAMAGE 12.0f
 

@@ -7610,6 +7610,14 @@ void android_main(struct android_app *app)
                     state.col_merged, (uint32_t)(sizeof(state.col_merged) / sizeof(state.col_merged[0])));
                 state.col.instances = state.col_merged;
             }
+            /* Cars smash props they drive into (they do not collide). */
+            for (uint32_t i = 0; state.wfx.props.count && state.vehicles.loaded && i < state.vehicles.count; i++) {
+                const hta_vehicle *car = &state.vehicles.cars[i];
+                if (!car->active) continue;
+                float sp = hta_vehicles_speed(&state.vehicles, i);
+                float v3[3] = { cosf(car->yaw) * sp, sinf(car->yaw) * sp, 0.0f };
+                hta_wfx_ram(&state.wfx, car->pos, v3, car->body_radius > 0.1f ? car->body_radius : 1.0f);
+            }
             /* What broke or came back: hide or show its triangles, and an
              * explosive one is a real blast (the host's game hurts people). */
             {

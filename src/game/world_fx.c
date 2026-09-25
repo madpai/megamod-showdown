@@ -113,6 +113,23 @@ void hta_wfx_load_map(hta_world_fx *w, const hta_external_map *m, float respawn)
         hta_wfx_set_map_weather(w, HTA_WEATHER_CLEAR, 0.0f);
 }
 
+void hta_wfx_ram(hta_world_fx *w, const float pos[3], const float vel[3], float radius)
+{
+    if (!w || !w->ready || !w->props.count || !pos || !vel) return;
+    float sp = sqrtf(vel[0]*vel[0] + vel[1]*vel[1] + vel[2]*vel[2]);
+    if (sp < 1.0f) return;                   /* ours: faster than a walk */
+    for (uint32_t i = 0; i < w->props.count; i++) {
+        hta_prop *p = &w->props.props[i];
+        if (p->broken) continue;
+        float d[3] = { p->centre[0]-pos[0], p->centre[1]-pos[1], p->centre[2]-pos[2] };
+        float reach = radius + fmaxf(p->half[0], p->half[1]);
+        if (d[0]*d[0] + d[1]*d[1] > reach * reach || fabsf(d[2]) > radius + p->half[2]) continue;
+        /* Broken from behind the car, so the pieces fly on ahead of it. */
+        float from[3] = { p->centre[0] - vel[0] / sp, p->centre[1] - vel[1] / sp, p->centre[2] };
+        hta_props_damage(&w->props, i, sp * 60.0f, p->centre, from, &w->rigid, &w->fx);
+    }
+}
+
 void hta_wfx_set_map_weather(hta_world_fx *w, hta_weather_kind k, float intensity)
 {
     if (!w) return;

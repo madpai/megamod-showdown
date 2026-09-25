@@ -234,6 +234,10 @@ Known risks in this build, most likely first:
   chunks. Props break per device (the host's decides damage).
 - Bots' nav grid does not know about props: a bot may walk into a crate
   until it breaks.
+- Vehicles do not collide with props (vehicle terrain queries leave
+  collision instances out); a car faster than a walk smashes any prop it
+  overlaps instead (`hta_wfx_ram`, 60 damage per wu/s, ours). Worth a
+  look: does ramming a crate feel right?
 
 Previous checkpoint (2026-09-24), still worth covering:
 

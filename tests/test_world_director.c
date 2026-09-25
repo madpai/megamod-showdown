@@ -147,6 +147,16 @@ int main(void)
         hta_wfx_game_event(&w, &hit, NULL);
         assert(!w.props.props[1].broken && w.props.props[1].health == w.props.props[1].max_health);
         col.instances = NULL; col.instance_count = 0;
+        /* A car at speed through the second (explosive) prop breaks it;
+         * at a crawl, nothing. */
+        float car[3] = { 4.3f, 5.3f, 0.3f }, slow[3] = { 0.5f, 0, 0 }, fast[3] = { 6.0f, 0, 0 };
+        hta_wfx_ram(&w, car, slow, 0.8f);
+        assert(!w.props.props[1].broken);
+        hta_wfx_ram(&w, car, fast, 0.8f);
+        assert(w.props.props[1].broken);
+        bool boom = false;
+        while (hta_props_pop(&w.props, &pe)) boom |= pe.kind == HTA_PROP_EV_EXPLODED;
+        assert(boom);
         /* No map: no props, clear skies. */
         hta_wfx_load_map(&w, NULL, 0);
         assert(w.props.count == 0 && w.map_weather == HTA_WEATHER_CLEAR);
