@@ -53,10 +53,9 @@ int main(void)
         char hb[1024];
         hta_json hj;
         hta_json_init(&hj, hb, sizeof(hb));
-        hta_json_object(&hj, NULL);
         hta_json_hitches(&hj, "hitches", &fs);
         size_t hn = hta_json_finish(&hj);
-        assert(hj.ok && hn > 0);
+        assert(hj.ok && hn > 0 && valid_json(hb) && hb[0] == '{' && hb[1] == '"');
         assert(strstr(hb, "\"frame\":3023") && strstr(hb, "\"ms\":400"));  /* oldest kept, newest */
         assert(!strstr(hb, "\"frame\":3022}"));
     }

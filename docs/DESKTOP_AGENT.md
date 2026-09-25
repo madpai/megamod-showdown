@@ -71,6 +71,16 @@ by the agent that made them.
 | 6 | **Harness**: headless, `--script`, `--control`, `--events`, `--report`, `--record`/`--replay`, sanitizer build | -- | agents test locally and in CI |
 | 7 | **Playtests in CI** and a `playtest` skill for agents | -- | every push plays a match |
 
+**Status 2026-09-25: the harness exists, in `megamod-sandbox`.**
+`src/app/agent.{h,c}` (event log, control channel, request parser;
+`tests/test_agent.c`), wired into the sandbox with `--headless`,
+`--no-render`, `--control`, `--events`, `--report`, `--seconds`; `step` and
+`input` block until their frames have run. `tests/playtest/sandbox_barrels.py`
+drives it like an agent (aim, grenade, walk; checks state, report and
+events) and runs in ctest as `playtest_sandbox` with no GPU. The
+`playtest` skill says how to use it. Not yet: `--script` files, record /
+replay, `--netsim`, the sanitizer build, and the harness in `megamod-join`.
+
 Steps 6-7 can start partly before 5: `megamod-sandbox` and `megamod-join`
 already run headless (`--demo`, `--shot`) and can grow `--events`,
 `--control` and `--report` first, so the harness is proven before the
