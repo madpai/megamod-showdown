@@ -1,0 +1,27 @@
+# megamod-server configuration (docs/DEDICATED_SERVER.md). Every key, with
+# its default. Check it: build-host/megamod-server --config <this> --check
+
+name = Megamod Server          # 23 characters at most: what LAN browsers show
+motd =
+bind = tailscale               # tailscale | lan | all | an IPv4 address
+port = 32270
+max_players = 8                # 2..8
+password =                     # protocol v10: parsed, not enforced yet
+
+maps = bloodgulch              # rotation, e.g.: bloodgulch, de_dust2, cs_office
+map_dir = /home/commander/assetlab-private/bundle
+trial_dir = /home/commander/halo-trial-data/extract/maps
+
+mode = slayer                  # slayer | team | ctf
+score_limit = 0                # 0: the mode's default
+time_limit = 0                 # minutes, 0: none
+respawn = 5                    # seconds
+bots = 3                       # 0..15
+bot_skill = standard           # casual | standard | aggressive | brutal
+spawn_protect = 3              # seconds
+classes = off
+duplicate_heroes = off
+
+tick_rate = 60                 # simulation steps per second
+status_file = /tmp/megamod-server.json
+sim = match                    # match (needs stages S1-S3) | scripted (test networking now)

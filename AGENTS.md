@@ -15,6 +15,7 @@ to any agent -- read the one that matches the task:
 | Put a build on the owner's phone | `.claude/skills/publish/SKILL.md` |
 | Convert or re-import a map | `.claude/skills/convert-map/SKILL.md` |
 | Read what the phone measured (SEND REPORT, crashes) | `.claude/skills/read-report/SKILL.md` |
+| Run / extend the dedicated server | `docs/DEDICATED_SERVER.md` |
 
 Match state goes in `src/app/session.h` (`HTA_SESSION_FIELDS`), Android-only
 state in `hta_android` after the union (see merge-branch for conflicts).

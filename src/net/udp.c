@@ -8,14 +8,19 @@
 
 bool hta_udp_open(hta_udp *s, uint16_t port)
 {
+    return hta_udp_open_bind(s,NULL,port);
+}
+bool hta_udp_open_bind(hta_udp *s, const char *ip, uint16_t port)
+{
     if (!s) return false;
     s->fd=-1;
-    int fd=socket(AF_INET,SOCK_DGRAM,0);
-    if (fd<0) return false;
-    int flags=fcntl(fd,F_GETFL,0);
     struct sockaddr_in bind_addr={0};
     bind_addr.sin_family=AF_INET; bind_addr.sin_addr.s_addr=htonl(INADDR_ANY);
     bind_addr.sin_port=htons(port);
+    if (ip && ip[0] && inet_pton(AF_INET,ip,&bind_addr.sin_addr)!=1) return false;
+    int fd=socket(AF_INET,SOCK_DGRAM,0);
+    if (fd<0) return false;
+    int flags=fcntl(fd,F_GETFL,0);
     if (flags<0 || fcntl(fd,F_SETFL,flags|O_NONBLOCK)<0 ||
         bind(fd,(struct sockaddr *)&bind_addr,sizeof(bind_addr))<0) {
         close(fd); return false;

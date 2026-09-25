@@ -393,6 +393,19 @@ are this pass.
 >    any crash, reopening the app sends a crash report on its own. The
 >    guest APK saves reports on the phone only (no server in its build).
 
+> 13. **Dedicated server reachability** (optional, desktop + phone): on the
+>    desktop, `build-host/megamod-server --config <cfg>` with `bind = tailscale`
+>    and `sim = scripted` (scripts/server.cfg.example). On the phone, JOIN and
+>    type the desktop's 100.x address. Expect to spawn among 4 scripted bots
+>    that die and gib; the status file lists the phone. This proves binding and
+>    Tailscale reach only -- the real match on a server is stages S1-S3.
+
+**Dedicated server:** `megamod-server --config server.cfg` (docs/DEDICATED_SERVER.md).
+Today it binds, advertises and serves a scripted match (`sim = scripted`) to
+test phones and the PC over LAN or Tailscale; the real match needs stages
+S1-S3 (host networking, loading without a GPU, the tick) moved out of
+platform_android.c -- one phone check per stage.
+
 **For agents adding state to `hta_android`:** since stage 1, match state is
 declared in `src/app/session.h` (`HTA_SESSION_FIELDS`); Android-only state
 (window, touch, JNI) after the union in `hta_android`. On a merge conflict

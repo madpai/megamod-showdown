@@ -110,6 +110,13 @@ before the next, each leaving Android working.
 Stages 1 and 2 are mechanical and the right next step. Each is one
 publish and one phone test. Do not merge stages to save a publish.
 
+## The dedicated server
+
+`megamod-server` (headless, cross-platform, LAN / Tailscale / internet)
+drives stages 2-5 from the host's side: docs/DEDICATED_SERVER.md has its
+stages S1-S3, which are the host half of this plan in the order a server
+needs them.
+
 ## What stays out of the engine
 
 - Halo tag knowledge stays in `asset/` and in `game/` where it names tags.

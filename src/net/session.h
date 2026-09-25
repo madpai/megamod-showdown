@@ -96,6 +96,8 @@ typedef struct {
 } hta_net_client;
 
 bool hta_net_server_open(hta_net_server *s, uint16_t port);
+/* Listening on one address only (NULL: all), e.g. the Tailscale address. */
+bool hta_net_server_open_bind(hta_net_server *s, const char *ip, uint16_t port);
 void hta_net_server_close(hta_net_server *s);
 /* Nonblocking bounded drain; now is monotonic seconds supplied by caller. */
 void hta_net_server_pump(hta_net_server *s, double now);

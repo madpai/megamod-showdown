@@ -1,0 +1,17 @@
+# systemd user unit for the dedicated server. Install:
+#   cp scripts/megamod-server.service.example ~/.config/systemd/user/megamod-server.service
+#   systemctl --user daemon-reload && systemctl --user enable --now megamod-server
+# With bind = tailscale, it waits for tailscaled's address (it exits and
+# systemd retries until the tailnet is up).
+[Unit]
+Description=Megamod Showdown dedicated server
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+ExecStart=%h/projects/halo-trial-android/build-host/megamod-server --config %h/megamod-server.cfg
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

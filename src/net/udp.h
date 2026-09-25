@@ -8,6 +8,9 @@
 typedef struct { int fd; } hta_udp;
 typedef struct { struct sockaddr_storage addr; socklen_t len; } hta_udp_addr;
 bool hta_udp_open(hta_udp *s, uint16_t port);
+/* The same, listening on one IPv4 address only (NULL or "" for all): a
+ * server kept to the LAN or to Tailscale binds to that interface's address. */
+bool hta_udp_open_bind(hta_udp *s, const char *ip, uint16_t port);
 bool hta_udp_resolve(hta_udp_addr *a, const char *host, uint16_t port);
 void hta_udp_close(hta_udp *s);
 /* -1 means no packet or socket error; callers drain a bounded number/frame. */

@@ -26,10 +26,14 @@ static bool send_packet(hta_udp *u, const hta_udp_addr *to, hta_net_stats *stats
 
 bool hta_net_server_open(hta_net_server *s, uint16_t port)
 {
+    return hta_net_server_open_bind(s,NULL,port);
+}
+bool hta_net_server_open_bind(hta_net_server *s, const char *ip, uint16_t port)
+{
     if (!s) return false;
     memset(s,0,sizeof(*s)); s->udp.fd=-1;
     s->info.max_players=HTA_NET_MAX_PLAYERS;
-    return hta_udp_open(&s->udp,port);
+    return hta_udp_open_bind(&s->udp,ip,port);
 }
 void hta_net_server_close(hta_net_server *s)
 { if (s) hta_udp_close(&s->udp); }
