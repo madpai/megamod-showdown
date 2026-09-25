@@ -50,6 +50,63 @@ int main(int argc, char **argv)
     CHECK(hta_nav_nearest(&nav, (float[3]){0,0,0}, 1.0f) == HTA_NAV_NONE,
           "an empty grid has no nearest node");
 
+    /* No game data: a flat floor with a crate wall across the middle.
+     * Paths and straight lines go round it while it stands and through
+     * where it stood once it breaks. */
+    {
+        static hta_vertex V[6];
+        static uint32_t I[6];
+        const float q[6][3] = { {-5,-5,0}, {5,-5,0}, {5,5,0}, {-5,-5,0}, {5,5,0}, {-5,5,0} };
+        for (int i = 0; i < 6; i++) { memset(&V[i], 0, sizeof(V[i])); memcpy(V[i].pos, q[i], 12); I[i] = (uint32_t)i; }
+        hta_bsp_mesh m;
+        memset(&m, 0, sizeof(m));
+        m.vertices = V; m.vertex_count = 6; m.indices = I; m.index_count = 6;
+        m.bounds_min[0] = m.bounds_min[1] = -5; m.bounds_max[0] = m.bounds_max[1] = 5; m.bounds_max[2] = 1;
+        hta_collision col;
+        CHECK(hta_collision_build(&col, &m), "floor collision");
+        static hta_nav fl;
+        hta_nav_params fp = { 0.175f, 0.7f, 0.7f, 1.0f, HTA_NAV_CELL };
+        CHECK(hta_nav_build(&fl, &col, m.bounds_min, m.bounds_max, &fp, err, sizeof(err)), "floor grid builds");
+        uint32_t a = hta_nav_nearest(&fl, (float[3]){-3,0,0}, 1.0f), b = hta_nav_nearest(&fl, (float[3]){3,0,0}, 1.0f);
+        CHECK(a != HTA_NAV_NONE && b != HTA_NAV_NONE && hta_nav_straight(&fl, a, b), "open floor: straight across");
+        hta_props P;
+        hta_props_init(&P, 4);
+        uint32_t crate = hta_props_add(&P, (float[3]){0,0,0.5f}, (float[3]){0.3f,1.5f,0.5f}, 0, HTA_RMAT_WOOD, 0, 1);
+        CHECK(hta_nav_sync_props(&fl, &P, fp.radius) && fl.blocked_nodes > 10, "a whole crate blocks nodes");
+        CHECK(!hta_nav_sync_props(&fl, &P, fp.radius), "an unchanged crate needs no resync");
+        CHECK(!hta_nav_straight(&fl, a, b), "no straight line through the crate");
+        uint32_t path[256];
+        uint32_t len = hta_nav_path(&fl, a, b, path, 256, 100000);
+        bool around = len > 2;
+        for (uint32_t i = 0; i < len; i++) {
+            float p[3];
+            hta_nav_pos(&fl, path[i], p);
+            if (fabsf(p[0]) < 0.3f && fabsf(p[1]) < 1.5f) around = false;
+            if (hta_nav_is_blocked(&fl, path[i])) around = false;
+        }
+        CHECK(around, "the path goes round the crate");
+        /* A goal inside the crate's padding is still reachable. */
+        uint32_t near = hta_nav_nearest(&fl, (float[3]){-0.4f,0,0}, 0.5f);
+        CHECK(near != HTA_NAV_NONE && hta_nav_is_blocked(&fl, near) &&
+              hta_nav_path(&fl, a, near, path, 256, 100000) > 1, "a blocked goal is reached");
+        /* A field steers round it too. */
+        uint32_t *next = malloc(fl.node_count * sizeof(uint32_t));
+        hta_nav_field(&fl, b, next);
+        len = hta_nav_field_path(&fl, next, a, path, 256);
+        around = len > 2 && path[len - 1] == b;
+        for (uint32_t i = 0; i < len; i++) if (hta_nav_is_blocked(&fl, path[i])) around = false;
+        CHECK(around, "a field goes round the crate");
+        free(next);
+        /* Broken: the way is open again. */
+        P.props[crate].health = 0.0f;
+        hta_props_damage(&P, crate, 1000, P.props[crate].centre, (float[3]){-3,0,0.5f}, NULL, NULL);
+        CHECK(P.props[crate].broken && hta_nav_sync_props(&fl, &P, fp.radius) && fl.blocked_nodes == 0 &&
+              hta_nav_straight(&fl, a, b), "a broken crate unblocks");
+        hta_props_free(&P);
+        hta_nav_free(&fl);
+        hta_collision_free(&col);
+    }
+
     if (argc < 2) {
         printf("\n  skip: pass bloodgulch.map\n");
         printf("\n%d checks, %d failures\n", checks, failures);

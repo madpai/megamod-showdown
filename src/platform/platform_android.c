@@ -2666,6 +2666,17 @@ static void feed_push(hta_android *s, const char *text)
     hta_log("[game] %s", text);
 }
 
+
+/* Bots walk round whole props and through where they stood: the nav grid
+ * follows the props whenever one breaks or comes back. A CTF stand field
+ * is worked out at the start, so sync just before it too. */
+static void nav_props(hta_android *s)
+{
+    bool first = s->nav.props_version == 0;
+    if (s->nav.built && s->wfx.ready &&
+        hta_nav_sync_props(&s->nav, &s->wfx.props, s->game.phys.radius) && first && s->nav.blocked_nodes)
+        hta_log("[nav] %u nodes under %u props", s->nav.blocked_nodes, s->wfx.props.count);
+}
 static void start_game(hta_android *s)
 {
     char err[HTA_ERRLEN];
@@ -2828,6 +2839,7 @@ static void start_game(hta_android *s)
         s->net.map_crc=crc;
         if (s->net_hosting) s->host_server.map_crc=crc;
     }
+    nav_props(s);
     hta_game_start(&s->game);
     s->world_round = 1;
     /* Every round's contrail, once: the roster's and the pools'. */
@@ -7441,6 +7453,7 @@ void android_main(struct android_app *app)
             if ((!state.net_enabled || state.net_hosting) && state.over_timer > 0.0f) {
                 state.over_timer -= dt;
                 if (state.over_timer <= 0.0f) {
+                    nav_props(&state);
                     hta_game_start(&state.game);
                     if (state.net_hosting) state.world_round++;
                     if (!state.dead) respawn(&state);
@@ -7645,6 +7658,7 @@ void android_main(struct android_app *app)
             }
             /* A LAN client breaks and rebuilds props only as the host says. */
             state.wfx.props.remote = state.net_enabled && !state.net_hosting;
+            nav_props(&state);
             /* Props are solid while whole: their instances ride with the
              * vehicles' in the grid everyone collides with. */
             if (state.wfx.ready && state.wfx.props.count) {

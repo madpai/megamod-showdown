@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+static uint32_t g_props_version;
+static void bump(hta_props *p) { if (!++g_props_version) ++g_props_version; p->version = g_props_version; }
+
 /* Health per material, in the game's damage points (a Spartan has 75 of
  * shield and health together). OURS: a crate takes a few rifle rounds, a
  * concrete block wants a grenade. */
@@ -22,6 +25,7 @@ bool hta_props_init(hta_props *p, uint32_t cap)
 {
     if (!p) return false;
     memset(p, 0, sizeof(*p));
+    bump(p);
     if (!cap) return true;
     /* Fixed arrays: instances point at props' grids, so nothing may move. */
     p->props = calloc(cap, sizeof(hta_prop));
@@ -101,6 +105,7 @@ uint32_t hta_props_add(hta_props *p, const float centre[3], const float half[3],
     pr->inst = &p->instances[i];
     place(pr);
     p->count++;
+    bump(p);
     return i;
 }
 
@@ -181,6 +186,7 @@ static void shatter(hta_props *p, uint32_t i, const float from[3], float force,
 static void respawn(hta_props *p, uint32_t i)
 {
     hta_prop *pr = &p->props[i];
+    bump(p);
     pr->broken = false;
     pr->health = pr->max_health;
     pr->inst->active = true;
@@ -191,6 +197,7 @@ static bool breaks(hta_props *p, uint32_t i, const float from[3], float force,
                    hta_rigid_world *w, hta_fx *fx, bool quiet)
 {
     hta_prop *pr = &p->props[i];
+    bump(p);
     pr->broken = true;
     pr->inst->active = false;
     pr->respawn_in = pr->respawn_time;

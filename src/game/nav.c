@@ -29,6 +29,8 @@ static const int DIAG_B[8] = { -1, -1, -1, -1, 1, 2, 3, 0 };
 /* How much a car's path search overweights the distance still to go. */
 #define NAV_CAR_GREED 2.0f
 
+static uint32_t column(const hta_nav *n, int cx, int cy);
+
 void hta_nav_free(hta_nav *n)
 {
     if (!n) return;
@@ -39,7 +41,71 @@ void hta_nav_free(hta_nav *n)
     free(n->parent);
     free(n->heap);
     free(n->stamp);
+    free(n->blocked);
     memset(n, 0, sizeof(*n));
+}
+
+uint32_t hta_nav_block_box(hta_nav *n, const float centre[3], const float half[3],
+                           float yaw, float pad, int delta)
+{
+    if (!n || !n->built || !centre || !half || !delta || !n->node_count) return 0;
+    if (!n->blocked) {
+        if (delta < 0) return 0;
+        n->blocked = (uint8_t *)calloc(n->node_count, 1);
+        if (!n->blocked) return 0;
+    }
+    float c = cosf(yaw), s = sinf(yaw);
+    float ex = half[0] + pad, ey = half[1] + pad;
+    /* The box's footprint, grown, as a world-axis rectangle of columns. */
+    float rx = fabsf(c) * ex + fabsf(s) * ey, ry = fabsf(s) * ex + fabsf(c) * ey;
+    int x0 = (int)floorf((centre[0] - rx - n->min[0]) / n->cell);
+    int x1 = (int)floorf((centre[0] + rx - n->min[0]) / n->cell);
+    int y0 = (int)floorf((centre[1] - ry - n->min[1]) / n->cell);
+    int y1 = (int)floorf((centre[1] + ry - n->min[1]) / n->cell);
+    float bottom = centre[2] - half[2], top = centre[2] + half[2];
+    uint32_t touched = 0;
+    for (int cy = y0; cy <= y1; cy++)
+        for (int cx = x0; cx <= x1; cx++) {
+            uint32_t ci = column(n, cx, cy);
+            if (ci == HTA_NAV_NONE) continue;
+            /* The column's centre, in the box's frame. */
+            float wx = n->min[0] + ((float)cx + 0.5f) * n->cell - centre[0];
+            float wy = n->min[1] + ((float)cy + 0.5f) * n->cell - centre[1];
+            float lx = c * wx + s * wy, ly = -s * wx + c * wy;
+            if (fabsf(lx) > ex || fabsf(ly) > ey) continue;
+            for (uint32_t j = n->col_start[ci]; j < n->col_start[ci + 1u]; j++) {
+                /* A floor under the box, give or take a step: it stands
+                 * there. A floor well above or below it is another storey. */
+                if (n->nodes[j].z < bottom - 0.3f || n->nodes[j].z > top) continue;
+                uint8_t *b = &n->blocked[j];
+                if (delta > 0) {
+                    if (*b == 0) n->blocked_nodes++;
+                    if (*b < 255u) (*b)++;
+                } else if (*b) {
+                    if (--(*b) == 0) n->blocked_nodes--;
+                }
+                touched++;
+            }
+        }
+    return touched;
+}
+
+void hta_nav_unblock_all(hta_nav *n)
+{
+    if (!n || !n->blocked) return;
+    memset(n->blocked, 0, n->node_count);
+    n->blocked_nodes = 0;
+}
+
+bool hta_nav_sync_props(hta_nav *n, const hta_props *p, float pad)
+{
+    if (!n || !n->built || !p || n->props_version == p->version) return false;
+    hta_nav_unblock_all(n);
+    for (uint32_t i = 0; i < p->count; i++)
+        if (!p->props[i].broken)
+            hta_nav_block_box(n, p->props[i].centre, p->props[i].half, p->props[i].yaw, pad, 1);
+    n->props_version = p->version;
+    return true;
 }
 
 static bool blocked(const hta_collision *c, const float a[3], const float b[3])
@@ -445,7 +511,7 @@ uint32_t hta_nav_path_wide(hta_nav *n, uint32_t from, uint32_t to,
         const hta_nav_node *a = &n->nodes[cur];
         for (int d = 0; d < 8; d++) {
             uint32_t nb = a->link[d];
-            if (nb == HTA_NAV_NONE) continue;
+            if (nb == HTA_NAV_NONE || (nb != to && hta_nav_is_blocked(n, nb))) continue;
             const hta_nav_node *b = &n->nodes[nb];
             float cost = step_cost(n, a, b, d);
             if (b->clear < clear) {
@@ -510,6 +576,9 @@ uint32_t hta_nav_field(hta_nav *n, uint32_t goal, uint32_t *next)
         for (int d = 0; d < 8; d++) {
             uint32_t nb = c->link[d];
             if (nb == HTA_NAV_NONE) continue;
+            /* A blocked node is never on the way; it still learns its way
+             * out, so a bot standing in one's padding is not lost. */
+            if (hta_nav_is_blocked(n, cur) && cur != goal) continue;
             const hta_nav_node *b = &n->nodes[nb];
             int back = -1;
             for (int k = 0; k < 8; k++) if (b->link[k] == cur) { back = k; break; }
@@ -565,6 +634,7 @@ static bool straight(const hta_nav *n, uint32_t a, uint32_t b, uint8_t clear)
         for (uint32_t j = n->col_start[ci]; j < n->col_start[ci + 1u]; j++) {
             const hta_nav_node *nd = &n->nodes[j];
             if ((nd->flags & HTA_NAV_NEAR_WALL) || nd->clear < clear) continue;
+            if (n->blocked && n->blocked[j]) continue;
             if (fabsf(nd->z - z) <= 0.22f) { z = nd->z; ok = true; break; }
         }
         if (!ok) return false;

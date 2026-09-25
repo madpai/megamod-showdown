@@ -23,6 +23,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "../engine/player.h"
+#include "../engine/props.h"
 
 /* Grid spacing, in world units. Ours: one biped radius (0.175 wu) would
  * give two cells a body and a million nodes; a whole body width gives a
@@ -68,6 +69,13 @@ typedef struct {
     uint32_t *stamp;         /* search generation a node was touched in */
     uint32_t  generation;
     bool      built;
+
+    /* Nodes something placed in the world stands on: a whole crate, a
+     * barrel. A count per node (props can overlap), NULL until the first
+     * block. Searches, fields and straight lines go around them. */
+    uint8_t  *blocked;
+    uint32_t  blocked_nodes;
+    uint32_t  props_version;  /* of the hta_props last synced; 0 = never */
 } hta_nav;
 
 typedef struct {
@@ -146,6 +154,25 @@ uint32_t hta_nav_random_wide(const hta_nav *n, uint32_t *rng, uint8_t clear);
  * other key, version or size is refused and the caller builds afresh. */
 bool hta_nav_save(const hta_nav *n, const char *path, uint32_t key);
 bool hta_nav_load(hta_nav *n, const char *path, uint32_t key);
+
+/* ---- Things in the way. ----
+ * The grid is the static world's. Whole destructible props stand on it:
+ * block or unblock (delta +1/-1) every node whose column lies inside the
+ * box grown by `pad` (the biped's radius) and whose floor is within the
+ * box's height. A search never enters a blocked node except as its goal;
+ * the start may be blocked (a bot pressed against a crate walks out).
+ * Returns the nodes touched. */
+uint32_t hta_nav_block_box(hta_nav *n, const float centre[3], const float half[3],
+                           float yaw, float pad, int delta);
+/* Clear every block. */
+void hta_nav_unblock_all(hta_nav *n);
+/* Blocks exactly the whole props, if they changed since the last sync
+ * (hta_props.version). Cheap to call every frame. True if it resynced. */
+bool hta_nav_sync_props(hta_nav *n, const hta_props *p, float pad);
+static inline bool hta_nav_is_blocked(const hta_nav *n, uint32_t node)
+{
+    return n && n->blocked && node < n->node_count && n->blocked[node] != 0;
+}
 
 /* A random node in the main region, for somewhere to wander to. */
 uint32_t hta_nav_random(const hta_nav *n, uint32_t *rng);

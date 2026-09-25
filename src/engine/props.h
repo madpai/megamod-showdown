@@ -59,6 +59,9 @@ typedef struct {
      * still chips and blasts still throw, but nothing breaks or comes
      * back here except through hta_props_set_broken. */
     bool remote;
+    /* Changes whenever a prop is added, breaks or comes back; unique
+     * across every hta_props (a reload never repeats an old value). */
+    uint32_t version;
 } hta_props;
 
 bool hta_props_init(hta_props *p, uint32_t cap);
