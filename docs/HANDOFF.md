@@ -194,6 +194,17 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-25 LAN v9 local verification.** The second cloud pass is on
+`halo-sandbox`. The full gate passed 80/80 with the owner's Trial data;
+Asset Lab passed 61/61 tests. The private de_dust2 package was reconverted
+with the new importer and has 75 breakables (40 metal, 26 wood, 9 glass),
+zero missing dependencies, 40/40 usable host spawns and no test falls.
+Use de_dust2 for the prop, bot-pathing and procedural-break sound checks
+below. Both phones must install this v9 build for LAN; older v8 builds
+refuse the connection. For an imported-map LAN test, both devices also need
+the same separately supplied package. First check Classic graphics and a
+short Blood Gulch round, then the new v9 checks in items 7–9.
+
 **2026-09-25 merged build.** Local gameplay and importer work is now on top of
 the cloud engine/effects and Workshop changes. Full game verification passed
 80/80 with the owner's Trial map; Asset Lab passed 57 synthetic tests. The
@@ -211,14 +222,13 @@ The merged tree passed the complete local verification gate, including Trial
 data, offscreen rendering and the Android build. `test_game` checks that a
 blast death carries the blast.
 
-**Cloud second pass (merged into this tree afterwards, NOT in the APK
-published at 12:28).** The first local merge picked up only the cloud's
+**Cloud second pass (absent from the earlier APK published at 12:28).** The first local merge picked up only the cloud's
 first pass. This tree adds: LAN protocol **v9** (gibs and prop breaks
 replicated), bots walking round props, procedural sound for props, debris,
 gibs and weather, a collision broad phase over props/vehicles, and a LAN
 decoder fuzz test. The cloud checked it with the host suite (37/37, also
-under ASan/UBSan), `ndkcheck` and the arm64 APK build -- but **not** with
-Trial data: run `verify.sh` with `HTA_MAP` and publish again. Both phones
+under ASan/UBSan), `ndkcheck` and the arm64 APK build. The local Trial-data
+gate has since passed 80/80. Both phones
 need the new build for LAN (v8 and v9 refuse each other). Items 7-9 below
 are this pass.
 
