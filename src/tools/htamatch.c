@@ -5,6 +5,7 @@
  *   htamatch <bloodgulch.map> [--bots N] [--skill 0-3] [--seconds S] [--mode ffa|team|ctf]
  *            [--shots N] [--every S] [--follow UNIT] [--out prefix]
  *            [--width W] [--height H] [--vehicles] [--seed N] [--oalmap PACKAGE]
+ *            [--hero-pose hover|cruise|attack] (frozen visual review, not simulation)
  *
  * Simulates S seconds, then keeps simulating and takes a frame every
  * `--every` seconds from a camera behind and above the followed unit.
@@ -76,6 +77,7 @@ int main(int argc, char **argv)
     int nchar = 0, nweap = 0;
     bool classes = false;
     const char *give = NULL;
+    const char *hero_pose = NULL; /* deterministic visual inspection, not a match benchmark */
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--bots") && i + 1 < argc) bots = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--skill") && i + 1 < argc) skill = atoi(argv[++i]);
@@ -92,6 +94,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--weapon") && i + 1 < argc && nweap < 16) weap_paths[nweap++] = argv[++i];
         else if (!strcmp(argv[i], "--classes")) classes = true;
         else if (!strcmp(argv[i], "--give") && i + 1 < argc) { give = argv[++i]; classes = true; }
+        else if (!strcmp(argv[i], "--hero-pose") && i + 1 < argc) hero_pose = argv[++i];
         else if (!strcmp(argv[i], "--seed") && i + 1 < argc) seed = (uint32_t)strtoul(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--mode") && i + 1 < argc) {
             const char *m = argv[++i];
@@ -377,7 +380,8 @@ int main(int argc, char **argv)
     hta_scene_light_from_bsp(&mesh, scene.light_dir, scene.light_color, scene.ambient);
     if (oalmap) {   /* no lightmaps: the explorer's even daylight */
         scene.light_dir[0] = 0.35f; scene.light_dir[1] = 0.4f; scene.light_dir[2] = 0.85f;
-        for (int k = 0; k < 3; k++) { scene.light_color[k] = 1.0f; scene.ambient[k] = 0.7f; }
+        /* Match Android's imported-map fallback when reviewing bodies. */
+        for (int k = 0; k < 3; k++) { scene.light_color[k] = 0.46f; scene.ambient[k] = 0.30f; }
     }
     scene.clear[0] = 0.42f; scene.clear[1] = 0.55f; scene.clear[2] = 0.72f;
 
@@ -395,7 +399,18 @@ int main(int argc, char **argv)
             game.units[0].in.move.move_right = 0.3f;
             game.units[1].eye.yaw = veh.cars[ride_car].yaw + 0.8f;
         }
-        hta_game_update(&game, dt);
+        if (hero_pose) {
+            if (strcmp(hero_pose,"hover") && strcmp(hero_pose,"cruise") && strcmp(hero_pose,"attack")) {
+                fprintf(stderr,"--hero-pose must be hover, cruise or attack\n"); return 2;
+            }
+            hta_unit *u=&game.units[follow % bots];
+            if (t==0.0f) u->body.pos[2]+=1.0f;
+            u->flying=true; u->riding=true; u->body.on_ground=false;
+            u->eye.yaw=u->eye.pitch=0.0f;
+            u->body.velocity[0]=!strcmp(hero_pose,"cruise") ? hta_game_body(&game,follow % bots).fly_speed : 0.0f;
+            u->body.velocity[1]=u->body.velocity[2]=0.0f;
+            u->ability_active=!strcmp(hero_pose,"attack") ? 1.0f : 0.0f;
+        } else hta_game_update(&game, dt);
         /* HTA_DEBUG_TRACE=unit: where it is, ten times a second. */
         if (getenv("HTA_DEBUG_TRACE")) {
             int tu = atoi(getenv("HTA_DEBUG_TRACE"));

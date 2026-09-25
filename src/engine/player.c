@@ -975,6 +975,13 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
                 want[k] = (f3[k] * in->move_forward + right[k] * in->move_right * 0.7f) * sp;
             if (in->jump) want[2] += sp * 0.6f;
             if (in->crouch) want[2] -= sp * 0.6f;
+            /* Combined steering must obey the character's speed budget.
+             * Preserve analog input below the cap and external knockback. */
+            float speed2 = want[0]*want[0] + want[1]*want[1] + want[2]*want[2];
+            if (speed2 > sp*sp) {
+                float scale = sp / sqrtf(speed2);
+                for (int k = 0; k < 3; k++) want[k] *= scale;
+            }
             float a = sp * 3.0f * dt;            /* full speed from rest in 1/3 s */
             for (int k = 0; k < 3; k++) {
                 float d = want[k] - p->velocity[k];
@@ -1112,4 +1119,69 @@ void hta_player_update(hta_player *p, hta_camera *cam, const hta_collision *col,
     cam->pos[0] = p->pos[0];
     cam->pos[1] = p->pos[1];
     cam->pos[2] = p->pos[2] + p->eye_height;
+}
+
+void hta_player_corpse_update(hta_player *p, const hta_collision *col, float gravity, float dt)
+{
+    if (!p || !(dt>0.0f)) return;
+    dt=fminf(dt,0.1f);
+    int steps=(int)ceilf(dt*120.0f);
+    float h=dt/(float)steps, radius=0.18f;
+    p->fly=false; p->footstep=false; p->landed=false;
+    if (p->on_ground && p->velocity[0]==0 && p->velocity[1]==0 && p->velocity[2]==0 && col && col->built) {
+        float ground;
+        if (hta_collision_ground(col,p->pos[0],p->pos[1],p->pos[2]+0.025f,&ground) &&
+            fabsf(p->pos[2]-ground)<0.025f) return;
+    }
+    for (int step=0;step<steps;step++) {
+        float centre[3]={p->pos[0],p->pos[1],p->pos[2]+radius};
+        p->velocity[2]-=fmaxf(gravity,0.0f)*h;
+        float drag=expf(-0.4f*h);
+        for (int k=0;k<3;k++) p->velocity[k]*=drag;
+        float left=h;
+        bool supported=false;
+        for (int contact=0;contact<3 && left>1e-6f;contact++) {
+            float speed=sqrtf(p->velocity[0]*p->velocity[0]+p->velocity[1]*p->velocity[1]+p->velocity[2]*p->velocity[2]);
+            if (speed<1e-6f) break;
+            float dir[3]; for(int k=0;k<3;k++) dir[k]=p->velocity[k]/speed;
+            float distance=speed*left, earliest=distance, normal[3]={0}; bool hit=false;
+            /* Leading and axial support rays sweep the compact body proxy.
+             * Substeps bound glancing-edge error; no endpoint-only wall test. */
+            for (int sample=0;sample<8;sample++) {
+                float from[3]={centre[0],centre[1],centre[2]}, n[3], t;
+                if (sample<6) from[sample/2]+=(sample&1 ? radius : -radius);
+                else if(sample==6) for(int k=0;k<3;k++) from[k]+=dir[k]*radius;
+                if (col && col->built && hta_collision_ray(col,from,dir,distance,&t,NULL,n) && t<=earliest) {
+                    earliest=t; memcpy(normal,n,sizeof(normal)); hit=true;
+                }
+            }
+            float travel=hit ? fmaxf(0.0f,earliest-0.002f) : distance;
+            for(int k=0;k<3;k++) centre[k]+=dir[k]*travel;
+            if (!hit) break;
+            float dot=0.0f; for(int k=0;k<3;k++) dot+=p->velocity[k]*normal[k];
+            if (dot>0.0f) { for(int k=0;k<3;k++) normal[k]=-normal[k]; dot=-dot; }
+            bool floor=normal[2]>0.5f;
+            float bounce=dot < -1.5f ? 0.22f : 0.0f;
+            for(int k=0;k<3;k++) p->velocity[k]-=(1.0f+bounce)*dot*normal[k];
+            if (floor) {
+                supported=true;
+                float friction=expf(-8.0f*h);
+                p->velocity[0]*=friction; p->velocity[1]*=friction;
+            }
+            for(int k=0;k<3;k++) centre[k]+=normal[k]*0.002f;
+            left*=fmaxf(0.0f,1.0f-earliest/fmaxf(distance,1e-6f));
+        }
+        for(int k=0;k<3;k++) p->pos[k]=centre[k]-(k==2 ? radius : 0.0f);
+        float ground;
+        if (col && col->built && p->velocity[2]<=0.1f &&
+            hta_collision_ground(col,p->pos[0],p->pos[1],p->pos[2]+0.025f,&ground) &&
+            p->pos[2]-ground<0.025f) {
+            p->pos[2]=ground; p->velocity[2]=0.0f; supported=true;
+            float friction=expf(-8.0f*h);
+            p->velocity[0]*=friction; p->velocity[1]*=friction;
+        }
+        p->on_ground=supported && fabsf(p->velocity[2])<0.1f;
+        if(p->on_ground && hypotf(p->velocity[0],p->velocity[1])<0.025f)
+            p->velocity[0]=p->velocity[1]=0.0f;
+    }
 }

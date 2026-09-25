@@ -110,8 +110,10 @@ typedef struct {
     char     hero_group[24];       /* SUPERHERO, SAIYAN, WIZARD, HERO, HUMAN */
     int      unique_limit;         /* 1: one of this character per match; 0: unlimited */
     /* A character's ability (Superman's laser eyes, Goku's ki blast): a
-     * shot of the Halo weapon `ability_base` at x ability_damage, every
-     * ability_cooldown seconds, named `ability_name` on its button. */
+     * Direct beams/pulses treat ability_damage as a whole activation budget,
+     * capped by the game's balance rules; projectile abilities retain the
+     * base-weapon multiplier. Cooldown has a runtime minimum of ten seconds
+     * after the active phase, named `ability_name` on its button. */
     char     ability_name[24], ability_base[64];
     float    ability_damage, ability_cooldown;
     float    ability_duration, ability_interval, ability_radius, ability_force, ability_cone;

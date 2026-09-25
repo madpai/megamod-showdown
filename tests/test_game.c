@@ -145,6 +145,23 @@ int main(int argc, char **argv)
     for (int i = 0; i < 200 && !ub->alive; i++) hta_game_update(&g, 1.0f / 30.0f);
     CHECK(ub->alive, "and he is back after the respawn time");
     {
+        /* A blast throws the body, it does not only hurt it. */
+        ub->body.pos[0] = ua->body.pos[0] + 2.0f;
+        ub->body.pos[1] = ua->body.pos[1];
+        ub->body.pos[2] = ua->body.pos[2];
+        ub->body.velocity[0] = ub->body.velocity[1] = ub->body.velocity[2] = 0.0f;
+        ub->vitals.shield = 400.0f;
+        ub->vitals.health = ub->vitals.max_health;
+        ua->vitals.shield = 400.0f;
+        float x0 = ub->body.pos[0];
+        /* Beside the victim, short of the shooter, so only one of them is in it. */
+        float at[3] = { ub->body.pos[0] - 0.35f, ub->body.pos[1], ub->body.pos[2] + 0.3f };
+        hta_game_blast(&g, a, at, 40.0f, 0.3f, 1.2f);
+        hta_game_update(&g, 1.0f / 30.0f);
+        CHECK(ub->alive && (ub->body.pos[0] > x0 + 0.05f || ub->body.velocity[0] > 2.0f),
+              "a rocket's blast throws the body away");
+    }
+    {
         /* Spawn protection: nobody hurts the fresh spawn until it runs out
          * or the spawn fires first. */
         g.spawn_protect = 2.0f;
@@ -206,7 +223,7 @@ int main(int argc, char **argv)
         ua->ability_cool = 0.0f;
         CHECK(hta_game_ability_charge(&g, a) == 1.0f && hta_game_ability(&g, a), "a ready ability fires");
         CHECK(!hta_game_ability(&g, a) && hta_game_ability_charge(&g, a) < 0.05f, "and then cools down");
-        for (int i = 0; i < 160; i++) hta_game_update(&g, 1.0f / 30.0f);
+        for (int i = 0; i < 310; i++) hta_game_update(&g, 1.0f / 30.0f);
         CHECK(hta_game_ability_charge(&g, a) >= 1.0f, "and is ready again after its cooldown");
         ua->character = -1;
         CHECK(hta_game_ability_charge(&g, a) < 0.0f, "a Spartan has none");
@@ -655,6 +672,9 @@ int main(int argc, char **argv)
         laser_hero.unique_limit = 1;
         laser_hero.ability_beam = true;
         laser_hero.ability_damage = 300.0f;
+        laser_hero.ability_duration = 2.4f;
+        laser_hero.ability_interval = 0.12f;
+        laser_hero.body_damage = 3.0f;
         laser_hero.ability_cooldown = 8.0f;
         snprintf(laser_hero.ability_base, sizeof(laser_hero.ability_base), "sniper rifle");
         CHECK(hta_game_load(&hero_match, &c, NULL, &col, err, sizeof(err)), "hero match loads");
@@ -687,10 +707,71 @@ int main(int argc, char **argv)
         }
         shooter->ability_cool = 0.0f;
         CHECK(hta_game_ability(&hero_match, player) &&
-              hero_match.units[bot].vitals.health <= 0.0f &&
-              hero_match.units[rival].vitals.health <= 0.0f,
-              "one laser beam burns through two opponents");
+              hero_match.units[bot].vitals.health > 0.0f &&
+              hero_match.units[rival].vitals.health > 0.0f &&
+              hero_match.units[bot].hurt && hero_match.units[rival].hurt,
+              "a beam pierces two opponents without killing on its first tick");
         CHECK(!hta_game_ability(&hero_match, player), "the beam enters cooldown");
+        for (int hz = 30; hz <= 120; hz *= 2) {
+            hero_match.units[bot].kind = HTA_UNIT_LOCAL;
+            hero_match.units[rival].kind = HTA_UNIT_LOCAL;
+            for (int k = 0; k < 2; k++) {
+                hta_unit *v = &hero_match.units[k ? rival : bot];
+                v->alive = true; v->protect = 0.0f;
+                v->vitals.health = v->vitals.max_health = 10000.0f;
+                v->vitals.shield = 0.0f;
+            }
+            shooter->ability_active = shooter->ability_cool = 0.0f;
+            float before = hero_match.units[rival].vitals.health;
+            CHECK(hta_game_ability(&hero_match, player), "channel starts for cadence test");
+            for (int i = 0; i < hz*3; i++) hta_game_update(&hero_match, 1.0f/hz);
+            float budget = hero_match.vitals_template.max_health + hero_match.vitals_template.max_shield;
+            CHECK(fabsf(before - hero_match.units[rival].vitals.health - budget) < 0.05f,
+                  "whole beam budget is tick-rate independent and ignores basic damage multiplier");
+            CHECK(shooter->ability_cool > 9.0f && !hta_game_ability(&hero_match, player),
+                  "ten-second recovery starts after the channel finishes");
+        }
+        laser_hero.ability_radius = 9.0f;
+        laser_hero.ability_damage = 350.0f;
+        laser_hero.ability_force = 16.0f;
+        laser_hero.ability_duration = 0.0f;
+        memset(shooter->body.pos, 0, sizeof(shooter->body.pos));
+        shooter->ability_active = shooter->ability_cool = 0.0f;
+        hta_unit *pulse_target = &hero_match.units[rival];
+        pulse_target->vitals.health = pulse_target->vitals.max_health = hero_match.vitals_template.max_health;
+        pulse_target->vitals.shield = 0.0f;
+        pulse_target->protect = 0.0f;
+        CHECK(hta_game_ability(&hero_match, player) &&
+              pulse_target->vitals.health > 0.0f &&
+              pulse_target->vitals.health < pulse_target->vitals.max_health &&
+              pulse_target->knock[2] > 0.0f,
+              "a high-strength shout throws an unshielded opponent without one-shotting them");
+        /* Keep character bots in their own kit, but leave ordinary guns
+         * available to humans and ammo available for the bot's own gun. */
+        hero_match.units[bot].kind = HTA_UNIT_BOT;
+        hero_match.units[bot].character = (int8_t)hero;
+        int32_t own = hero_match.start_weapon[0], foreign = hero_match.start_weapon[1];
+        snprintf(laser_hero.loadout[0], sizeof(laser_hero.loadout[0]), "%s", hero_match.weapons[own].display);
+        CHECK(hta_game_can_equip(&hero_match, bot, own) && !hta_game_can_equip(&hero_match, bot, foreign),
+              "a character bot can equip only its authored kit");
+        int32_t prior = hero_match.units[bot].carry[hero_match.units[bot].slot].weapon;
+        hta_game_give(&hero_match, bot, foreign, NULL);
+        CHECK(hero_match.units[bot].carry[hero_match.units[bot].slot].weapon == prior,
+              "inventory rejects a foreign kit even if requested directly");
+        CHECK(hta_game_can_equip(&hero_match, player, foreign), "human players can still scavenge ordinary weapons");
+        int32_t ability = hero_match.char_ability[hero];
+        CHECK(!hta_game_can_equip(&hero_match, bot, ability) &&
+              hta_game_drop_weapon(&hero_match, ability, NULL, shooter->body.pos, 0.0f, NULL) < 0,
+              "a special ability can neither be equipped nor dropped as loot");
+        hta_oal_asset innate = {0};
+        snprintf(innate.hold_type, sizeof(innate.hold_type), "fist");
+        hero_match.weapons[own].asset = &innate;
+        hero_match.units[bot].character = -1;
+        CHECK(!hta_game_can_equip(&hero_match, bot, own) && hta_game_can_equip(&hero_match, bot, foreign),
+              "fallback bots cannot inherit imported hero kits but can scavenge base guns");
+        CHECK(hta_game_drop_weapon(&hero_match, own, NULL, shooter->body.pos, 0.0f, NULL) < 0,
+              "innate fist/ki/repulsor weapons cannot become pickups");
+        hero_match.weapons[own].asset = NULL;
         hta_game_free(&hero_match);
     }
 

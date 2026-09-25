@@ -16,6 +16,36 @@ static int failures = 0, checks = 0;
 
 int main(void)
 {
+    {
+        hta_vertex verts[8]={0};
+        const float points[8][3]={{-10,-10,0},{10,-10,0},{10,10,0},{-10,10,0},
+                                 {1,-10,0},{1,10,0},{1,10,8},{1,-10,8}};
+        uint32_t indices[]={0,1,2,0,2,3,4,6,5,4,7,6};
+        for(int i=0;i<8;i++) memcpy(verts[i].pos,points[i],sizeof(points[i]));
+        hta_bsp_mesh room={0}; room.vertices=verts; room.vertex_count=8;
+        room.indices=indices; room.index_count=12;
+        room.bounds_min[0]=room.bounds_min[1]=-10; room.bounds_min[2]=0;
+        room.bounds_max[0]=room.bounds_max[1]=10; room.bounds_max[2]=8;
+        hta_collision walls={0};
+        CHECK(hta_collision_build(&walls,&room),"corpse test room builds");
+        hta_player body; hta_player_init(&body);
+        body.pos[2]=2; body.velocity[0]=100;
+        hta_player_corpse_update(&body,&walls,4,0.1f);
+        CHECK(body.pos[0]<0.85f && body.velocity[0]<0,"fast corpse bounces off a thin wall instead of tunnelling");
+        body.pos[0]=body.pos[1]=0; body.pos[2]=0.5f;
+        body.velocity[0]=body.velocity[1]=0; body.velocity[2]=-80;
+        hta_player_corpse_update(&body,&walls,4,0.1f);
+        CHECK(body.pos[2]>=0 && body.velocity[2]>=0,"fast corpse impact cannot pass through the floor");
+        for(int i=0;i<1200;i++) hta_player_corpse_update(&body,&walls,4,1.0f/120);
+        CHECK(body.on_ground && fabsf(body.pos[2])<0.03f && fabsf(body.velocity[2])<0.01f,"corpse settles on support");
+        body.velocity[1]=4;
+        hta_player_corpse_update(&body,&walls,4,0.1f);
+        CHECK(body.pos[1]>0.1f,"a settled corpse can move again after an impulse");
+        body.pos[2]=100; body.velocity[0]=body.velocity[1]=body.velocity[2]=0;
+        for(int i=0;i<360;i++) hta_player_corpse_update(&body,&walls,4,1.0f/120);
+        CHECK(!body.on_ground && body.velocity[2]<-1 && body.pos[2]<95,"a corpse still falls after three seconds in the air");
+        hta_collision_free(&walls);
+    }
     static bsp_fixture bf;
     hta_cache c;
     hta_bsp_mesh mesh;
@@ -102,6 +132,27 @@ int main(void)
     }
 
     printf("\n[movement]\n");
+    {
+        /* Full pitch/strafe/ascent used to stack beyond fly_speed. Test
+         * both tick rates, plus the analog response below the cap. */
+        for (int hz = 30; hz <= 120; hz *= 2) {
+            hta_player f;
+            hta_player_init(&f);
+            f.fly = true; f.fly_speed = 5.0f; f.pos[2] = 100.0f;
+            hta_camera fc;
+            hta_camera_init(&fc);
+            fc.pitch = 0.7f;
+            hta_player_input fi = {0};
+            fi.move_forward = fi.move_right = 1.0f; fi.jump = true;
+            for (int i = 0; i < hz; i++) hta_player_update(&f, &fc, NULL, &fi, 1.0f/hz);
+            float speed = sqrtf(f.velocity[0]*f.velocity[0] + f.velocity[1]*f.velocity[1] + f.velocity[2]*f.velocity[2]);
+            CHECK(fabsf(speed - f.fly_speed) < 0.001f, "combined flight inputs respect maximum speed");
+            fi.move_forward = 0.25f; fi.move_right = 0.0f; fi.jump = false;
+            for (int i = 0; i < hz; i++) hta_player_update(&f, &fc, NULL, &fi, 1.0f/hz);
+            speed = sqrtf(f.velocity[0]*f.velocity[0] + f.velocity[1]*f.velocity[1] + f.velocity[2]*f.velocity[2]);
+            CHECK(fabsf(speed - 1.25f) < 0.001f, "flight preserves slow analog steering");
+        }
+    }
     float x0 = p.pos[0], y0 = p.pos[1];
     cam.yaw = 0.0f;      /* face +X */
     in.move_forward = 1.0f;

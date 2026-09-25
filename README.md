@@ -37,7 +37,18 @@ says so in a public ledger of invented constants.
 
 ## Megamod Showdown checkpoint
 
-The private `halo-sandbox` branch now plays Slayer, Team Slayer and CTF with
+The latest polish build adds blended procedural hero flight/beam poses,
+Chell and Combine Elite (14 imported characters total), real Combine pain/death
+sounds, and the Compound warehouse arena (six imported maps). Character bots
+keep their kits; specials have activation damage budgets and a ten-second
+minimum recovery after the active phase. Verification: 80/80; Compound spawn
+checks: 33/33. These are host checks; phone appearance and LAN feel still need
+testing. Optional OALMAP v2 supports static Source lightmaps; existing map
+packages are still v1. Articulated ragdolls remain unfinished.
+
+The earlier checkpoint below records how this roster started.
+
+The public `halo-sandbox` branch now plays Slayer, Team Slayer and CTF with
 characters and equipment from the owner's own Source and Garry's Mod content.
 The 2026-09-24 personal build (`f9ee859`) has **12 characters, 11 imported
 weapons and five imported maps** alongside playable Blood Gulch. The roster is

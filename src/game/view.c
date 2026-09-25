@@ -196,6 +196,7 @@ void hta_game_view_free(hta_game_view *v)
     for (uint32_t w = 0; w < HTA_GAME_MAX_WEAPONS; w++)
         if (v->have_weapon[w] && !v->borrowed[w]) hta_bsp_free(&v->weapon_mesh[w]);
     for (uint32_t i = 0; i < HTA_GAME_MAX_UNITS; i++) free(v->oal_posed[i]);
+    hta_bsp_free(&v->gib_mesh);
     memset(v, 0, sizeof(*v));
 }
 
@@ -241,6 +242,9 @@ static void imported_update(hta_game_view *v, const hta_game *g, uint32_t i, flo
         v->oal_capacity[i] = v->oal_posed[i] ? m->mesh.vertex_count : 0;
         v->oal_char[i] = u->character;
         v->oal_clip[i] = -2;
+        v->oal_flight_pitch[i] = v->oal_flight_roll[i] = 0.0f;
+        v->oal_cruise[i] = v->oal_power_pose[i] = 0.0f;
+        v->oal_power_time[i] = 0.0f;
     }
     if (!v->oal_posed[i]) return;
     const char *role;
@@ -250,14 +254,18 @@ static void imported_update(hta_game_view *v, const hta_game *g, uint32_t i, flo
         role = "death";
         if (hta_oal_clip_find(m, role) < 0) {
             role = "idle";
-            float k = u->dead_for / TOPPLE_TIME;
-            topple = (k > 1.0f ? 1.0f : k) * TOPPLE_ANGLE;
+            /* Spin with the shove that killed them. A body with no rate
+             * still topples onto its back, as before. */
+            if (u->tumble != 0.0f || u->tumble_rate != 0.0f) topple = u->tumble;
+            else {
+                float k = u->dead_for / TOPPLE_TIME;
+                topple = (k > 1.0f ? 1.0f : k) * TOPPLE_ANGLE;
+            }
         }
     } else if (u->flying) {
-        /* Superman 64's imported jump clip loses its head. A self-powered
-         * flyer leans forward in the complete idle pose; broom riders use air. */
+        /* Keep the complete skeleton; procedural flight poses below
+         * avoid the broken imported Superman jump/head animation. */
         role = "idle";
-        topple = 0.12f;
     } else if (u->riding) {
         role = "air";           /* on a broom: legs hanging, as in the jump */
     } else if (u->vehicle >= 0) {
@@ -284,6 +292,33 @@ static void imported_update(hta_game_view *v, const hta_game *g, uint32_t i, flo
     if (clip != v->oal_clip[i]) { v->oal_clip[i] = clip; v->oal_time[i] = 0.0f; }
     else v->oal_time[i] += dt;
     hta_oal_pose(m, clip, v->oal_time[i], v->oal_world[i]);
+    const hta_oal_asset *hero = g->characters[u->character];
+    float bank=0.0f;
+    if (u->alive && hero->can_fly && u->vehicle<0) {
+        float forward=u->body.velocity[0]*cosf(u->eye.yaw)+u->body.velocity[1]*sinf(u->eye.yaw);
+        float side=-u->body.velocity[0]*sinf(u->eye.yaw)+u->body.velocity[1]*cosf(u->eye.yaw);
+        float speed=hero->fly_speed>0.1f ? hero->fly_speed : 5.0f;
+        float cruise=u->flying ? fmaxf(0.0f,fminf(1.0f,forward/speed)) : 0.0f;
+        v->oal_power_time[i]=fmaxf(0.0f,v->oal_power_time[i]-dt);
+        float attack=u->ability_active>0.0f || v->oal_power_time[i]>0.0f ? 1.0f : 0.0f;
+        cruise*=1.0f-attack;
+        float blend=1.0f-expf(-8.0f*fmaxf(dt,0.0f));
+        v->oal_cruise[i]+=(cruise-v->oal_cruise[i])*blend;
+        v->oal_power_pose[i]+=(attack-v->oal_power_pose[i])*blend;
+        float pitch=u->flying ? 0.10f+cruise*(1.15f-u->eye.pitch*0.65f) : 0.0f;
+        float roll=u->flying ? fmaxf(-0.3f,fminf(0.3f,-side/speed*0.3f)) : 0.0f;
+        v->oal_flight_pitch[i]+=(pitch-v->oal_flight_pitch[i])*blend;
+        v->oal_flight_roll[i]+=(roll-v->oal_flight_roll[i])*blend;
+        topple=v->oal_flight_pitch[i]; bank=v->oal_flight_roll[i];
+        hta_imported_hero_pose(m,v->oal_world[i],v->oal_cruise[i],v->oal_power_pose[i],hero->ability_color);
+        float head_up[3]={-sinf(topple*0.75f),0.0f,cosf(topple*0.75f)};
+        hta_imported_point_limb(m,v->oal_world[i],"ValveBiped.Bip01_Neck1",
+                                 "ValveBiped.Bip01_Head1",head_up,v->oal_cruise[i]);
+    } else {
+        v->oal_flight_pitch[i]=v->oal_flight_roll[i]=0.0f;
+        v->oal_cruise[i]=v->oal_power_pose[i]=0.0f;
+        v->oal_power_time[i]=0.0f;
+    }
     float yaw = u->alive ? u->eye.yaw : u->death_yaw;
     const float *at = u->body.pos;
     hta_transform seat;
@@ -299,6 +334,16 @@ static void imported_update(hta_game_view *v, const hta_game *g, uint32_t i, flo
     r[0] = cy*ct;  r[1] = -sy; r[2] = cy*st;  r[3] = at[0];
     r[4] = sy*ct;  r[5] = cy;  r[6] = sy*st;  r[7] = at[1];
     r[8] = -st;    r[9] = 0;   r[10] = ct;    r[11] = at[2];
+    if (u->alive && hero->can_fly) {
+        float cb=cosf(bank), sb=sinf(bank);
+        for (int k=0;k<3;k++) {
+            float y=r[k*4+1], z=r[k*4+2];
+            r[k*4+1]=y*cb+z*sb; r[k*4+2]=-y*sb+z*cb;
+        }
+        /* Lean around the hips, not around the feet. */
+        float pivot=u->body.phys.coll_stand*0.5f;
+        r[3]-=r[2]*pivot; r[7]-=r[6]*pivot; r[11]+=(1.0f-r[10])*pivot;
+    }
     hta_oal_skin(m, (const float (*)[12])v->oal_world[i], r, v->oal_posed[i]);
 }
 
@@ -314,6 +359,156 @@ const hta_vertex *hta_game_view_body_vertices(const hta_game_view *v, const hta_
     if (!v || !g || i >= HTA_GAME_MAX_UNITS) return NULL;
     const hta_oal_model *m = i < g->unit_count ? body_of(g, &g->units[i]) : NULL;
     return m ? v->oal_posed[i] : v->actor[i].posed;
+}
+
+static const int GIB_TRIS[36] = {
+    0,1,2, 0,2,3,  4,6,5, 4,7,6,  0,4,5, 0,5,1,
+    1,5,6, 1,6,2,  2,6,7, 2,7,3,  3,7,4, 3,4,0
+};
+static const float GIB_CORNER[8][3] = {
+    {-1,-1,-1},{1,-1,-1},{1,1,-1},{-1,1,-1},
+    {-1,-1,1},{1,-1,1},{1,1,1},{-1,1,1}
+};
+
+static bool gib_mesh_build(hta_game_view *v)
+{
+    if (v->gib_ready) return true;
+    enum { V = 8, I = 36 };
+    hta_bsp_mesh *m = &v->gib_mesh;
+    m->vertices = calloc((size_t)HTA_VIEW_GIBS * V, sizeof(hta_vertex));
+    m->indices = calloc((size_t)HTA_VIEW_GIBS * I, sizeof(uint32_t));
+    m->submeshes = calloc(1, sizeof(hta_submesh));
+    m->textures = calloc(1, sizeof(hta_bsp_texture));
+    uint8_t *px = malloc(4);
+    if (!m->vertices || !m->indices || !m->submeshes || !m->textures || !px) {
+        free(px);
+        hta_bsp_free(m);
+        return false;
+    }
+    px[0] = px[1] = px[2] = px[3] = 255;
+    m->textures[0].width = m->textures[0].height = 1;
+    m->textures[0].rgba = px;
+    m->texture_count = 1;
+    m->vertex_count = HTA_VIEW_GIBS * V;
+    m->index_count = HTA_VIEW_GIBS * I;
+    m->submesh_count = 1;
+    hta_submesh_init(&m->submeshes[0]);
+    m->submeshes[0].first_index = 0;
+    m->submeshes[0].index_count = m->index_count;
+    m->submeshes[0].albedo_tex = 0;
+    for (int g = 0; g < HTA_VIEW_GIBS; g++)
+        for (int t = 0; t < I; t++)
+            m->indices[g * I + t] = (uint32_t)(g * V + GIB_TRIS[t]);
+    v->gib_ready = true;
+    return true;
+}
+
+static void gib_write(hta_game_view *v)
+{
+    if (!v->gib_ready) return;
+    for (int i = 0; i < HTA_VIEW_GIBS; i++) {
+        hta_vertex *o = v->gib_mesh.vertices + (size_t)i * 8;
+        float c = cosf(v->gib[i].angle), s = sinf(v->gib[i].angle);
+        float sz = v->gib[i].live ? v->gib[i].size : 0.0f;
+        for (int k = 0; k < 8; k++) {
+            float x = GIB_CORNER[k][0] * sz, y = GIB_CORNER[k][1] * sz, z = GIB_CORNER[k][2] * sz;
+            o[k].pos[0] = v->gib[i].pos[0] + x * c - z * s;
+            o[k].pos[1] = v->gib[i].pos[1] + y;
+            o[k].pos[2] = v->gib[i].pos[2] + x * s + z * c;
+            o[k].normal[0] = v->gib[i].rgb[0];
+            o[k].normal[1] = v->gib[i].rgb[1];
+            o[k].normal[2] = v->gib[i].rgb[2];
+            o[k].lm_uv[0] = v->gib[i].live ? 1.0f : 0.0f;
+            o[k].lm_uv[1] = 0.0f;
+            o[k].uv[0] = o[k].uv[1] = 0.0f;
+        }
+    }
+}
+
+static int gib_slot(hta_game_view *v)
+{
+    int best = 0;
+    float oldest = 1e9f;
+    for (int i = 0; i < HTA_VIEW_GIBS; i++) {
+        if (!v->gib[i].live) return i;
+        if (v->gib[i].life < oldest) { oldest = v->gib[i].life; best = i; }
+    }
+    return best;
+}
+
+static void gib_spawn(hta_game_view *v, const float at[3], const float vel[3],
+                      const float rgb[3], float size)
+{
+    if (!v || !gib_mesh_build(v)) return;
+    int slot = gib_slot(v);
+    memset(&v->gib[slot], 0, sizeof(v->gib[slot]));
+    v->gib[slot].live = true;
+    v->gib[slot].life = 1.7f;
+    v->gib[slot].size = size;
+    v->rng = v->rng * 1664525u + 1013904223u;
+    v->gib[slot].angle = (float)(v->rng & 255) / 40.0f;
+    v->gib[slot].spin = ((v->rng & 1u) ? 1.0f : -1.0f) * (4.0f + (float)((v->rng >> 8) & 7u));
+    for (int k = 0; k < 3; k++) {
+        v->gib[slot].pos[k] = at[k];
+        v->gib[slot].vel[k] = vel[k];
+        v->gib[slot].rgb[k] = rgb[k];
+    }
+}
+
+static void gib_tick(hta_game_view *v, const hta_game *g, float dt)
+{
+    if (!v->gib_ready) return;
+    float grav = g->gravity > 0.1f ? g->gravity : 4.0f;
+    for (int i = 0; i < HTA_VIEW_GIBS; i++) {
+        if (!v->gib[i].live) continue;
+        v->gib[i].life -= dt;
+        if (v->gib[i].life <= 0.0f) { v->gib[i].live = false; continue; }
+        v->gib[i].vel[2] -= grav * dt;
+        v->gib[i].pos[0] += v->gib[i].vel[0] * dt;
+        v->gib[i].pos[1] += v->gib[i].vel[1] * dt;
+        v->gib[i].pos[2] += v->gib[i].vel[2] * dt;
+        v->gib[i].angle += v->gib[i].spin * dt;
+        float gz;
+        if (g->col && g->col->built &&
+            hta_collision_ground(g->col, v->gib[i].pos[0], v->gib[i].pos[1],
+                                 v->gib[i].pos[2] + 0.4f, &gz) &&
+            v->gib[i].pos[2] <= gz) {
+            v->gib[i].pos[2] = gz;
+            if (v->gib[i].vel[2] < 0.0f) {
+                v->gib[i].vel[2] *= -0.35f;
+                v->gib[i].vel[0] *= 0.6f;
+                v->gib[i].vel[1] *= 0.6f;
+                v->gib[i].spin *= 0.6f;
+                if (v->gib[i].vel[2] < 0.8f) v->gib[i].vel[2] = 0.0f;
+            }
+        }
+    }
+    gib_write(v);
+}
+
+const hta_bsp_mesh *hta_game_view_gib_mesh(const hta_game_view *v)
+{
+    return v && v->gib_ready ? &v->gib_mesh : NULL;
+}
+
+void hta_game_view_debris(hta_game_view *v, const float at[3], const float dir[3],
+                          int count, float speed)
+{
+    static const float stone[3] = { 0.55f, 0.48f, 0.38f };
+    static const float dust[3] = { 0.75f, 0.64f, 0.42f };
+    if (!v || !at || count < 1 || !(speed > 0.0f)) return;
+    if (count > 8) count = 8;
+    float d0 = dir ? dir[0] : 0.0f, d1 = dir ? dir[1] : 0.0f, d2 = dir ? dir[2] : 0.4f;
+    for (int i = 0; i < count; i++) {
+        v->rng = v->rng * 1664525u + 1013904223u;
+        float a = (float)(v->rng & 255) / 255.0f * 6.2831853f;
+        float up = 0.45f + (float)((v->rng >> 8) & 255) / 255.0f;
+        float vel[3] = { cosf(a) * speed + d0 * speed * 0.35f,
+                         sinf(a) * speed + d1 * speed * 0.35f,
+                         up * speed + d2 * speed * 0.2f };
+        gib_spawn(v, at, vel, (i & 1) ? stone : dust, 0.05f + (float)(i & 3) * 0.018f);
+    }
+    gib_write(v);
 }
 
 void hta_game_view_update(hta_game_view *v, const hta_game *g, int32_t skip, float dt)
@@ -410,6 +605,7 @@ void hta_game_view_update(hta_game_view *v, const hta_game *g, int32_t skip, flo
         hta_actor_place(a, u->body.pos, u->eye.yaw);
         v->shown[i] = true;
     }
+    gib_tick(v, g, dt);
 }
 
 void hta_game_view_weapon_space(const hta_game *g, int32_t weapon, float model[16])

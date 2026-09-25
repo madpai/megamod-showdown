@@ -373,6 +373,28 @@ bool hta_game_class_weapon(const hta_game *g, int32_t w)
            !g->weapons[w].hidden;
 }
 
+bool hta_game_can_equip(const hta_game *g, int32_t unit, int32_t weapon)
+{
+    if (!hta_game_class_weapon(g, weapon) || unit < 0 || (uint32_t)unit >= g->unit_count) return false;
+    const hta_unit *u = &g->units[unit];
+    if (u->kind == HTA_UNIT_BOT && u->character >= 0 && (uint32_t)u->character < g->character_count) {
+        const hta_oal_asset *hero = g->characters[u->character];
+        if (hero && (hero->loadout[0][0] || hero->loadout[1][0]))
+            return !strcmp(g->weapons[weapon].display, hero->loadout[0]) ||
+                   !strcmp(g->weapons[weapon].display, hero->loadout[1]);
+    }
+    /* A fallback Spartan bot must not randomly inherit another roster
+     * character's imported kit either. Base map guns remain shareable. */
+    if (u->kind == HTA_UNIT_BOT && g->weapons[weapon].asset) {
+        for (uint32_t c = 0; c < g->character_count; c++) {
+            const hta_oal_asset *hero = g->characters[c];
+            if (hero && (!strcmp(g->weapons[weapon].display, hero->loadout[0]) ||
+                         !strcmp(g->weapons[weapon].display, hero->loadout[1]))) return false;
+        }
+    }
+    return true;
+}
+
 void hta_game_set_loadout(hta_game *g, int32_t unit, int32_t a, int32_t b)
 {
     if (!g || unit < 0 || unit >= (int32_t)g->unit_count) return;
@@ -383,7 +405,8 @@ void hta_game_set_loadout(hta_game *g, int32_t unit, int32_t a, int32_t b)
 static void arm(hta_game *g, hta_unit *u)
 {
     int32_t pick[2] = { g->start_weapon[0], g->start_weapon[1] };
-    if (g->classes) {
+    if (g->classes || (u->kind == HTA_UNIT_BOT && u->character >= 0 &&
+                       (uint32_t)u->character < g->character_count)) {
         if(u->character>=0 && (uint32_t)u->character<g->character_count) {
             const hta_oal_asset *hero=g->characters[u->character];
             for(int slot=0;slot<2;slot++) {
@@ -403,7 +426,9 @@ static void arm(hta_game *g, hta_unit *u)
             uint32_t n = 0;
             for (uint32_t w = 0; w < g->weapon_count; w++)
                 /* Not a bat yet: a bot would fire it from across the map. */
-                if (hta_game_class_weapon(g, (int32_t)w) && !g->weapons[w].melee_only && !g->weapons[w].mount)
+                if (hta_game_can_equip(g, (int32_t)(u-g->units), (int32_t)w) &&
+                    !g->weapons[w].melee_only && !g->weapons[w].mount &&
+                    (!g->weapons[w].asset || strcmp(g->weapons[w].asset->hold_type, "fist")))
                     allowed[n++] = (int32_t)w;
             if (n) {
                 u->rng = u->rng * 1664525u + 1013904223u;
@@ -416,6 +441,8 @@ static void arm(hta_game *g, hta_unit *u)
         }
     }
     for (int s = 0; s < 2; s++) {
+        if (u->kind == HTA_UNIT_BOT &&
+            !hta_game_can_equip(g, (int32_t)(u-g->units), pick[s])) pick[s] = -1;
         u->carry[s].weapon = pick[s];
         if (u->carry[s].weapon >= 0)
             hta_ammo_init(&u->carry[s].ammo, &g->weapons[u->carry[s].weapon].def);
@@ -693,6 +720,7 @@ static void spawn_unit(hta_game *g, int32_t idx)
     u->gibbed = false;
     u->protect = g->spawn_protect;
     u->spree = 0;
+    u->tumble = u->tumble_rate = u->stagger = 0.0f;
     u->last_attacker = HTA_GAME_NONE;
     u->powerup = HTA_ITEM_NONE;
     u->powerup_timer = 0.0f;
@@ -721,6 +749,7 @@ void hta_game_revive(hta_game *g, int32_t idx)
     u->gibbed = false;
     u->protect = g->spawn_protect;
     u->flag = -1;
+    u->tumble = u->tumble_rate = u->stagger = 0.0f;
     u->spree = 0;
     u->last_attacker = HTA_GAME_NONE;
     memset(u->attackers, 0, sizeof(u->attackers));
@@ -833,8 +862,7 @@ void hta_game_sync_local(hta_game *g, const hta_player *body, const hta_camera *
 
 void hta_game_give(hta_game *g, int32_t idx, int32_t weapon, const hta_ammo *ammo)
 {
-    if (!g || idx < 0 || idx >= (int32_t)g->unit_count ||
-        weapon < 0 || (uint32_t)weapon >= g->weapon_count) return;
+    if (!hta_game_can_equip(g, idx, weapon)) return;
     hta_unit *u = &g->units[idx];
     uint32_t s = u->slot & 1u;
     if (u->carry[s].weapon >= 0 && u->carry[s ^ 1u].weapon < 0) s ^= 1u;
@@ -1164,6 +1192,20 @@ static void hulls_tick(hta_game *g, float dt)
     }
 }
 
+/* A shove the body has not taken yet. Flight lets go so the next step
+ * cannot steer the velocity back to a hover. */
+static void shove(hta_unit *u, float x, float y, float z)
+{
+    if (!u || u->vehicle >= 0) return;
+    u->knock[0] += x;
+    u->knock[1] += y;
+    u->knock[2] += z;
+    u->body.on_ground = false;
+    u->body.fly = false;
+    float sp = sqrtf(x * x + y * y + z * z);
+    if (sp > 4.0f && u->stagger < 0.75f) u->stagger = 0.75f;
+}
+
 void hta_game_blast(hta_game *g, int32_t attacker, const float centre[3],
                     float damage, float core, float radius)
 {
@@ -1196,6 +1238,20 @@ void hta_game_blast(hta_game *g, int32_t attacker, const float centre[3],
         memcpy(u->blast_at, centre, sizeof(u->blast_at));
         u->since_blast = 0.0f;
         hta_game_hurt(g, (int32_t)i, attacker, damage * f, c);
+        /* Seated bodies ride the hull, which is thrown below. On foot, the
+         * blast itself throws you: away from it, and up, hard enough to
+         * leave the ground. A rocket is about 80 at the centre. */
+        if (u->vehicle < 0 && u->alive && u->protect <= 0.0f) {
+            float push = damage * f * 0.16f;
+            if (push > 18.0f) push = 18.0f;
+            float inv = dist > 0.25f ? 1.0f / dist : 0.0f;
+            float nx = dist > 0.25f ? dx * inv : 0.0f;
+            float ny = dist > 0.25f ? dy * inv : 0.0f;
+            float nz = dist > 0.25f ? dz * inv : 1.0f;
+            float up = push * 0.55f;
+            if (up < 2.5f * f) up = 2.5f * f;
+            shove(u, nx * push, ny * push, nz * push * 0.35f + up);
+        }
     }
     /* Hulls: hurt, and thrown. Nearest point of the hull counts, roughly
      * its centre less its radius. */
@@ -1254,6 +1310,18 @@ static void die(hta_game *g, int32_t idx)
     v->respawn = g->respawn_time;
     v->dead_for = 0.0f;
     v->death_yaw = v->eye.yaw;
+    v->flying = false;
+    v->riding = false;
+    v->body.fly = false;
+    {
+        float vx = v->body.velocity[0] + v->knock[0];
+        float vy = v->body.velocity[1] + v->knock[1];
+        float vz = v->body.velocity[2] + v->knock[2];
+        float spd = sqrtf(vx * vx + vy * vy + vz * vz);
+        float side = vx * sinf(v->eye.yaw) - vy * cosf(v->eye.yaw);
+        v->tumble = 0.2f;
+        v->tumble_rate = (2.4f + spd * 0.22f) * (side >= 0.0f ? 1.0f : -1.0f);
+    }
     int32_t killer = (v->last_attacker >= 0 && v->since_attacked <= HTA_CREDIT_WINDOW)
                    ? v->last_attacker : HTA_GAME_NONE;
     char buf[96], fmt[96];
@@ -1478,11 +1546,24 @@ static void beam(hta_game *g, int32_t idx, int32_t wi, float damage)
         float radius = v->body.phys.radius + 0.48f;
         if (side2 > radius*radius) continue;
         hta_game_hurt(g, (int32_t)i, idx, damage, centre);
+        /* Along the beam, and off the floor. Each tick adds a little, and
+         * stops once they are already travelling with it, so a two-second
+         * heat vision does not accelerate them without limit. */
+        float have = 0.0f, pending = 0.0f;
+        for (int k = 0; k < 3; k++) {
+            have += v->body.velocity[k] * dir[k];
+            pending += v->knock[k] * dir[k];
+        }
+        float add = 8.0f - (have + pending);
+        if (add > 3.2f) add = 3.2f;
+        if (add < 0.0f) add = 0.0f;
+        float up = (v->body.velocity[2] + v->knock[2] > 6.0f) ? 0.25f : 1.4f;
+        shove(v, dir[0] * add, dir[1] * add, dir[2] * add + up);
     }
 }
 
 /* A shockwave respects walls and teams; a cone is a directional shout. */
-static void hero_pulse(hta_game *g, int32_t idx, int32_t wi, const hta_oal_asset *a)
+static void hero_pulse(hta_game *g, int32_t idx, int32_t wi, const hta_oal_asset *a, float damage)
 {
     hta_unit *u = &g->units[idx];
     float from[3], dir[3];
@@ -1501,10 +1582,25 @@ static void hero_pulse(hta_game *g, int32_t idx, int32_t wi, const hta_oal_asset
         float wall=dist;
         if (g->col && hta_collision_ray(g->col,from,d,dist,&wall,NULL,NULL) && wall<dist-0.08f) continue;
         float power=1.0f-0.5f*dist/a->ability_radius;
-        hta_game_hurt(g,(int32_t)i,idx,a->ability_damage*power,at);
-        for (int k=0;k<3;k++) g->units[i].knock[k]+=d[k]*a->ability_force*power;
-        g->units[i].knock[2]+=a->ability_force*0.3f;
+        hta_game_hurt(g,(int32_t)i,idx,damage*power,at);
+        shove(&g->units[i], d[0]*a->ability_force*power, d[1]*a->ability_force*power,
+              d[2]*a->ability_force*power + a->ability_force*0.55f*power);
     }
+}
+
+static float ability_interval(const hta_oal_asset *a)
+{
+    return a->ability_interval > 0.0f ? fmaxf(a->ability_interval, 0.10f) : 0.15f;
+}
+
+float hta_game_ability_cooldown(const hta_game *g, int32_t idx)
+{
+    /* Initial Megamod balance floor, measured after the channel ends. */
+    if (!g || idx < 0 || (uint32_t)idx >= g->unit_count) return 0.0f;
+    int32_t c = g->units[idx].character;
+    if (c < 0 || (uint32_t)c >= g->character_count || !g->characters[c]) return 0.0f;
+    const hta_oal_asset *a = g->characters[c];
+    return fmaxf(a->ability_cooldown, 10.0f);
 }
 
 static void hero_shot(hta_game *g, int32_t idx)
@@ -1514,8 +1610,19 @@ static void hero_shot(hta_game *g, int32_t idx)
     int32_t wi=g->char_ability[u->character];
     if (wi<0) return;
     const hta_oal_asset *a=g->characters[u->character];
-    if (a->ability_radius>0.0f) hero_pulse(g,idx,wi,a);
-    else if (g->weapons[wi].beam) beam(g,idx,wi,a->ability_damage>0.0f?a->ability_damage:250.0f);
+    /* Direct powers spend one activation budget, not that much damage
+     * every tick multiplied again by the hero's basic-attack strength.
+     * Shouts are crowd control; beams reward sustained tracking. */
+    float duration = fmaxf(0.0f, fminf(a->ability_duration, 4.0f));
+    float shots = fmaxf(1.0f, ceilf(duration / ability_interval(a) - 0.0001f));
+    float cap = a->ability_radius > 0.0f ? g->vitals_template.max_health * 0.6f :
+                g->vitals_template.max_health + g->vitals_template.max_shield;
+    float damage = fminf(a->ability_damage > 0.0f ? a->ability_damage : cap, cap) / shots;
+    hta_body_attr body = hta_game_body(g, idx);
+    float multiplier = body.damage * (u->riding ? body.fly_damage : 1.0f);
+    if (multiplier > 0.0f) damage /= multiplier;
+    if (a->ability_radius>0.0f) hero_pulse(g,idx,wi,a,damage);
+    else if (g->weapons[wi].beam) beam(g,idx,wi,damage);
     else shoot(g,idx,wi,g->weapons[wi].def.error_angle[0]);
 }
 
@@ -1523,12 +1630,12 @@ bool hta_game_ability(hta_game *g, int32_t idx)
 {
     if (!g || idx<0 || idx>=(int32_t)g->unit_count || g->over) return false;
     hta_unit *u=&g->units[idx];
-    if (!u->alive || u->ability_cool>0.0f || u->character<0 ||
+    if (!u->alive || u->ability_active>0.0f || u->ability_cool>0.0f || u->character<0 ||
         (uint32_t)u->character>=g->character_count || g->char_ability[u->character]<0) return false;
     const hta_oal_asset *a=g->characters[u->character];
-    u->ability_cool=a->ability_cooldown>0.0f?a->ability_cooldown:6.0f;
+    u->ability_cool=hta_game_ability_cooldown(g, idx);
     u->ability_active=fminf(a->ability_duration,4.0f);
-    u->ability_tick=a->ability_interval>0.0f?fmaxf(a->ability_interval,0.10f):0.15f;
+    u->ability_tick=ability_interval(a);
     u->fired=true;
     u->protect=0.0f;
     hero_shot(g,idx);
@@ -1541,8 +1648,7 @@ float hta_game_ability_charge(const hta_game *g, int32_t idx)
     const hta_unit *u = &g->units[idx];
     if (u->character < 0 || (uint32_t)u->character >= g->character_count || g->char_ability[u->character] < 0)
         return -1.0f;
-    const hta_oal_asset *a = g->characters[u->character];
-    float cd = a->ability_cooldown > 0.0f ? a->ability_cooldown : 6.0f;
+    float cd = hta_game_ability_cooldown(g, idx);
     float f = 1.0f - u->ability_cool / cd;
     return f < 0.0f ? 0.0f : f > 1.0f ? 1.0f : f;
 }
@@ -1687,6 +1793,8 @@ int32_t hta_game_melee(hta_game *g, int32_t idx)
             vk->knock[0] += dx / dl * w->knockback;
             vk->knock[1] += dy / dl * w->knockback;
             vk->knock[2] += w->knockback * 0.35f;
+            if (w->knockback > 4.0f && vk->stagger < 0.6f) vk->stagger = 0.6f;
+            vk->body.on_ground = false;
         }
         if (behind) hta_game_hurt(g, who, idx, w->melee_damage * (HTA_BACKSMACK_MULT - 1.0f), c);
     }
@@ -1734,6 +1842,7 @@ static bool take_drops(hta_game *g, int32_t idx)
     int32_t dr = hta_game_drop_near(g, u->body.pos, HTA_DROP_REACH);
     if (dr >= 0) {
         hta_game_drop *d = &g->drops[dr];
+        if (!hta_game_can_equip(g, idx, d->weapon)) return false;
         for (int s = 0; s < 2; s++) {
             if (!same_gun(g, u->carry[s].weapon, d->weapon)) continue;
             hta_ammo *a = &u->carry[s].ammo;
@@ -1807,7 +1916,7 @@ static void take_items(hta_game *g, int32_t idx)
     const hta_item_choice *w = hta_pickups_item(it, ws);
     if (!w) return;
     int32_t wi = hta_game_weapon_index(g, w->tag_id);
-    if (wi < 0) return;
+    if (!hta_game_can_equip(g, idx, wi)) return;
     /* Carrying it already: take its ammunition, as Halo does. */
     for (int s = 0; s < 2; s++) {
         if (u->carry[s].weapon != wi) continue;
@@ -1869,7 +1978,9 @@ int32_t hta_game_drop_weapon(hta_game *g, int32_t weapon, const hta_ammo *ammo,
                              const float pos[3], float yaw, const float vel[3])
 {
     if (!g || weapon < 0 || (uint32_t)weapon >= g->weapon_count || !pos ||
-        g->weapons[weapon].vehicle) return -1;
+        g->weapons[weapon].vehicle || g->weapons[weapon].hidden) return -1;
+    /* Fists, ki and repulsors belong to the body, not a loot container. */
+    if (g->weapons[weapon].asset && !strcmp(g->weapons[weapon].asset->hold_type, "fist")) return -1;
     int32_t slot = -1;
     float oldest = -1.0f;
     for (int32_t i = 0; i < HTA_GAME_MAX_DROPS; i++) {
@@ -2883,6 +2994,17 @@ static void fly(hta_game *g, float dt)
     }
 }
 
+/* A body that has already died still has to travel. The local player's
+ * pawn does this in the platform; everyone else is integrated here until
+ * they settle, so a rocket's last shove is not thrown away. */
+static void corpse_move(hta_game *g, hta_unit *u, float dt)
+{
+    hta_player_corpse_update(&u->body, g->col, g->gravity>0.1f ? g->gravity : 4.0f, dt);
+    if (u->body.on_ground) u->tumble_rate*=expf(-8.0f*dt);
+
+    u->tumble += u->tumble_rate * dt;
+}
+
 void hta_game_update(hta_game *g, float dt)
 {
     if (!g || !g->loaded || dt <= 0.0f) return;
@@ -2909,16 +3031,25 @@ void hta_game_update(hta_game *g, float dt)
         if (u->protect > 0.0f) u->protect = u->fired ? 0.0f : u->protect - dt;
         if (!u->alive || g->over) u->ability_active=0.0f;
         if (u->ability_active>0.0f && u->character>=0 && (uint32_t)u->character<g->character_count) {
-            u->ability_active-=dt; u->ability_tick-=dt;
-            if (u->ability_tick<=0.0f && u->ability_active>0.0f) {
-                const hta_oal_asset *a=g->characters[u->character];
-                u->ability_tick=fmaxf(a->ability_interval,0.10f);
+            float active_dt = fminf(dt, u->ability_active);
+            u->ability_active=fmaxf(0.0f, u->ability_active-dt);
+            u->ability_tick-=active_dt;
+            const hta_oal_asset *a=g->characters[u->character];
+            /* Retain overshoot so 30/60/120 Hz deliver the same pulses.
+             * The endpoint belongs to recovery, not an extra shot. */
+            while (u->ability_tick<=0.0f &&
+                   (u->ability_active>0.00001f || u->ability_tick < -0.00001f)) {
+                u->ability_tick+=ability_interval(a);
                 hero_shot(g,(int32_t)i);
             }
         } else if (u->ability_cool > 0.0f) {
             /* The wait starts when the attack finishes, so a long beam
              * cannot be fired again the moment it ends. */
             u->ability_cool -= dt;
+        }
+        if (u->stagger > 0.0f) {
+            u->stagger -= dt;
+            if (u->stagger < 0.0f) u->stagger = 0.0f;
         }
         if (u->kind != HTA_UNIT_LOCAL && (u->knock[0] != 0.0f || u->knock[1] != 0.0f || u->knock[2] != 0.0f)) {
             for (int k = 0; k < 3; k++) { u->body.velocity[k] += u->knock[k]; u->knock[k] = 0.0f; }
@@ -2927,6 +3058,11 @@ void hta_game_update(hta_game *g, float dt)
         if (u->multi_timer > 0.0f) u->multi_timer -= dt;
         if (!u->alive) {
             u->dead_for += dt;
+            if (u->kind != HTA_UNIT_LOCAL) corpse_move(g, u, dt);
+            else {
+                u->tumble += u->tumble_rate * dt;
+                if (u->body.on_ground) u->tumble_rate *= expf(-2.5f * dt);
+            }
             if (u->kind != HTA_UNIT_LOCAL && !g->over) {
                 u->respawn -= dt;
                 if (u->respawn <= 0.0f) spawn_unit(g, (int32_t)i);

@@ -64,8 +64,12 @@ if [ "$BUILD" = 1 ]; then
     done
     for f in "$HTA_IMPORTED"/*.oalmap; do
       [ -f "$f" ] || continue
+      base=$(basename "$f" .oalmap)
+      case "$base" in
+        mcdonalds|mcronalds) echo "skipping $base"; continue ;;
+      esac
       ln "$f" "$STAGE/maps/" 2>/dev/null || cp "$f" "$STAGE/maps/"
-      echo "bundling imported map $(basename "$f" .oalmap)"
+      echo "bundling imported map $base"
     done
     # Imported characters and weapons (.oalasset), same private source.
     for kind in characters weapons sounds; do
@@ -84,7 +88,11 @@ fi
 [ -f "$APK" ] || { echo "no APK at $APK (run without --no-build)" >&2; exit 1; }
 
 mkdir -p "$ROOT/uploads"
-cp "$APK" "$ROOT/megamod-showdown.apk"
+# Materialize the copy before Gradle cleans its source; verify before
+# replacing the served APK so a failed read cannot publish a broken file.
+cp --reflink=never "$APK" "$ROOT/megamod-showdown.apk.tmp"
+sha256sum "$ROOT/megamod-showdown.apk.tmp" >/dev/null
+mv "$ROOT/megamod-showdown.apk.tmp" "$ROOT/megamod-showdown.apk"
 
 # A guest needs the same code but must import their own Trial data. Build and
 # publish that variant alongside the owner's personal APK for multiplayer QA.

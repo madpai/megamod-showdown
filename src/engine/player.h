@@ -158,6 +158,10 @@ typedef struct {
     float land_speed;    /* how fast you were falling when it did, wu/s */
 } hta_player;
 
+/* Shared dead-body proxy: swept collision, bounce and contact friction.
+ * Never sleeps in midair; reuses position/velocity without changing biped tags. */
+void hta_player_corpse_update(hta_player *p, const hta_collision *col, float gravity, float dt);
+
 /* Sets the scope magnification. 1.0 (or anything below it) is unzoomed. */
 void hta_player_set_zoom(hta_player *p, float magnification);
 

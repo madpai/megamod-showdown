@@ -1,3 +1,64 @@
+## 2026-09-25 — procedural flight polish and verified content expansion
+
+Replaced the fixed idle tilt with smoothed flight pitch/bank and procedural
+ValveBiped arm/head posing. A subtree rotation preserves joint lengths and
+attachments; unsupported/missing joints safely do nothing. Cruise silhouettes:
+Goku two arms ahead, Superman one fist ahead, Iron Man trailing arms. Beam
+poses extend arms independently of the cruise stance; heat vision keeps the
+head-led pose. Added deterministic `htamatch --hero-pose hover|cruise|attack`
+for visual review (does not simulate a match). Five new synthetic checks cover
+subtree transforms, preservation of an unrelated head, opposite directions and
+missing/degenerate inputs. `test_oal_asset`: 32 checks. Goku cruise/attack,
+Superman cruise and Iron Man cruise inspected offscreen.
+
+Imported Chell and Combine Elite from installed Garry's Mod assets; no missing
+dependencies. Added character hurt/death sound hooks, throttled/spatialized,
+and bundled Combine's actual pain/death recordings from the owner's content.
+Host events and guest damage snapshots/kill notices drive them. Guest ability
+FX drive a short attack-pose hold. Content remains private, outside the repo.
+
+Converted CSS Port. Dedicated-server content initially lacked textures;
+installed client content resolved them. Final package has 285451 triangles,
+40/40 usable starts, zero test falls, 195.1 MiB host GPU allocation. Two water
+materials have no base texture and retain the importer's explicit fallback.
+No claim of Source lightmaps or functional Source moving props/water. Initial
+8-bot/new-character run: 18 kills in 45.5 s. Full engine verification 80/80.
+Initial tuning and device objectives are in HANDOFF; phone/LAN feel unverified.
+
+Longer Port match exposed bots walking on the seabed: withheld from bundle.
+Compound replaces it in the release: 201181 triangles, 33/33 usable spawns,
+zero falls in spawn tests, all 184 materials resolved, zero water faces,
+189.2 MiB host GPU allocation. Eight new-character bots: 24 kills in 60 s.
+Importer tests: 36/36. Compound spawn and match renders inspected.
+
+## 2026-09-24 — gameplay review, bot kits and ability spam
+
+Reviewed current Megamod code and private bundle after owner reported static
+flight, missing lighting/audio, small arenas and weak character feel. Detailed
+findings and staged work: `docs/MEGAMOD_REVIEW.md`. Preserved prior uncommitted
+work. Fixed diagonal/ascent flight exceeding configured speed and aligned
+`htamatch` fallback character lighting with Android. Player suite: 91 checks.
+
+Owner then reported bots stealing other heroes' gear and abilities, and
+one-shot/spammable powers. Bot kit eligibility is now shared by AI goals,
+spawn selection and authoritative inventory/pickup paths. Fallback bots cannot
+borrow imported gear named in other characters' kits. Hidden abilities and
+fist-type innate weapons no longer create drops. Physical weapons remain
+available to human scavengers.
+
+Beam damage was per tick and stacked body damage (Superman 110 x 3 each tick).
+Direct powers now spend an activation budget, divided among timed shots and
+compensated for basic-attack multipliers. Initial invented balance limits:
+beam total <= baseline health + shields; pulse total <= 0.6 x baseline health
+before falloff; recovery >= 10 s AFTER channel end. Preserved knockback.
+Projectile-style abilities retain their old damage multipliers and still need
+tuning. Cadence retains overshoot and excludes an endpoint shot. Client HUD
+prediction includes channel time and shares the recovery floor with authority.
+Tests cover piercing without first-tick kills, 30/60/120 Hz channel budgets,
+post-channel recovery, surviving shouts and kit/inventory/drop restrictions.
+Full gate after changes: 80 passed, 0 failed. Phone/LAN balance feel remains
+unverified. No new poses, articulated ragdolls, lightmaps or maps claimed.
+
 # Engineering journal — Halo Trial Android
 
 Every session, newest first. **You do not need to read this to work on the
