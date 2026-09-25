@@ -1,0 +1,94 @@
+# Every push and pull request: the checks an agent (or a person) must not
+# break. Tests that need the owner's Trial data skip here; verify.sh with
+# HTA_MAP on the dev machine stays the full gate before publishing.
+name: ci
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  no-game-data:
+    # A public repository: no Trial data, imported packages or rendered
+    # frames, ever (CLAUDE.md).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Nothing proprietary tracked
+        run: |
+          bad=$(git ls-files | grep -iE '\.(map|wav|ogg|mp3|oalmap|oalasset|bsp|vpk|gma|mdl|vtf|ppm)$' || true)
+          if [ -n "$bad" ]; then echo "::error::game data or rendered frames are tracked:"; echo "$bad"; exit 1; fi
+      - name: No Trial data or packages anywhere in history
+        run: |
+          bad=$(git rev-list --all --objects | grep -iE '\.(map|wav|ogg|oalmap|oalasset)$' || true)
+          if [ -n "$bad" ]; then echo "::error::found in history:"; echo "$bad"; exit 1; fi
+
+  host:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q cmake libsdl2-dev libvulkan-dev mesa-vulkan-drivers
+      - name: Build (Release, asserts kept for tests)
+        run: cmake -S . -B build-host -DCMAKE_BUILD_TYPE=Release && cmake --build build-host -j4
+      - name: Test
+        run: cd build-host && ctest --output-on-failure -j4
+
+  sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q cmake libsdl2-dev libvulkan-dev mesa-vulkan-drivers
+      - name: Build with ASan and UBSan
+        run: |
+          cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined"
+          cmake --build build-asan -j4
+      - name: Test (lavapipe's own leaks are not ours)
+        env: { ASAN_OPTIONS: detect_leaks=0 }
+        run: cd build-asan && ctest --output-on-failure -j4
+
+  android:
+    # platform_android.c is built by nothing else: the NDK type check, then
+    # the real Gradle build of the plain (asset-free) APK.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: NDK and CMake the app pins
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;28.0.13004108" "platforms;android-35" > /dev/null
+          echo "ANDROID_NDK=$ANDROID_HOME/ndk/28.0.13004108" >> "$GITHUB_ENV"
+      - name: NDK type check
+        run: scripts/ndkcheck.sh
+      - name: Gradle debug APK
+        run: cd android && ./gradlew --no-daemon -q :app:assembleDebug
+      - name: The APK carries no Trial data
+        run: |
+          apk=android/app/build/outputs/apk/debug/app-debug.apk
+          if unzip -l "$apk" | grep -iE '\.(map|oalmap|oalasset)$'; then echo "::error::APK carries game data"; exit 1; fi
+
+  shaders:
+    # Committed SPIR-V matches its GLSL. A different glslang version can
+    # emit different words for the same shader, so this warns, not fails.
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -q && sudo apt-get install -y -q glslang-tools
+      - name: Compile and compare
+        run: |
+          scripts/compile_shaders.sh
+          if ! git diff --exit-code --stat shaders/; then
+            echo "::warning::shaders/*.inl differ from a fresh compile; run scripts/compile_shaders.sh"
+          fi
