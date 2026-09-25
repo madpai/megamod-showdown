@@ -46,6 +46,16 @@ public class SetupActivity extends Activity {
     private Button play;
     private EditText serverAddress;
     private Button botsButton, skillButton, modelButton, botModelButton;
+    private Button presetButton, goreButton, weatherButton;
+    /* Video & effects, written to video.cfg for the native side (it reads
+     * the same key = value format as src/gfx/gfx_settings.c). AUTO writes
+     * nothing: native picks a preset from the GPU's name. CLASSIC is the
+     * original renderer, drawn straight to the screen -- the safe choice
+     * if a newer path misbehaves on some phone. */
+    private static final String[] PRESETS = { "Auto", "Classic", "Potato", "Low", "Medium", "High", "Ultra" };
+    private static final String[] GORE = { "Off", "Chunks", "Full" };
+    private static final String[] WEATHER = { "Map default", "Clear", "Rain", "Storm", "Snow", "Ash", "Sandstorm" };
+    private int preset = 0, gore = 2, weather = 0;
     /* Imported bodies built into this APK (assets/characters/NAME.oalasset);
      * "" is the Spartan. */
     private final java.util.List<String> models = new java.util.ArrayList<>();
@@ -112,6 +122,17 @@ public class SetupActivity extends Activity {
         botModelButton.setOnClickListener(v -> { botModels = !botModels; showModelSettings(); });
         showModelSettings();
 
+        preset = Math.max(0, Math.min(PRESETS.length - 1, prefs.getInt("video_preset", 0)));
+        gore = Math.max(0, Math.min(GORE.length - 1, prefs.getInt("gore", 2)));
+        weather = Math.max(0, Math.min(WEATHER.length - 1, prefs.getInt("weather", 0)));
+        presetButton = btn("", 0xFF3C4656);
+        presetButton.setOnClickListener(v -> { preset = (preset + 1) % PRESETS.length; showVideoSettings(); });
+        goreButton = btn("", 0xFF3C4656);
+        goreButton.setOnClickListener(v -> { gore = (gore + 1) % GORE.length; showVideoSettings(); });
+        weatherButton = btn("", 0xFF3C4656);
+        weatherButton.setOnClickListener(v -> { weather = (weather + 1) % WEATHER.length; showVideoSettings(); });
+        showVideoSettings();
+
         play = btn("Back to main menu", 0xFF2A7A3A);
         play.setOnClickListener(v -> {
             if (existingMap() == null && !builtInData()) { status.setText("Pick a map first."); return; }
@@ -165,6 +186,15 @@ public class SetupActivity extends Activity {
         root.addView(botsButton);
         root.addView(space(6));
         root.addView(skillButton);
+        root.addView(space(6));
+        root.addView(space(10));
+        root.addView(tv("VIDEO & EFFECTS", 18, 0xFFE6E9EF, true));
+        root.addView(space(6));
+        root.addView(presetButton);
+        root.addView(space(6));
+        root.addView(goreButton);
+        root.addView(space(6));
+        root.addView(weatherButton);
         root.addView(space(6));
 
         root.addView(space(6));
@@ -265,6 +295,35 @@ public class SetupActivity extends Activity {
             Log.w(TAG, "Could not read Wi-Fi IPv4 address", e);
         }
         return null;
+    }
+
+    private void showVideoSettings() {
+        presetButton.setText("Graphics: " + PRESETS[preset]);
+        goreButton.setText("Gore: " + GORE[gore]);
+        weatherButton.setText("Weather: " + WEATHER[weather]);
+        getSharedPreferences("hta", MODE_PRIVATE).edit()
+                .putInt("video_preset", preset).putInt("gore", gore).putInt("weather", weather).apply();
+        writeVideoConfig();
+    }
+
+    /** video.cfg beside the maps: what native reads at start-up. */
+    private void writeVideoConfig() {
+        StringBuilder b = new StringBuilder("# Written by SETTINGS. Native reads it at start-up.\n");
+        if (preset == 1) {
+            b.append("preset = custom\npost = off\nrender_scale = 1\nmsaa = 1\n")
+             .append("dynamic_resolution = off\nfog = off\n");
+        } else if (preset >= 2) {
+            b.append("preset = ").append(PRESETS[preset].toLowerCase(java.util.Locale.ROOT)).append('\n');
+        }
+        b.append("gib_level = ").append(gore).append('\n');
+        String[] wkeys = { "auto", "clear", "rain", "storm", "snow", "ash", "sandstorm" };
+        b.append("weather = ").append(wkeys[weather]).append('\n');
+        File f = new File(destDir(), "video.cfg");
+        try (FileOutputStream out = new FileOutputStream(f)) {
+            out.write(b.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.io.IOException e) {
+            Log.w(TAG, "Could not write video.cfg", e);
+        }
     }
 
     private File destDir() {

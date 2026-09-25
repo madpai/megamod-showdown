@@ -215,10 +215,20 @@ int main(int argc, char **argv)
     float ctr[3];
     hta_game_centre(&g, a, ctr);
     int before_score = ua->score;
+    { hta_game_event drain; while (hta_game_pop(&g, &drain)) { } }   /* room for the KILL */
     hta_game_blast(&g, a, ctr, 5000.0f, 1.0f, 2.0f);
     hta_game_update(&g, 1.0f / 30.0f);
     CHECK(!ua->alive && ua->suicides == 1 && ua->score == before_score - 1,
           "your own rocket is a suicide, and costs a point");
+    {
+        /* The death says it was a blast, how big, and where: gibs. */
+        hta_game_event ev;
+        bool blasted = false;
+        while (hta_game_pop(&g, &ev))
+            if (ev.kind == HTA_EV_KILL && ev.a == a)
+                blasted = ev.amount > 1.0f && fabsf(ev.dir[0] - ctr[0]) < 1e-4f;
+        CHECK(blasted, "a blast death carries the blast (fraction and centre)");
+    }
     /* From behind. */
     for (int i = 0; i < 200 && !ua->alive; i++) hta_game_update(&g, 1.0f / 30.0f);
     ub->body.pos[0] = ua->body.pos[0] - 0.5f; ub->body.pos[1] = ua->body.pos[1];

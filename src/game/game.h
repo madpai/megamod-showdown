@@ -274,6 +274,14 @@ typedef struct {
     float    multi_timer;
     int32_t  last_attacker;
     float    since_attacked;
+    /* The last blast that reached this unit: how much it did and where it
+     * was, for a death to say whether it came apart (gibs). Stale after
+     * HTA_BLAST_KILL_WINDOW, so a rocket you lived through cannot gib you
+     * later from a rifle round. */
+    float    blast_hit;
+    float    blast_at[3];
+    float    since_blast;
+    bool     gibbed;          /* blown apart: no corpse, the renderer's gibs */
     int32_t  attackers[HTA_GAME_MAX_UNITS]; /* for assists: a hit this life */
 
     /* Cosmetic state for the renderer and the network. */
@@ -297,7 +305,10 @@ typedef struct {
 /* ---- Things the caller turns into sound, words and effects ---------- */
 typedef enum {
     HTA_EV_NONE = 0,
-    HTA_EV_KILL,          /* a: victim, b: killer (-1 none), weapon */
+    HTA_EV_KILL,          /* a: victim, b: killer (-1 none), weapon, pos (centre);
+                           * amount: the killing blast as a fraction of the
+                           * victim's full health + shield (0: not a blast),
+                           * dir: where that blast was */
     HTA_EV_SPAWN,         /* a */
     HTA_EV_FIRE,          /* a, weapon, pos (muzzle), dir; amount = reach for beams */
     HTA_EV_HIT_WORLD,     /* a (shooter), weapon, pos, dir (normal), material */
@@ -440,6 +451,9 @@ typedef struct hta_game {
     hta_game_drop   drops[HTA_GAME_MAX_DROPS];
     /* True where this device runs the drops (solo, a host). */
     bool            simulate_drops;
+    /* The gore setting (0 off, 1 chunks, 2 full): at 0 a blast death
+     * leaves a corpse as it always did; above, a big enough one gibs. */
+    uint8_t         gore;
 
     hta_game_event  events[HTA_GAME_MAX_EVENTS];
     uint32_t        event_count;

@@ -325,7 +325,7 @@ void hta_game_view_update(hta_game_view *v, const hta_game *g, int32_t skip, flo
         v->shown[i] = false;
         if (u->kind != HTA_UNIT_NONE && (int32_t)i != skip && body_of(g, u)) {
             imported_update(v, g, i, dt);
-            v->shown[i] = v->oal_posed[i] && (u->alive || u->dead_for < g->respawn_time - 0.05f);
+            v->shown[i] = v->oal_posed[i] && (u->alive || (!u->gibbed && u->dead_for < g->respawn_time - 0.05f));
             continue;
         }
         if (!a->loaded || u->kind == HTA_UNIT_NONE || (int32_t)i == skip) continue;
@@ -342,7 +342,7 @@ void hta_game_view_update(hta_game_view *v, const hta_game *g, int32_t skip, flo
             }
             hta_actor_update(a, dt);
             hta_actor_place(a, NULL, a->yaw);
-            v->shown[i] = u->dead_for < g->respawn_time - 0.05f;
+            v->shown[i] = !u->gibbed && u->dead_for < g->respawn_time - 0.05f;
             continue;
         }
         v->dying[i] = false;

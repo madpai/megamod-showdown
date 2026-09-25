@@ -16,6 +16,14 @@ layout(set = 0, binding = 2) uniform sampler2D u_detail;
 layout(set = 0, binding = 3) uniform sampler2D u_detail2;
 layout(set = 0, binding = 4) uniform sampler2D u_multi;
 
+/* Per-frame values that do not fit the (full) push constants: the
+ * atmosphere. Bound once per frame as set 1. */
+layout(set = 1, binding = 0) uniform Frame {
+    vec4 fog_color;   /* rgb; a > 0.5: fog on */
+    vec4 fog;         /* x density, y start distance, z znear, w zfar */
+    vec4 misc;        /* x seconds; yzw reserved */
+} frame;
+
 layout(location = 0) in vec3 v_normal;
 layout(location = 1) in vec2 v_uv;
 layout(location = 2) in vec3 v_world;
@@ -36,6 +44,23 @@ vec4 fold(vec4 cur, vec4 nxt, int op) {
     if (op == 11) return mix(cur, nxt, nxt.a);
     if (op == 12) return mix(nxt, cur, nxt.a);
     return cur;
+}
+
+/* Distance fog, exponential-squared past a clear radius. Distance comes
+ * from the depth buffer's value, not from v_world: instances and the
+ * viewmodel pass model-space positions through v_world, but every draw
+ * shares the world camera's projection -- except the sky and the viewmodel,
+ * which opt out. light_dir.w picks the mode: 0 none, 1 blend toward the fog
+ * colour, 2 fade to black (additive draws, where blending toward a colour
+ * would ADD the fog as light). */
+vec3 apply_fog(vec3 c) {
+    int mode = int(push.light_dir.w + 0.5);
+    if (mode == 0 || frame.fog_color.a < 0.5) return c;
+    float n = frame.fog.z, f = frame.fog.w;
+    float dist = (f * n) / (f - gl_FragCoord.z * (f - n));
+    float x = max(dist - frame.fog.y, 0.0) * frame.fog.x;
+    float k = 1.0 - exp(-x * x);
+    return mode == 2 ? c * (1.0 - k) : mix(c, frame.fog_color.rgb, k);
 }
 
 void main() {
@@ -67,7 +92,7 @@ void main() {
      * folded into the colour as well. */
     if (push.detail.w > 2.5 && push.light_color.w < 1.5) {
         float a = clamp(v_lm_uv.x, 0.0, 1.0);
-        out_color = vec4(base.rgb * v_normal * a, base.a * a);
+        out_color = vec4(apply_fog(base.rgb * v_normal * a), base.a * a);
         return;
     }
     vec3 albedo = base.rgb;
@@ -153,5 +178,5 @@ void main() {
      * because a smoke sprite is a soft shape in the alpha channel over a
      * black background. The additive pipeline blends ONE/ONE and does not
      * care either way. */
-    out_color = vec4(col, base.a);
+    out_color = vec4(apply_fog(col), base.a);
 }

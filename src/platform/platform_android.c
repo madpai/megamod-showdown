@@ -53,6 +53,8 @@
 #include "../game/external_world.h"
 #include "../game/imported.h"
 #include "../asset/oal_asset.h"
+#include "../gfx/gfx_settings.h"
+#include "../game/world_fx_gpu.h"
 
 #include <android/log.h>
 #include <android/input.h>
@@ -513,6 +515,18 @@ typedef struct {
     bool    hud_ready;
     float   hud_move[2];
     bool    hud_jump, hud_fire, hud_crouch;
+
+    /* Video settings (SETTINGS writes video.cfg; gfx_settings.c reads
+     * it) and the world-effects director: debris, gibs, splats, weather. */
+    hta_gfx_settings video;
+    bool    video_loaded, video_auto;
+    char    video_cfg[2048];
+    size_t  video_cfg_len;
+    hta_world_fx wfx;
+    const void *wfx_world;            /* the mesh it was set up for */
+    /* Vehicles' collision instances and the props', merged every frame
+     * into the one list the world grid points at. */
+    hta_collision_instance col_merged[HTA_VEHICLE_MAX + 256];
 } hta_android;
 
 static hta_android *g_android;
@@ -3023,6 +3037,20 @@ static void shake_fire(hta_android *s, uint32_t jpt)
         hta_shake_add(&s->shake, &d, &s->cam, NULL);
 }
 
+/* Thunder rolling in: a long low shake, no kick. The Trial has no thunder
+ * sound, so this is felt, not heard. Ours: 1.6 s, 0.004 wu, 0.004 rad at
+ * full loudness. */
+static void shake_thunder(hta_android *s, float gain)
+{
+    hta_damage_shake d;
+    memset(&d, 0, sizeof(d));
+    d.radius[0] = d.radius[1] = 1e6f;
+    d.shake_time = 1.6f;
+    d.shake_move = 0.004f * gain;
+    d.shake_rot = 0.004f * gain;
+    hta_shake_add(&s->shake, &d, &s->cam, NULL);
+}
+
 /* A vehicle blowing up: the shell's fireball twice, a ring of it around
  * the hull, its bang, the shake, the scorch. */
 static void wreck_fx(hta_android *s, const float at[3])
@@ -3237,6 +3265,7 @@ static void game_events(hta_android *s)
     hta_game_event e;
     char buf[96];
     while (hta_game_pop(&s->game, &e)) {
+        hta_wfx_game_event(&s->wfx, &e, &s->game);
         if (s->net_hosting && (e.a==-1 || (e.a>=0 && e.a<HTA_GAME_MAX_UNITS)) &&
             (e.kind==HTA_EV_FIRE || e.kind==HTA_EV_HIT_WORLD ||
              e.kind==HTA_EV_DETONATE)) {
@@ -4486,11 +4515,67 @@ static void gather_input(hta_android *s, hta_player_input *in, float dt)
 
 /* ------------------------------ lifecycle ------------------------------ */
 
+/* video.cfg beside the maps, written by SETTINGS. No file, or no preset
+ * in it, means AUTO: a preset picked from the GPU once it is known. */
+static void load_video(hta_android *s)
+{
+    s->video_loaded = true;
+    s->video_auto = true;
+    s->video_cfg_len = 0;
+    hta_gfx_settings_preset(&s->video, HTA_QUALITY_MEDIUM);
+    const char *dir = s->app->activity->externalDataPath;
+    if (!dir) dir = s->app->activity->internalDataPath;
+    char path[1024];
+    if (!dir || snprintf(path, sizeof(path), "%s/video.cfg", dir) >= (int)sizeof(path)) return;
+    FILE *f = fopen(path, "rb");
+    if (!f) { hta_log("[video] no video.cfg: auto"); return; }
+    s->video_cfg_len = fread(s->video_cfg, 1, sizeof(s->video_cfg) - 1, f);
+    fclose(f);
+    s->video_cfg[s->video_cfg_len] = 0;
+    s->video_auto = strstr(s->video_cfg, "preset") == NULL;
+    hta_gfx_settings_parse(&s->video, s->video_cfg, s->video_cfg_len);
+    hta_log("[video] video.cfg: preset %s%s", hta_quality_name(s->video.preset),
+            s->video_auto ? " (auto)" : "");
+}
+
 static void start_gfx(hta_android *s)
 {
     char err[HTA_ERRLEN];
-    s->gfx = hta_gfx_create_window(s->app->window, err, sizeof(err));
+    if (!s->video_loaded) load_video(s);
+    /* AUTO starts on the original renderer, learns the GPU's name, then
+     * moves to the suggested preset; a chosen preset starts on it. */
+    s->gfx = hta_gfx_create_window_ex(s->app->window, s->video_auto ? NULL : &s->video,
+                                      err, sizeof(err));
     if (!s->gfx) { hta_log("[gfx] init FAILED: %s", err); s->has_window = false; return; }
+    if (s->video_auto) {
+        long cores = sysconf(_SC_NPROCESSORS_ONLN);
+        hta_quality q = hta_gfx_settings_suggest(hta_gfx_device_name(s->gfx), true, 0,
+                                                 cores > 0 ? (uint32_t)cores : 0);
+        hta_gfx_settings_preset(&s->video, q);
+        /* The rest of the file (gore, weather) still applies. */
+        hta_gfx_settings_parse(&s->video, s->video_cfg, s->video_cfg_len);
+        s->video.preset = q;
+        s->video_auto = false;
+        hta_log("[video] auto: %s on '%s' (%ld cores)", hta_quality_name(q),
+                hta_gfx_device_name(s->gfx), cores);
+    }
+    if (!hta_gfx_apply_settings(s->gfx, &s->video, err, sizeof(err))) {
+        hta_log("[video] %s preset failed (%s): the original renderer instead",
+                hta_quality_name(s->video.preset), err);
+        /* Adopt what works, or every frame's look would retry the build. */
+        uint32_t gib = s->video.gib_level;
+        float wd = s->video.weather_density, pd = s->video.particle_density;
+        uint32_t md = s->video.max_debris;
+        hta_gfx_get_settings(s->gfx, &s->video);
+        s->video.gib_level = gib; s->video.weather_density = wd;
+        s->video.particle_density = pd; s->video.max_debris = md;
+    }
+    hta_log("[video] %s: %s, scale %.2f, msaa %u", hta_quality_name(s->video.preset),
+            hta_gfx_is_composed(s->gfx) ? "composed" : "direct", hta_gfx_render_scale(s->gfx),
+            hta_gfx_msaa(s->gfx));
+    s->game.gore = (uint8_t)s->video.gib_level;
+    if (s->wfx.ready && !hta_wfx_gpu_upload(&s->wfx, s->gfx))
+        hta_log("[wfx] effect meshes failed to upload");
     s->has_window = true;
     s->win_w = ANativeWindow_getWidth(s->app->window);
     s->win_h = ANativeWindow_getHeight(s->app->window);
@@ -4595,6 +4680,7 @@ static void stop_gfx(hta_android *s)
     if (s->gpu_fx) { hta_gfx_mesh_free(s->gfx, s->gpu_fx); s->gpu_fx = NULL; }
     if (s->gpu_sky) { hta_gfx_mesh_free(s->gfx, s->gpu_sky); s->gpu_sky = NULL; }
     if (s->gpu_mesh) { hta_gfx_mesh_free(s->gfx, s->gpu_mesh); s->gpu_mesh = NULL; }
+    hta_wfx_gpu_free(&s->wfx, s->gfx);
     if (s->gfx) { hta_gfx_destroy(s->gfx); s->gfx = NULL; }
     s->has_window = false;
 }
@@ -5292,8 +5378,14 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
             uint32_t sound=hta_projectile_impact_sound(&s->cache,proj,fx.material);
             if (sound) play_tag_at(s,sound,fx.pos,0.8f);
             hta_gun_add_mark(&s->gun,fx.pos,fx.dir,HTA_MARK_SIZE);
+            /* The same round, on a joining phone: props chip and break here
+             * too (host and client each run their own props; see HANDOFF). */
+            hta_game_event hw={.kind=HTA_EV_HIT_WORLD,.a=-1,.material=fx.material};
+            for (int k=0;k<3;k++) { hw.pos[k]=fx.pos[k]; hw.dir[k]=fx.dir[k]; }
+            hta_wfx_game_event(&s->wfx,&hw,&s->game);
         } else if (fx.kind==HTA_NET_FX_WRECK) {
             wreck_fx(s,fx.pos);
+            hta_wfx_net_fx(&s->wfx,HTA_WFX_NET_WRECK,fx.pos,fx.dir,0.0f);
         } else if (fx.kind==HTA_NET_FX_DETONATE && fx.weapon<s->game.pool_count) {
             const hta_projectiles *pool=&s->game.pools[fx.weapon];
             if (pool->detonation_snd)
@@ -5301,8 +5393,10 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
             shake_effect(s,pool->det_effect,fx.pos);
             if (s->pool_recipe[fx.weapon]!=HTA_PART_NO_RECIPE)
                 hta_particles_burst(&s->parts,s->pool_recipe[fx.weapon],fx.pos,fx.dir);
-            if (pool->blast_radius>0.0f)
+            if (pool->blast_radius>0.0f) {
                 hta_gun_add_mark(&s->gun,fx.pos,fx.dir,pool->blast_radius);
+                hta_wfx_net_fx(&s->wfx,HTA_WFX_NET_DETONATE,fx.pos,fx.dir,pool->blast_radius);
+            }
         }
     }
     hta_net_kill kill;
@@ -7487,13 +7581,86 @@ void android_main(struct android_app *app)
                 dynlist[dyncount].vertex_color = true;
                 dyncount++;
             }
+            /* World effects: set up once the map's collision exists (and
+             * again for a new map), stepped every frame, drawn after the
+             * engine's own dynamic meshes. */
+            if (state.map_loaded && state.wfx_world != (const void *)state.mesh.vertices) {
+                if (!state.wfx.ready) {
+                    if (hta_wfx_init(&state.wfx, &state.col, &state.video)) {
+                        hta_wfx_choose_weather(&state.wfx,
+                            hta_wfx_parse_weather(state.video_cfg, state.video_cfg_len));
+                        hta_wfx_gpu_upload(&state.wfx, state.gfx);
+                    }
+                } else {
+                    hta_wfx_reset(&state.wfx);
+                }
+                /* An imported map's breakables and weather. Props come back
+                 * after 30 s (ours) so a long match keeps its cover. */
+                hta_wfx_load_map(&state.wfx, state.world_loaded ? &state.world_ext : NULL, 30.0f);
+                if (state.wfx.props.count)
+                    hta_log("[wfx] %u breakable props, weather %s", state.wfx.props.count,
+                            hta_weather_name(state.wfx.weather.kind));
+                state.wfx_world = state.mesh.vertices;
+            }
+            /* Props are solid while whole: their instances ride with the
+             * vehicles' in the grid everyone collides with. */
+            if (state.wfx.ready && state.wfx.props.count) {
+                uint32_t nv = state.vehicles.loaded ? state.vehicles.count : 0u;
+                state.col.instance_count = hta_props_instances(&state.wfx.props, state.vehicles.inst, nv,
+                    state.col_merged, (uint32_t)(sizeof(state.col_merged) / sizeof(state.col_merged[0])));
+                state.col.instances = state.col_merged;
+            }
+            /* Cars smash props they drive into (they do not collide). */
+            for (uint32_t i = 0; state.wfx.props.count && state.vehicles.loaded && i < state.vehicles.count; i++) {
+                const hta_vehicle *car = &state.vehicles.cars[i];
+                if (!car->active) continue;
+                float sp = hta_vehicles_speed(&state.vehicles, i);
+                float v3[3] = { cosf(car->yaw) * sp, sinf(car->yaw) * sp, 0.0f };
+                hta_wfx_ram(&state.wfx, car->pos, v3, car->body_radius > 0.1f ? car->body_radius : 1.0f);
+            }
+            /* What broke or came back: hide or show its triangles, and an
+             * explosive one is a real blast (the host's game hurts people). */
+            {
+                hta_prop_event pe;
+                while (state.wfx.ready && hta_props_pop(&state.wfx.props, &pe)) {
+                    uint32_t tag = state.wfx.props.props[pe.prop].user;
+                    for (uint32_t i = 0; tag && state.gpu_mesh && i < state.mesh.submesh_count &&
+                                         state.world_loaded && state.world_ext.submesh_breakable; i++)
+                        if (state.world_ext.submesh_breakable[i] == tag)
+                            hta_gfx_mesh_set_draw_mode(state.gpu_mesh, i,
+                                pe.kind == HTA_PROP_EV_RESPAWNED ? state.mesh.submeshes[i].draw_mode : HTA_DRAW_SKIP);
+                    if (pe.kind == HTA_PROP_EV_EXPLODED) {
+                        if (state.game_on && (!state.net_enabled || state.net_hosting))
+                            hta_game_blast(&state.game, -1, pe.pos, pe.damage, pe.radius * 0.3f, pe.radius);
+                        hta_props_blast(&state.wfx.props, pe.pos, pe.damage, pe.radius,
+                                        &state.wfx.rigid, &state.wfx.fx);
+                        hta_fx_burst(&state.wfx.fx, HTA_BURST_SPARKS, pe.pos, NULL, 40);
+                        shake_thunder(&state, 0.8f);
+                    }
+                }
+            }
+            hta_scene drawscene = state.scene;
+            if (state.wfx.ready) {
+                hta_wfx_update(&state.wfx, dt, &state.cam);
+                hta_gfx_settings look;
+                hta_wfx_frame_look(&state.wfx, &state.video, &look,
+                                   drawscene.ambient, drawscene.light_color);
+                hta_gfx_apply_settings(state.gfx, &look, NULL, 0);
+                hta_wfx_gpu_frame(&state.wfx, state.gfx, &state.video, dt);
+                dyncount = hta_wfx_gpu_draw(&state.wfx, &state.cam, dynlist, dyncount,
+                                            HTA_GFX_MAX_DYNAMIC);
+                if (state.wfx.weather.thunder_ready) {
+                    float tg;
+                    if (hta_weather_thunder(&state.wfx.weather, &tg)) shake_thunder(&state, tg);
+                }
+            }
             g_inst_count = 0;
             dyncount = game_draw(&state, dynlist, dyncount);
             vehicles_draw(&state);
             hta_gfx_set_instances(state.gfx, g_inst, g_inst_count);
             hta_camera drawcam = state.cam;
             hta_shake_apply(&state.shake, &drawcam);
-            if (!hta_gfx_draw(state.gfx, &drawcam, &state.scene, state.gpu_mesh,
+            if (!hta_gfx_draw(state.gfx, &drawcam, &drawscene, state.gpu_mesh,
                               state.gpu_sky, state.gpu_fx,
                               dynlist, dyncount,
                               vmdraw.mesh ? &vmdraw : NULL,

@@ -27,9 +27,16 @@ if(ANDROID)
         src/engine/audio.c
         src/engine/ammo.c
         src/engine/hud.c
+        src/engine/rigid.c
+        src/engine/fx.c
+        src/engine/gore.c
+        src/engine/props.c
+        src/engine/weather.c
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
+        src/game/world_fx.c
+        src/game/world_fx_gpu.c
         src/game/game.c
         src/game/brain.c
         src/game/view.c
@@ -49,6 +56,7 @@ if(ANDROID)
         src/asset/weapon.c
         src/asset/anim.c
         src/asset/model.c
+        src/gfx/gfx_settings.c
         src/gfx/gfx_vulkan.c
         src/platform/platform_android.c
         src/platform/audio_android.c
@@ -77,15 +85,18 @@ else()
         src/engine/actor.c
         src/engine/pickup.c
         src/engine/bot.c src/engine/viewmodel.c src/engine/audio.c src/engine/ammo.c src/engine/hud.c
+        src/engine/rigid.c src/engine/fx.c src/engine/gore.c src/engine/props.c src/engine/weather.c
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
+        src/game/world_fx.c
         src/game/game.c
         src/game/brain.c
         src/game/view.c
         src/game/menu.c
         src/asset/cache.c src/asset/bsp.c src/asset/external_map.c src/asset/oal_asset.c src/asset/bitmap.c src/asset/sound.c src/asset/ogg.c src/asset/effect.c src/asset/dialogue.c src/asset/strings.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
-        src/asset/anim.c src/asset/model.c src/asset/font.c)
+        src/asset/anim.c src/asset/model.c src/asset/font.c
+        src/gfx/gfx_settings.c)
     target_include_directories(hta_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(hta_engine PRIVATE -Wall -Wextra)
 
@@ -116,7 +127,7 @@ else()
     # Host offscreen renderer: needs Vulkan loader + headers on the host.
     find_package(Vulkan QUIET)
     if(Vulkan_FOUND)
-        add_library(hta_gfx_host STATIC src/gfx/gfx_vulkan.c src/platform/platform_posix.c)
+        add_library(hta_gfx_host STATIC src/gfx/gfx_vulkan.c src/gfx/gfx_settings.c src/game/world_fx_gpu.c src/platform/platform_posix.c)
         target_include_directories(hta_gfx_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${Vulkan_INCLUDE_DIRS})
         target_link_libraries(hta_gfx_host PUBLIC ${Vulkan_LIBRARIES} m)
         target_compile_options(hta_gfx_host PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
@@ -134,6 +145,13 @@ else()
         add_executable(open-halo-asset-test src/tools/open_halo_asset_test.c)
         target_link_libraries(open-halo-asset-test PRIVATE hta_engine hta_gfx_host m)
 
+        # The renderer's own pictures, on a synthetic scene. Skips (77)
+        # when there is no Vulkan device; lavapipe is enough.
+        add_executable(test_gfx_render tests/test_gfx_render.c)
+        target_link_libraries(test_gfx_render PRIVATE hta_gfx_host hta_engine m)
+        add_test(NAME gfx_render COMMAND test_gfx_render)
+        set_tests_properties(gfx_render PROPERTIES SKIP_RETURN_CODE 77)
+
         add_executable(htaview src/tools/htaview.c)
         target_link_libraries(htaview PRIVATE hta_engine hta_gfx_host m)
         find_package(PkgConfig QUIET)
@@ -141,9 +159,17 @@ else()
             pkg_check_modules(SDL2 QUIET IMPORTED_TARGET sdl2)
             if(SDL2_FOUND)
                 add_executable(htaplay src/tools/htaplay.c)
-                target_link_libraries(htaplay PRIVATE hta_engine hta_gfx_host hta_net PkgConfig::SDL2 m)
+                target_link_libraries(htaplay PRIVATE hta_desktop hta_engine hta_gfx_host hta_net PkgConfig::SDL2 m)
                 target_compile_options(htaplay PRIVATE -Wall -Wextra)
                 message(STATUS "host SDL2 found: htaplay will be built")
+                # The desktop platform layer (window, Vulkan surface, input,
+                # pacing) and the data-free sandbox on top of it.
+                add_library(hta_desktop STATIC src/platform/desktop_sdl.c)
+                target_link_libraries(hta_desktop PUBLIC hta_gfx_host PkgConfig::SDL2)
+                target_compile_options(hta_desktop PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+                add_executable(megamod-sandbox src/tools/sandbox.c)
+                target_link_libraries(megamod-sandbox PRIVATE hta_desktop hta_gfx_host hta_engine m)
+                target_compile_options(megamod-sandbox PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
             endif()
         endif()
         message(STATUS "host Vulkan found: htaview will be built")
@@ -260,7 +286,35 @@ else()
     target_link_libraries(test_sound PRIVATE hta_engine m)
     add_test(NAME sound COMMAND test_sound)
 
+
+    add_executable(test_rigid tests/test_rigid.c)
+    target_link_libraries(test_rigid PRIVATE hta_engine m)
+    add_test(NAME rigid COMMAND test_rigid)
+
+    add_executable(test_world_fx tests/test_world_fx.c)
+    target_link_libraries(test_world_fx PRIVATE hta_engine m)
+    add_test(NAME world_fx COMMAND test_world_fx)
+
+    add_executable(test_world_director tests/test_world_director.c)
+    target_link_libraries(test_world_director PRIVATE hta_engine m)
+    add_test(NAME world_director COMMAND test_world_director)
+
+    add_executable(test_gfx_settings tests/test_gfx_settings.c)
+    target_link_libraries(test_gfx_settings PRIVATE hta_engine m)
+    add_test(NAME gfx_settings COMMAND test_gfx_settings)
+
     add_executable(mkfixture tests/mkfixture.c tests/fixture.c)
     target_include_directories(mkfixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     target_link_libraries(mkfixture PRIVATE m)
+
+    # Tests call side-effecting functions inside assert(). A Release build
+    # defines NDEBUG, which compiled those calls out and left the tests
+    # passing on garbage (test_external_map freed an unbuilt grid). Keep
+    # asserts live in every test, whatever the build type.
+    get_property(hta_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(t IN LISTS hta_targets)
+        if(t MATCHES "^test_")
+            target_compile_options(${t} PRIVATE -UNDEBUG)
+        endif()
+    endforeach()
 endif()

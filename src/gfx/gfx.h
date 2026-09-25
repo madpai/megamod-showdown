@@ -13,6 +13,7 @@
 #include "../engine/engine.h"
 #include "../engine/camera.h"
 #include "../asset/bsp.h"
+#include "gfx_settings.h"
 
 typedef struct hta_gfx      hta_gfx;
 typedef struct hta_gfx_mesh hta_gfx_mesh;
@@ -28,7 +29,38 @@ typedef struct {
 hta_gfx *hta_gfx_create_window(void *native_window, char *err, size_t errlen);
 /* headless; render target is width x height */
 hta_gfx *hta_gfx_create_offscreen(uint32_t w, uint32_t h, char *err, size_t errlen);
+/* The same, starting from `settings` (NULL: the legacy direct path).
+ * Anisotropy is baked into samplers here and cannot change later. */
+hta_gfx *hta_gfx_create_window_ex(void *native_window, const hta_gfx_settings *settings,
+                                  char *err, size_t errlen);
+hta_gfx *hta_gfx_create_offscreen_ex(uint32_t w, uint32_t h, const hta_gfx_settings *settings,
+                                     char *err, size_t errlen);
+
+/* Desktop windows (SDL, GLFW, ...). The windowing library names the
+ * instance extensions it needs and makes the surface; the renderer stays
+ * free of any window-system header. `make_surface` gets a VkInstance and
+ * writes a VkSurfaceKHR through `surface_out`. */
+typedef bool (*hta_gfx_surface_fn)(void *vk_instance, void *user, void *surface_out);
+hta_gfx *hta_gfx_create_desktop(const char *const *instance_exts, uint32_t ext_count,
+                                hta_gfx_surface_fn make_surface, void *user,
+                                uint32_t width, uint32_t height,
+                                const hta_gfx_settings *settings, char *err, size_t errlen);
+/* After the window changes size (desktop). Meshes survive. */
+bool     hta_gfx_resize(hta_gfx *g, uint32_t w, uint32_t h, char *err, size_t errlen);
 void     hta_gfx_destroy(hta_gfx *g);
+
+/* Video settings, applied between frames. Grading, fog and bloom strength
+ * cost nothing to change; scale ceiling, MSAA, post on/off and vsync
+ * rebuild targets and pipelines (not meshes). On failure the renderer falls
+ * back to the direct path and returns false. For dynamic resolution, apply
+ * the CEILING scale once and move within it with hta_gfx_set_render_scale,
+ * which never reallocates. */
+bool  hta_gfx_apply_settings(hta_gfx *g, const hta_gfx_settings *s, char *err, size_t errlen);
+void  hta_gfx_get_settings(const hta_gfx *g, hta_gfx_settings *out);
+void  hta_gfx_set_render_scale(hta_gfx *g, float scale);
+float hta_gfx_render_scale(const hta_gfx *g);
+bool  hta_gfx_is_composed(const hta_gfx *g);
+uint32_t hta_gfx_msaa(const hta_gfx *g);
 
 const char *hta_gfx_device_name(const hta_gfx *g);
 void        hta_gfx_extent(const hta_gfx *g, uint32_t *w, uint32_t *h);
@@ -46,6 +78,9 @@ hta_gfx_mesh *hta_gfx_mesh_upload_dynamic(hta_gfx *g, const hta_bsp_mesh *mesh,
 hta_gfx_mesh *hta_gfx_mesh_upload_dynamic_world(hta_gfx *g, const hta_bsp_mesh *mesh,
                                                 char *err, size_t errlen);
 void hta_gfx_mesh_free(hta_gfx *g, hta_gfx_mesh *m);
+/* Changes how one submesh draws from the next frame on: HTA_DRAW_SKIP
+ * hides it (a broken prop), any other mode draws it that way again. */
+void hta_gfx_mesh_set_draw_mode(hta_gfx_mesh *m, uint32_t submesh, uint8_t mode);
 
 /* The first-person view. `vertices` (optional) replaces the mesh's vertex data
  * for this frame; the copy happens behind the frame fence. `offset` shifts the

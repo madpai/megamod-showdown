@@ -13,7 +13,9 @@
 #include "gfx/gfx.h"
 #include "net/session.h"
 #include "net/replication.h"
+#include "platform/desktop_sdl.h"
 #include <SDL.h>
+#include <SDL_vulkan.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -128,16 +130,38 @@ int main(int argc,char **argv)
     if (!hta_net_client_open(&net,argv[2],(uint16_t)port)) {
         fprintf(stderr,"bad server address\n"); return 1;
     }
-    if (SDL_Init(SDL_INIT_VIDEO|SDL_INIT_EVENTS)) { fprintf(stderr,"SDL: %s\n",SDL_GetError()); return 1; }
-    SDL_Window *window=SDL_CreateWindow("Blood Gulch LAN - connecting",
-                        window_x,window_y,WIDTH,HEIGHT,0);
-    SDL_Renderer *renderer=window ? SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE) : NULL;
-    SDL_Texture *texture=renderer ? SDL_CreateTexture(renderer,SDL_PIXELFORMAT_RGBA32,
-                                                      SDL_TEXTUREACCESS_STREAMING,WIDTH,HEIGHT) : NULL;
-    if (!texture) { fprintf(stderr,"SDL video: %s\n",SDL_GetError()); return 1; }
+    /* Interactive: a real Vulkan swapchain in a resizable window, at the
+     * video settings (HTA_VIDEO=preset, default high). Scripted runs
+     * (--auto, --shot, SDL's dummy driver in verify.sh) keep the offscreen
+     * renderer they were proven on. */
+    const char *vdrv=getenv("SDL_VIDEODRIVER");
+    bool native=!auto_seconds && !shot && !(vdrv && !strcmp(vdrv,"dummy"));
+    hta_desktop *desk=NULL;
+    SDL_Window *window=NULL; SDL_Renderer *renderer=NULL; SDL_Texture *texture=NULL;
+    hta_gfx *gfx=NULL;
+    if (native) {
+        hta_gfx_settings vs;
+        hta_quality q=HTA_QUALITY_HIGH;
+        const char *pv=getenv("HTA_VIDEO");
+        if (pv) hta_quality_from_name(pv,&q);
+        hta_gfx_settings_preset(&vs,q);
+        vs.window_width=1280; vs.window_height=720;
+        desk=hta_desktop_open("Blood Gulch LAN - connecting",&vs,err,sizeof(err));
+        if (!desk) fprintf(stderr,"native window unavailable (%s); using the offscreen path\n",err);
+        else { gfx=hta_desktop_gfx(desk); window=(SDL_Window *)hta_desktop_window(desk);
+               SDL_SetWindowPosition(window,window_x,window_y); }
+    }
+    if (!desk) {
+        if (SDL_Init(SDL_INIT_VIDEO|SDL_INIT_EVENTS)) { fprintf(stderr,"SDL: %s\n",SDL_GetError()); return 1; }
+        window=SDL_CreateWindow("Blood Gulch LAN - connecting",window_x,window_y,WIDTH,HEIGHT,0);
+        renderer=window ? SDL_CreateRenderer(window,-1,SDL_RENDERER_SOFTWARE) : NULL;
+        texture=renderer ? SDL_CreateTexture(renderer,SDL_PIXELFORMAT_RGBA32,
+                                             SDL_TEXTUREACCESS_STREAMING,WIDTH,HEIGHT) : NULL;
+        if (!texture) { fprintf(stderr,"SDL video: %s\n",SDL_GetError()); return 1; }
+        gfx=hta_gfx_create_offscreen(WIDTH,HEIGHT,err,sizeof(err));
+    }
     bool mouse_captured=!auto_seconds;
     if (mouse_captured) SDL_SetRelativeMouseMode(SDL_TRUE);
-    hta_gfx *gfx=hta_gfx_create_offscreen(WIDTH,HEIGHT,err,sizeof(err));
     if (!gfx) { fprintf(stderr,"Vulkan: %s\n",err); return 1; }
     hta_gfx_mesh *world=hta_gfx_mesh_upload(gfx,&mesh,err,sizeof(err));
     hta_gfx_mesh *skygpu=sky.index_count ? hta_gfx_mesh_upload(gfx,&sky,err,sizeof(err)) : NULL;
@@ -279,12 +303,26 @@ int main(int argc,char **argv)
             dyn.mesh=actor_gpu[slot]; dyn.vertices=a->posed; dyn.vertex_count=a->mesh.vertex_count;
             dyn.lit=true; dyn_count=1;
         }
-        if (!hta_gfx_draw(gfx,&cam,&scene,world,skygpu,NULL,&dyn,dyn_count,NULL,NULL) ||
-            !hta_gfx_readback(gfx,rgba,(size_t)WIDTH*HEIGHT*4u)) {
-            fprintf(stderr,"render failed\n"); running=false; break;
+        if (desk) {
+            uint32_t ew=0,eh=0;
+            hta_gfx_extent(gfx,&ew,&eh);
+            if (eh) cam.aspect=(float)ew/(float)eh;
+            if (!hta_gfx_draw(gfx,&cam,&scene,world,skygpu,NULL,&dyn,dyn_count,NULL,NULL)) {
+                /* Out of date: the window changed size. Follow it. */
+                int pw=0,ph=0;
+                SDL_Vulkan_GetDrawableSize(window,&pw,&ph);
+                if (pw>0 && ph>0 && !hta_gfx_resize(gfx,(uint32_t)pw,(uint32_t)ph,err,sizeof(err))) {
+                    fprintf(stderr,"resize failed: %s\n",err); running=false; break;
+                }
+            }
+        } else {
+            if (!hta_gfx_draw(gfx,&cam,&scene,world,skygpu,NULL,&dyn,dyn_count,NULL,NULL) ||
+                !hta_gfx_readback(gfx,rgba,(size_t)WIDTH*HEIGHT*4u)) {
+                fprintf(stderr,"render failed\n"); running=false; break;
+            }
+            SDL_UpdateTexture(texture,NULL,rgba,WIDTH*4);
+            SDL_RenderCopy(renderer,texture,NULL,NULL); SDL_RenderPresent(renderer);
         }
-        SDL_UpdateTexture(texture,NULL,rgba,WIDTH*4);
-        SDL_RenderCopy(renderer,texture,NULL,NULL); SDL_RenderPresent(renderer);
         if (now-last_log>=2) {
             char title[128];
             if (net.connected)
@@ -314,8 +352,12 @@ int main(int argc,char **argv)
     free(rgba);
     for (int slot=0;slot<2;slot++) hta_gfx_mesh_free(gfx,actor_gpu[slot]);
     hta_gfx_mesh_free(gfx,skygpu);
-    hta_gfx_mesh_free(gfx,world); hta_gfx_destroy(gfx);
-    SDL_DestroyTexture(texture); SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit();
+    hta_gfx_mesh_free(gfx,world);
+    if (desk) hta_desktop_close(desk);
+    else {
+        hta_gfx_destroy(gfx);
+        SDL_DestroyTexture(texture); SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit();
+    }
     for (int slot=0;slot<2;slot++) hta_actor_free(&remote[slot]);
     hta_collision_free(&col);
     hta_bsp_free(&collision_mesh); hta_bsp_free(&sky); hta_bsp_free(&mesh);

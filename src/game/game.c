@@ -1,3 +1,4 @@
+#include "../engine/gore.h"
 #include "game.h"
 #include "../asset/effect.h"
 #include "../asset/anim.h"
@@ -11,6 +12,8 @@
 #include <string.h>
 #include <strings.h>
 
+/* How long after a blast a death still counts as the blast's (ours). */
+#define HTA_BLAST_KILL_WINDOW 0.25f
 #define PI 3.14159265f
 
 /* Weapon (inherits Item, Object): offsets from Invader's weapon.json, which
@@ -687,6 +690,7 @@ static void spawn_unit(hta_game *g, int32_t idx)
     arm(g, u);
     u->flag = -1;
     u->alive = true;
+    u->gibbed = false;
     u->protect = g->spawn_protect;
     u->spree = 0;
     u->last_attacker = HTA_GAME_NONE;
@@ -714,6 +718,7 @@ void hta_game_revive(hta_game *g, int32_t idx)
     hta_unit *u = &g->units[idx];
     hta_game_unseat(g, idx);
     u->alive = true;
+    u->gibbed = false;
     u->protect = g->spawn_protect;
     u->flag = -1;
     u->spree = 0;
@@ -1187,6 +1192,9 @@ void hta_game_blast(hta_game *g, int32_t attacker, const float centre[3],
             const hta_vehicle *car = &g->vehicles->cars[u->vehicle];
             f *= g->vehicles->types[car->type].rider_damage;
         }
+        u->blast_hit = damage * f;
+        memcpy(u->blast_at, centre, sizeof(u->blast_at));
+        u->since_blast = 0.0f;
         hta_game_hurt(g, (int32_t)i, attacker, damage * f, c);
     }
     /* Hulls: hurt, and thrown. Nearest point of the hull counts, roughly
@@ -1251,6 +1259,15 @@ static void die(hta_game *g, int32_t idx)
     char buf[96], fmt[96];
     hta_game_event e = { .kind = HTA_EV_KILL, .a = idx, .b = killer, .weapon = -1 };
     hta_game_centre(g, idx, e.pos);
+    /* Blown up, or shot? A blast this tick or the last few says blown up;
+     * how much of a whole body's worth it did says how hard. */
+    if (v->since_blast <= HTA_BLAST_KILL_WINDOW && v->blast_hit > 0.0f) {
+        float full = v->vitals.max_health + v->vitals.max_shield;
+        e.amount = full > 0.0f ? v->blast_hit / full : 1.0f;
+        memcpy(e.dir, v->blast_at, sizeof(e.dir));
+        v->gibbed = g->gore > 0 && hta_gibs_should(e.amount, NULL);
+    }
+    v->blast_hit = 0.0f;
     if (killer >= 0 && killer != idx && g->units[killer].kind != HTA_UNIT_NONE) {
         hta_unit *k = &g->units[killer];
         e.weapon = k->carry[k->slot & 1u].weapon;
@@ -2888,6 +2905,7 @@ void hta_game_update(hta_game *g, float dt)
         hta_unit *u = &g->units[i];
         if (u->kind == HTA_UNIT_NONE) continue;
         u->since_attacked += dt;
+        u->since_blast += dt;
         if (u->protect > 0.0f) u->protect = u->fired ? 0.0f : u->protect - dt;
         if (!u->alive || g->over) u->ability_active=0.0f;
         if (u->ability_active>0.0f && u->character>=0 && (uint32_t)u->character<g->character_count) {

@@ -8,7 +8,12 @@
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-24 (hero polish, citizen fists, McRonalds map)
+**Date of this revision:** 2026-09-25 (engine session: video settings and a new
+renderer path, rigid-body debris, destructible props, gibs, weather, PC
+window + sandbox; Asset Lab Workshop search/import). Built in a cloud
+container on branch `claude/vibrant-euler-xwhpy5` of `megamod` (no phone, no
+Trial data there): **merge it into `halo-sandbox`, run `verify.sh` with
+`HTA_MAP`, publish, then test** -- see CURRENT TESTING OBJECTIVE.
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Branches -- read this first:**
 - `halo-sandbox` is **MEGAMOD SHOWDOWN**. Push this branch only to private
@@ -174,7 +179,70 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-**This session's phone test (2026-09-24), game `91a1679`.** Personal and
+**This session (2026-09-25), branch `claude/vibrant-euler-xwhpy5`.** Nothing
+here has been on a phone yet. It was built and tested in a cloud container:
+host suite 35/35 (Release too), `test_gfx_render` on lavapipe with the
+Vulkan validation layer silent, the arm64 `.so` and the debug APK build. The
+Trial-data tests (`test_game`, `test_biped`, ...) SKIPPED there -- run
+`HTA_MAP=... scripts/verify.sh` before publishing. `test_game` gained a
+check that a blast death carries the blast.
+
+> 0. **SETTINGS → VIDEO & EFFECTS** (new): Graphics (Auto, Classic, Potato,
+>    Low, Medium, High, Ultra), Gore (Off, Chunks, Full), Weather (Map
+>    default, Clear, Rain, Storm, Snow, Ash, Sandstorm). It writes
+>    `video.cfg` beside the maps; the game reads it when it starts. `adb
+>    logcat | grep '\[video\]'` says what AUTO picked and whether the
+>    renderer is "direct" or "composed".
+> 1. **Classic first.** Pick Graphics: Classic and play a round. It must
+>    look and run exactly like the last build (it is the old renderer, fog
+>    off). If it does not, stop and send a screenshot: that is a regression.
+> 2. **Then Auto, then each preset.** Low/Potato render at 75%/50% and
+>    upscale (should look softer, run faster); Medium adds bloom, FXAA and a
+>    little vignette; High adds MSAA x2 and a filmic curve; Ultra renders at
+>    150% with MSAA x4. Send a screenshot per preset of the same spot, and
+>    the fps each shows. Dynamic resolution (Low/Medium) lowers the scale
+>    when the frame rate drops. Distance fog is on from Low up.
+> 3. **Gibs.** Gore: Full. Kill a bot with a rocket, a grenade at its feet
+>    or a vehicle explosion: it should come apart (chunks, blood mist, drips,
+>    splats where pieces land) and leave no corpse. A rifle kill still
+>    leaves a body. Gore: Off brings corpses back for everything.
+> 4. **Debris.** Grenades and rockets throw dirt clods; a wrecked vehicle
+>    sheds metal panels that bounce and settle; lying debris is thrown again
+>    by the next blast.
+> 5. **Weather.** Weather: Storm on Blood Gulch: rain streaks, splashes
+>    around you, fog thickening, lightning flashes and a rumble after. Under
+>    a roof (the bases) no rain should fall. Try Snow and Sandstorm too.
+> 6. **Breakable props on an imported map** (re-convert a map with the new
+>    Asset Lab first: its `prop_physics` crates and barrels become
+>    breakable). Shoot a crate: chips, then it bursts into pieces and you
+>    can walk where it stood; it comes back after 30 s. An explosive barrel
+>    blows up and hurts people near it. A map with `func_precipitation`
+>    brings its own weather.
+> 7. **LAN.** A joining phone sees corpses where the host sees gibs
+>    (gibbing is not replicated yet), but it does get detonation debris,
+>    wreck panels, its own weather, and props breaking under the replicated
+>    shots and blasts. Say what else differs.
+
+Known risks in this build, most likely first:
+- **The composed renderer on a real phone GPU.** It is new Vulkan code
+  (offscreen targets, MSAA resolve, bloom passes) proven only on lavapipe.
+  If a preset renders black, garbled or crashes, Classic still works and
+  the log says why.
+- **Frame time on the phone at High/Ultra.** Measured nowhere yet. Auto
+  picks conservatively (Mali-G7x → Medium, Adreno 7xx → High).
+- Gibs are not replicated: a LAN joiner sees a corpse where the host sees
+  chunks. Props break per device (the host's decides damage).
+- Bots' nav grid does not know about props: a bot may walk into a crate
+  until it breaks.
+- Vehicles do not collide with props (vehicle terrain queries leave
+  collision instances out); a car faster than a walk smashes any prop it
+  overlaps instead (`hta_wfx_ram`, 60 damage per wu/s, ours). Worth a
+  look: does ramming a crate feel right?
+
+Previous checkpoint (2026-09-24), still worth covering:
+
+**Phone test (2026-09-24), game `91a1679`.**
+Personal and
 guest APKs go to **http://100.89.1.14:8733/**. Protocol **v8**.
 The personal APK adds `mcdonalds.oalmap` (menu name MCRONALDS) and replaces
 the Heavy fist viewmodel with Garry's Mod citizen arms. Previous checkpoint
@@ -681,7 +749,22 @@ steer round other vehicles, and a jam is the physics refusing a move
 (team matches: 21% of wheel time blocked -> 10%). Remaining, in order:
 
 1. **Device feedback** on this build and the ones before it (see CURRENT
-   TESTING OBJECTIVE).
+   TESTING OBJECTIVE). The 2026-09-25 engine work (presets, composed
+   renderer, gibs, weather, props) is the most device-sensitive change in
+   a while: Classic first, then each preset.
+1a. **Engine next, from the 2026-09-25 session**, in order of leverage:
+   - The game loop out of `platform_android.c`, stages 1-2 of
+     `docs/ENGINE_ARCHITECTURE.md` (state split, then device-neutral
+     input). Mechanical, one publish each; unblocks Megamod on PC.
+   - Replicate gibbing (a bit on the KILL message) and prop breaks (host
+     decides; a prop index in the GAME packet) so LAN devices agree.
+   - Props in the nav grid: a whole prop blocks nodes, a broken one frees
+     them (bots walk into crates today).
+   - Per-submesh back-face culling in the renderer, so cel-shading outline
+     shells can be kept (Asset Lab drops them today) and fill is saved.
+   - `func_breakable` brushes as breakables (Asset Lab), glass first.
+   - Tuning on device: bloom threshold, ACES look, fog density per map --
+     all ledger numbers, all guesses until a phone screenshot says.
 2. **Driving in a fight** (in progress, see `docs/RUNNING_LOG.md`). The
    Ghost's blind strafing was most of it: now it strafes only toward open
    ground, FFA 15.1% -> 8.7% blocked. What is left per match: chasing on
@@ -996,6 +1079,25 @@ the full story.
 
 ---
 
+### Traps found 2026-09-25
+
+- **Release builds silently skipped the tests.** Tests put side-effecting
+  calls in `assert()`; `CMAKE_BUILD_TYPE=Release` defines NDEBUG. Test
+  targets now build with `-UNDEBUG` (CMakeLists' last lines). verify.sh
+  (no build type) was never affected.
+- **Most of `test_game` needs the Trial map.** Without `HTA_MAP` it runs 2
+  checks and reports success. A cloud session cannot run it.
+- **One renderer path at a time.** A gfx made with the old constructors
+  is exactly the old direct renderer. `hta_gfx_apply_settings` switches to
+  the composed path; if that fails it falls back and the caller must adopt
+  the working settings, or every frame's apply retries the rebuild.
+- **A box landing almost flat span up** on the edge that touched a substep
+  first. Speculative contacts (solve within the distance a point travels
+  this step) fixed it; do not remove the margin.
+- **Dynamic meshes copy what you tell them.** Weather copies only up to the
+  most drops ever live since upload (slots past it are zeros from the
+  template); copying a full storm's 480 KB a frame for a drizzle is waste.
+
 ## Numbers that are OURS, not the tags'
 
 Every one of these is invented because no tag carries it. If something feels
@@ -1028,6 +1130,24 @@ wrong, this list is the first place to look — they are all one constant.
 | `HTA_PICKUP_LIFT` | 0.06 wu | how far an item floats off its placement |
 | `HTA_ITEM_RESPAWN_DEFAULT` | 15 s | when neither placement nor collection says |
 | `HTA_MELEE_REACH` | 0.5 wu | how far a swing reaches |
+| video presets | see `gfx_settings.c` | scale 0.5/0.75/1/1/1.5, MSAA 1/1/1/2/4, aniso 1/2/4/8/16, particles 0.35..1, debris 16..256, decals 32..512 |
+| fog defaults | density 0.0009/wu, start 30 wu | exponential-squared; colour from the scene's clear colour |
+| bloom | threshold 1.0 (soft knee), strength 0.35..0.5 | scene-linear; lightmapped ground is x2 so bright sand can bloom |
+| ACES pre-scale | 0.72 | holds mid-grey where it was (the fit maps 0.13 to 0.18) |
+| dynamic resolution | -0.05 over 110% of budget, +0.025 under 80%, every 0.5 s | `hta_gfx_settings_adapt` |
+| AUTO preset rules | Adreno >=730 High, >=640 Medium; Mali-G7x Medium; <=4 cores Potato | `hta_gfx_settings_suggest` |
+| debris gravity | 3.215 wu/s^2 | 9.8 m/s^2 at 3.048 m/wu -- physics, not a guess |
+| rigid materials | density, bounce, friction per material | `hta_rigid_material_props`; flesh/dirt do not roll |
+| box corner rounding | 20% of the smallest half-extent | more made boxes rock on their edges forever |
+| gib threshold | killing blast >= 60% of full health+shield | `hta_gibs_should`; also `HTA_BLAST_KILL_WINDOW` 0.25 s |
+| gib throw | <= ~4 wu/s out, ~1 wu of lift | 7 wu/s put heads 36 m up |
+| prop health | glass 5, wood 40, dirt 60, metal 120, concrete 200 | a Spartan is 75 shield+health |
+| bullet on a prop | 12 per round | `HTA_WFX_BULLET_DAMAGE` |
+| prop respawn | 30 s on imported maps | cover comes back in a long match |
+| explosive prop blast | 150 damage, 3 wu | Asset Lab's default when a map gives none |
+| weather | rain 3 wu/s, snow 0.35, box 24 wu wide x 14 high, roof cells 2 wu | `weather.c` |
+| lightning | every 6-20 s, flash decays x5/s, thunder at 112.5 wu/s (343 m/s) | storm only |
+| thunder rumble | 1.6 s, 0.004 wu / 0.004 rad | the Trial has no thunder sound |
 | Fists knockback | 4 wu/s horizontal, 1.4 wu/s up | imported Fists definition; invented for Goku and Superman |
 | Broom flight | 3.5 wu/s; camera 1.25 wu back, 0.28 up/right | slower flight and shoulder view, invented |
 | Class flight | Goku 5.4, Superman 5.8, Iron Man 4.8 wu/s; airborne damage x0.8/x0.85/x0.75 | invented hero balance in private packages; power-flight camera 2.0 wu back, 0.42 up, 0.38 aside |
@@ -1129,6 +1249,19 @@ git. To refresh one, render it (e.g. `htamenu ui.map --width 1600 --height
 `releases/download/media/<name>.jpg`; headless Firefox
 (`firefox --headless --screenshot out.png <url>`) shows whether it renders.
 
+**Renderer pictures without game data:** `test_gfx_render` draws a
+synthetic scene through every path (legacy, neutral post, Potato, bloom,
+fog, High, Ultra, MSAA, dynamic resolution, a live preset switch, and the
+effects) and checks the pixels; `HTA_RENDER_OUT=dir` writes each as PPM.
+Run it with `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` after touching
+the renderer: it must print no VUID.
+
+**The sandbox:** `build-host/megamod-sandbox` (needs SDL2) opens a window
+with the new systems and no game data (F2 preset, F3 weather, F4 gore,
+LMB shoot, G grenade). `--preset ultra --demo 6 --shot out.ppm` runs a
+scripted scene offscreen. `HTA_VIDEO=ultra ./build-host/htaplay ...` puts
+the LAN client on the native swapchain.
+
 **If host Vulkan fails** (`VK_ERROR_INCOMPATIBLE_DRIVER`: NVIDIA userspace
 newer than the loaded kernel module until a reboot), use the unpacked Mesa
 lavapipe: `export VK_ICD_FILENAMES=$PWD/scratch/lvp/usr/share/vulkan/icd.d/lvp_icd.json`
@@ -1223,6 +1356,17 @@ Put them in the session scratchpad, not the repo. Relink after every rebuild.
 | Main menu from ui.map | `src/game/menu.c` |
 | `ustr` string lists | `src/asset/strings.c` |
 | Ogg Vorbis (stb_vorbis) | `src/asset/ogg.c`, `src/third_party/stb_vorbis.c` |
+| **Video settings, presets** | `src/gfx/gfx_settings.c` |
+| Composed renderer, post, fog | `src/gfx/gfx_vulkan.c` (`create_mode`), `shaders/post.frag`, `shaders/mesh.frag` (`apply_fog`) |
+| Rigid bodies | `src/engine/rigid.c` |
+| Destructible props | `src/engine/props.c` |
+| Gibs | `src/engine/gore.c` |
+| Effect atlas, sprites, splats, debris mesh | `src/engine/fx.c` |
+| Weather | `src/engine/weather.c` |
+| **World-effects director** (events → effects) | `src/game/world_fx.c`, `world_fx_gpu.c` |
+| Desktop window, input, pacing | `src/platform/desktop_sdl.c` |
+| Data-free sandbox (template for new games) | `src/tools/sandbox.c` |
+| Architecture and the loop-extraction plan | `docs/ENGINE_ARCHITECTURE.md` |
 | Tests | `tests/test_*.c` — most take `$HTA_MAP` |
 
 ---
@@ -1237,6 +1381,7 @@ Put them in the session scratchpad, not the repo. Relink after every rebuild.
 | `docs/INVADER_ASSET_PIPELINE.md` | how Invader's definitions are used |
 | `docs/ANDROID_PORT_INVESTIGATION.md` | the original feasibility work |
 | `docs/PROGRESS.md` | early milestone log |
+| `docs/ENGINE_ARCHITECTURE.md` | layers, what is reusable, the staged plan to move the game loop out of `platform_android.c` |
 
 ---
 
