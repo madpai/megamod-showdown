@@ -28,6 +28,10 @@ if(ANDROID)
         src/engine/ammo.c
         src/engine/hud.c
         src/engine/rigid.c
+        src/engine/fx.c
+        src/engine/gore.c
+        src/engine/props.c
+        src/engine/weather.c
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
@@ -79,7 +83,7 @@ else()
         src/engine/actor.c
         src/engine/pickup.c
         src/engine/bot.c src/engine/viewmodel.c src/engine/audio.c src/engine/ammo.c src/engine/hud.c
-        src/engine/rigid.c
+        src/engine/rigid.c src/engine/fx.c src/engine/gore.c src/engine/props.c src/engine/weather.c
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
@@ -275,6 +279,10 @@ else()
     add_executable(test_rigid tests/test_rigid.c)
     target_link_libraries(test_rigid PRIVATE hta_engine m)
     add_test(NAME rigid COMMAND test_rigid)
+
+    add_executable(test_world_fx tests/test_world_fx.c)
+    target_link_libraries(test_world_fx PRIVATE hta_engine m)
+    add_test(NAME world_fx COMMAND test_world_fx)
 
     add_executable(test_gfx_settings tests/test_gfx_settings.c)
     target_link_libraries(test_gfx_settings PRIVATE hta_engine m)

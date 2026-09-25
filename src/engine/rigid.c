@@ -579,7 +579,9 @@ static void solve_world(hta_rigid_world *w, uint32_t bi, float dt)
      * and the test holds it to that). */
     float ground = 0.0f;
     for (uint32_t k = 0; k < nc; k++) if (cs[k].n[2] > 0.5f) ground = 1.0f;
-    if (ground > 0.0f && dot3(b->vel, b->vel) < 0.3f * 0.3f) {
+    /* Soft things (flesh, dirt) do not roll at all: they slump. */
+    bool soft = b->material == HTA_RMAT_FLESH || b->material == HTA_RMAT_DIRT;
+    if (ground > 0.0f && (soft || dot3(b->vel, b->vel) < 0.3f * 0.3f)) {
         float damp = expf(-3.0f * b->friction * dt);
         for (int q = 0; q < 3; q++) b->ang[q] *= damp;
     }

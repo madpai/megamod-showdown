@@ -11,6 +11,9 @@
  * HTA_RENDER_OUT=dir writes a PPM per case for eyeballing. */
 #include "gfx/gfx.h"
 #include "engine/camera.h"
+#include "engine/fx.h"
+#include "engine/gore.h"
+#include "engine/weather.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -308,6 +311,88 @@ int main(void)
         }
         if (m) hta_gfx_mesh_free(g, m);
         if (g) hta_gfx_destroy(g);
+    }
+
+    /* 8. The engine's own effects: debris boxes (lit, mipmapped dynamic
+     * world mesh), sprites (vertex colour, alpha + additive) and rain,
+     * all through the Ultra path. They must draw and change the picture. */
+    {
+        hta_gfx_settings_preset(&u, HTA_QUALITY_ULTRA);
+        hta_gfx *g = hta_gfx_create_offscreen_ex(W, H, &u, err, sizeof err);
+        CHECK(g != NULL, "effects renderer: %s", err);
+        hta_rigid_world rw;
+        hta_fx fx;
+        hta_weather wt;
+        hta_rigid_init(&rw, 64, NULL);
+        rw.floor_z = 0.0f;
+        hta_fx_init(&fx, 64, 256, 64, NULL);
+        hta_weather_init(&wt, 1500, &fx.atlas, NULL);
+        hta_gib_desc gd = { .pos = { 12, 0, 0.5f }, .from = { 11, 0, 0.3f }, .strength = 0.6f };
+        hta_gibs_spawn(&rw, &fx, &gd, 2);
+        for (int k = 0; k < 6; k++) {
+            hta_rigid_desc d;
+            memset(&d, 0, sizeof d);
+            d.shape = HTA_RIGID_BOX; d.material = (hta_rigid_material)(k % HTA_RMAT_COUNT);
+            d.half[0] = 0.4f; d.half[1] = 0.3f; d.half[2] = 0.25f;
+            d.pos[0] = 9.0f + (float)k * 1.2f; d.pos[1] = -2.5f + (float)k; d.pos[2] = 1.0f + (float)k * 0.3f;
+            d.ang[0] = 1.0f; d.ang[2] = 2.0f;
+            hta_rigid_spawn(&rw, &d);
+        }
+        hta_camera cam = camera();
+        float wind[2] = { 0.4f, 0.1f };
+        hta_weather_set(&wt, HTA_WEATHER_STORM, 1.0f, wind);
+        for (int k = 0; k < 20; k++) {
+            hta_rigid_step(&rw, 1.0f / 60.0f);
+            hta_fx_update(&fx, 1.0f / 60.0f);
+            hta_weather_update(&wt, 1.0f / 60.0f, &cam, &fx);
+        }
+        float sparks[3] = { 8, 2, 1.5f }, up[3] = { 0, 0, 1 };
+        hta_fx_burst(&fx, HTA_BURST_SPARKS, sparks, up, 40);
+        hta_fx_build_debris(&fx, &rw);
+        hta_fx_build_sprites(&fx, &cam);
+        hta_weather_build(&wt, &cam);
+        hta_gfx_mesh *m = g ? hta_gfx_mesh_upload(g, &scene, err, sizeof err) : NULL;
+        hta_gfx_mesh *dm = g ? hta_gfx_mesh_upload_dynamic_world(g, &fx.debris, err, sizeof err) : NULL;
+        hta_gfx_mesh *sm = g ? hta_gfx_mesh_upload_dynamic(g, &fx.sprites, err, sizeof err) : NULL;
+        hta_gfx_mesh *wm = g ? hta_gfx_mesh_upload_dynamic(g, &wt.mesh, err, sizeof err) : NULL;
+        CHECK(m && dm && sm && wm, "effect meshes upload: %s", err);
+        if (m && dm && sm && wm) {
+            hta_gfx_dynamic dyn[3];
+            memset(dyn, 0, sizeof dyn);
+            dyn[0].mesh = dm; dyn[0].vertices = fx.debris_verts; dyn[0].vertex_count = fx.debris.vertex_count; dyn[0].lit = true;
+            dyn[1].mesh = sm; dyn[1].vertices = fx.sprite_verts; dyn[1].vertex_count = fx.sprites.vertex_count; dyn[1].vertex_color = true;
+            dyn[2].mesh = wm; dyn[2].vertices = wt.verts; dyn[2].vertex_count = wt.mesh.vertex_count; dyn[2].vertex_color = true;
+            static uint8_t with[W*H*4], without[W*H*4];
+            CHECK(hta_gfx_draw(g, &cam, &kScene, m, NULL, NULL, dyn, 3, NULL, NULL), "draw effects");
+            hta_gfx_readback(g, with, sizeof with);
+            CHECK(hta_gfx_draw(g, &cam, &kScene, m, NULL, NULL, NULL, 0, NULL, NULL), "draw plain");
+            hta_gfx_readback(g, without, sizeof without);
+            /* Where the debris lies: the middle of the lower half. */
+            double a0[3], a1[3], d = 0;
+            for (int yy = H / 2; yy < H * 3 / 4; yy += 4) for (int xx = W / 3; xx < W * 2 / 3; xx += 4) {
+                mean_rect(with, xx, yy, xx + 4, yy + 4, a1);
+                mean_rect(without, xx, yy, xx + 4, yy + 4, a0);
+                d += fabs(a1[0] - a0[0]) + fabs(a1[1] - a0[1]) + fabs(a1[2] - a0[2]);
+            }
+            d /= (double)((H / 4 / 4) * (W / 3 / 4) * 3);
+            printf("effects change the debris area by %.2f\n", d);
+            CHECK(d > 4.0, "effects visible (%.2f)", d);
+            const char *dir = getenv("HTA_RENDER_OUT");
+            if (dir) {
+                char path[512];
+                snprintf(path, sizeof path, "%s/effects.ppm", dir);
+                FILE *f = fopen(path, "wb");
+                if (f) { fprintf(f, "P6\n%d %d\n255\n", W, H); for (int i = 0; i < W * H; i++) fwrite(with + i * 4, 1, 3, f); fclose(f); }
+            }
+        }
+        if (wm) hta_gfx_mesh_free(g, wm);
+        if (sm) hta_gfx_mesh_free(g, sm);
+        if (dm) hta_gfx_mesh_free(g, dm);
+        if (m) hta_gfx_mesh_free(g, m);
+        if (g) hta_gfx_destroy(g);
+        hta_weather_free(&wt);
+        hta_fx_free(&fx);
+        hta_rigid_free(&rw);
     }
 
     for (int i = 0; i < 3; i++) free(scene.textures[i].rgba);
