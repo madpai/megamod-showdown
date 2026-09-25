@@ -184,6 +184,30 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-25 gameplay map update.** The six canonical private bundle maps
+were re-imported without baked lightmaps, validated with
+`open-halo-map-test` (all spawns usable, no falls, no missing dependencies),
+and replaced in the owner's personal APK. Same-spawn render brightness is
+unchanged from the previous packages. The old packages are retained under
+`~/assetlab-private/fallback-pre-breakables-20260925/`.
+
+| Bundled map | Breakable props | Breakable brushes/windows | Map weather | Spawns |
+|---|---:|---:|---|---:|
+| de_dust2 | 75 | 0 | none | 40/40 |
+| cs_office | 226 | 14 windows | none | 40/40 |
+| de_aztec | 16 | 0 | rain | 40/40 |
+| cs_compound | 113 | 7, including 3 windows | none | 33/33 |
+| ctf_2fort | 14 | 0 | none | 32/32 |
+| gm_construct | 4 | 0 | none | 33/33 |
+
+**Phone objective:** Test breakable props on each map; shoot windows in
+cs_office and cs_compound; check that de_aztec uses rain with Weather set
+to Map default. For LAN, the guest must install these new packages with
+the same map names: the map check refuses an old package. Run test 10 below
+to join a phone-hosted match from the PC with `megamod-join`, using the
+new package for an imported map. Baked-lighting candidates remain private
+until their render artifacts have been reviewed.
+
 **2026-09-25 PC joiner and private map review.** Cloud commits `8b7162b`
 and `f5a32e0` are merged and pushed to `megamod/main`. Verification passed
 80/80 with the owner's Trial data. `scripts/test_join.sh` connected the PC
