@@ -20,6 +20,7 @@
  * vehicles, dropped weapons, flags, the HUD's health, and first-person
  * weapons. The title bar carries the score, ping and kill feed. */
 #define _POSIX_C_SOURCE 200809L
+#include "app/content.h"
 #include "app/fs.h"
 #include "asset/bitmap.h"
 #include "asset/bsp.h"
@@ -349,7 +350,8 @@ static void title(join *j, hta_desktop *d, double now, const char *host, unsigne
     if (!j->net.connected)
         snprintf(t, sizeof(t), "Megamod LAN | connecting to %s:%u%s", host, port,
                  j->net.reject_reason == HTA_NET_REJECT_MAP ? " | REFUSED: not the host's map" :
-                 j->net.reject_reason == HTA_NET_REJECT_FULL ? " | REFUSED: full" : "");
+                 j->net.reject_reason == HTA_NET_REJECT_FULL ? " | REFUSED: full" :
+                 j->net.reject_reason == HTA_NET_REJECT_CONTENT ? " | REFUSED: characters/weapons differ" : "");
     else
         snprintf(t, sizeof(t), "Megamod LAN | player %u%s | %d - %d | %.0f ms | %s%s",
                  j->net.id, j->view.me_alive ? "" : " (dead)", j->view.team_score[0], j->view.team_score[1],
@@ -404,9 +406,14 @@ int main(int argc, char **argv)
     setup_effects(&j);
     if (!hta_net_client_open(&j.net, host, (uint16_t)port)) { fprintf(stderr, "bad host address %s\n", host); return 1; }
     j.net.map_crc = j.map_crc;
+    /* The host's imported characters and weapons, in the same order: they
+     * travel as positions (app/compat.h). From the bundle (--bundle or
+     * HTA_BUNDLE_DIR); with none, only a host with none will take us. */
+    j.net.content = hta_content_fingerprint_fs(&fs);
     hta_net_view_init(&j.view);
-    printf("join: %s:%u, %s%s, map check %08x, %s\n", host, port, oal ? oal : world ? world : "Blood Gulch",
-           j.biped ? "" : " (stand-ins: no Trial map)", j.map_crc, hta_quality_name(j.video.preset));
+    printf("join: %s:%u, %s%s, map check %08x, content %016llx, %s\n", host, port,
+           oal ? oal : world ? world : "Blood Gulch", j.biped ? "" : " (stand-ins: no Trial map)",
+           j.map_crc, (unsigned long long)j.net.content, hta_quality_name(j.video.preset));
 
     hta_desktop *d = NULL;
     hta_gfx *g = NULL;
@@ -481,7 +488,10 @@ int main(int argc, char **argv)
     for (uint32_t i = 0; i < j.wfx.props.count; i++) broken += j.wfx.props.props[i].broken;
     printf("join: %s, player %u, %u entities live, %u kills (%u gibbed), %u effects, %u corrections, "
            "score %d-%d, %u props broken, %u sounds\n",
-           j.net.connected ? "connected" : "NOT connected", j.net.id, seen,
+           j.net.connected ? "connected" :
+           j.net.reject_reason == HTA_NET_REJECT_CONTENT ? "REFUSED (characters/weapons differ from the host's)" :
+           j.net.reject_reason == HTA_NET_REJECT_MAP ? "REFUSED (not the host's map)" :
+           j.net.reject_reason == HTA_NET_REJECT_FULL ? "REFUSED (full)" : "NOT connected", j.net.id, seen,
            j.view.kills, j.view.gibs, j.view.fx, j.view.corrections, j.view.team_score[0], j.view.team_score[1],
            broken, j.wfx_audio.played);
     if (shot) {

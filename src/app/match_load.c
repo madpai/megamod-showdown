@@ -1,6 +1,7 @@
 /* Loading a match without a GPU (app/match_load.h). Moved from the Android
  * loop's load_map, world_nav and start_game; the code is theirs. */
 #include "app/match_load.h"
+#include "app/compat.h"
 #include "app/content.h"
 #include "app/session.h"
 #include "platform/platform.h"
@@ -310,6 +311,14 @@ void hta_match_begin(hta_session *s)
         uint32_t crc = s->cache.crc32 ^ (s->world_loaded ? s->world_ext.key : 0u);
         s->net.map_crc=crc;
         if (s->net_hosting) s->host_server.map_crc=crc;
+        /* ...and hold the same imported characters and weapons, in the
+         * same order: the network names them by position (app/compat.h). */
+        uint64_t content=hta_content_fingerprint(s->imp_char,s->imp_char_count,
+                                                 s->imp_weap,s->imp_weap_count);
+        s->net.content=content;
+        if (s->net_hosting) s->host_server.content=content;
+        hta_log("[net] map check %08x, content %016llx (%u characters, %u weapons)", crc,
+                (unsigned long long)content, s->imp_char_count, s->imp_weap_count);
     }
     hta_match_nav_props(s);
     hta_game_start(&s->game);

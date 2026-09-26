@@ -145,7 +145,12 @@ void hta_session_tick(hta_session *s, float dt, double now, void (*unit_added)(h
     world_fx(s, dt);
     /* A host: its joiners' packets in, their units driven, the world out. */
     if (s->net_enabled && s->net_hosting) {
+        uint64_t refused = s->host_server.stats.refused;
         hta_net_server_pump(&s->host_server, now);
+        if (s->host_server.stats.refused != refused)
+            hta_log("[net] refused a joiner: %s", s->host_server.last_refusal == HTA_NET_REJECT_CONTENT
+                    ? "different characters/weapons" : s->host_server.last_refusal == HTA_NET_REJECT_MAP
+                    ? "different map" : "full");
         hta_host_peers(s, now, unit_added);
         hta_host_world(s);
     }

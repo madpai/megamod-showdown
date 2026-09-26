@@ -6,6 +6,7 @@
  *   megamod-content [--trial DIR] [--bundle DIR] [--world NAME]...
  *   (or HTA_TRIAL_DIR / HTA_BUNDLE_DIR). With no --world, every
  *   maps/NAME.oalmap is loaded. Exit 1 if anything named fails. */
+#include "app/compat.h"
 #include "app/content.h"
 #include "app/fs.h"
 #include "app/session.h"
@@ -56,6 +57,9 @@ int main(int argc, char **argv)
            s->imp_weap_count, s->ui_sounds.name[0] ? "yes" : "no");
     for (uint32_t i = 0; i < s->imp_char_count; i++) printf("  character %2u %s\n", i, s->imp_char[i].name);
     for (uint32_t i = 0; i < s->imp_weap_count; i++) printf("  weapon    %2u %s\n", i, s->imp_weap[i].name);
+    printf("content fingerprint %016llx (LAN: host and joiner must match; app/compat.h)\n",
+           (unsigned long long)hta_content_fingerprint(s->imp_char, s->imp_char_count,
+                                                       s->imp_weap, s->imp_weap_count));
 
     static hta_fs_list_result maps;
     if (!nworld) {

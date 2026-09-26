@@ -8,6 +8,7 @@ typedef struct {
     uint64_t invalid, dropped, snapshots_in, snapshots_out, events_in, events_out;
     uint64_t worlds_in, worlds_out;
     uint64_t limited;           /* server: dropped unread, over a source's rate */
+    uint64_t refused;           /* server: HELLOs turned away (map, content) */
     double ping_ms;
 } hta_net_stats;
 
@@ -56,6 +57,8 @@ typedef struct {
     uint32_t last_drop_tick;
     uint32_t last_game_tick;
     uint32_t map_crc;
+    uint64_t content;          /* v10: the imported rosters' fingerprint; 0 none */
+    uint8_t  last_refusal;     /* the last HELLO turned away: HTA_NET_REJECT_* */
     /* What DISCOVER is told. max_players also caps who HELLO lets in;
      * hta_net_server_open sets it to HTA_NET_MAX_PLAYERS. */
     hta_net_info info;
@@ -80,6 +83,7 @@ typedef struct {
     bool connected;
     uint8_t reject_reason;
     uint32_t map_crc;
+    uint64_t content;          /* v10: sent in HELLO (app/compat.h) */
     double last_hello, last_ping, ping_sent, last_receive;
     uint32_t ping_nonce;
     hta_net_player players[HTA_NET_MAX_PLAYERS];

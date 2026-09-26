@@ -1,9 +1,11 @@
 /* A match's content through hta_fs (app/content.h). Moved from the Android
  * loop's load_imported and load_world_package, which read the APK only. */
 #include "app/content.h"
+#include "app/compat.h"
 #include "app/session.h"
 #include "platform/platform.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* A missing optional file is quiet; a present one that fails says why. */
@@ -26,26 +28,44 @@ void hta_session_load_imported(hta_session *s, const hta_fs *fs)
     if (s->imported_loaded) return;
     s->imported_loaded = true;
     load_oal(fs, "sounds/ui.oalasset", &s->ui_sounds, true);
-    static const char *const DIRS[2] = { "characters", "weapons" };
+    s->imp_char_count = hta_content_load_dir(fs, "characters", s->imp_char, HTA_MAX_IMPORTED);
+    s->imp_weap_count = hta_content_load_dir(fs, "weapons", s->imp_weap, HTA_MAX_IMPORTED);
+    for (uint32_t k = 0; k < s->imp_char_count; k++)
+        s->imp_voice[k][0] = s->imp_voice[k][1] = HTA_AUDIO_NO_CLIP;
+    for (uint32_t k = 0; k < s->imp_weap_count; k++)
+        s->imp_clip[k][0] = s->imp_clip[k][1] = HTA_AUDIO_NO_CLIP;
+}
+
+uint32_t hta_content_load_dir(const hta_fs *fs, const char *dir, hta_oal_asset *out, uint32_t max)
+{
     static hta_fs_list_result names;
-    for (int d = 0; d < 2; d++) {
-        hta_fs_list(fs, DIRS[d], ".oalasset", &names);
-        for (unsigned i = 0; i < names.count; i++) {
-            if ((d ? s->imp_weap_count : s->imp_char_count) >= HTA_MAX_IMPORTED) break;
-            hta_oal_asset *slot = d ? &s->imp_weap[s->imp_weap_count] : &s->imp_char[s->imp_char_count];
-            char name[128];
-            snprintf(name, sizeof(name), "%s/%s", DIRS[d], names.name[i]);
-            if (!load_oal(fs, name, slot, false)) continue;
-            if (d) {
-                uint32_t k = s->imp_weap_count++;
-                s->imp_clip[k][0] = s->imp_clip[k][1] = HTA_AUDIO_NO_CLIP;
-            } else {
-                s->imp_voice[s->imp_char_count][0] = s->imp_voice[s->imp_char_count][1] = HTA_AUDIO_NO_CLIP;
-                s->imp_char_count++;
-            }
-            hta_log("[imported] %s '%s' (%s), %u models", slot->kind, slot->name, slot->display, slot->model_count);
-        }
+    uint32_t count = 0;
+    hta_fs_list(fs, dir, ".oalasset", &names);
+    for (unsigned i = 0; i < names.count && count < max; i++) {
+        char name[128];
+        snprintf(name, sizeof(name), "%s/%s", dir, names.name[i]);
+        if (!load_oal(fs, name, &out[count], false)) continue;
+        hta_log("[imported] %s '%s' (%s), %u models", out[count].kind, out[count].name,
+                out[count].display, out[count].model_count);
+        count++;
     }
+    return count;
+}
+
+uint64_t hta_content_fingerprint_fs(const hta_fs *fs)
+{
+    hta_oal_asset *c = calloc(HTA_MAX_IMPORTED, sizeof(*c));
+    hta_oal_asset *w = calloc(HTA_MAX_IMPORTED, sizeof(*w));
+    uint64_t fp = 0;
+    if (c && w) {
+        uint32_t nc = hta_content_load_dir(fs, "characters", c, HTA_MAX_IMPORTED);
+        uint32_t nw = hta_content_load_dir(fs, "weapons", w, HTA_MAX_IMPORTED);
+        fp = hta_content_fingerprint(c, nc, w, nw);
+        for (uint32_t i = 0; i < nc; i++) hta_oal_free(&c[i]);
+        for (uint32_t i = 0; i < nw; i++) hta_oal_free(&w[i]);
+    }
+    free(c); free(w);
+    return fp;
 }
 
 bool hta_session_load_world(hta_session *s, const hta_fs *fs, char *err, size_t errlen)

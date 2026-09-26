@@ -10,12 +10,22 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "app/fs.h"
+#include "asset/oal_asset.h"
 
 typedef struct hta_session hta_session;
 
 /* sounds/ui.oalasset, then characters/ and weapons/ *.oalasset in name
  * order (the index LAN sends), into the session. Once per run. */
 void hta_session_load_imported(hta_session *s, const hta_fs *fs);
+
+/* `dir`/NAME.oalasset ("characters" or "weapons") in name order into
+ * out[0..max): the roster order the network indexes. Returns how many
+ * loaded; a file that fails is logged and skipped, on every peer alike. */
+uint32_t hta_content_load_dir(const hta_fs *fs, const char *dir, hta_oal_asset *out, uint32_t max);
+
+/* The imported rosters' fingerprint (app/compat.h) straight from `fs`,
+ * for a program that does not keep them (the desktop joiner). */
+uint64_t hta_content_fingerprint_fs(const hta_fs *fs);
 
 /* s->world's package, maps/<world>.oalmap -- "imported" is the file the
  * owner picked, external.oalmap in app storage -- into s->world_ext, its

@@ -40,6 +40,7 @@ if(ANDROID)
         src/app/content.c
         src/app/match_load.c
         src/app/session_tick.c
+        src/app/compat.c
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
@@ -129,11 +130,11 @@ else()
     target_link_libraries(megamod-server PRIVATE hta_net m)
     target_compile_options(megamod-server PRIVATE -Wall -Wextra)
     # The phone's content set on the desktop, by name (app/fs.h, app/content.h).
-    add_executable(megamod-content src/tools/content.c src/app/content.c src/app/fs.c src/platform/platform_posix.c)
+    add_executable(megamod-content src/tools/content.c src/app/content.c src/app/compat.c src/app/fs.c src/platform/platform_posix.c)
     target_link_libraries(megamod-content PRIVATE hta_engine m)
     target_compile_options(megamod-content PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
     # A real match with no GPU and no player: the phone's load and start (app/match_load.h).
-    add_executable(megamod-match src/tools/match.c src/app/session_tick.c src/app/host_net.c src/app/match_load.c src/app/content.c src/app/fs.c src/platform/platform_posix.c)
+    add_executable(megamod-match src/tools/match.c src/app/compat.c src/app/session_tick.c src/app/host_net.c src/app/match_load.c src/app/content.c src/app/fs.c src/platform/platform_posix.c)
     target_link_libraries(megamod-match PRIVATE hta_engine hta_net m)
     target_compile_options(megamod-match PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
     add_executable(test_net_view tests/test_net_view.c)
@@ -197,7 +198,7 @@ else()
             pkg_check_modules(SDL2 QUIET IMPORTED_TARGET sdl2)
             if(SDL2_FOUND)
                 # The PC joins a LAN match (a phone's, or megamod-fakehost): protocol v9.
-                add_executable(megamod-join src/tools/join.c src/app/fs.c)
+                add_executable(megamod-join src/tools/join.c src/app/fs.c src/app/content.c src/app/compat.c)
                 target_link_libraries(megamod-join PRIVATE hta_desktop hta_netview hta_engine hta_gfx_host hta_net PkgConfig::SDL2 m)
                 target_compile_options(megamod-join PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
                 add_executable(htaplay src/tools/htaplay.c)
@@ -366,6 +367,13 @@ else()
     add_executable(test_fs tests/test_fs.c src/app/fs.c)
     target_include_directories(test_fs PRIVATE src)
     add_test(NAME fs COMMAND test_fs)
+    add_executable(test_compat tests/test_compat.c src/app/compat.c src/app/content.c src/app/fs.c src/platform/platform_posix.c)
+    target_link_libraries(test_compat PRIVATE hta_engine m)
+    add_test(NAME compat COMMAND test_compat)
+    add_executable(test_handshake tests/test_handshake.c src/platform/platform_posix.c)
+    target_link_libraries(test_handshake PRIVATE hta_net m)
+    target_include_directories(test_handshake PRIVATE src)
+    add_test(NAME handshake COMMAND test_handshake)
     add_executable(test_sfx tests/test_sfx.c)
     target_link_libraries(test_sfx PRIVATE hta_engine m)
     add_test(NAME sfx COMMAND test_sfx)

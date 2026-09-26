@@ -130,6 +130,8 @@ bool hta_net_world_pack(uint8_t *dst, size_t cap, const hta_net_world *w, size_t
         w->item_count>64 ||
         w->over>1 || (w->winner!=255 && w->winner>=HTA_NET_MAX_ENTITIES) ||
         !isfinite(w->time) || w->time<0.0f || w->time>100000.0f) return false;
+    for (uint8_t i=0;i<w->item_count;i++)
+        if (w->item_choice[i]>=HTA_NET_MAX_ITEM_CHOICES) return false;
     size_t n=HTA_NET_WORLD_HEADER+(size_t)w->count*HTA_NET_ENTITY_BYTES;
     if (cap<n || n+HTA_NET_HEADER>HTA_NET_MAX_PACKET) return false;
     fw(dst,w->time); u16w(dst+4,w->round);
@@ -191,8 +193,12 @@ bool hta_net_world_unpack(const uint8_t *src, size_t len, hta_net_world *w)
     tmp.bot_count=src[7]; tmp.over=src[8]; tmp.winner=src[9];
     tmp.score_limit=src[10]; tmp.time_limit=src[11]; tmp.respawn_time=src[12];
     tmp.item_count=src[13];
+    if (tmp.item_count>64) return false;
     memcpy(tmp.item_present,src+14,8);
     memcpy(tmp.item_choice,src+22,64);
+    /* A choice indexes the spawn's weighted choices: never past them. */
+    for (uint8_t i=0;i<tmp.item_count;i++)
+        if (tmp.item_choice[i]>=HTA_NET_MAX_ITEM_CHOICES) return false;
     for (uint8_t i=0;i<tmp.count;i++) {
         const uint8_t *p=src+HTA_NET_WORLD_HEADER+(size_t)i*HTA_NET_ENTITY_BYTES;
         hta_net_entity *e=&tmp.entities[i];

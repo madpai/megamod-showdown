@@ -191,6 +191,25 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-26 N1 + N3: protocol v10, joiners must bring the host's
+content.** docs/CONTENT_COMPATIBILITY.md is the contract (every content
+position on the wire, what builds each table, what guards it). HELLO now
+carries a 64-bit fingerprint of the imported characters and weapons (their
+gameplay values, in roster order; src/app/compat.c); a joiner whose
+fingerprint or map check differs -- or who sends no map check, which used
+to skip it -- is refused before it gets a player slot ("CHARACTERS/WEAPONS
+DO NOT MATCH" on the phone; `refused a joiner` in the host's log). WORLD's
+item choice is bounds-checked (a malformed packet could read past an array).
+**Also fixed, a step 4 regression on ab2b116:** a hosting phone gave its
+own loopback client a second, idle remote body ("Player 1") -- now
+recognised by its HELLO nonce. Checked in the emulator: the same bundle
+joins (fingerprint 1e5ae3cc3d6343c2 on the APK and the desktop alike), a
+bundle missing Goku and no bundle are refused, and the host shows only the
+real joiner. **Phone check (both phones on this build):** a hosted match
+still joins; a guest with the plain APK is now refused by a personal-build
+host (by design; see the doc's "Consequence for guests"). v9 builds cannot
+join v10 and vice versa.
+
 **2026-09-26 step 4, the loop out (`hta_session_tick`).** The world's
 per-frame simulation moved from android_main to src/app/session_tick.c:
 game update and events' consequences, round restart, world effects (out

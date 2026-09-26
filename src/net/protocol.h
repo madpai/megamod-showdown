@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #define HTA_NET_MAGIC 0x31415448u /* "HTA1" on the wire */
-#define HTA_NET_VERSION 9u
+#define HTA_NET_VERSION 10u   /* v10: HELLO carries the content fingerprint (app/compat.h) */
 #define HTA_NET_HEADER 20u
 #define HTA_NET_MAX_PACKET 1200u
 #define HTA_NET_MAX_PLAYERS 8u
@@ -114,7 +114,11 @@ typedef struct {
  * movement and fire; counters make one-shot actions survive packet loss. */
 /* v6 HTA_NET_READY: the player has chosen a class and may be spawned. */
 enum { HTA_NET_JUMP=1, HTA_NET_TRIGGER=2, HTA_NET_DUCK=4, HTA_NET_ALT=8, HTA_NET_READY=16, HTA_NET_FLY=32 };
-enum { HTA_NET_REJECT_FULL=1, HTA_NET_REJECT_MAP=2 };
+/* v10: CONTENT -- the imported characters/weapons differ (app/compat.h). */
+enum { HTA_NET_REJECT_FULL=1, HTA_NET_REJECT_MAP=2, HTA_NET_REJECT_CONTENT=3 };
+/* A Trial item spawn's weighted choices (asset/items.h HTA_ITEM_MAX_CHOICES):
+ * WORLD's item_choice indexes them, so it is checked against this. */
+#define HTA_NET_MAX_ITEM_CHOICES 8u
 typedef struct {
     uint8_t id, flags, weapon_slot;
     float forward, right, yaw, pitch;

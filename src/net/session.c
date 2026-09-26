@@ -73,15 +73,26 @@ static void server_packet(hta_net_server *s, const hta_udp_addr *from,
         return;
     }
     if (p->type==HTA_NET_HELLO) {
-        if (p->length!=8) { s->stats.invalid++; return; }
+        if (p->length!=16) { s->stats.invalid++; return; }
         uint32_t nonce=hta_net_u32_read(p->payload);
         uint32_t map_crc=hta_net_u32_read(p->payload+4);
+        uint64_t content=(uint64_t)hta_net_u32_read(p->payload+8) |
+                         (uint64_t)hta_net_u32_read(p->payload+12)<<32;
         if (!nonce) { s->stats.invalid++; return; }
-        if (s->map_crc && map_crc && s->map_crc!=map_crc) {
+        /* A host in a match knows its map and content; a joiner must bring
+         * the same, or every index it is sent means something else. (Before
+         * v10 a joiner sending 0 skipped the map check.) A host with no
+         * map CRC -- a test harness -- takes anyone. */
+        uint8_t refuse=0;
+        if (s->map_crc && s->map_crc!=map_crc) refuse=HTA_NET_REJECT_MAP;
+        else if (s->content && s->content!=content) refuse=HTA_NET_REJECT_CONTENT;
+        if (refuse) {
             uint8_t reject[5]; hta_net_u32_write(reject,nonce);
-            reject[4]=HTA_NET_REJECT_MAP;
+            reject[4]=refuse;
             send_packet(&s->udp,from,&s->stats,HTA_NET_REJECT,
                         &s->sequence,s->tick,reject,sizeof(reject));
+            s->stats.refused++;
+            s->last_refusal=refuse;
             return;
         }
         unsigned cap=s->info.max_players && s->info.max_players<HTA_NET_MAX_PLAYERS
@@ -415,7 +426,8 @@ static void client_packet(hta_net_client *c, const hta_net_packet *p, double now
 {
     if (p->type==HTA_NET_REJECT && p->length==5 && !c->connected &&
         hta_net_u32_read(p->payload)==c->nonce &&
-        (p->payload[4]==HTA_NET_REJECT_FULL || p->payload[4]==HTA_NET_REJECT_MAP)) {
+        (p->payload[4]==HTA_NET_REJECT_FULL || p->payload[4]==HTA_NET_REJECT_MAP ||
+         p->payload[4]==HTA_NET_REJECT_CONTENT)) {
         c->reject_reason=p->payload[4];
         c->last_receive=now;
         return;
@@ -565,9 +577,11 @@ void hta_net_client_pump(hta_net_client *c, double now)
     }
     if (!c->connected && !c->reject_reason &&
         (c->last_hello==0 || now-c->last_hello>=0.25)) {
-        uint8_t payload[8]; hta_net_u32_write(payload,c->nonce);
+        uint8_t payload[16]; hta_net_u32_write(payload,c->nonce);
         hta_net_u32_write(payload+4,c->map_crc);
-        send_packet(&c->udp,&c->server,&c->stats,HTA_NET_HELLO,&c->sequence,0,payload,8);
+        hta_net_u32_write(payload+8,(uint32_t)c->content);
+        hta_net_u32_write(payload+12,(uint32_t)(c->content>>32));
+        send_packet(&c->udp,&c->server,&c->stats,HTA_NET_HELLO,&c->sequence,0,payload,16);
         c->last_hello=now;
     }
     if (c->connected && (c->last_ping==0 || now-c->last_ping>=1.0)) {

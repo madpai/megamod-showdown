@@ -4963,7 +4963,8 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
     }
     atomic_store(&g_net_status, !s->net.connected ?
                  s->net.reject_reason==HTA_NET_REJECT_MAP ? 7 :
-                 s->net.reject_reason==HTA_NET_REJECT_FULL ? 8 : 1 :
+                 s->net.reject_reason==HTA_NET_REJECT_FULL ? 8 :
+                 s->net.reject_reason==HTA_NET_REJECT_CONTENT ? 9 : 1 :
                  !s->net_hosting ? (s->net.have_world ? 2 : 6) :
                  hta_net_server_count(&s->host_server)>1 ? 4 : 3);
     if (s->net.connected && !s->net_spawned && s->spawn_count) {
