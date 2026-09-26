@@ -204,6 +204,22 @@ true: revert `5caa7e6` and `95e4933` (keep docs and the harness),
 republish, and `3cf8e96` is the known-good. `main` is pushed only after
 this passes.
 
+**Result 2026-09-26: PASS.** Phone (S24 Ultra, build a87e6ae) hosted Blood
+Gulch; the desktop `megamod-join` joined over LAN (192.168.1.249), was
+given a unit, walked 186 world units to the host, was seen and killed
+three times and respawned each time (owner's screenshots). Host report
+09:38: `rate_limited` 0, server `invalid` 0, ping ~8 ms, last minute p99
+10 ms with 0 hitches. The one mid-match hitch (1029 ms at 56.7 s) is the
+app resuming from the background (surface recreated, map re-uploaded),
+not gameplay. Backgrounding the app while hosting can drop the match.
+**Found, older than S1 (since `9740485`, 2026-09-22): every VEHICLES packet
+is rejected by the client** when any vehicle angle sits at exactly +-pi
+(a car facing 180 degrees): pack wraps pi to -31416, unpack re-wraps
+-3.1416 to +31416, the byte compare fails. Measured: 656/656 VEHICLES
+invalid on the joiner; every other packet type clean. Joiners (and the
+host's own loopback client) therefore get no vehicle state. Fix: keep
+quantised angles inside +-31415, with a round-trip test at +-pi.
+
 **NEXT SESSION -- start here (written 2026-09-25 evening for the local
 session on 2026-09-26).** State of play:
 
