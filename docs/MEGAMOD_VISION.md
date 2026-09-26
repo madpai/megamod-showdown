@@ -5,6 +5,10 @@ in [Open Asset Lab](https://github.com/madpai/open-asset-lab) (its companion
 is `docs/ASSET_LAB_VISION.md` there). This is the canonical statement of
 what both projects are becoming. It was set by the owner on 2026-09-26.
 
+The [comparative research corpus](research/README.md) studies the external
+architectures behind possible next steps. Its recommendations are proposals;
+the current implementation and staged priorities remain defined here.
+
 Every section separates three things, and so must every contributor:
 
 | Tag | Means |

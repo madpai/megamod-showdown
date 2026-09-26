@@ -34,6 +34,9 @@ content (imported or original) → Open Asset Lab → MegaMod packages
 Workshop is one provider.** The crossover roster is a stress test for that
 generality, not the identity. The north star, with what exists now versus
 what is planned, is [`docs/MEGAMOD_VISION.md`](docs/MEGAMOD_VISION.md).
+The [comparative engine and mod research](docs/research/README.md) records the
+published sources, architectural comparisons, license boundaries, and proposed
+MegaMod/Open Asset Lab experiments behind future decisions.
 
 <div align="center">
 
