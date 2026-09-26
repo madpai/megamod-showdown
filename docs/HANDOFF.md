@@ -208,6 +208,15 @@ doing nothing, acting twice, or behaving unlike d0b168d. Two deliberate
 differences: a tap shorter than a frame now always registers; getting into
 a car also releases a held gamepad/hot-corner fire. If it fails: revert
 7d313d7; d0b168d is the known-good.
+**Result 2026-09-26 10:35: PASS.** Owner: "all fine, controls work".
+Hosted ctf_2fort CTF (Ultra preset) with the desktop joiner in (player 2,
+unit 4): server `invalid` 0, `rate_limited` 0, last minute p99 9.5 ms and
+no hitches. **Open, for later:** (1) the first ctf_2fort match on Ultra
+(scale 1.5, MSAA 4, thermal light) hitched 81-102 ms about every 20 s
+mid-match -- the next report of that map says whether it repeats; (2) the
+host's server `dropped` is 19-29 on ctf_2fort even with only the loopback
+client, 0 on Blood Gulch -- find which packet type; (3) one ~150 ms host
+hitch when a peer joins (Blood Gulch, four reports).
 
 **2026-09-26 vehicle fix (build "Vehicles reach joiners").** Angles at
 exactly +-pi no longer make the client reject VEHICLES, DROPS or GAME
