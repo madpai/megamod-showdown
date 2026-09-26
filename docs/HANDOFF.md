@@ -191,6 +191,20 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-26 step 3, loading without a GPU (build "Match loads in shared
+code").** docs/DESKTOP_AGENT.md step 3: the data half of loading a map and
+starting a match (Trial cache, world, collision, nav, items, vehicles,
+game, bots, round start) moved verbatim from platform_android.c to
+`src/app/match_load.c`; the phone calls it and adds sound, GPU and its own
+player around it. Host gate: ctest 47/47, ndkcheck clean, verify.sh 82/82
+(new: headless Blood Gulch and de_dust2 matches), ASan clean on two
+matches. **Phone check:** solo Blood Gulch with bots (they move, fight,
+pick items up, vehicles are there); solo ctf_2fort CTF (flags at the
+bases); host de_dust2 and let the desktop join. Anything different from
+the last build is a fail: a map that will not load (the loading screen
+says why), bots standing still, no vehicles or items, no flags.
+If it fails: revert this build's commit; 69c85f4 is the known-good.
+
 **2026-09-26 props break from your gunfire (build "Props take your
 bullets").** The local player's hitscan is traced in the Android frame and
 never told the props what it hit: only bots' rounds (game.c,

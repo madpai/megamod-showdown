@@ -49,6 +49,14 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_hud "$HTA_MAP" >/dev/null 2>&1; then ok "crosshair from the weapon HUD tag"; else bad "crosshair from the weapon HUD tag"; fi
   if ./build-host/test_weapons "$HTA_MAP" >/dev/null 2>&1; then ok "roster animations + zoom from the weapon tags"; else bad "roster animations + zoom from the weapon tags"; fi
   if ./build-host/test_projectile "$HTA_MAP" >/dev/null 2>&1; then ok "projectiles from the projectile tags"; else bad "projectiles from the projectile tags"; fi
+  # A real match with no GPU, through the phone's own load and start
+  # (app/match_load.c): it must load, and bots must fight.
+  if ./build-host/megamod-match --trial "$(dirname "$HTA_MAP")" --seconds 30 2>/dev/null | grep -qE ", [1-9][0-9]* kills"; then
+    ok "headless Blood Gulch match loads and plays"; else bad "headless Blood Gulch match loads and plays"; fi
+  if [ -n "$HTA_BUNDLE_DIR" ] && [ -f "$HTA_BUNDLE_DIR/de_dust2.oalmap" ]; then
+    if ./build-host/megamod-match --trial "$(dirname "$HTA_MAP")" --bundle "$HTA_BUNDLE_DIR" --world de_dust2 --seconds 30 2>/dev/null | grep -qE ", [1-9][0-9]* kills"; then
+      ok "headless imported match (de_dust2) loads and plays"; else bad "headless imported match (de_dust2) loads and plays"; fi
+  fi
   if ./build-host/test_particle "$HTA_MAP" >/dev/null 2>&1; then ok "effect particles from the effect tags"; else bad "effect particles from the effect tags"; fi
   if ./build-host/test_vitals "$HTA_MAP" >/dev/null 2>&1; then ok "vitality and falling from the Trial tags"; else bad "vitality and falling from the Trial tags"; fi
   if ./build-host/test_vehicle "$HTA_MAP" >/dev/null 2>&1; then ok "Trial vehicles: all five types load, drive, fly and seat"; else bad "Trial vehicles: all five types load, drive, fly and seat"; fi

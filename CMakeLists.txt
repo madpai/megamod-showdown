@@ -38,6 +38,7 @@ if(ANDROID)
         src/app/input.c
         src/app/fs.c
         src/app/content.c
+        src/app/match_load.c
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
@@ -130,6 +131,10 @@ else()
     add_executable(megamod-content src/tools/content.c src/app/content.c src/app/fs.c src/platform/platform_posix.c)
     target_link_libraries(megamod-content PRIVATE hta_engine m)
     target_compile_options(megamod-content PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+    # A real match with no GPU and no player: the phone's load and start (app/match_load.h).
+    add_executable(megamod-match src/tools/match.c src/app/match_load.c src/app/content.c src/app/fs.c src/platform/platform_posix.c)
+    target_link_libraries(megamod-match PRIVATE hta_engine m)
+    target_compile_options(megamod-match PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
     add_executable(test_net_view tests/test_net_view.c)
     target_link_libraries(test_net_view PRIVATE hta_netview)
     add_test(NAME net_view COMMAND test_net_view)

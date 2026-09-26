@@ -62,6 +62,8 @@ Set once per shell (this machine's folders; the content itself never goes in git
 export HTA_TRIAL_DIR=/home/commander/halo-trial-data/extract/maps HTA_BUNDLE_DIR=$HOME/assetlab-private/bundle
 build-host/megamod-content                 # Trial maps, every bundled world, character, weapon
 build-host/megamod-join <phone IP> --world ctf_2fort --auto 120   # join a phone hosting that map
+build-host/megamod-match --world ctf_2fort --mode ctf --seconds 60 --cache scratch/navcache
+                                           # a real match, bots only, no GPU: the phone's own load
 ```
 `--world` takes the host's map by name (bloodgulch, ctf_2fort, ...), so the
 map check matches the phone without paths. The phone drops a hosted match

@@ -99,7 +99,7 @@ the loop moves out. Pause, menus and class pick stay platform-side (the
 app shell, not the match). The gamepad's R1 is mapped to both fire and
 melee; fire wins, as before.
 
-**Status 2026-09-26: step 2 (files) is built, awaiting its phone check.**
+**Status 2026-09-26: step 2 (files) is done and passed its phone check.**
 `src/app/fs.{h,c}`: content by name across ordered roots (`hta_fs_map`,
 `hta_fs_list` sorted by name -- the imported index LAN sends; `tests/test_fs.c`).
 Android mounts the APK (callbacks over AAssetManager) then app storage;
@@ -114,6 +114,22 @@ weapons in the phone's order, 7 worlds, Blood Gulch crc e7e08c22) and
 `find_map` search list and kept mapped by the platform; they move behind
 `hta_fs` with step 3's data-half load. Settings, nav cache and crash files
 still use app-storage paths.
+
+**Status 2026-09-26: step 3 (loading without a GPU) is built, awaiting its
+phone check.** `src/app/match_load.{h,c}`: `hta_match_load_world` (the
+Trial cache from mapped files, world or package, collision, walkable grid
+kept in a writable dir, items, materials, vehicles), `hta_match_start`
+(the game, imported weapons and bodies, starts and flags, vehicles, mode,
+bots' grid, items, local player optional -- `me = -1` for a server, bots)
+and `hta_match_begin` (match on, LAN map check, props on the grid, round
+one), moved verbatim from `load_map` / `world_nav` / `start_game`. Android
+maps the Trial files and dresses its player, sounds and GPU around them.
+Desktop gain: `megamod-match` runs a real bots-only match headless (Blood
+Gulch 0.47 ms/frame; ctf_2fort CTF, de_dust2, cs_office all load and
+play), and verify.sh now plays one on Blood Gulch and one on de_dust2.
+**Coupling that remains:** finding the Trial files is still Android's
+`find_map` (the desktop uses `hta_fs`); the per-frame tick is still in
+`android_main` (step 4); wfx init (props) still happens in the render loop.
 
 Steps 6-7 can start partly before 5: `megamod-sandbox` and `megamod-join`
 already run headless (`--demo`, `--shot`) and can grow `--events`,
