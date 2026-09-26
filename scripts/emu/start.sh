@@ -14,7 +14,9 @@ if ! $ADB devices | grep -q "^emulator-"; then
   until [ "$($ADB shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do sleep 2; done
 fi
 [ "$1" = "--no-build" ] || scripts/publish_apk.sh --with-assets --emulator-apk "$APK"
-$ADB install -r -g "$APK" | tail -1
+# A failed install must stop here: the old build would run and pass for this one.
+out=$($ADB install -r -g "$APK" 2>&1) || { echo "$out" >&2; echo "INSTALL FAILED" >&2; exit 1; }
+echo "$out" | tail -1
 # The game's UDP port into the emulator, for hosting tests (see the skill).
 $ADB emu redir add udp:32270:32270 >/dev/null 2>&1 || true
 echo "emulator ready: $($ADB shell getprop ro.build.version.release | tr -d '\r'), $APK installed"

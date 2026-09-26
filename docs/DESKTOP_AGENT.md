@@ -115,8 +115,8 @@ weapons in the phone's order, 7 worlds, Blood Gulch crc e7e08c22) and
 `hta_fs` with step 3's data-half load. Settings, nav cache and crash files
 still use app-storage paths.
 
-**Status 2026-09-26: step 3 (loading without a GPU) is built, awaiting its
-phone check.** `src/app/match_load.{h,c}`: `hta_match_load_world` (the
+**Status 2026-09-26: step 3 (loading without a GPU) is done; it passed in
+the Android emulator.** `src/app/match_load.{h,c}`: `hta_match_load_world` (the
 Trial cache from mapped files, world or package, collision, walkable grid
 kept in a writable dir, items, materials, vehicles), `hta_match_start`
 (the game, imported weapons and bodies, starts and flags, vehicles, mode,
@@ -130,6 +130,23 @@ play), and verify.sh now plays one on Blood Gulch and one on de_dust2.
 **Coupling that remains:** finding the Trial files is still Android's
 `find_map` (the desktop uses `hta_fs`); the per-frame tick is still in
 `android_main` (step 4); wfx init (props) still happens in the render loop.
+
+**Status 2026-09-26: step 4 (the loop out) is done; it passed in the
+Android emulator.** `src/app/session_tick.{h,c}`: `hta_session_tick(s, dt,
+now, unit_added)` steps the world -- the game, its events' consequences
+(props hit, a host's LAN effects and kills), the next round
+(`round_restarted`), world effects (props solid, smashed, broken, back,
+blasting; debris physics) and a host's server side (pump, peers, world).
+Events and prop changes land in an outbox on the session that the
+platform drains for sounds, particles, feed, killcam and hiding broken
+props. World effects left the draw branch, where they froze whenever
+nothing was drawn. `megamod-match` runs through the tick (props break,
+rounds restart headless). **Coupling that remains:** the local player's
+controls, weapon, grenades and projectile weapon (`state.proj`,
+`state.nades`), pickups and respawn are still in `android_main` -- they
+are the player, not the world, and go to the desktop build with step 5;
+a server's `hta_host_world` still needs `s->net.connected` (set it, as
+tests/test_host_net.c does, when there is no loopback client).
 
 Steps 6-7 can start partly before 5: `megamod-sandbox` and `megamod-join`
 already run headless (`--demo`, `--shot`) and can grow `--events`,

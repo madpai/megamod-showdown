@@ -191,6 +191,20 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-26 step 4, the loop out (`hta_session_tick`).** The world's
+per-frame simulation moved from android_main to src/app/session_tick.c:
+game update and events' consequences, round restart, world effects (out
+of the draw branch: props no longer freeze behind menus or the killcam),
+a host's server side. **Passed in the emulator** (build 1d378cd, installed
+and confirmed by versionName): Blood Gulch Slayer 3 bots 13 kills in 5 min
+(the old build 10 and 14: no change in play); Blood Gulch Team Slayer 7
+bots first to 10 -- game over after 205 s, a new game, our player
+respawned; cs_office world effects set up from the tick (240 props, 735
+nav nodes blocked); hosted Blood Gulch, the desktop joined through
+udprelay, killed the host and a bot, host invalid 0 dropped 0. Host gate:
+ctest 47/47, verify.sh 82/82, ndkcheck clean, ASan+UBSan clean; headless
+props break (cs_office 14 in 2 min) and rounds restart (--score 3).
+
 **2026-09-26 step 3, loading without a GPU (build "Match loads in shared
 code").** docs/DESKTOP_AGENT.md step 3: the data half of loading a map and
 starting a match (Trial cache, world, collision, nav, items, vehicles,
@@ -269,7 +283,14 @@ taking your bullets and the ghost practice target all passed on the phone
 today; step 3 (loading without a GPU) passed in the Android emulator.
 **Phone checks are now the agent's job, in the emulator** (skill
 `emulator`, scripts/emu/): ask the owner only for feel and performance.
-Next is docs/DESKTOP_AGENT.md **step 4 (the loop out)**. Also open: the three "for later" items under step 1's result
+Step 4 (the loop out, `hta_session_tick`) passed in the emulator too.
+Next is docs/DESKTOP_AGENT.md **step 5 (`megamod` on the desktop)**.
+**This machine flips bits** (2026-09-26): two fresh copies of the 1.5 GB
+APK each differed from the source in 1-2 single bits, and btrfs has
+counted 3370 checksum failures on nvme0n1p2. Likely RAM (4x16 GB DDR4-3200
+at full speed on a Ryzen 7 5700X). The owner is to run memtest86+ / drop
+the memory speed. Meanwhile: publish_apk.sh and scripts/emu/start.sh
+check copies byte for byte and fail loudly; `git fsck` was clean. Also open: the three "for later" items under step 1's result
 below. Phone-hosted LAN tests: the phone drops its match when the app is
 backgrounded, so start a desktop retry-join loop first and tell the owner
 not to switch apps; for an imported map pass `--oalmap` with the same

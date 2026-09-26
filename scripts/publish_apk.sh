@@ -96,6 +96,8 @@ if [ -n "$EMULATOR_APK" ]; then
   [ -f "$APK" ] || { echo "no APK at $APK" >&2; exit 1; }
   mkdir -p "$(dirname "$EMULATOR_APK")"
   cp --reflink=never "$APK" "$EMULATOR_APK"
+  # A 1.5 GB copy has come out different once: check it byte for byte.
+  cmp -s "$APK" "$EMULATOR_APK" || { echo "emulator APK copy differs from $APK" >&2; exit 1; }
   echo "emulator APK ($SOURCE): $EMULATOR_APK"
   exit 0
 fi
