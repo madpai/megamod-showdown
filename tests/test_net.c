@@ -131,6 +131,29 @@ static void world_codec(void)
     assert(!hta_net_vehicles_unpack(veh_wire,veh_n,&veh2));
     veh.cars[0].pos[0]=500.0f;   /* past the fixed-point range */
     assert(!hta_net_vehicles_pack(veh_wire,sizeof(veh_wire),&veh,&veh_n));
+    /* An angle of exactly +-pi (a car parked facing 180 degrees) must
+     * survive the receiver's re-pack check: it once rejected every VEHICLES
+     * packet on Blood Gulch, and DROPS and GAME share the quantiser. */
+    {
+        const float edges[4]={3.14159265f,-3.14159265f,3.14158f,-3.14158f};
+        for (unsigned e=0;e<4;e++) {
+            hta_net_vehicles one; memset(&one,0,sizeof(one)); one.count=1;
+            for (int k=0;k<HTA_NET_VEHICLE_SEATS;k++) one.cars[0].occupant[k]=255;
+            one.cars[0].yaw=one.cars[0].pitch=one.cars[0].roll=one.cars[0].aim_yaw=
+                one.cars[0].aim_pitch=one.cars[0].steering=one.cars[0].wheel_spin=
+                one.cars[0].barrel_spin=edges[e];
+            assert(hta_net_vehicles_pack(veh_wire,sizeof(veh_wire),&one,&veh_n));
+            assert(hta_net_vehicles_unpack(veh_wire,veh_n,&veh2));
+            assert(fabsf(fabsf(veh2.cars[0].yaw)-3.1415f)<0.0002f);
+            hta_net_drops dr,dr2; memset(&dr,0,sizeof(dr)); dr.count=1; dr.drop[0].yaw=edges[e];
+            uint8_t dw[1+HTA_NET_DROP_BYTES]; size_t dn=0;
+            assert(hta_net_drops_pack(dw,sizeof(dw),&dr,&dn) && hta_net_drops_unpack(dw,dn,&dr2));
+            hta_net_game g,g2; memset(&g,0,sizeof(g)); g.winner_team=255;
+            g.flag[0].present=1; g.flag[0].carrier=255; g.flag[0].yaw=edges[e];
+            uint8_t gw[HTA_NET_GAME_BYTES];
+            assert(hta_net_game_pack(gw,sizeof(gw),&g) && hta_net_game_unpack(gw,sizeof(gw),&g2));
+        }
+    }
     hta_net_world a={0},b;
     a.time=12.5f; a.round=3; a.count=2; a.bot_count=1;
     a.winner=255; a.score_limit=25; a.time_limit=10; a.respawn_time=5;

@@ -382,6 +382,17 @@ static float wrapf(float a)
 #define VQ_ANGLE 10000.0f
 #define VQ_SPEED 100.0f
 #define VQ_TRAVEL 500.0f
+/* An angle wrapped to [-pi, pi) and quantised. +-pi itself would come out
+ * as +-31416, which unpacks just past pi and re-wraps to the other sign, so
+ * the receiver's re-pack check would reject the whole packet (a car parked
+ * facing 180 degrees did, every tick). Keep it one step inside. */
+static bool q16_angle(float a, int16_t *out)
+{
+    if (!q16(wrapf(a),VQ_ANGLE,out)) return false;
+    if (*out>31415) *out=31415;
+    if (*out<-31415) *out=-31415;
+    return true;
+}
 
 bool hta_net_vehicles_pack(uint8_t *dst, size_t cap, const hta_net_vehicles *v,
                            size_t *written)
@@ -402,7 +413,7 @@ bool hta_net_vehicles_pack(uint8_t *dst, size_t cap, const hta_net_vehicles *v,
         const float angles[8]={c->yaw,c->pitch,c->roll,c->aim_yaw,c->aim_pitch,
                                c->steering,c->wheel_spin,c->barrel_spin};
         for (unsigned k=0;k<8;k++) {
-            if (!q16(wrapf(angles[k]),VQ_ANGLE,&q)) return false;
+            if (!q16_angle(angles[k],&q)) return false;
             u16w(o+8+k*2,(uint16_t)q);
         }
         if (!q16(c->speed,VQ_SPEED,&q)) return false;
@@ -465,7 +476,7 @@ bool hta_net_drops_pack(uint8_t *dst, size_t cap, const hta_net_drops *d, size_t
             if (!q16(d->drop[i].pos[k],VQ_POS,&q)) return false;
             u16w(o+1+k*2,(uint16_t)q);
         }
-        if (!q16(wrapf(d->drop[i].yaw),VQ_ANGLE,&q)) return false;
+        if (!q16_angle(d->drop[i].yaw,&q)) return false;
         u16w(o+7,(uint16_t)q);
     }
     if (written) *written=1u+(size_t)d->count*HTA_NET_DROP_BYTES;
@@ -512,7 +523,7 @@ bool hta_net_game_pack(uint8_t *dst, size_t cap, const hta_net_game *g)
             if (!q16(g->flag[t].pos[k],VQ_POS,&q)) return false;
             u16w(o+2+k*2,(uint16_t)q);
         }
-        if (!q16(wrapf(g->flag[t].yaw),VQ_ANGLE,&q)) return false;
+        if (!q16_angle(g->flag[t].yaw,&q)) return false;
         u16w(o+8,(uint16_t)q);
         o[10]=0;
     }

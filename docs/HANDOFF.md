@@ -191,6 +191,17 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-26 vehicle fix (build "Vehicles reach joiners").** Angles at
+exactly +-pi no longer make the client reject VEHICLES, DROPS or GAME
+packets (`q16_angle` in src/net/protocol.c; `test_net` covers it and
+aborts on the old encoder). Host gate: ctest 45/45 plain and under
+ASan/UBSan, net fuzz 400k OK, ndkcheck clean, verify.sh 80/80. Wire format
+unchanged, no protocol bump. **Phone check:** host Blood Gulch, get in a
+Warthog and drive it while the desktop joiner is in; pause, SEND REPORT.
+Pass = the host's own `[net] id ... invalid` stays 0 (it climbed ~18/s
+before) and the joiner counts 0 invalid VEHICLES. Then step 1 of
+docs/DESKTOP_AGENT.md (input in) starts.
+
 **2026-09-26 S1 phone check (build "S1: host networking + rate limiting").**
 This build carries S1 (`5caa7e6`, host networking moved to
 `src/app/host_net.c`) and per-source rate limiting (`95e4933`) on top of
