@@ -204,6 +204,14 @@ bases); host de_dust2 and let the desktop join. Anything different from
 the last build is a fail: a map that will not load (the loading screen
 says why), bots standing still, no vehicles or items, no flags.
 If it fails: revert this build's commit; 69c85f4 is the known-good.
+**Result 2026-09-26 12:40: PASS, run in the Android emulator** (the
+owner asked that agents run these checks; `.claude/skills/emulator`).
+Same APK with an x86_64 lib beside arm64: solo Blood Gulch (28 vehicles,
+37 items, nav, bots killing each other), solo ctf_2fort CTF (32 starts,
+flags at the bases, red flag marker and blue on the radar, bots
+fighting), and hosted de_dust2 with the desktop joining through
+scripts/emu/udprelay.py (player 2, unit 4, two kills, host invalid 0,
+ping 10-17 ms).
 
 **2026-09-26 props break from your gunfire (build "Props take your
 bullets").** The local player's hitscan is traced in the Android frame and
@@ -258,7 +266,10 @@ collision instances. Being chased next, on the desktop.
 **NEXT SESSION -- start here (updated 2026-09-26 midday).** S1, rate
 limiting, the vehicle-angle fix, step 1 (input in), step 2 (files), props
 taking your bullets and the ghost practice target all passed on the phone
-today. Next is docs/DESKTOP_AGENT.md **step 3 (loading without a GPU)**. Also open: the three "for later" items under step 1's result
+today; step 3 (loading without a GPU) passed in the Android emulator.
+**Phone checks are now the agent's job, in the emulator** (skill
+`emulator`, scripts/emu/): ask the owner only for feel and performance.
+Next is docs/DESKTOP_AGENT.md **step 4 (the loop out)**. Also open: the three "for later" items under step 1's result
 below. Phone-hosted LAN tests: the phone drops its match when the app is
 backgrounded, so start a desktop retry-join loop first and tell the owner
 not to switch apps; for an imported map pass `--oalmap` with the same

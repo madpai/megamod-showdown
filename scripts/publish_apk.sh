@@ -40,6 +40,7 @@ HTA_IMPORTED=${HTA_IMPORTED:-$HOME/assetlab-private/bundle}
 TITLE=""
 NOTES_FILE=""
 NOTES_TEXT=""
+EMULATOR_APK=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build)   BUILD=0 ;;
@@ -47,6 +48,9 @@ while [ $# -gt 0 ]; do
     --title)      TITLE=$2; shift ;;
     --notes)      NOTES_FILE=$2; shift ;;
     --notes-text) NOTES_TEXT=$2; shift ;;
+    # Build for the desktop's Android emulator too (x86_64 beside arm64),
+    # write the APK to PATH, and stop: nothing is published or backed up.
+    --emulator-apk) EMULATOR_APK=$2; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -85,7 +89,15 @@ if [ "$BUILD" = 1 ]; then
     PROPS="$PROPS -PhtaReportUrl=http://$BIND:$PORT/report"
     echo "bundling the owner's Trial data from $HTA_DATA (personal build)"
   fi
+  [ -n "$EMULATOR_APK" ] && PROPS="$PROPS -PhtaAbis=arm64-v8a,x86_64"
   (cd android && $GRADLE --no-daemon -q :app:assembleDebug $PROPS)
+fi
+if [ -n "$EMULATOR_APK" ]; then
+  [ -f "$APK" ] || { echo "no APK at $APK" >&2; exit 1; }
+  mkdir -p "$(dirname "$EMULATOR_APK")"
+  cp --reflink=never "$APK" "$EMULATOR_APK"
+  echo "emulator APK ($SOURCE): $EMULATOR_APK"
+  exit 0
 fi
 [ -f "$APK" ] || { echo "no APK at $APK (run without --no-build)" >&2; exit 1; }
 

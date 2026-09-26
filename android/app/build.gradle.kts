@@ -25,8 +25,11 @@ android {
         buildConfigField("String", "REPORT_URL", "\"" + reportUrl.replace("\"", "") + "\"")
         buildConfigField("boolean", "PERSONAL", (providers.gradleProperty("htaAssetsDir").orNull != null).toString())
 
-        // Modern ARM64 only, per the brief. No fat APK.
-        ndk { abiFilters += listOf("arm64-v8a") }
+        // Modern ARM64 only, per the brief. No fat APK -- except the
+        // emulator build (publish_apk.sh --emulator-apk), which adds x86_64
+        // so an x86 Android emulator runs it at full speed.
+        val abis = (providers.gradleProperty("htaAbis").orNull ?: "arm64-v8a").split(",").map { it.trim() }
+        ndk { abiFilters += abis }
 
         externalNativeBuild {
             cmake {
