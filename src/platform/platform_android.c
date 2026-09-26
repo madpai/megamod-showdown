@@ -15,6 +15,7 @@
 #include "../app/session.h"
 #include "../app/report.h"
 #include "../app/host_net.h"
+#include "../app/input.h"
 #include <dlfcn.h>
 #include <signal.h>
 #include <unwind.h>
@@ -33,6 +34,7 @@
 #include "../engine/contrail.h"
 #include "../engine/shake.h"
 #include <stdatomic.h>
+#include <pthread.h>
 #include "../engine/ammo.h"
 #include "../engine/hud.h"
 #include "../engine/viewmodel.h"
@@ -152,11 +154,12 @@ typedef struct {
     bool    pad_fire;
     float   pending_yaw, pending_pitch;
 
+    bool    prev_jump_held, prev_fire_held;   /* for their press edges */
+
     /* Java HUD (GameActivity). When ready, touch move/jump/fire/look
-     * come from JNI instead of hot-corners. */
+     * come from JNI instead of hot-corners; what JNI sends waits in
+     * g_hud_in until the frame takes it (android_read_input). */
     bool    hud_ready;
-    float   hud_move[2];
-    bool    hud_jump, hud_fire, hud_crouch;
 } hta_android;
 _Static_assert(offsetof(hta_android, session) == 0,
                "host_unit_added casts a session back to its hta_android");
@@ -4426,6 +4429,35 @@ static void menu_leave(hta_android *s)
 #define LOOK_SENSITIVITY  0.006f
 #define PAD_LOOK_SPEED    2.6f
 
+/* What the Java HUD sent since the last frame. JNI calls arrive on the
+ * activity's thread, so they write here under a lock and the frame takes
+ * it whole, once (android_read_input); the gamepad's taps come the same
+ * way from the looper. Nothing else touches the session from outside. */
+static pthread_mutex_t g_hud_lock = PTHREAD_MUTEX_INITIALIZER;
+typedef struct {
+    float move[2], look[2];
+    bool  jump, fire, crouch, alt;                     /* held */
+    bool  jump_pressed, fire_pressed, crouch_pressed, alt_pressed;
+    bool  reload, melee, swap, zoom, grenade, fly, ability;
+    int   debug;
+} hud_mailbox;
+static hud_mailbox g_hud_in;
+
+static void hud_button(bool *held, bool *pressed, bool down)
+{
+    pthread_mutex_lock(&g_hud_lock);
+    if (down && !*held) *pressed = true;
+    *held = down;
+    pthread_mutex_unlock(&g_hud_lock);
+}
+
+static void hud_tap(bool *request)
+{
+    pthread_mutex_lock(&g_hud_lock);
+    *request = true;
+    pthread_mutex_unlock(&g_hud_lock);
+}
+
 static int32_t on_input(struct android_app *app, AInputEvent *event)
 {
     hta_android *s = (hta_android *)app->userData;
@@ -4541,11 +4573,11 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
         if (code == AKEYCODE_BUTTON_A || code == AKEYCODE_SPACE) { s->jump_held = down; return 1; }
         if (code == AKEYCODE_BUTTON_R1 || code == AKEYCODE_BUTTON_R2 ||
             code == AKEYCODE_BUTTON_X) { s->fire_held = down; return 1; }
-        if (code == AKEYCODE_BUTTON_Y && down) { s->hud_reload = true; return 1; }
-        if (code == AKEYCODE_BUTTON_R1 && down) { s->hud_melee = true; return 1; }
-        if (code == AKEYCODE_BUTTON_L1 && down) { s->hud_swap = true; return 1; }
-        if (code == AKEYCODE_BUTTON_THUMBR && down) { s->hud_zoom = true; return 1; }
-        if (code == AKEYCODE_BUTTON_L2 && down) { s->hud_grenade = true; return 1; }
+        if (code == AKEYCODE_BUTTON_Y && down) { hud_tap(&g_hud_in.reload); return 1; }
+        if (code == AKEYCODE_BUTTON_R1 && down) { hud_tap(&g_hud_in.melee); return 1; }
+        if (code == AKEYCODE_BUTTON_L1 && down) { hud_tap(&g_hud_in.swap); return 1; }
+        if (code == AKEYCODE_BUTTON_THUMBR && down) { hud_tap(&g_hud_in.zoom); return 1; }
+        if (code == AKEYCODE_BUTTON_L2 && down) { hud_tap(&g_hud_in.grenade); return 1; }
         if (code == AKEYCODE_BUTTON_B && down) {
             s->player.noclip = !s->player.noclip;
             hta_log("[input] noclip %s", s->player.noclip ? "ON" : "OFF");
@@ -4556,14 +4588,25 @@ static int32_t on_input(struct android_app *app, AInputEvent *event)
     return 0;
 }
 
-static void gather_input(hta_android *s, hta_player_input *in, float dt)
+/* This frame's input, device-neutral: the HUD (or the hot-corner stick
+ * without it), a gamepad and touch look, into hta_input for the session. */
+static void android_read_input(hta_android *s, hta_input *in, float dt)
 {
     memset(in, 0, sizeof(*in));
+    pthread_mutex_lock(&g_hud_lock);
+    hud_mailbox hud = g_hud_in;
+    g_hud_in.look[0] = g_hud_in.look[1] = 0.0f;
+    g_hud_in.jump_pressed = g_hud_in.fire_pressed = false;
+    g_hud_in.crouch_pressed = g_hud_in.alt_pressed = false;
+    g_hud_in.reload = g_hud_in.melee = g_hud_in.swap = g_hud_in.zoom = false;
+    g_hud_in.grenade = g_hud_in.fly = g_hud_in.ability = false;
+    g_hud_in.debug = 0;
+    pthread_mutex_unlock(&g_hud_lock);
 
     /* Java HUD stick, or fallback invisible left-half stick */
     if (s->hud_ready) {
-        in->move_right   += s->hud_move[0];
-        in->move_forward += s->hud_move[1];
+        in->move_right   += hud.move[0];
+        in->move_forward += hud.move[1];
     } else if (s->move_pointer >= 0 && s->app->window) {
         float w = (float)ANativeWindow_getWidth(s->app->window);
         float h = (float)ANativeWindow_getHeight(s->app->window);
@@ -4584,19 +4627,27 @@ static void gather_input(hta_android *s, hta_player_input *in, float dt)
     in->look_yaw   += -s->pad_look[0] * PAD_LOOK_SPEED * dt;
     in->look_pitch += -s->pad_look[1] * PAD_LOOK_SPEED * dt;
 
-    /* accumulated touch look */
-    in->look_yaw   += s->pending_yaw;
-    in->look_pitch += s->pending_pitch;
+    /* accumulated touch look, native and HUD */
+    in->look_yaw   += s->pending_yaw + hud.look[0];
+    in->look_pitch += s->pending_pitch + hud.look[1];
     s->pending_yaw = s->pending_pitch = 0.0f;
 
-    if (in->move_forward >  1.0f) in->move_forward =  1.0f;
-    if (in->move_forward < -1.0f) in->move_forward = -1.0f;
-    if (in->move_right   >  1.0f) in->move_right   =  1.0f;
-    if (in->move_right   < -1.0f) in->move_right   = -1.0f;
+    /* Held buttons from every source, and whether any went down. */
+    bool fire_held = s->fire_held || s->pad_fire;
+    in->jump = s->jump_held || hud.jump;
+    in->jump_pressed = hud.jump_pressed || (s->jump_held && !s->prev_jump_held);
+    in->fire = fire_held || hud.fire;
+    in->fire_pressed = hud.fire_pressed || (fire_held && !s->prev_fire_held);
+    s->prev_jump_held = s->jump_held;
+    s->prev_fire_held = fire_held;
+    in->crouch = hud.crouch;
+    in->crouch_pressed = hud.crouch_pressed;
+    in->alt_fire = hud.alt;
+    in->alt_pressed = hud.alt_pressed;
 
-    in->jump = s->jump_held || s->hud_jump;
-    in->fire = s->fire_held || s->pad_fire || s->hud_fire;
-    in->crouch = s->hud_crouch;
+    in->reload = hud.reload; in->melee = hud.melee; in->swap = hud.swap;
+    in->zoom = hud.zoom; in->grenade = hud.grenade; in->fly = hud.fly;
+    in->ability = hud.ability; in->debug = hud.debug;
 }
 
 /* ------------------------------ lifecycle ------------------------------ */
@@ -5506,7 +5557,7 @@ JNIEXPORT void JNICALL
 Java_net_hta_halotrial_GameActivity_nativeHudAlt(JNIEnv *env, jclass cls, jboolean down)
 {
     (void)env; (void)cls;
-    if (g_android) g_android->hud_alt = down ? true : false;
+    if (g_android) hud_button(&g_hud_in.alt, &g_hud_in.alt_pressed, down);
 }
 
 JNIEXPORT jint JNICALL
@@ -5543,8 +5594,10 @@ Java_net_hta_halotrial_GameActivity_nativeHudMove(JNIEnv *env, jclass cls, jfloa
 {
     (void)env; (void)cls;
     if (!g_android) return;
-    g_android->hud_move[0] = x;
-    g_android->hud_move[1] = y;
+    pthread_mutex_lock(&g_hud_lock);
+    g_hud_in.move[0] = x;
+    g_hud_in.move[1] = y;
+    pthread_mutex_unlock(&g_hud_lock);
 }
 
 JNIEXPORT void JNICALL
@@ -5552,29 +5605,31 @@ Java_net_hta_halotrial_GameActivity_nativeHudLook(JNIEnv *env, jclass cls, jfloa
 {
     (void)env; (void)cls;
     if (!g_android) return;
-    g_android->pending_yaw   += -dx * LOOK_SENSITIVITY;
-    g_android->pending_pitch += -dy * LOOK_SENSITIVITY;
+    pthread_mutex_lock(&g_hud_lock);
+    g_hud_in.look[0] += -dx * LOOK_SENSITIVITY;
+    g_hud_in.look[1] += -dy * LOOK_SENSITIVITY;
+    pthread_mutex_unlock(&g_hud_lock);
 }
 
 JNIEXPORT void JNICALL
 Java_net_hta_halotrial_GameActivity_nativeHudJump(JNIEnv *env, jclass cls, jboolean down)
 {
     (void)env; (void)cls;
-    if (g_android) g_android->hud_jump = down ? true : false;
+    if (g_android) hud_button(&g_hud_in.jump, &g_hud_in.jump_pressed, down);
 }
 
 JNIEXPORT void JNICALL
 Java_net_hta_halotrial_GameActivity_nativeHudFire(JNIEnv *env, jclass cls, jboolean down)
 {
     (void)env; (void)cls;
-    if (g_android) g_android->hud_fire = down ? true : false;
+    if (g_android) hud_button(&g_hud_in.fire, &g_hud_in.fire_pressed, down);
 }
 
 JNIEXPORT void JNICALL
 Java_net_hta_halotrial_GameActivity_nativeHudCrouch(JNIEnv *env, jclass cls, jboolean down)
 {
     (void)env; (void)cls;
-    if (g_android) g_android->hud_crouch = down ? true : false;
+    if (g_android) hud_button(&g_hud_in.crouch, &g_hud_in.crouch_pressed, down);
 }
 
 /* A request, not a held button: the game loop consumes and clears it. */
@@ -5582,21 +5637,21 @@ JNIEXPORT void JNICALL
 Java_net_hta_halotrial_GameActivity_nativeHudReload(JNIEnv *env, jclass cls)
 {
     (void)env; (void)cls;
-    if (g_android) g_android->hud_reload = true;
+    if (g_android) hud_tap(&g_hud_in.reload);
 }
 
 JNIEXPORT void JNICALL
 Java_net_hta_halotrial_GameActivity_nativeHudMelee(JNIEnv *env, jclass cls)
 {
     (void)env; (void)cls;
-    if (g_android) g_android->hud_melee = true;
+    if (g_android) hud_tap(&g_hud_in.melee);
 }
 
 JNIEXPORT void JNICALL
 Java_net_hta_halotrial_GameActivity_nativeHudSwap(JNIEnv *env, jclass cls)
 {
     (void)env; (void)cls;
-    if (g_android) g_android->hud_swap = true;
+    if (g_android) hud_tap(&g_hud_in.swap);
 }
 
 /* The character's ability button, and how ready it is. */
@@ -5604,7 +5659,7 @@ JNIEXPORT void JNICALL
 Java_net_hta_halotrial_GameActivity_nativeHudAbility(JNIEnv *env, jclass cls)
 {
     (void)env; (void)cls;
-    if (g_android) g_android->hud_ability = true;
+    if (g_android) hud_tap(&g_hud_in.ability);
 }
 
 static _Atomic int g_ability_charge;     /* 0..1000 */
@@ -5632,7 +5687,7 @@ JNIEXPORT void JNICALL
 Java_net_hta_halotrial_GameActivity_nativeHudFly(JNIEnv *env, jclass cls)
 {
     (void)env; (void)cls;
-    if (g_android) g_android->hud_fly = true;
+    if (g_android) hud_tap(&g_hud_in.fly);
 }
 
 /* Which HUD buttons mean anything now, for the Java HUD: 1 can fly, 2 in
@@ -5651,20 +5706,20 @@ JNIEXPORT void JNICALL
 Java_net_hta_halotrial_GameActivity_nativeHudZoom(JNIEnv *env, jclass cls)
 {
     (void)env; (void)cls;
-    if (g_android) g_android->hud_zoom = true;
+    if (g_android) hud_tap(&g_hud_in.zoom);
 }
 JNIEXPORT void JNICALL
 Java_net_hta_halotrial_GameActivity_nativeHudGrenade(JNIEnv *env, jclass cls)
 {
     (void)env; (void)cls;
-    if (g_android) g_android->hud_grenade = true;
+    if (g_android) hud_tap(&g_hud_in.grenade);
 }
 JNIEXPORT void JNICALL
 Java_net_hta_halotrial_GameActivity_nativeHudDebug(JNIEnv *env, jclass cls,
                                                    jint action)
 {
     (void)env; (void)cls;
-    if (g_android) g_android->hud_debug = (int)action + 1;   /* 0 = nothing pending */
+    if (g_android) { pthread_mutex_lock(&g_hud_lock); g_hud_in.debug = (int)action + 1; pthread_mutex_unlock(&g_hud_lock); }
 }
 
 /* ------------------------------ vehicles ------------------------------ */
@@ -6069,8 +6124,10 @@ void android_main(struct android_app *app)
         }
 
         if (state.explore_external) {
+            hta_input raw;
             hta_player_input walk;
-            gather_input(&state, &walk, dt);
+            android_read_input(&state, &raw, dt);
+            hta_session_input(&state.session, &raw, &walk);
             if (atomic_load(&g_paused)) {
                 memset(&walk, 0, sizeof(walk));
                 dt = 0.0f;
@@ -6095,8 +6152,10 @@ void android_main(struct android_app *app)
             continue;
         }
 
+        hta_input raw;
         hta_player_input in;
-        gather_input(&state, &in, dt);
+        android_read_input(&state, &raw, dt);
+        hta_session_input(&state.session, &raw, &in);
         if (atomic_load(&g_paused)) {
             /* Solo holds the world. A live LAN match keeps simulating while
              * this player's input is blank, like an online pause menu. */

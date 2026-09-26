@@ -315,11 +315,11 @@ static void play(join *j, const hta_input *in, double now, float dt)
     memset(&ni, 0, sizeof(ni));
     ni.forward = pi.move_forward; ni.right = pi.move_right;
     ni.jump = in->jump; ni.fire = in->fire; ni.crouch = in->crouch; ni.alt = in->alt_fire;
-    ni.grenade = in->key_pressed[SDL_SCANCODE_G];
-    ni.melee = in->key_pressed[SDL_SCANCODE_F];
-    ni.reload = in->key_pressed[SDL_SCANCODE_R];
+    ni.grenade = in->grenade;
+    ni.melee = in->melee;
+    ni.reload = in->reload;
     ni.pickup = ni.action = in->use_pressed;
-    ni.ability = in->key_pressed[SDL_SCANCODE_Q];
+    ni.ability = in->ability;
     static uint8_t slot;
     if (in->key_pressed[SDL_SCANCODE_1]) slot = 0;
     if (in->key_pressed[SDL_SCANCODE_2]) slot = 1;
@@ -333,7 +333,7 @@ static void scripted(double t, hta_input *in)
     in->move_forward = 1.0f;
     in->look_yaw = 0.01f;
     in->fire = fmod(t, 1.0) < 0.3;
-    if (fmod(t, 2.0) < 0.02) in->key_pressed[SDL_SCANCODE_G] = true;
+    if (fmod(t, 2.0) < 0.02) in->grenade = true;
 }
 
 static void title(join *j, hta_desktop *d, double now, const char *host, unsigned port)

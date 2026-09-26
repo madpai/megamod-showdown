@@ -35,6 +35,7 @@ if(ANDROID)
         src/engine/sfx.c
         src/app/report.c
         src/app/host_net.c
+        src/app/input.c
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
@@ -347,6 +348,9 @@ else()
     add_executable(test_session tests/test_session.c)
     target_link_libraries(test_session PRIVATE hta_engine m)
     add_test(NAME session COMMAND test_session)
+    add_executable(test_input tests/test_input.c src/app/input.c)
+    target_link_libraries(test_input PRIVATE hta_engine m)
+    add_test(NAME input COMMAND test_input)
     add_executable(test_sfx tests/test_sfx.c)
     target_link_libraries(test_sfx PRIVATE hta_engine m)
     add_test(NAME sfx COMMAND test_sfx)

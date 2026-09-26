@@ -105,6 +105,7 @@
     int32_t       my_car, my_seat;    /* where this player sits, -1 on foot */                 \
     float         seat_look[2];       /* a Warthog driver's look, relative to the hull */      \
     bool          hud_alt;            /* the vehicle's second trigger, held */                 \
+    bool          hud_jump, hud_fire, hud_crouch; /* held, latched (app/input.c) */            \
     bool          veh_fire;           /* the vehicle gun's trigger, for the host */            \
     bool          show_self;          /* our own body is on screen: third person */            \
     uint16_t      net_action_count, net_ability_count;                                         \

@@ -81,6 +81,24 @@ events) and runs in ctest as `playtest_sandbox` with no GPU. The
 `playtest` skill says how to use it. Not yet: `--script` files, record /
 replay, `--netsim`, the sanitizer build, and the harness in `megamod-join`.
 
+**Status 2026-09-26: step 1 (input in) is on branch `input-in`, awaiting its
+phone check.** `src/app/input.h` holds `hta_input`, the one device-neutral
+frame input (movement, look, held buttons with their press edges, and the
+one-shot requests: reload, melee, swap, zoom, grenade, fly, ability,
+debug). `hta_session_input()` (`src/app/input.c`, `tests/test_input.c`)
+takes it into the session. Android fills it once a frame
+(`android_read_input`): the Java HUD's JNI calls only write a locked
+mailbox now, so the old unsynchronised writes from the activity thread are
+gone. The desktop fills the same struct (E swap, R reload, F melee, G
+grenade, Q ability, Z zoom, V fly), and `megamod-join` / `megamod-sandbox`
+read the named actions, not scancodes. **Coupling that remains:** the
+frame's ~1,200-line game section still lives in `android_main` and still
+reads the session's pending flags (`hud_swap`, ...) where it always did;
+`hta_session_frame(s, dt, in)` as one function arrives with step 4, when
+the loop moves out. Pause, menus and class pick stay platform-side (the
+app shell, not the match). The gamepad's R1 is mapped to both fire and
+melee; fire wins, as before.
+
 Steps 6-7 can start partly before 5: `megamod-sandbox` and `megamod-join`
 already run headless (`--demo`, `--shot`) and can grow `--events`,
 `--control` and `--report` first, so the harness is proven before the

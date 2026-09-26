@@ -396,7 +396,7 @@ static void step(sandbox *s, const hta_input *in, float dt)
     hta_collision_index_instances(&s->col, &s->col_index, 0.25f);
     hta_player_update(&s->player, &s->cam, &s->col, &pi, dt);
     if (in->fire_pressed) shoot(s);
-    if (in->alt_pressed || in->key_pressed[SDL_SCANCODE_G]) throw_grenade(s);
+    if (in->alt_pressed || in->grenade) throw_grenade(s);
     for (int k = 0; k < 8; k++) {
         if (s->nade_fuse[k] <= 0) continue;
         s->nade_fuse[k] -= dt;
@@ -469,7 +469,7 @@ static void demo_script(sandbox *s, double t, hta_input *in)
     float yaw = atan2f(dy, dx), pitch = atan2f(dz, sqrtf(dx*dx + dy*dy)) + 0.25f;
     in->look_yaw = yaw - s->cam.yaw;
     in->look_pitch = pitch - s->cam.pitch;
-    if (want != stage) { stage = want; in->key_pressed[SDL_SCANCODE_G] = true; }
+    if (want != stage) { stage = want; in->grenade = true; }
     if (fmod(t, 0.4) < 0.017) in->fire_pressed = true;
 }
 

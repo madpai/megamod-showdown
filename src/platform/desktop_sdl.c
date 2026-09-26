@@ -108,6 +108,9 @@ bool hta_desktop_poll(hta_desktop *d, hta_input *in, float sens)
     if (!d || !in) return false;
     memset(in->key_pressed, 0, sizeof(in->key_pressed));
     in->fire_pressed = in->alt_pressed = in->use_pressed = in->jump_pressed = false;
+    in->crouch_pressed = false;
+    in->reload = in->melee = in->swap = in->zoom = in->grenade = in->fly = in->ability = false;
+    in->debug = 0;
     in->look_yaw = in->look_pitch = 0.0f;
     in->resized = false;
     if (sens <= 0.0f) sens = 0.0025f;
@@ -129,6 +132,17 @@ bool hta_desktop_poll(hta_desktop *d, hta_input *in, float sens)
             if (!e.key.repeat && e.key.keysym.scancode < 512) in->key_pressed[e.key.keysym.scancode] = true;
             if (!e.key.repeat && e.key.keysym.scancode == SDL_SCANCODE_E) in->use_pressed = true;
             if (!e.key.repeat && e.key.keysym.scancode == SDL_SCANCODE_SPACE) in->jump_pressed = true;
+            if (!e.key.repeat) switch (e.key.keysym.scancode) {   /* the named actions */
+            case SDL_SCANCODE_E: in->swap = true; break;
+            case SDL_SCANCODE_R: in->reload = true; break;
+            case SDL_SCANCODE_F: in->melee = true; break;
+            case SDL_SCANCODE_G: in->grenade = true; break;
+            case SDL_SCANCODE_Q: in->ability = true; break;
+            case SDL_SCANCODE_Z: in->zoom = true; break;
+            case SDL_SCANCODE_V: in->fly = true; break;
+            case SDL_SCANCODE_LCTRL: case SDL_SCANCODE_C: in->crouch_pressed = true; break;
+            default: break;
+            }
             break;
         default: break;
         }

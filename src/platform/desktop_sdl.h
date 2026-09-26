@@ -13,19 +13,9 @@
 #include <stdint.h>
 #include "../gfx/gfx.h"
 #include "../gfx/gfx_settings.h"
+#include "../app/input.h"
 
-/* What the player did this frame, device-neutral. Look deltas are radians
- * already scaled by sensitivity; buttons are held-state plus a pressed
- * edge for this frame. */
-typedef struct {
-    float move_forward, move_right;    /* -1..1 */
-    float look_yaw, look_pitch;        /* radians this frame */
-    bool  jump, crouch, fire, alt_fire, use;
-    bool  fire_pressed, alt_pressed, use_pressed, jump_pressed;
-    bool  key_pressed[512];            /* SDL scancodes pressed THIS frame */
-    bool  quit;
-    bool  resized;
-} hta_input;
+/* hta_input, the device-neutral frame input, is src/app/input.h. */
 
 typedef struct hta_desktop hta_desktop;
 
