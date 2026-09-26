@@ -204,6 +204,16 @@ is installed (IMPORTED in the map list), it starts; (5) host one match and
 the desktop joins with `--world`. Fail = a map or body missing from a
 menu, a load error on screen, or a different character on the joiner.
 If it fails: revert this build's commit; 0558bf8 is the known-good.
+**Result 2026-09-26 11:45: PASS** (owner: 1 great, 2 great, 5 worked;
+4 not applicable, no picked map installed). The desktop joined the
+phone's ctf_2fort match by `--world` ("player 1 joined game unit 4",
+invalid 0, rate_limited 0). **3: props never break from gunfire** on
+cs_office, de_dust2 and ctf_2fort (props_broken 0 in all eight reports,
+240/75/14 props loaded). Not this build: 13dfb40's reports show the same
+(0 on de_dust2 and ctf_2fort; 1-2 on cs_compound, likely blasts). Bullets
+reach props only through HTA_EV_HIT_WORLD plus a 0.12-unit ray back into
+a prop box (world_fx.c); suspect the game's bullet trace ignores the prop
+collision instances. Being chased next, on the desktop.
 
 
 **NEXT SESSION -- start here (written 2026-09-26 late morning).** Main is
