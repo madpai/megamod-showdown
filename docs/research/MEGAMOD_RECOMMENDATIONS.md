@@ -6,6 +6,8 @@
 
 ### N1. Freeze the current runtime/content boundary in a contract inventory
 
+The independent [source review](CURRENT_RUNTIME_CONTENT_BOUNDARY_REVIEW.md) identifies current path/ID conflation, manifest gameplay fields, ordinal network dependencies and Halo-tag/display-name lookups. Claude's contract inventory should verify these against its implementation branch.
+
 - **Problem:** OALMAP/OALASSET and current gameplay data have different schemas and ownership assumptions.
 - **Observed solution:** Factorio publishes stage/API boundaries; Space Engineers distinguishes builders and runtime entities.
 - **Proposed MegaMod adaptation:** document actual package fields, loader limits, definition lookup points, world IDs, and authority for each existing type before changing formats.
@@ -14,6 +16,8 @@
 - **Open Asset Lab impact:** source-to-runtime field map and provenance matrix. **Networking impact:** identify fields affecting match compatibility. **Android impact:** no runtime cost.
 
 ### N2. Add a creator-visible OAL validation report for stable IDs/references
+
+Use the bounded [initial ID grammar recommendation](CONTENT_ID_GRAMMAR_RECOMMENDATION.md) as the experiment input, subject to a current-name inventory; it is not yet a format decision.
 
 - **Problem:** content references and package dependencies become opaque as new asset kinds arrive.
 - **Observed solution:** Factorio prototype errors, Arma required addons, xEdit reference/conflict views.
@@ -34,6 +38,8 @@
 ## NEXT
 
 ### X1. Build one generic world-event slice
+
+The [X1 evidence note](WORLD_EVENT_SLICE_RECOMMENDATION.md) narrows this to typed verbs, placed IDs, bounded queued dispatch, moving collision, host authority and late-join state. Its acceptance checks are proposed, not validated.
 
 - **Problem:** imported maps currently carry geometry and limited breakables; doors/buttons/triggers need generic behavior.
 - **Observed solution:** Source entity I/O, Bethesda placement references, Arma mission/editor entities.

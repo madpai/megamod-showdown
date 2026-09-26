@@ -46,3 +46,5 @@ This synthesis groups **observed patterns** and **MegaMod inferences** by proble
 | Optional structural preprocessing | Mobile work shifted offline | Requires quality/performance evidence before adoption |
 
 The [recommendations](MEGAMOD_RECOMMENDATIONS.md) prioritize experiments around current limitations. The [Asset Lab companion map](https://github.com/madpai/open-asset-lab/blob/main/docs/RESEARCH_CONNECTIONS.md) describes compiler consequences.
+
+**Current MegaMod evidence (2026-09-26):** the [N1 boundary review](CURRENT_RUNTIME_CONTENT_BOUNDARY_REVIEW.md) finds that OALMAP already puts some gameplay data in manifest JSON; map/network identity uses a manifest hash, while imported roster and prop state use dense ordinals. This supports validating [canonical IDs](CONTENT_ID_GRAMMAR_RECOMMENDATION.md) before treating current names as save or network identity. The [X1 slice](WORLD_EVENT_SLICE_RECOMMENDATION.md) remains a research recommendation until an original synthetic world measures it.
