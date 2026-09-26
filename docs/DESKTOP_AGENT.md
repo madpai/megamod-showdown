@@ -81,8 +81,8 @@ events) and runs in ctest as `playtest_sandbox` with no GPU. The
 `playtest` skill says how to use it. Not yet: `--script` files, record /
 replay, `--netsim`, the sanitizer build, and the harness in `megamod-join`.
 
-**Status 2026-09-26: step 1 (input in) is on branch `input-in`, awaiting its
-phone check.** `src/app/input.h` holds `hta_input`, the one device-neutral
+**Status 2026-09-26: step 1 (input in) is done and passed its phone check
+(`7d313d7`; on main at `af7814d`).** `src/app/input.h` holds `hta_input`, the one device-neutral
 frame input (movement, look, held buttons with their press edges, and the
 one-shot requests: reload, melee, swap, zoom, grenade, fly, ability,
 debug). `hta_session_input()` (`src/app/input.c`, `tests/test_input.c`)

@@ -191,6 +191,16 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**NEXT SESSION -- start here (written 2026-09-26 late morning).** Main is
+`af7814d`: S1, rate limiting, the vehicle-angle fix and step 1 (input in)
+all passed on the phone today. Next is docs/DESKTOP_AGENT.md **step 2
+(files: `hta_fs`)**, one phone check (built-in maps and a picked
+`.oalmap`). Also open: the three "for later" items under step 1's result
+below. Phone-hosted LAN tests: the phone drops its match when the app is
+backgrounded, so start a desktop retry-join loop first and tell the owner
+not to switch apps; for an imported map pass `--oalmap` with the same
+package.
+
 **2026-09-26 step 1, input in (build "Input in: one input path").**
 docs/DESKTOP_AGENT.md step 1: the Java HUD, touch and gamepad now reach the
 game through one device-neutral `hta_input` a frame (`src/app/input.h`,
