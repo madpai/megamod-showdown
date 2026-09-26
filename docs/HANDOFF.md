@@ -191,6 +191,24 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-26 step 1, input in (build "Input in: one input path").**
+docs/DESKTOP_AGENT.md step 1: the Java HUD, touch and gamepad now reach the
+game through one device-neutral `hta_input` a frame (`src/app/input.h`,
+`hta_session_input`); JNI writes a locked mailbox instead of the session.
+The game logic is unchanged. Host gate: ctest 46/46 (new `input` test),
+ndkcheck clean, verify.sh 80/80, sandbox playtest PASS. **Phone check,
+solo Blood Gulch first:** move, look, jump, crouch, fire (hold and tap),
+reload, SWING/melee, grenade, SWAP, ZOOM, FLY, KAMEHAMEHA; pause and
+resume; pick up a weapon. **Vehicle:** SWAP near a Warthog to get in,
+drive, gunner seat turret (fire + alt), get out -- a held jump/brake must
+not jump on the way out, a held fire must not fire the car gun on the way
+in. **Menus:** team and class pick, start a match. **Then** one imported
+map, and a LAN join (desktop `megamod-join` is fine). Fail = a control
+doing nothing, acting twice, or behaving unlike d0b168d. Two deliberate
+differences: a tap shorter than a frame now always registers; getting into
+a car also releases a held gamepad/hot-corner fire. If it fails: revert
+7d313d7; d0b168d is the known-good.
+
 **2026-09-26 vehicle fix (build "Vehicles reach joiners").** Angles at
 exactly +-pi no longer make the client reject VEHICLES, DROPS or GAME
 packets (`q16_angle` in src/net/protocol.c; `test_net` covers it and
