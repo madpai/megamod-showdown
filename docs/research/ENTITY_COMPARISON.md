@@ -23,7 +23,7 @@ Read with the [individual reports](README.md). `F` = directly documented in cite
 
 ## Proposed MegaMod-native model (inference)
 
-1. **Definition registry at startup:** OAL-compiled, immutable `kind:namespace.name` IDs. Resolve references and dependency closure once; assign dense type-local numeric indices for C tables.
+1. **Definition registry at startup:** OAL-compiled, immutable `namespace:type/name` IDs (the one grammar: [Open Asset Lab `docs/CONTENT_IDS.md`](https://github.com/madpai/open-asset-lab/blob/main/docs/CONTENT_IDS.md); an earlier draft here said `kind:namespace.name`). Resolve references and dependency closure once; assign dense type-local numeric indices for C tables.
 2. **Runtime instance registry:** keep `hta_unit`, `hta_prop`, `hta_vehicle`, projectiles, and world objects in their specialized pools. Add a tiny common handle (`kind`, `slot`, `generation`) and a lookup/validation function. Do not move hot movement arrays into a generic allocator.
 3. **Capabilities for cross-cutting behavior:** start with `Transform`, `Collider`, `Health/Breakable`, `Interactable/Trigger`, `EventEmitter/Receiver`, and `NetworkReplicated`, only when a real world-entity slice needs them. A capability can be a typed index into its own compact pool, not heap-allocated component objects.
 4. **Behavior:** fixed C systems advance physics/collision/animation/net; optional host Lua handlers run at declared events and call bounded verbs. No per-entity `Update` callback unless profiling proves it affordable.
