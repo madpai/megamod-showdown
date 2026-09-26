@@ -213,6 +213,8 @@ spawn, unhittable (a match's rounds look only at its units) and walked
 through. Now always freed when a match starts (build "No ghost target").
 **Phone check:** a 0-bot solo match on any map -- no Spartan standing in
 front of the spawn; a match with bots is as before.
+**Result 2026-09-26 12:15: PASS** (owner: "No spartan all is good").
+Debris polish is parked by the owner ("passable for now").
 
 **2026-09-26 step 2, files (build "Files by name").** docs/DESKTOP_AGENT.md
 step 2: bundled worlds and imported characters/weapons/UI sounds now load
@@ -239,11 +241,10 @@ a prop box (world_fx.c); suspect the game's bullet trace ignores the prop
 collision instances. Being chased next, on the desktop.
 
 
-**NEXT SESSION -- start here (written 2026-09-26 late morning).** Main is
-`af7814d`: S1, rate limiting, the vehicle-angle fix and step 1 (input in)
-all passed on the phone today. Next is docs/DESKTOP_AGENT.md **step 2
-(files: `hta_fs`)**, one phone check (built-in maps and a picked
-`.oalmap`). Also open: the three "for later" items under step 1's result
+**NEXT SESSION -- start here (updated 2026-09-26 midday).** S1, rate
+limiting, the vehicle-angle fix, step 1 (input in), step 2 (files), props
+taking your bullets and the ghost practice target all passed on the phone
+today. Next is docs/DESKTOP_AGENT.md **step 3 (loading without a GPU)**. Also open: the three "for later" items under step 1's result
 below. Phone-hosted LAN tests: the phone drops its match when the app is
 backgrounded, so start a desktop retry-join loop first and tell the owner
 not to switch apps; for an imported map pass `--oalmap` with the same
