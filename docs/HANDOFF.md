@@ -191,6 +191,19 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-26 S1 phone check (build "S1: host networking + rate limiting").**
+This build carries S1 (`5caa7e6`, host networking moved to
+`src/app/host_net.c`) and per-source rate limiting (`95e4933`) on top of
+the known-good `3cf8e96`. Host gate on the desktop: ctest 45/45, ndkcheck
+clean, verify.sh 80/80 with the Trial map, sandbox playtest PASS.
+**One hosted LAN match:** the phone hosts Blood Gulch; a second phone or
+`build-host/megamod-join` from the desktop joins. Pass = the joiner gets a
+unit, moves, is visible to the host, no stutter on either side, and the
+host's SEND REPORT shows `net.rate_limited` 0. Fail = any of those not
+true: revert `5caa7e6` and `95e4933` (keep docs and the harness),
+republish, and `3cf8e96` is the known-good. `main` is pushed only after
+this passes.
+
 **NEXT SESSION -- start here (written 2026-09-25 evening for the local
 session on 2026-09-26).** State of play:
 
