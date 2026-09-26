@@ -25,7 +25,11 @@ void hta_host_peers(hta_session *s, double now, void (*unit_added)(hta_session *
             s->peer_ready[i]=false;
             continue;
         }
-        if (p->player.id==s->net.id) {
+        /* Our own client, over loopback: by its id once it has one, and by
+         * its HELLO's nonce before -- the tick pumps the server before the
+         * client hears WELCOME, and an id check alone gave us a second,
+         * remote body for one frame that never left. */
+        if (p->player.id==s->net.id || (s->net.nonce && p->nonce==s->net.nonce)) {
             s->peer_unit[i]=(int8_t)s->me;
             continue;
         }

@@ -17,6 +17,35 @@ static void pump(hta_net_server *s, hta_net_client *c, double now)
     hta_net_client_pump(c, now + 0.0001);
 }
 
+/* The host's own client joins its own server over loopback. The tick runs
+ * the server side before the client side, so for one frame the server has
+ * the host's HELLO while the client does not yet know its id: the host
+ * must still be recognised (by the HELLO's nonce), not given a second,
+ * remote body -- a "Player 1" that stood idle at a spawn (step 4). */
+static void host_own_client(void)
+{
+    static hta_session h;
+    memset(&h, 0, sizeof(h));
+    for (unsigned i = 0; i < HTA_NET_MAX_PLAYERS; i++) h.peer_unit[i] = -1;
+    h.game_on = true;
+    h.me = hta_game_add(&h.game, HTA_UNIT_LOCAL, "Player", HTA_TEAM_AUTO);
+    assert(h.me == 0);
+    assert(hta_net_server_open(&h.host_server, 0));
+    assert(hta_net_client_open(&h.net, "127.0.0.1", hta_udp_port(&h.host_server.udp)));
+    hta_net_client_pump(&h.net, 1.0);                 /* HELLO out */
+    for (int i = 0; i < 100000 && !hta_net_server_count(&h.host_server); i++)
+        hta_net_server_pump(&h.host_server, 1.0);     /* ...in, WELCOME out */
+    assert(hta_net_server_count(&h.host_server) == 1 && !h.net.connected && h.net.id == 0);
+    uploads = 0;
+    hta_host_peers(&h, 1.0, unit_added);             /* before the client hears back */
+    printf("host's own client: %u units, %d upload(s)\n", h.game.unit_count, uploads);
+    assert(h.game.unit_count == 1 && uploads == 0);
+    for (unsigned i = 0; i < HTA_NET_MAX_PLAYERS; i++)
+        if (h.host_server.peers[i].active) assert(h.peer_unit[i] == h.me);
+    hta_net_client_close(&h.net);
+    hta_net_server_close(&h.host_server);
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -90,6 +119,7 @@ int main(void)
 
     hta_net_client_close(&joiner);
     hta_net_server_close(&s.host_server);
+    host_own_client();
     printf("host_net: ok\n");
     return 0;
 }
