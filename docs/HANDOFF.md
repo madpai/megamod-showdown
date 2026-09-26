@@ -201,6 +201,13 @@ Warthog and drive it while the desktop joiner is in; pause, SEND REPORT.
 Pass = the host's own `[net] id ... invalid` stays 0 (it climbed ~18/s
 before) and the joiner counts 0 invalid VEHICLES. Then step 1 of
 docs/DESKTOP_AGENT.md (input in) starts.
+**Result 2026-09-26 10:19: PASS.** Phone hosted Blood Gulch on a8a3906
+(28 vehicles placed), two desktop joiners in: the host's own client
+`invalid 0` throughout (was climbing ~18/s), the joiner counted 895/895
+VEHICLES valid, `rate_limited` 0, p99 10.5 ms. One 153 ms hitch at 12.3 s
+lines up with a joiner arriving, as the 139-143 ms ones did in the three
+S1 reports: a peer joining costs one hitch on the host (unit upload?),
+worth chasing.
 
 **2026-09-26 S1 phone check (build "S1: host networking + rate limiting").**
 This build carries S1 (`5caa7e6`, host networking moved to
