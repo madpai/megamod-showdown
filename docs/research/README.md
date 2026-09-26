@@ -1,6 +1,6 @@
 # Comparative engine and mod architecture research
 
-Research date: **2026-09-26**. This corpus informs [MegaMod's vision](../MEGAMOD_VISION.md) and [Open Asset Lab's vision](https://github.com/madpai/open-asset-lab/blob/main/docs/ASSET_LAB_VISION.md). It is architectural research, not an implementation plan or permission to reuse another project's code or game assets. The local MegaMod checkout is `halo-sandbox` in `halo-trial-android`, tracking `madpai/megamod-showdown`.
+Research date: **2026-09-26**. This corpus informs the [MegaMod Engine and Showdown vision](../MEGAMOD_VISION.md) and [Open Asset Lab's vision](https://github.com/madpai/open-asset-lab/blob/main/docs/ASSET_LAB_VISION.md). **MegaMod Engine** is the reusable runtime; **MegaMod Showdown** is its official reference game and stress test; **Open Asset Lab** compiles foreign and original content. Future original games consume the Engine independently. The corpus is architectural research, not an implementation plan or permission to reuse another project's code or game assets. The local checkout is `halo-sandbox` in `halo-trial-android`, tracking `madpai/megamod-showdown`.
 
 ## Reading order and status
 

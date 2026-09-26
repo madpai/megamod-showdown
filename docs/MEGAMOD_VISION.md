@@ -1,4 +1,4 @@
-# MegaMod vision — the north star
+# MegaMod Engine and Showdown vision — the north star
 
 **Read this before any major architectural decision** in this repository or
 in [Open Asset Lab](https://github.com/madpai/open-asset-lab) (its companion
@@ -24,14 +24,15 @@ Nothing here is permission to rewrite working systems. See
 
 ## 0. In one paragraph
 
-MegaMod is not "Halo with mods". It is becoming a **native, lightweight,
+**MegaMod Engine** is becoming a **native, lightweight, reusable,
 content-driven game runtime** where worlds, characters, weapons, vehicles,
 abilities, scripts and rules are composed from normalized building blocks
 and played natively and in multiplayer on modest hardware. **Open Asset Lab**
 is becoming the system that **understands, prepares, validates and packages
 those building blocks** from any origin. **Halo is one compatibility layer.
 Source is one importer family. Steam Workshop is one provider.** The
-long-term platform belongs to MegaMod itself.
+long-term platform belongs to MegaMod Engine. **MegaMod Showdown** is its
+official reference game, not another name for the engine.
 
 ```
  EXTERNAL OR ORIGINAL CONTENT
@@ -42,26 +43,49 @@ long-term platform belongs to MegaMod itself.
             │
       MEGAMOD ENGINE ── core runtime · game framework · content runtime
             │           compatibility layers (Halo Trial, …)
-  GAME / SANDBOX / EXPERIENCE
-            │
-   NATIVE MULTIPLAYER
+            ├── MEGAMOD SHOWDOWN (reference game and stress test)
+            ├── ORIGINAL GAME #1 / FUTURE GAMES
+            └── CREATOR EXPERIENCES
 ```
 
 **The rule that decides most arguments:**
-*MegaMod should understand MegaMod content. Open Asset Lab should understand
+*MegaMod Engine should understand Engine-ready content. Open Asset Lab should understand
 the messiness of external content.*
 
-### Names
-- **MegaMod**: the engine and platform.
-- **MEGAMOD SHOWDOWN**: this repository and its first experience, the
-  crossover arena game.
+### Names and product boundary
+- **MegaMod Engine**: the reusable technology and game framework. It must
+  serve games other than Showdown, including a wholly original game with
+  original worlds, characters, weapons, assets, scripts and rules.
+- **MegaMod Showdown**: the official reference game built on the engine.
+  It is the playground, integration test, compatibility showcase,
+  multiplayer stress test, content-remix sandbox and torture test. It
+  remains maintained after original games launch.
+- **Open Asset Lab**: the separate ingestion, normalization, validation,
+  compilation and creator-tooling layer for foreign and original content.
+- **Future original games**: independent products that consume MegaMod
+  Engine. They should not inherit Showdown's crossover assumptions.
+- This repository currently contains both Engine and Showdown code. This
+  conceptual distinction does not require a repository split or large
+  source move; restructure only when doing so solves a practical problem.
 - The C prefix `hta_` ("Halo Trial Android") is historical. Keep it. Renaming
   thousands of symbols is churn with no capability. New *concepts* get
   generic names (below); the prefix stays.
 
+**Showdown can be ridiculous. The engine must remain clean.** Showdown may
+combine Goku, Master Chief, gravity guns, Halo rockets, Source maps and
+original characters. MegaMod Engine should know Character, Weapon,
+Projectile, Ability, Vehicle, World, Trigger, Mover, GameRule, Material and
+Script. Showdown should exercise engine capabilities as a consumer; its
+specific roster, jokes, mutators and compatibility cases must not define
+generic engine APIs. A new physics, Lua, material or replication capability
+should be stressed in Showdown to discover its limits. An original game
+asks whether the same capability supports a cohesive, excellent experience.
+Showdown asks, "Can the engine survive this?" An original game asks, "Can
+we make something cohesive and excellent with it?"
+
 ---
 
-## 1. What MegaMod is becoming
+## 1. What MegaMod Engine is becoming
 
 A lightweight, native, modular, content-driven game runtime and creation
 platform. It loads normalized worlds, characters, weapons, vehicles,
@@ -76,11 +100,22 @@ custom energy weapon; King of the Hill; low gravity, explosive deaths,
 destructible props. All of it launched without modifying or rebuilding
 the C engine.
 
-Crossover content is the demonstration, not the identity. The deeper goal:
+Crossover content is Showdown's demonstration, not the engine's identity.
+The deeper goal:
 take worlds, characters, assets, behaviours and gameplay ideas from wildly
 different sources, normalize them into a common interactive language,
 recombine them into new experiences, and run them natively and multiplayer
 on lightweight hardware.
+
+The reusable Engine owns platform/runtime services, Vulkan rendering,
+input, audio, timing, resource management, networking, host-authoritative
+simulation, physics/collision, entity storage, animation, world loading
+and interactions, characters, weapons, projectiles, abilities, vehicles,
+materials, generic events and game-rule framework. Future scripting APIs
+and a content/package registry belong at this level when real consumers
+need them. Showdown should push these systems with mixed character types,
+imported and original worlds, unusual movement, flight, vehicles,
+breakables, bots, mutators, multiplayer and Android/desktop/headless runs.
 
 ### Conceptual engine structure [Next, as a direction]
 
@@ -92,7 +127,7 @@ MegaMod Engine
 │                      teams/factions · vehicles · objectives · scoring · game rules
 ├── Content Runtime    worlds · meshes · materials · animations · audio assets
 │                      scripts · gameplay metadata
-└── Compatibility      Halo Trial · OAL runtime packages · future adapters
+└── Compatibility      Halo Trial · future foreign-runtime adapters
 ```
 
 This is a map to refactor *toward* when concrete work justifies it, not a
@@ -411,18 +446,27 @@ launch and inspect a test session.
 ## 16. Original content is essential
 
 Imported content is a stress test for generality, **not a prerequisite**.
-MegaMod must support original, open-licensed, user-created and procedurally
-generated content, and assets made for MegaMod.
+MegaMod Engine must support original, open-licensed, user-created and
+procedurally generated content, and assets made for the Engine.
 
-**The milestone that proves MegaMod is its own engine:** a complete
-original experience (world, characters, weapons, rules) that runs with **no
-Halo and no Source assets**. `megamod-sandbox` is the seed: it already runs
+**The proof that MegaMod Engine can serve an original game:** a complete
+original test experience (world, characters, weapons, rules) that runs with
+**no Halo or Source dependency**. `megamod-sandbox` is the seed: it already runs
 the engine's physics, props, gibs, weather and presets with no game data.
+
+Do not wait for an arbitrary "engine complete" milestone. A reasonable
+threshold for starting a **separate original game** is an original-content
+pipeline, generic interactive worlds, stable content definitions, a
+scripting layer, reliable package/content compatibility, sufficiently
+generic character/weapon/ability systems, working desktop and Android
+runtimes, and one original test experience with no Halo or Source
+dependency. This is a readiness guide, not a claim that those capabilities
+are implemented today. Showdown continues as the maintained stress test.
 
 The first-class original workflow [Next]:
 ```
-Blender → glTF → Open Asset Lab → character / weapon / map metadata
-        → validate → preview → compile → MegaMod
+Blender → glTF / original assets → Open Asset Lab
+        → validate → preview → compile → MegaMod Engine → original game
 ```
 No Halo, no Source, no Garry's Mod. Building a **non-Source importer
 (glTF first)** is how Asset Lab proves it has generalized.
@@ -477,8 +521,10 @@ and it lets agents test on the desktop.
 
 ## 19. The design question for every feature
 
-**Is this a general MegaMod capability, or a special case for one source
-game?** Prefer the general capability.
+**Is this a capability MegaMod Engine can offer to Showdown and another
+game, or a rule that belongs in Showdown?** Keep game-specific rules in
+the consumer. Prefer small reusable capabilities when a real product need
+exposes them.
 
 | Don't add | Add |
 |---|---|
@@ -503,6 +549,12 @@ game?** Prefer the general capability.
 If a proposal fails several of these, reconsider its architecture.
 
 ## 21. Do not over-refactor
+
+**Real product need → small reusable engine capability → second use →
+generalization if justified.** Showdown is the main source of feature
+demand while the engine matures; future original games add independent
+evidence. Do not build a general engine system solely because it sounds
+useful.
 
 The codebase works. This vision must not trigger reckless rewrites. For
 every architectural improvement:

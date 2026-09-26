@@ -1,6 +1,13 @@
 # MEGAMOD SHOWDOWN (branch `halo-sandbox` of halo-trial-android)
 
-**This branch is MEGAMOD SHOWDOWN**, the owner's fork of Open Halo that plays
+**This branch contains MEGAMOD SHOWDOWN and MEGAMOD ENGINE.** Showdown is
+the official reference game, playground and torture test **built on** the
+reusable Engine; it is not the Engine API. Open Asset Lab is the separate
+content compiler. Future original games are independent Engine consumers.
+**Showdown can be ridiculous. The engine must remain clean.** The two
+currently share this repository; no split or source move is implied.
+
+The branch is the owner's fork of Open Halo that plays
 imported content from other games (Source maps, characters, weapons via
 Open Asset Lab). Named 2026-09-24. Its GitHub home is the PUBLIC repo
 https://github.com/madpai/megamod-showdown (remote `megamod`; this branch
@@ -20,14 +27,15 @@ session's branch reaches the phone through a local agent following
   to Open Halo separately (cherry-pick onto `fp-animated-guns`), with the
   owner's say-so.
 
-**Direction (owner, 2026-09-26): MegaMod is becoming its own engine.**
-Before major architectural work, read `docs/MEGAMOD_VISION.md`. MegaMod is
+**Direction (owner, 2026-09-26): MegaMod Engine is becoming reusable beyond Showdown.**
+Before major architectural work, read `docs/MEGAMOD_VISION.md`. The engine is
 evolving into an independent, content-driven runtime: **Halo is a
 compatibility layer, Source/GMod is an importer path through Open Asset
 Lab, and new systems should prefer generic engine concepts** (`Door`,
 `WeaponDefinition`, `TeleportTrigger`) over source-game-specific
-assumptions. Foreign terminology stays in importers and in the existing
-Halo layer. That is direction, not a rewrite order: preserve what works,
+assumptions. Foreign terminology and Showdown-specific roster/rules stay
+outside generic Engine APIs, in importers, the compatibility layer or the
+reference game. That is direction, not a rewrite order: preserve what works,
 refactor the minimum a real feature needs, verify Android, Blood Gulch and
 the imported bundle (vision §21). The briefing below still describes the
 engine as it is, Halo ancestry included.

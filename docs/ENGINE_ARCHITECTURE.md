@@ -1,15 +1,26 @@
-# Engine architecture
+# MegaMod Engine architecture in the Showdown repository
 
-The owner wants this engine to outlive Megamod: cross-platform, networked,
-with real physics, and a starting point for other games. This is how it is
-laid out **today**, what is already reusable, and the staged plan for the
+MegaMod Engine is the reusable technology; MegaMod Showdown is its first
+consumer and official integration/stress test. The owner wants the engine
+to serve independent games: cross-platform, networked, with real physics.
+This is how it is laid out **today**, what is already reusable, and the staged plan for the
 one big piece that is not.
 
-Where it is **going** -- MegaMod as an independent content-driven runtime,
+Where it is **going** -- MegaMod Engine as an independent content-driven runtime,
 with Halo as one compatibility layer and a conceptual split into core
 runtime, game framework, content runtime and compatibility layers -- is
 [MEGAMOD_VISION.md](MEGAMOD_VISION.md). This file stays a description of
 the code as it is; update it as the code moves, not ahead of it.
+
+**Current coupling:** Engine and Showdown share this repository and much
+of `src/app`/`src/game`; the Trial tag loader and historical `hta_` names
+remain in the runtime, and Showdown still uses Trial gameplay data in
+normal matches. `src/engine`, `src/gfx`, `src/net` and the platform code
+contain reusable pieces, but directory names are not a complete API
+boundary. The goal is to make a second game consume proven capabilities
+without Showdown roster or rule assumptions. No repository split is
+required by this document; consider one only when a second consumer makes
+the shared build/API boundary concrete.
 
 ## The layers
 

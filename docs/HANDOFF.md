@@ -1,12 +1,16 @@
 # Halo Trial Android — handoff
 
-> **On branch `halo-sandbox` this is MEGAMOD SHOWDOWN** (public repo
+> **On branch `halo-sandbox` this repository hosts MEGAMOD SHOWDOWN and
+> MEGAMOD ENGINE** (public repo
 > madpai/megamod-showdown, remote `megamod`). See CLAUDE.md's top section
 > for where it pushes and what never goes to Open Halo.
 >
-> **Direction (2026-09-26):** MegaMod is becoming its own content-driven
-> engine; Halo is one compatibility layer, Source/GMod an importer path
-> through Open Asset Lab. **Before major architectural work read
+> **Product direction (2026-09-26):** MegaMod Engine is the reusable
+> runtime; MegaMod Showdown is its official reference game and stress
+> test; Open Asset Lab compiles foreign and original content. **Showdown
+> can be ridiculous. The engine must remain clean.** Halo is one
+> compatibility layer, Source/GMod an importer path through Open Asset
+> Lab. **Before major architectural work read
 > [`docs/MEGAMOD_VISION.md`](MEGAMOD_VISION.md).** This handoff documents
 > the engine as it is -- including its Halo ancestry, which stays accurate
 > history and a supported compatibility layer.

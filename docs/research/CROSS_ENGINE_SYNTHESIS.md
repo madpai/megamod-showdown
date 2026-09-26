@@ -1,6 +1,6 @@
 # Cross-engine synthesis: smallest useful architecture
 
-This synthesis groups **observed patterns** and **MegaMod inferences** by problem. The individual reports hold citations, license notes, and unknowns. No other engine's source or data is a code donor.
+This synthesis groups **observed patterns** and **MegaMod Engine inferences** by problem. MegaMod Showdown is the first demanding consumer of those reusable capabilities; its crossover content should not define engine APIs. Open Asset Lab is the compiler boundary for foreign and original content. The individual reports hold citations, license notes, and unknowns. No other engine's source or data is a code donor.
 
 ## Entity model
 

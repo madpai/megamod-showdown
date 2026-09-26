@@ -2,16 +2,31 @@
 
 # MEGAMOD SHOWDOWN
 
-*A native Android game runtime, evolving from the Open Halo Project into
-**MegaMod**: a general, content-driven engine for imported and original
-worlds, characters, weapons and game rules, played natively and in
-multiplayer. Content is prepared by
-[Open Asset Lab](https://github.com/madpai/open-asset-lab). No game content
-is included in this repository.*
+*The official reference game, playground and stress test for **MegaMod
+Engine**, a reusable native game runtime. [Open Asset Lab](https://github.com/madpai/open-asset-lab)
+prepares its content. No game content is included in this repository.*
 
 </div>
 
 ## What this is, and where it is going
+
+**Showdown can be ridiculous. The engine must remain clean.** Showdown may
+mix Goku, Master Chief, Halo rockets, Source maps and original content. The
+engine should see reusable concepts such as Character, Weapon, Projectile,
+Ability, Vehicle, World, Trigger, Mover, GameRule, Material and Script.
+Showdown is a consumer and integration test of the engine, not its API.
+
+| Layer | Responsibility |
+| --- | --- |
+| **Open Asset Lab** | Ingest, normalize, validate and compile foreign **and original** content; grow creator tooling. |
+| **MegaMod Engine** | Reusable platform, rendering, input, audio, physics, simulation, networking and game/content frameworks. |
+| **MegaMod Showdown** | Official reference game and deliberately chaotic compatibility and multiplayer torture test. |
+
+The long-term ecosystem is Open Asset Lab → MegaMod Engine → MegaMod
+Showdown, independent original games and creator experiences. Showdown stays
+maintained as the engine's stress test after original games exist. This is a
+conceptual boundary within the current repository; a source-tree or
+repository split awaits a practical need.
 
 **Today** MEGAMOD SHOWDOWN is a crossover arena shooter on a native C/Vulkan
 Android engine. The engine was built against the free Halo Trial, and the
@@ -26,8 +41,8 @@ and an experience is a combination of them, launched without rebuilding
 the engine:
 
 ```
-content (imported or original) → Open Asset Lab → MegaMod packages
-    → MegaMod engine → game / sandbox / experience → native multiplayer
+content (imported or original) → Open Asset Lab → engine-ready packages
+    → MegaMod Engine → Showdown / original game / creator experience
 ```
 
 **Halo is one compatibility layer. Source is one importer family. Steam
@@ -204,8 +219,9 @@ have already cost a session. [`docs/JOURNAL.md`](docs/JOURNAL.md) is the
 session history. Search it by symptom.
 
 **Before architectural work, read [`docs/MEGAMOD_VISION.md`](docs/MEGAMOD_VISION.md).**
-New systems should be generic MegaMod capabilities (a `Door`, a
-`WeaponDefinition`), not special cases for one source game. Agents: see
+New systems should be reusable MegaMod Engine capabilities (a `Door`, a
+`WeaponDefinition`) needed by a real consumer, not Showdown-specific rules
+or special cases for one source game. Agents: see
 [`AGENTS.md`](AGENTS.md).
 
 ## Legal

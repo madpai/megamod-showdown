@@ -1,4 +1,12 @@
-# Working in Megamod Showdown
+# Working in MegaMod Showdown and MegaMod Engine
+
+**Product model:** Open Asset Lab compiles engine-ready content; MegaMod
+Engine is the reusable native runtime; MegaMod Showdown is its official
+reference game and aggressive stress test. Future original games are
+separate engine consumers. **Showdown can be ridiculous. The engine must
+remain clean.** Keep Showdown's roster, humor and compatibility cases out
+of generic engine concepts. The two currently share this repository;
+do not split or rename it solely to express this model.
 
 Read `CLAUDE.md` (hard rules: public repository, no game data, author
 Phase2, never push to Open Halo's `origin`) and `docs/HANDOFF.md` (the
@@ -6,7 +14,7 @@ briefing, the testing objective, every invented constant) before changing
 anything. `docs/ENGINE_ARCHITECTURE.md` is the map of the engine.
 
 **Before major architectural work, read `docs/MEGAMOD_VISION.md`.** MegaMod
-is evolving from a Halo port into an independent content-driven runtime.
+Engine is evolving from a Halo port into an independent content-driven runtime.
 Halo is one compatibility layer; Source/GMod reaches the engine only as
 packages from Open Asset Lab; Steam Workshop is one acquisition provider.
 The runtime should understand MegaMod content; Asset Lab should understand
@@ -20,9 +28,10 @@ foreign content. For every new system ask (vision §20):
 - Can Asset Lab validate it before runtime? Does it keep provenance?
 - Does it move MegaMod toward a platform rather than one hardcoded game?
 
-And don't over-refactor (vision §21): a real limitation first, the minimum
+And don't over-refactor (vision §21): a real product need, the minimum
 change, tests, Android + Blood Gulch + imported-content checks, and write
-down the coupling that remains. The vision separates **[Now]**, **[Next]**
+down the coupling that remains. Seek a second use before generalizing.
+The vision separates **[Now]**, **[Next]**
 and **[Someday]**: never document or claim a [Next] capability as done.
 
 The step-by-step procedures live as skills in `.claude/skills/` and apply
