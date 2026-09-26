@@ -2628,8 +2628,10 @@ static void start_game(hta_android *s)
         s->hero_bark_time[k]=-10.0f;
     }
     if (hta_contrails_build(&s->trails, err, sizeof(err))) hta_log("[game] %s", err);
-    /* The practice target is gone: there are real people to shoot now. */
-    if (bots > 0) hta_bot_free(&s->bot);
+    /* The practice target is gone: a match's rounds and blasts only look for
+     * the match's units, so it would stand there unhittable and walked
+     * through -- with no bots as much as with them. */
+    hta_bot_free(&s->bot);
     static const char *const MODES[HTA_MODE_COUNT] = { "Slayer", "Team Slayer", "CTF" };
     hta_log("[game] %s: you (team %d) and %d bot(s) at skill %d, first to %d, %d min, respawn %.0f s",
             MODES[s->game.mode], s->game.units[s->me].team, bots, s->bot_skill,

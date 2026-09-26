@@ -203,6 +203,16 @@ metal ~10, glass 1; a grenade still breaks things; SEND REPORT
 (`props_broken` > 0). Host a match and shoot one: the desktop joiner should
 see it break. Fail = nothing breaks, or a prop breaks where you did not
 shoot.
+**Result 2026-09-26 12:04: PASS** (owner: "seems to work"; "the effects
+are a little silly" -- ask what looks off). cs_office solo 1 broken, de_dust2
+hosted with the desktop joined 4 broken, debris 24.
+**Found alongside: a practice-target Spartan in a 0-bot match** (owner's
+screenshot, cs_office solo): Blood Gulch's old target (hta_bot) was freed
+only `if (bots > 0)`, so with no bots it stood 8 units in front of the
+spawn, unhittable (a match's rounds look only at its units) and walked
+through. Now always freed when a match starts (build "No ghost target").
+**Phone check:** a 0-bot solo match on any map -- no Spartan standing in
+front of the spawn; a match with bots is as before.
 
 **2026-09-26 step 2, files (build "Files by name").** docs/DESKTOP_AGENT.md
 step 2: bundled worlds and imported characters/weapons/UI sounds now load
