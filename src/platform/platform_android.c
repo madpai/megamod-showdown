@@ -6861,14 +6861,29 @@ void android_main(struct android_app *app)
                         float bt = -1.0f, bhit[3];
                         int32_t who = -1;
                         bool onbot;
+                        bool wall = false;
+                        float wh[3], wn[3];
                         if (state.game_on) {
-                            float wt = HTA_GUN_RANGE, wh[3], wn[3];
-                            bool wall = state.col.built &&
+                            float wt = HTA_GUN_RANGE;
+                            wall = state.col.built &&
                                 hta_collision_ray(&state.col, state.cam.pos, dir,
                                                   HTA_GUN_RANGE, &wt, wh, wn);
                             who = hta_game_ray(&state.game, state.cam.pos, dir,
                                                wall ? wt : HTA_GUN_RANGE, state.me, &bt, bhit);
                             onbot = who >= 0;
+                            /* A round into the world may have struck a prop:
+                             * tell the props, as the game does for bots'
+                             * rounds (HTA_EV_HIT_WORLD), once per pellet.
+                             * On a LAN client the host decides (props.remote). */
+                            if (wall && !onbot && state.wfx.props.count) {
+                                hta_game_event he = { .kind = HTA_EV_HIT_WORLD, .a = state.me, .b = -1 };
+                                for (int k = 0; k < 3; k++) { he.pos[k] = wh[k]; he.dir[k] = wn[k]; }
+                                int pellets = state.weap.projectiles_per_shot > 0
+                                            ? state.weap.projectiles_per_shot : 1;
+                                if (pellets > 32) pellets = 32;
+                                for (int r = 0; r < pellets; r++)
+                                    hta_wfx_game_event(&state.wfx, &he, &state.game);
+                            }
                         } else {
                             onbot = hta_bot_ray(&state.bot, state.cam.pos, dir,
                                                 HTA_GUN_RANGE, &bt, bhit);

@@ -191,6 +191,19 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-26 props break from your gunfire (build "Props take your
+bullets").** The local player's hitscan is traced in the Android frame and
+never told the props what it hit: only bots' rounds (game.c,
+HTA_EV_HIT_WORLD) and blasts reached them, so your own gun never broke
+anything. Now a world hit from your gun is passed to the props the same
+way, once per pellet (world_fx.c's contract, `test_world_director`). Host
+gate: verify.sh 80/80, ndkcheck clean. **Phone check:** cs_office or
+de_dust2 solo: shoot a crate/barrel/window -- wood breaks in ~4 rounds,
+metal ~10, glass 1; a grenade still breaks things; SEND REPORT
+(`props_broken` > 0). Host a match and shoot one: the desktop joiner should
+see it break. Fail = nothing breaks, or a prop breaks where you did not
+shoot.
+
 **2026-09-26 step 2, files (build "Files by name").** docs/DESKTOP_AGENT.md
 step 2: bundled worlds and imported characters/weapons/UI sounds now load
 through `hta_fs` (APK first, then app storage) and the same code the
