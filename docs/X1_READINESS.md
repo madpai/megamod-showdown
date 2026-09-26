@@ -1,6 +1,14 @@
 # X1 (world events) readiness, from the N1/N3/N2 implementation
 
-**Status:** 2026-09-26, planning note. X1 is **not started**. This answers
+**Status:** 2026-09-26, planning note, **now superseded by the
+implementation: [WORLD_ENTITIES.md](WORLD_ENTITIES.md).** Where the build
+differs from this note: placed IDs are full `namespace:entity/name`, not a
+name segment; the client sends **no** new CONTROL field (the existing action
+counter; the host picks the interactable); mover state goes in a new
+WORLD_STATE packet that only OALMAP **v3** worlds use, which older runtimes
+refuse to load, so **v10 was kept** and no version number was consumed;
+link cycles are refused, not warned about. The planning text follows as it
+was. It answered
 the questions left open by
 [WORLD_EVENT_SLICE_RECOMMENDATION](research/WORLD_EVENT_SLICE_RECOMMENDATION.md)
 using what the content-compatibility and ID-audit work showed.

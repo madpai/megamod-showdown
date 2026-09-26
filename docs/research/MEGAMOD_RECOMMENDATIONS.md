@@ -44,7 +44,7 @@ The [order memo](POST_N3_ORDER_DECISION.md) now recommends X1 with the existing 
 | N1 inventory — done | Current OAL/runtime source | Reveals actual gameplay fields and local ordinals | [V10 contract](../CONTENT_COMPATIBILITY.md) reconciles field/loader/network inventory | Must precede changes that assume the boundary |
 | N3 v10 — done | N1's current-index evidence | Refuses mismatched imported rosters and missing joiner values before spawn | Cross-platform mismatch/zero tests reject before slot allocation | Correctness bug existed without stable-ID migration |
 | N2 read-only audit — done | N1 names and OAL manifests | Exposes collisions and legacy mapping cost for `namespace:type/name` | OAL audit and synthetic tests; no runtime format change | Migration before v10 would enlarge the bug fix |
-| X1 world-event slice — next | V10 gate, original OAL fixture, current emulator/joiner paths | Generic Button → Relay → Door and Trigger → Teleport destination with host state/collision | Real compiled package loads; two clients and late join agree; invalid-link, reorder and stale-handle tests pass | Needs real fixture and a bounded interact input, not full desktop gameplay |
+| X1 world-event slice — **implemented 2026-09-26** ([WORLD_ENTITIES](../WORLD_ENTITIES.md)) | V10 gate, original OAL fixture, current emulator/joiner paths | Generic Button → Relay → Door and Trigger → Teleport destination with host state/collision | Real compiled package loads; two clients and late join agree; invalid-link, reorder and stale-handle tests pass | Needs real fixture and a bounded interact input, not full desktop gameplay |
 | Full Step 5 desktop | X1 behavior and shared player/action contract | Desktop parity and visual debugging | Desktop hosts/joins same match and action behavior as Android | X1 can reveal needed state/action UI without blocking engine proof |
 | X2 small immutable registry | X1 fields plus N2 evidence | Shared definition identity beyond ad hoc lists | Two definitions and cross-reference load without positional save identity | Avoid speculative general registry before X1 |
 | X3 host Lua | X1/X2 verbs and authority | Creator behavior beyond fixed C links | One bounded host ability/rule, deterministic state/late join | Scripting API needs proven handles/events |
@@ -54,7 +54,7 @@ The [order memo](POST_N3_ORDER_DECISION.md) now recommends X1 with the existing 
 
 ### X1. Build one generic world-event slice
 
-The [X1 evidence note](WORLD_EVENT_SLICE_RECOMMENDATION.md) narrows this to typed verbs, placed IDs, bounded queued dispatch, moving collision, host authority and late-join state. Its acceptance checks are proposed, not validated.
+The [X1 evidence note](WORLD_EVENT_SLICE_RECOMMENDATION.md) narrows this to typed verbs, placed IDs, bounded queued dispatch, moving collision, host authority and late-join state. Implemented 2026-09-26 ([WORLD_ENTITIES](../WORLD_ENTITIES.md)): the acceptance checks pass on host tests, `scripts/test_x1.sh` and the emulator; the note records what was confirmed and refined.
 
 - **Problem:** imported maps currently carry geometry and limited breakables; doors/buttons/triggers need generic behavior.
 - **Observed solution:** Source entity I/O, Bethesda placement references, Arma mission/editor entities.

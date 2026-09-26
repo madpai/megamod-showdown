@@ -38,6 +38,7 @@ refused ("not the host's map").
 | Vehicles, seats, hulls | Trial scenario placements | placement order | map check |
 | Items, item choices | Trial scenario | spawn order | map check (choice now bounds-checked on the wire) |
 | Breakable props (GAME prop mask) | `.oalmap` `breakables` in manifest order | manifest order | map check (package key) |
+| World entities (X1: WORLD_STATE mover index) | OALMAP v3 manifest `world_entities` | manifest order | map check (package key covers every definition field; [WORLD_ENTITIES.md](WORLD_ENTITIES.md)) |
 | Units, peers, flag carrier, winner | runtime slots | host-assigned | host-authoritative, not content |
 
 Imported weapons whose `base` is not found are dropped on every peer alike
@@ -61,6 +62,7 @@ Imported weapons whose `base` is not found are dropped on every peer alike
 | VEHICLES `index`, `occupant[]` | vehicles, units | -- (map check) |
 | DROPS `weapon` | weapon roster | wrong gun on the ground |
 | GAME `prop_broken` bits, `hull[32]` | props, vehicles | -- (map check) |
+| WORLD_STATE `entity` (X1, only on OALMAP v3 worlds) | world entities | -- (map check; a client applies it only to its own movers) |
 
 Strings, not positions (safe): the class/loadout choice from the menus
 (`nativeSetLoadout`, `nativeChooseClass`) and kill-feed text.

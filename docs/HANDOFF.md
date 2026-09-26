@@ -195,6 +195,20 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-26 X1: generic world entities (docs/WORLD_ENTITIES.md).** The
+first world whose behaviour is not Halo's or Source's: Open Asset Lab's
+original `x1_event_lab` (OALMAP v3). Button -> relay -> door, trigger ->
+teleport, host-authoritative; clients get the door's state in a new
+WORLD_STATE packet (v10 kept: only v3 worlds use it). Checked: host tests,
+ASan/UBSan, `scripts/test_x1.sh` (headless host + two desktop joiners,
+late join, mismatched package refused), and the emulator APK hosting with
+the desktop joiner. **Phone check:** put `x1_event_lab.oalmap`
+(`assetlab fixture x1_event_lab --output ...`) in the bundle, host it,
+walk to the red button on the wall beside the orange door and press the
+action (swap) button: the door slides away; walk through onto the green pad:
+you land on the blue platform. A second phone joining afterwards sees the
+door open. Blood Gulch and imported maps must be unchanged.
+
 **2026-09-26 N1 + N3: protocol v10, joiners must bring the host's
 content.** docs/CONTENT_COMPATIBILITY.md is the contract (every content
 position on the wire, what builds each table, what guards it). HELLO now

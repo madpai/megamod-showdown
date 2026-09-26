@@ -1,6 +1,8 @@
 # X1: bounded world-event vertical slice
 
-**Status:** RESEARCH ONLY, 2026-09-26. This is a minimum contract proposal for an original synthetic `Button → Relay → Door` and `Trigger → Teleport` world. It is not a Source entity system or an implemented MegaMod feature.
+**Implementation evidence (X1 landed, 2026-09-26):** [WORLD_ENTITIES.md](../WORLD_ENTITIES.md) implements this contract with an original OAL world, host and two desktop joiners, late join, and a refused mismatched package. Confirmed: closed enum verbs, load-time ID resolution to generation-checked handles, host FIFO at a fixed tick phase with 512/256 limits, static cycle rejection with a runtime depth cap, moving collider through the existing instance path, state (not events) for late join. Refined: queue overflow drops and counts the event instead of halting dispatch; OAL also bounds a single root's total work (256) and chain length (16); interaction reuses CONTROL's action counter with the host choosing the target; mover state ships in an additive packet gated by OALMAP v3, keeping v10. Not needed: per-actor teleport cooldowns beyond one teleport per actor per step plus "no destination inside a trigger".
+
+**Status:** RESEARCH, 2026-09-26 (implemented as above). This is a minimum contract proposal for an original synthetic `Button → Relay → Door` and `Trigger → Teleport` world. It is not a Source entity system or an implemented MegaMod feature.
 
 ## Evidence boundary
 
