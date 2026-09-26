@@ -79,12 +79,15 @@ static void world_fx(hta_session *s, float dt)
     /* A LAN client breaks and rebuilds props only as the host says. */
     s->wfx.props.remote = s->net_enabled && !s->net_hosting;
     hta_match_nav_props(s);
-    /* Props are solid while whole: their instances ride with the
-     * vehicles' in the grid everyone collides with. */
-    if (s->wfx.ready && s->wfx.props.count) {
+    /* Props are solid while whole, and movers wherever they are: their
+     * instances ride with the vehicles' in the grid everyone collides with. */
+    if ((s->wfx.ready && s->wfx.props.count) || s->went.loaded) {
         uint32_t nv = s->vehicles.loaded ? s->vehicles.count : 0u;
-        s->col.instance_count = hta_props_instances(&s->wfx.props, s->vehicles.inst, nv,
-            s->col_merged, (uint32_t)(sizeof(s->col_merged) / sizeof(s->col_merged[0])));
+        uint32_t cap = (uint32_t)(sizeof(s->col_merged) / sizeof(s->col_merged[0])) - HTA_WDEF_MAX_ENTITIES;
+        uint32_t n = s->wfx.ready ? hta_props_instances(&s->wfx.props, s->vehicles.inst, nv, s->col_merged, cap) : 0u;
+        if (!s->wfx.ready) for (uint32_t i = 0; i < nv && n < cap; i++) s->col_merged[n++] = s->vehicles.inst[i];
+        n += hta_went_instances(&s->went, s->col_merged + n, HTA_WDEF_MAX_ENTITIES);
+        s->col.instance_count = n;
         s->col.instances = s->col_merged;
         /* A broad phase over them: every ray, ground probe and
          * debris contact looks at the few near it, not all. */
@@ -114,6 +117,66 @@ static void world_fx(hta_session *s, float dt)
     if (s->wfx.ready) hta_wfx_update(&s->wfx, dt, s->me >= 0 ? &s->cam : NULL);
 }
 
+/* The host's player presses use: at a button in reach, that is the
+ * button's (and not a vehicle's). Runs before the game spends the press. */
+static void world_interact(hta_session *s)
+{
+    if (!s->went.loaded || !s->game_on || s->game.over) return;
+    for (uint32_t i = 0; i < s->game.unit_count && i < HTA_WENT_MAX_ACTORS; i++) {
+        hta_unit *u = &s->game.units[i];
+        if (u->kind == HTA_UNIT_NONE || !u->alive || !u->in.action || u->vehicle >= 0) continue;
+        float cp = cosf(u->eye.pitch), fwd[3] = { cosf(u->eye.yaw) * cp, sinf(u->eye.yaw) * cp, sinf(u->eye.pitch) };
+        int32_t used = hta_went_interact(&s->went, (uint8_t)i, u->eye.pos, fwd);
+        if (used >= 0) {
+            u->in.action = false;
+            hta_log("[world] unit %u used %s", i, s->went.defs->entity[used].id);
+        }
+    }
+}
+
+/* One unit, moved by a teleport: the host's own player is the platform's
+ * body (s->player, with the camera), everybody else the game's. */
+static void teleport_unit(hta_session *s, uint32_t i, const float pos[3], float yaw)
+{
+    hta_unit *u = &s->game.units[i];
+    if ((int32_t)i == s->me) {
+        float d[3] = { pos[0] - s->player.pos[0], pos[1] - s->player.pos[1], pos[2] - s->player.pos[2] };
+        for (int k = 0; k < 3; k++) { s->player.pos[k] = pos[k]; s->cam.pos[k] += d[k]; s->player.velocity[k] = 0.0f; }
+        s->cam.yaw = yaw;
+    }
+    for (int k = 0; k < 3; k++) { u->body.pos[k] = pos[k]; u->body.velocity[k] = 0.0f; }
+    u->eye.pos[0] = pos[0]; u->eye.pos[1] = pos[1]; u->eye.pos[2] = pos[2] + u->body.eye_height;
+    u->eye.yaw = yaw;
+    s->went_teleports++;
+    hta_log("[world] unit %u teleported to (%.2f %.2f %.2f)", i, pos[0], pos[1], pos[2]);
+}
+
+/* World entities, every tick. The host senses triggers from where the game
+ * put everyone and runs the queued events; everybody moves the movers. */
+static void world_entities(hta_session *s, float dt, bool authority)
+{
+    hta_world_entities *w = &s->went;
+    if (!w->loaded) return;
+    w->remote = !authority;
+    if (authority && s->game_on) {
+        for (uint32_t i = 0; i < HTA_WENT_MAX_ACTORS; i++) {
+            const hta_unit *u = i < s->game.unit_count ? &s->game.units[i] : NULL;
+            bool here = u && u->kind != HTA_UNIT_NONE && u->alive && u->vehicle < 0;
+            hta_went_sense(w, (uint8_t)i, here ? u->body.pos : NULL, here);
+        }
+    }
+    hta_went_step(w, dt);
+    for (uint32_t k = 0; authority && k < w->teleport_count; k++) {
+        const hta_went_teleport *t = &w->teleports[k];
+        if (t->actor < s->game.unit_count && s->game.units[t->actor].alive)
+            teleport_unit(s, t->actor, t->pos, t->yaw);
+    }
+    if (w->diag_count != s->went_diag_seen) {
+        hta_log("[world] %s (%u problems so far)", w->diag, w->diag_count);
+        s->went_diag_seen = w->diag_count;
+    }
+}
+
 void hta_session_tick(hta_session *s, float dt, double now, void (*unit_added)(hta_session *))
 {
     s->outbox_count = s->prop_outbox_count = 0;
@@ -122,6 +185,7 @@ void hta_session_tick(hta_session *s, float dt, double now, void (*unit_added)(h
     /* Everybody else: the bots think and fight, their rounds fly, the
      * dead come back and the score is kept. */
     if (s->game_on && authority) {
+        world_interact(s);
         hta_game_update(&s->game, dt);
         hta_game_event e;
         while (hta_game_pop(&s->game, &e)) {
@@ -136,12 +200,14 @@ void hta_session_tick(hta_session *s, float dt, double now, void (*unit_added)(h
             if (s->over_timer <= 0.0f) {
                 hta_match_nav_props(s);
                 hta_game_start(&s->game);
+                hta_went_reset(&s->went);
                 if (s->net_hosting) s->world_round++;
                 s->round_restarted = true;
                 hta_log("[game] a new game");
             }
         }
     }
+    world_entities(s, dt, authority);
     world_fx(s, dt);
     /* A host: its joiners' packets in, their units driven, the world out. */
     if (s->net_enabled && s->net_hosting) {

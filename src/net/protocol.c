@@ -10,7 +10,7 @@ void hta_net_u32_write(uint8_t *p, uint32_t v)
 uint32_t hta_net_u32_read(const uint8_t *p)
 { return (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24); }
 
-static bool known(uint8_t t) { return t >= HTA_NET_HELLO && t <= HTA_NET_GAME; }
+static bool known(uint8_t t) { return t >= HTA_NET_HELLO && t <= HTA_NET_WORLD_STATE; }
 
 bool hta_net_pack(uint8_t *dst, size_t cap, uint8_t type, uint32_t seq,
                   uint32_t tick, const uint8_t *payload, uint16_t len,
@@ -568,4 +568,35 @@ bool hta_net_game_unpack(const uint8_t *src, size_t len, hta_net_game *g)
     uint8_t check[HTA_NET_GAME_BYTES];
     if (!hta_net_game_pack(check,sizeof(check),&tmp) || memcmp(check,src,len)) return false;
     *g=tmp; return true;
+}
+
+bool hta_net_world_state_pack(uint8_t *dst, size_t cap, const hta_net_world_state *w, size_t *written)
+{
+    if (!dst || !w || w->count > HTA_NET_MAX_WORLD_STATE ||
+        cap < 1u + (size_t)w->count * HTA_NET_WORLD_STATE_BYTES) return false;
+    dst[0] = w->count;
+    for (unsigned i = 0; i < w->count; i++) {
+        if (w->mover[i].phase > 3 || w->mover[i].entity >= HTA_NET_MAX_WORLD_STATE ||
+            (i && w->mover[i].entity <= w->mover[i - 1].entity)) return false;
+        uint8_t *o = dst + 1 + i * HTA_NET_WORLD_STATE_BYTES;
+        o[0] = w->mover[i].entity; o[1] = w->mover[i].phase; u16w(o + 2, w->mover[i].t);
+    }
+    if (written) *written = 1u + (size_t)w->count * HTA_NET_WORLD_STATE_BYTES;
+    return true;
+}
+
+bool hta_net_world_state_unpack(const uint8_t *src, size_t len, hta_net_world_state *w)
+{
+    if (!src || !w || len < 1 || src[0] > HTA_NET_MAX_WORLD_STATE ||
+        len != 1u + (size_t)src[0] * HTA_NET_WORLD_STATE_BYTES) return false;
+    hta_net_world_state tmp;
+    memset(&tmp, 0, sizeof(tmp));
+    tmp.count = src[0];
+    for (unsigned i = 0; i < tmp.count; i++) {
+        const uint8_t *in = src + 1 + i * HTA_NET_WORLD_STATE_BYTES;
+        tmp.mover[i].entity = in[0]; tmp.mover[i].phase = in[1]; tmp.mover[i].t = u16r(in + 2);
+    }
+    uint8_t check[1 + HTA_NET_MAX_WORLD_STATE * HTA_NET_WORLD_STATE_BYTES];
+    if (!hta_net_world_state_pack(check, sizeof(check), &tmp, NULL)) return false;
+    *w = tmp; return true;
 }

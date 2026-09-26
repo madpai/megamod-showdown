@@ -90,7 +90,7 @@ void hta_net_view_update(hta_net_view *v, hta_net_client *net, double now,
     if (!v || !net) return;
     v->respawned = v->snapped = false;
     if (!net->connected) {
-        v->me = -1; v->me_alive = false; v->props_synced = false;
+        v->me = -1; v->me_alive = false; v->props_synced = false; v->world_state_synced = false;
         for (uint32_t i = 0; i < HTA_NET_MAX_ENTITIES; i++) v->ent[i].live = false;
         return;
     }
@@ -149,6 +149,22 @@ void hta_net_view_update(hta_net_view *v, hta_net_client *net, double now,
     /* Nobody to play them with on a PC: events are only counted. */
     hta_net_event ev;
     while (hta_net_client_pop_event(net, &ev)) {}
+}
+
+uint32_t hta_net_view_world_state(hta_net_view *v, const hta_net_client *net, hta_world_entities *went)
+{
+    if (!v || !net || !went || !went->loaded) return 0;
+    if (!net->connected) { v->world_state_synced = false; v->world_state_tick = 0; return 0; }
+    if (!net->have_world_state || net->last_world_state_tick == v->world_state_tick) return 0;
+    v->world_state_tick = net->last_world_state_tick;
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < net->world_state.count; i++) {
+        hta_went_mover_state m = { net->world_state.mover[i].entity, net->world_state.mover[i].phase,
+                                   net->world_state.mover[i].t };
+        n += hta_went_apply(went, &m, !v->world_state_synced);
+    }
+    v->world_state_synced = true;
+    return n;
 }
 
 bool hta_net_view_send(hta_net_view *v, hta_net_client *net, double now,

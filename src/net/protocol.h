@@ -41,7 +41,13 @@ typedef enum {
     HTA_NET_KILL, HTA_NET_ACK, HTA_NET_FX, HTA_NET_PROJECTILES,
     HTA_NET_REJECT, HTA_NET_VEHICLES, HTA_NET_DROPS,
     /* v4: the rules -- mode, team scores, the flags, vehicle hulls. */
-    HTA_NET_GAME
+    HTA_NET_GAME,
+    /* The world's movers (doors), host -> clients. Additive in v10: only a
+     * host playing an OALMAP v3 world sends it, and only an engine that
+     * implements world entities can load one (older ones refuse v3), so no
+     * two peers that can share a match disagree about it. See
+     * docs/WORLD_ENTITIES.md "Networking". */
+    HTA_NET_WORLD_STATE
 } hta_net_type;
 
 typedef struct {
@@ -235,6 +241,19 @@ typedef struct {
 } hta_net_game;
 bool hta_net_game_pack(uint8_t *dst, size_t cap, const hta_net_game *g);
 bool hta_net_game_unpack(const uint8_t *src, size_t len, hta_net_game *g);
+
+/* Each mover of the world: its entity index (the same on every peer: the
+ * map check covers the manifest that lists them), phase (0 closed, 1
+ * opening, 2 open, 3 closing) and progress in 1/65535ths. Indices strictly
+ * increase. Resulting state only -- clients never see the events. */
+#define HTA_NET_MAX_WORLD_STATE 64u
+#define HTA_NET_WORLD_STATE_BYTES 4u
+typedef struct {
+    uint8_t count;
+    struct { uint8_t entity, phase; uint16_t t; } mover[HTA_NET_MAX_WORLD_STATE];
+} hta_net_world_state;
+bool hta_net_world_state_pack(uint8_t *dst, size_t cap, const hta_net_world_state *w, size_t *written);
+bool hta_net_world_state_unpack(const uint8_t *src, size_t len, hta_net_world_state *w);
 
 bool hta_net_vehicles_pack(uint8_t *dst, size_t cap, const hta_net_vehicles *v,
                            size_t *written);

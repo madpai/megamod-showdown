@@ -9,7 +9,7 @@ static uint32_t u32(const unsigned char *p) { return (uint32_t)p[0]|((uint32_t)p
 static float f32(const unsigned char *p) { uint32_t v=u32(p); float f; memcpy(&f,&v,4); return f; }
 static bool take(size_t *at, size_t n, size_t size) { if (n>size-*at) return false; *at+=n; return true; }
 static bool fail(char *err,size_t n,const char *s) { if(err && n) snprintf(err,n,"%s",s); return false; }
-void hta_external_map_free(hta_external_map *m) { if(!m)return; hta_bsp_free(&m->mesh); free(m->spawns); free(m->solid_indices); free(m->breakables); free(m->submesh_breakable); memset(m,0,sizeof(*m)); }
+void hta_external_map_free(hta_external_map *m) { if(!m)return; hta_bsp_free(&m->mesh); free(m->spawns); free(m->solid_indices); free(m->breakables); free(m->submesh_breakable); free(m->submesh_entity); memset(m,0,sizeof(*m)); }
 
 void hta_external_map_collision_view(const hta_bsp_mesh *render, const hta_external_map *m,
                                      hta_bsp_mesh *view)
@@ -221,8 +221,9 @@ bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external
     size_t at=64;
     bool ok=false;
     uint32_t version=u32(data+4);
-    if(memcmp(data,"OALM",4)||(version!=1 && version!=2)){fail(err,errlen,"unsupported OALMAP package version");goto done;}
-    size_t group_size=version==2 ? 20u : 16u;
+    if(memcmp(data,"OALM",4)||version<1||version>3){fail(err,errlen,"unsupported OALMAP package version");goto done;}
+    size_t group_size=version>=2 ? 20u : 16u;
+    out->version=version;
     uint32_t ml=u32(data+8),vc=u32(data+12),ic=u32(data+16),gc=u32(data+20),tc=u32(data+24),sc=u32(data+28);
     if(ml>4u*1024u*1024u||vc==0||vc>5000000u||ic==0||ic>15000000u||ic%3||gc==0||gc>100000u||tc==0||tc>10000u||sc>100000u){fail(err,errlen,"package counts out of range");goto done;}
     for(int k=0;k<3;k++){
@@ -257,20 +258,25 @@ bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external
     uint32_t end=0;
     out->solid_indices=malloc((size_t)ic*4);
     out->submesh_breakable=calloc(gc,sizeof(uint16_t));
-    if(!out->solid_indices||!out->submesh_breakable){fail(err,errlen,"out of memory");goto done;}
+    out->submesh_entity=calloc(gc,sizeof(uint16_t));
+    if(!out->solid_indices||!out->submesh_breakable||!out->submesh_entity){fail(err,errlen,"out of memory");goto done;}
     for(uint32_t i=0;i<gc;i++){
         const unsigned char *p=data+at+i*group_size;
         uint32_t first=u32(p),count=u32(p+4),tex=u32(p+8),flags=u32(p+12);
         if(first!=end||count==0||count%3||count>ic-first||tex>=tc){fail(err,errlen,"invalid material group");goto done;}
         hta_submesh *s=&out->mesh.submeshes[i];hta_submesh_init(s);
         s->first_index=first;s->index_count=count;s->albedo_tex=tex;
-        if(version==2){
+        if(version>=2){
             uint32_t light=u32(p+16);
             if(light!=UINT32_MAX && light>=tc){fail(err,errlen,"invalid lightmap texture");goto done;}
             s->lightmap_tex=light;
         }
         if(flags&HTA_EXTERNAL_GROUP_ALPHA) s->draw_mode=HTA_DRAW_ALPHA;   /* fences, foliage, glass */
         if(flags&HTA_EXTERNAL_GROUP_BREAKABLE) out->submesh_breakable[i]=(uint16_t)((flags>>8)&0xFFFFu);
+        if(flags&HTA_EXTERNAL_GROUP_ENTITY){
+            if(version<3||(flags&HTA_EXTERNAL_GROUP_BREAKABLE)||!(flags&HTA_EXTERNAL_GROUP_NO_COLLISION)){fail(err,errlen,"invalid world entity group");goto done;}
+            out->submesh_entity[i]=(uint16_t)((flags>>8)&0xFFFFu);
+        }
         if(!(flags&HTA_EXTERNAL_GROUP_NO_COLLISION)){
             memcpy(out->solid_indices+out->solid_index_count,out->mesh.indices+first,(size_t)count*4);
             out->solid_index_count+=count;
@@ -306,6 +312,20 @@ bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external
     flag_points(data+64,ml,out);
     breakables(data+64,ml,out);
     weather(data+64,ml,out);
+    /* v3's entities: parsed and checked whole, or the package is refused. */
+    if(version>=3){
+        char why[200];
+        if(!hta_world_defs_parse(data+64,ml,&out->world_defs,why,sizeof(why))){
+            if(err&&errlen) snprintf(err,errlen,"world entities: %s",why);
+            goto done;
+        }
+        for(uint32_t i=0;i<gc;i++){
+            uint16_t e=out->submesh_entity[i];
+            if(e && (e>out->world_defs.count || out->world_defs.entity[e-1].kind!=HTA_WDEF_MOVER)){
+                fail(err,errlen,"a group names a world entity that is not a mover");goto done;
+            }
+        }
+    }
     /* A group naming a breakable the manifest does not list is plain scenery. */
     for(uint32_t i=0;i<gc;i++) if(out->submesh_breakable[i]>out->breakable_count) out->submesh_breakable[i]=0;
     out->key=2166136261u;

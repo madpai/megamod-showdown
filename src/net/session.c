@@ -368,6 +368,20 @@ bool hta_net_server_game(hta_net_server *s, const hta_net_game *game)
     return sent;
 }
 
+bool hta_net_server_world_state(hta_net_server *s, const hta_net_world_state *ws)
+{
+    if (!s || !ws || s->udp.fd<0 || s->last_world_state_tick==s->tick) return false;
+    uint8_t payload[1+HTA_NET_MAX_WORLD_STATE*HTA_NET_WORLD_STATE_BYTES];
+    size_t len=0;
+    if (!hta_net_world_state_pack(payload,sizeof(payload),ws,&len)) return false;
+    s->last_world_state_tick=s->tick;
+    bool sent=false;
+    for (unsigned i=0;i<HTA_NET_MAX_PLAYERS;i++) if (s->peers[i].active)
+        if (send_packet(&s->udp,&s->peers[i].addr,&s->stats,HTA_NET_WORLD_STATE,
+                        &s->sequence,s->tick,payload,(uint16_t)len)) sent=true;
+    return sent;
+}
+
 bool hta_net_scan_open(hta_net_scan *s)
 {
     if (!s) return false;
@@ -550,6 +564,13 @@ static void client_packet(hta_net_client *c, const hta_net_packet *p, double now
         c->game=gm; c->have_game=true; c->last_game_tick=p->tick;
         break;
     }
+    case HTA_NET_WORLD_STATE: {
+        if (p->tick<=c->last_world_state_tick) { c->stats.dropped++; break; }
+        hta_net_world_state ws;
+        if (!hta_net_world_state_unpack(p->payload,p->length,&ws)) { c->stats.invalid++; break; }
+        c->world_state=ws; c->have_world_state=true; c->last_world_state_tick=p->tick;
+        break;
+    }
     default: c->stats.invalid++; break;
     }
 }
@@ -566,6 +587,7 @@ void hta_net_client_pump(hta_net_client *c, double now)
         c->have_vehicles=false; c->last_vehicle_tick=0;
         c->have_drops=false; c->last_drop_tick=0;
         c->have_game=false; c->last_game_tick=0;
+        c->have_world_state=false; c->last_world_state_tick=0;
         memset(c->seen_kills,0,sizeof(c->seen_kills));
         memset(c->present,0,sizeof(c->present));
         uint32_t old_nonce=c->nonce;

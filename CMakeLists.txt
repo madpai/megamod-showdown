@@ -31,6 +31,8 @@ if(ANDROID)
         src/engine/fx.c
         src/engine/gore.c
         src/engine/props.c
+        src/engine/world_entities.c
+        src/asset/world_def.c
         src/engine/weather.c
         src/engine/sfx.c
         src/app/report.c
@@ -47,6 +49,7 @@ if(ANDROID)
         src/game/world_fx.c
         src/game/world_fx_audio.c
         src/game/world_fx_gpu.c
+        src/game/world_entities_gpu.c
         src/game/game.c
         src/game/brain.c
         src/game/view.c
@@ -104,6 +107,7 @@ else()
         src/game/brain.c
         src/game/view.c
         src/game/menu.c
+        src/engine/world_entities.c src/asset/world_def.c
         src/asset/cache.c src/asset/bsp.c src/asset/external_map.c src/asset/oal_asset.c src/asset/bitmap.c src/asset/sound.c src/asset/ogg.c src/asset/effect.c src/asset/dialogue.c src/asset/strings.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
         src/asset/anim.c src/asset/model.c src/asset/font.c
         src/gfx/gfx_settings.c)
@@ -114,6 +118,9 @@ else()
     add_executable(test_external_map tests/test_external_map.c)
     target_link_libraries(test_external_map PRIVATE hta_engine m)
     add_test(NAME external_map COMMAND test_external_map)
+    add_executable(test_world_entities tests/test_world_entities.c)
+    target_link_libraries(test_world_entities PRIVATE hta_engine m)
+    add_test(NAME world_entities COMMAND test_world_entities)
     add_executable(test_net tests/test_net.c)
     target_link_libraries(test_net PRIVATE hta_net m)
     add_test(NAME net COMMAND test_net)
@@ -166,7 +173,7 @@ else()
     # Host offscreen renderer: needs Vulkan loader + headers on the host.
     find_package(Vulkan QUIET)
     if(Vulkan_FOUND)
-        add_library(hta_gfx_host STATIC src/gfx/gfx_vulkan.c src/gfx/gfx_settings.c src/game/world_fx_gpu.c src/platform/platform_posix.c)
+        add_library(hta_gfx_host STATIC src/gfx/gfx_vulkan.c src/gfx/gfx_settings.c src/game/world_fx_gpu.c src/game/world_entities_gpu.c src/platform/platform_posix.c)
         target_include_directories(hta_gfx_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${Vulkan_INCLUDE_DIRS})
         target_link_libraries(hta_gfx_host PUBLIC ${Vulkan_LIBRARIES} m)
         target_compile_options(hta_gfx_host PRIVATE -Wall -Wextra -Wno-missing-field-initializers)

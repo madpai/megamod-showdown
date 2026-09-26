@@ -48,6 +48,41 @@ int main(void)
         assert(m.mesh.submeshes[0].lightmap_tex==UINT32_MAX);
         hta_external_map_free(&m);
     }
+    /* V3: v2's layout plus world entities, parsed whole or refused. V1/v2
+     * never read the section (an older package keeps its old meaning). */
+    {
+        static const char man[]="{\"world_entities\":{\"entities\":["
+            "{\"id\":\"t:entity/b\",\"kind\":\"interactable\",\"links\":[{\"event\":\"used\",\"input\":\"open\",\"target\":\"t:entity/d\"}],\"position\":[0,0,0.5],\"reach\":1},"
+            "{\"bounds\":{\"max\":[1,1,1],\"min\":[0,0,0]},\"id\":\"t:entity/d\",\"kind\":\"mover\",\"links\":[],\"move\":[0,0,1],\"speed\":2}"
+            "],\"schema\":1}}";
+        size_t group=64+120+12, ml=sizeof(man)-1, n3=n+4+ml;
+        unsigned char *w=malloc(n3);assert(w);
+        memcpy(w,b,64);memcpy(w+64,man,ml);
+        memcpy(w+64+ml,b+64,group+16-64);u32(w+ml+group+16,UINT32_MAX);
+        memcpy(w+ml+group+20,b+group+16,n-group-16);
+        u32(w+4,3);u32(w+8,(uint32_t)ml);
+        assert(hta_external_map_load_memory(w,n3,&m,err,sizeof(err))||(fprintf(stderr,"%s\n",err),0));
+        assert(m.version==3&&m.world_defs.count==2&&m.world_defs.link_count==1&&m.world_defs.link[0].target==1);
+        assert(m.world_defs.entity[1].kind==HTA_WDEF_MOVER&&m.submesh_entity[0]==0);
+        hta_external_map_free(&m);
+        /* An entity group must be a mover's, and out of static collision. */
+        u32(w+ml+group+12,HTA_EXTERNAL_GROUP_ENTITY|(2u<<8));
+        assert(!hta_external_map_load_memory(w,n3,&m,err,sizeof(err))&&strstr(err,"invalid world entity group"));
+        u32(w+ml+group+12,0);
+        /* A broken link refuses the whole package, and says why. */
+        char *t=strstr((char*)w+64,"t:entity/d\"}");assert(t);t[9]='x';
+        assert(!hta_external_map_load_memory(w,n3,&m,err,sizeof(err)));
+        assert(strstr(err,"world entities: t:entity/b references missing target t:entity/x"));
+        t[9]='d';
+        /* The same manifest in a v2 package: the section is not read. */
+        u32(w+4,2);
+        assert(hta_external_map_load_memory(w,n3,&m,err,sizeof(err))&&m.world_defs.count==0);
+        hta_external_map_free(&m);
+        /* A version this runtime does not know is refused. */
+        u32(w+4,4);
+        assert(!hta_external_map_load_memory(w,n3,&m,err,sizeof(err)));
+        free(w);
+    }
     /* The manifest's own "team" decides, not the Source class name. */
     {
         static const char man[]="{\"entities\":[{\"classname\":\"info_player_terrorist\",\"team\":0}],"

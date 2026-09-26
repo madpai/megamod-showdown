@@ -27,6 +27,7 @@
 #include "../engine/player.h"
 #include "../net/session.h"
 #include "world_fx.h"
+#include "../engine/world_entities.h"
 
 #define HTA_NET_VIEW_FEED 6u
 #define HTA_NET_VIEW_FEED_SECONDS 6.0f
@@ -74,6 +75,8 @@ typedef struct {
     uint16_t melee, grenade, reload, pickup, action, ability;
     double   last_send;
     bool     props_synced;
+    uint32_t world_state_tick;    /* the last WORLD_STATE applied */
+    bool     world_state_synced;
     /* diagnostics */
     uint32_t kills, gibs, fx, corrections;
 } hta_net_view;
@@ -84,6 +87,10 @@ void hta_net_view_init(hta_net_view *v);
  * host's effects and may be NULL. */
 void hta_net_view_update(hta_net_view *v, hta_net_client *net, double now,
                          hta_player *local, hta_camera *cam, hta_world_fx *wfx);
+/* The host's movers (WORLD_STATE) into `went`, which must be `remote`:
+ * the first one snaps (we were not there), later ones are eased toward.
+ * Returns how many movers it applied. */
+uint32_t hta_net_view_world_state(hta_net_view *v, const hta_net_client *net, hta_world_entities *went);
 /* CONTROL and STATE to the host, at most every 50 ms. Returns true when
  * it sent. `ready`: we have what we need to be spawned (the Android joiner
  * waits for its class; a plain client is always ready). */

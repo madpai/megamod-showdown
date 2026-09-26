@@ -56,6 +56,7 @@ typedef struct {
     uint32_t last_vehicle_tick;
     uint32_t last_drop_tick;
     uint32_t last_game_tick;
+    uint32_t last_world_state_tick;
     uint32_t map_crc;
     uint64_t content;          /* v10: the imported rosters' fingerprint; 0 none */
     uint8_t  last_refusal;     /* the last HELLO turned away: HTA_NET_REJECT_* */
@@ -112,6 +113,9 @@ typedef struct {
     hta_net_game game;
     bool have_game;
     uint32_t last_game_tick;
+    hta_net_world_state world_state;
+    bool have_world_state;
+    uint32_t last_world_state_tick;
 } hta_net_client;
 
 bool hta_net_server_open(hta_net_server *s, uint16_t port);
@@ -129,6 +133,7 @@ bool hta_net_server_projectiles(hta_net_server *s, const hta_net_projectiles *pr
 bool hta_net_server_vehicles(hta_net_server *s, const hta_net_vehicles *vehicles);
 bool hta_net_server_drops(hta_net_server *s, const hta_net_drops *drops);
 bool hta_net_server_game(hta_net_server *s, const hta_net_game *game);
+bool hta_net_server_world_state(hta_net_server *s, const hta_net_world_state *ws);
 
 bool hta_net_scan_open(hta_net_scan *s);
 void hta_net_scan_close(hta_net_scan *s);

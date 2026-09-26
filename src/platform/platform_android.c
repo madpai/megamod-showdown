@@ -4478,6 +4478,7 @@ static void stop_gfx(hta_android *s)
     if (s->gpu_fx) { hta_gfx_mesh_free(s->gfx, s->gpu_fx); s->gpu_fx = NULL; }
     if (s->gpu_sky) { hta_gfx_mesh_free(s->gfx, s->gpu_sky); s->gpu_sky = NULL; }
     if (s->gpu_mesh) { hta_gfx_mesh_free(s->gfx, s->gpu_mesh); s->gpu_mesh = NULL; }
+    hta_went_gpu_free(&s->went_gpu, s->gfx); s->went_gpu_mesh = NULL;
     hta_wfx_gpu_free(&s->wfx, s->gfx);
     if (s->gfx) { hta_gfx_destroy(s->gfx); s->gfx = NULL; }
     s->has_window = false;
@@ -4950,6 +4951,7 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
     if (!s->net.connected) {
         s->net_spawned=false; s->remote_visible=false;
         s->props_synced=false;
+        s->went_synced=false; s->went_state_tick=0;
         if (!s->net_hosting) {
             s->world_applied_tick=0;
             s->projectile_applied_tick=0;
@@ -5009,6 +5011,18 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
             hta_props_apply_mask(&s->wfx.props,gm->prop_broken,gm->prop_count,
                                  first ? NULL : &s->wfx.rigid,first ? NULL : &s->wfx.fx);
             s->props_synced=true;
+        }
+        /* The host's movers: state, not events -- the first one snaps (we
+         * were not there to see it move). */
+        if (s->went.loaded && s->net.have_world_state && s->net.last_world_state_tick!=s->went_state_tick) {
+            s->went_state_tick=s->net.last_world_state_tick;
+            for (unsigned i=0;i<s->net.world_state.count;i++) {
+                hta_went_mover_state m={s->net.world_state.mover[i].entity,s->net.world_state.mover[i].phase,
+                                        s->net.world_state.mover[i].t};
+                hta_went_apply(&s->went,&m,!s->went_synced);
+            }
+            if (!s->went_synced) hta_log("[world] the host's movers applied (%u)",s->net.world_state.count);
+            s->went_synced=true;
         }
         s->game.allow_duplicate_heroes = (gm->options & HTA_NET_GAME_DUPLICATES) != 0;
         s->allow_duplicate_heroes = s->game.allow_duplicate_heroes;
@@ -5871,7 +5885,15 @@ void android_main(struct android_app *app)
         int32_t near_seat = -1;
         int32_t near_car = mine && !seated && !state.dead && state.vehicles.loaded
                          ? hta_game_seat_near(&state.game, state.me, &near_seat) : -1;
-        if (!state.dead && state.hud_swap && (seated || near_car >= 0)) {
+        /* A world's button in reach: the use goes to it (the host checks
+         * again and decides; here it only chooses the press over a swap). */
+        bool near_use = false;
+        if (mine && !seated && !state.dead && state.went.loaded) {
+            float fwd[3];
+            hta_camera_forward(&state.cam, fwd);
+            near_use = hta_went_can_interact(&state.went, state.cam.pos, fwd) >= 0;
+        }
+        if (!state.dead && state.hud_swap && (seated || near_car >= 0 || near_use)) {
             state.hud_swap = false;
             if (state.net_enabled && !state.net_hosting) state.net_action_count++;
             else mine->in.action = true;
@@ -7218,6 +7240,17 @@ void android_main(struct android_app *app)
             g_inst_count = 0;
             dyncount = game_draw(&state, dynlist, dyncount);
             vehicles_draw(&state);
+            /* The world's movers (a door), cut from the world upload once
+             * and drawn where they have slid to. */
+            if (state.went.loaded && state.gpu_mesh && state.went_gpu_mesh != (const void *)state.gpu_mesh) {
+                hta_went_gpu_free(&state.went_gpu, state.gfx);
+                hta_went_gpu_upload(&state.went_gpu, state.gfx, &state.mesh, state.gpu_mesh,
+                                    state.world_ext.submesh_entity, &state.went);
+                state.went_gpu_mesh = state.gpu_mesh;
+                hta_log("[world] %u movers drawn", state.went_gpu.count);
+            }
+            g_inst_count += hta_went_gpu_instances(&state.went_gpu, &state.went, g_inst + g_inst_count,
+                                                   HTA_GFX_MAX_INSTANCES - g_inst_count);
             hta_gfx_set_instances(state.gfx, g_inst, g_inst_count);
             hta_camera drawcam = state.cam;
             hta_shake_apply(&state.shake, &drawcam);

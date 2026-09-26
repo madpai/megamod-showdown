@@ -57,6 +57,13 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
     if ./build-host/megamod-match --trial "$(dirname "$HTA_MAP")" --bundle "$HTA_BUNDLE_DIR" --world de_dust2 --seconds 30 2>/dev/null | grep -qE ", [1-9][0-9]* kills"; then
       ok "headless imported match (de_dust2) loads and plays"; else bad "headless imported match (de_dust2) loads and plays"; fi
   fi
+  # X1: Open Asset Lab's original world, hosted headless, joined twice
+  # (docs/WORLD_ENTITIES.md). Needs Open Asset Lab beside this checkout.
+  if [ -d "${OAL_DIR:-../open-asset-lab}/assetlab" ]; then
+    if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x1.sh > scratch/test_x1.log 2>&1; then
+      ok "X1 world: button->relay->door, trigger->teleport, late join, mismatch refused"
+    else bad "X1 world: button->relay->door, trigger->teleport, late join, mismatch refused"; fi
+  fi
   if ./build-host/test_particle "$HTA_MAP" >/dev/null 2>&1; then ok "effect particles from the effect tags"; else bad "effect particles from the effect tags"; fi
   if ./build-host/test_vitals "$HTA_MAP" >/dev/null 2>&1; then ok "vitality and falling from the Trial tags"; else bad "vitality and falling from the Trial tags"; fi
   if ./build-host/test_vehicle "$HTA_MAP" >/dev/null 2>&1; then ok "Trial vehicles: all five types load, drive, fly and seat"; else bad "Trial vehicles: all five types load, drive, fly and seat"; fi

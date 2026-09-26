@@ -5,6 +5,7 @@
  *
  *   megamod-join <host> [port] [--map bloodgulch.map] [--oalmap map.oalmap]
  *                [--preset P] [--weather W] [--auto SECONDS] [--shot out.ppm]
+ *                [--route "x,y;E;w1.5;x,y..."]
  *
  * --map is the owner's own Trial map: the Spartan everyone wears, and the
  * map check a phone host makes (its CRC, with the .oalmap's key when the
@@ -13,8 +14,16 @@
  * host accepts a joiner that names no map).
  *
  * Keys: WASD, mouse (click to capture, Esc to release / quit), LMB fire,
- * RMB zoom, G grenade, F melee, R reload, E pick up, Q ability, 1/2
- * weapon, Space jump, C crouch, F2 preset, F3 weather.
+ * RMB zoom, G grenade, F melee, R reload, E use (pick up, a vehicle, a
+ * world's button -- the host decides which), Q ability, 1/2 weapon, Space
+ * jump, C crouch, F2 preset, F3 weather.
+ *
+ * --route drives the player instead (tests, docs/WORLD_ENTITIES.md): walk
+ * to each "x,y" in turn, "E" presses use where it stands, "wS" waits S
+ * seconds, "Lx,y" looks toward a point, "Bx,y" walks toward one for 3 s
+ * and fails if it gets there (something should block it: a closed door).
+ * A walk the host interrupts by moving us (a teleport) ends there. The run ends when the route does, or at --auto. It reports what
+ * the world's movers did and whether the host moved us (a teleport).
  *
  * What a PC does not draw yet (the phone does): projectiles in flight,
  * vehicles, dropped weapons, flags, the HUD's health, and first-person
@@ -33,6 +42,7 @@
 #include "game/net_view.h"
 #include "game/world_fx_audio.h"
 #include "game/world_fx_gpu.h"
+#include "game/world_entities_gpu.h"
 #include "gfx/gfx.h"
 #include "platform/audio_sdl.h"
 #include "platform/desktop_sdl.h"
@@ -86,6 +96,17 @@ typedef struct {
     hta_gfx_mesh *gpu_world, *gpu_sky;
     uint32_t rng;
     int weather;
+    /* the world's entities: the host runs them, we draw its movers */
+    hta_world_entities went;
+    hta_went_gpu went_gpu;
+    uint32_t world_states;
+    /* --route */
+    char route[512];
+    const char *step;
+    double step_at;
+    bool route_done, route_failed;
+    uint32_t moved_by_host, moved_at_step;
+    float last_pos[3];
 } join;
 
 /* The Trial map from --map, else maps/bloodgulch.map through `fs`; the
@@ -169,6 +190,12 @@ static bool load_world(join *j, const hta_fs *fs, const char *map_path, const ch
 
 static void setup_effects(join *j)
 {
+    char err[256];
+    if (j->have_ext && !hta_went_load(&j->went, &j->ext.world_defs, err, sizeof(err)))
+        fprintf(stderr, "world entities: %s\n", err);
+    j->went.remote = true;                          /* the host runs them */
+    if (j->went.loaded)
+        printf("join: %u world entities, %u links\n", j->went.defs->count, j->went.defs->link_count);
     if (!hta_wfx_init(&j->wfx, &j->col, &j->video)) return;
     hta_wfx_load_map(&j->wfx, j->have_ext ? &j->ext : NULL, 0.0f);
     j->wfx.props.remote = true;                     /* the host breaks them */
@@ -193,6 +220,8 @@ static void upload(join *j, hta_gfx *g)
     j->gpu_sky = j->sky.index_count ? hta_gfx_mesh_upload(g, &j->sky, err, sizeof(err)) : NULL;
     if (j->wfx.ready) hta_wfx_gpu_upload(&j->wfx, g);
     if (j->box_verts) j->gpu_boxes = hta_gfx_mesh_upload_dynamic_world(g, &j->boxes, err, sizeof(err));
+    if (j->went.loaded && j->gpu_world)
+        hta_went_gpu_upload(&j->went_gpu, g, &j->mesh, j->gpu_world, j->ext.submesh_entity, &j->went);
 }
 
 /* The host's props that break and return hide and show their faces. */
@@ -286,7 +315,8 @@ static bool frame(join *j, hta_gfx *g, double now, float dt)
 {
     /* Props solid while whole, with a broad phase over them. */
     j->col.instances = j->merged;
-    j->col.instance_count = hta_props_instances(&j->wfx.props, NULL, 0, j->merged, 1024);
+    j->col.instance_count = hta_props_instances(&j->wfx.props, NULL, 0, j->merged, 1024 - HTA_WDEF_MAX_ENTITIES);
+    j->col.instance_count += hta_went_instances(&j->went, j->merged + j->col.instance_count, HTA_WDEF_MAX_ENTITIES);
     hta_collision_index_instances(&j->col, &j->col_index, 0.25f);
     prop_events(j);
     hta_wfx_update(&j->wfx, dt, &j->cam);
@@ -299,6 +329,8 @@ static bool frame(join *j, hta_gfx *g, double now, float dt)
     hta_gfx_dynamic dyn[HTA_NET_MAX_ENTITIES + 8];
     uint32_t n = draw_entities(j, g, now, dt, dyn, 0, HTA_NET_MAX_ENTITIES + 4);
     n = hta_wfx_gpu_draw(&j->wfx, &j->cam, dyn, n, HTA_NET_MAX_ENTITIES + 8);
+    hta_gfx_instance inst[HTA_WDEF_MAX_ENTITIES];
+    hta_gfx_set_instances(g, inst, hta_went_gpu_instances(&j->went_gpu, &j->went, inst, HTA_WDEF_MAX_ENTITIES));
     hta_camera cam = j->cam;
     uint32_t w, h;
     hta_gfx_extent(g, &w, &h);
@@ -310,7 +342,17 @@ static bool frame(join *j, hta_gfx *g, double now, float dt)
 static void play(join *j, const hta_input *in, double now, float dt)
 {
     hta_net_client_pump(&j->net, now);
+    float before[3] = { j->player.pos[0], j->player.pos[1], j->player.pos[2] };
     hta_net_view_update(&j->view, &j->net, now, &j->player, &j->cam, &j->wfx);
+    /* The host moved us far in one go (not a respawn): a teleport. */
+    float dx = j->player.pos[0] - before[0], dy = j->player.pos[1] - before[1], dz = j->player.pos[2] - before[2];
+    if (j->view.snapped && !j->view.respawned && dx * dx + dy * dy + dz * dz > 1.0f) {
+        j->moved_by_host++;
+        printf("join: the host moved us to (%.2f %.2f %.2f)\n", j->player.pos[0], j->player.pos[1], j->player.pos[2]);
+    }
+    /* The host's movers; ours only animate between its words. */
+    if (hta_net_view_world_state(&j->view, &j->net, &j->went)) j->world_states++;
+    hta_went_step(&j->went, dt);
     hta_player_input pi = { in->move_forward, in->move_right, in->look_yaw, in->look_pitch,
                             in->jump, false, in->crouch };
     if (!j->view.me_alive && j->net.connected && j->view.me >= 0) {
@@ -331,6 +373,52 @@ static void play(join *j, const hta_input *in, double now, float dt)
     if (in->key_pressed[SDL_SCANCODE_2]) slot = 1;
     ni.weapon_slot = slot;
     hta_net_view_send(&j->view, &j->net, now, &ni, &j->cam, &j->player, true);
+}
+
+/* --route: one step at a time, toward each waypoint in turn. */
+static void route(join *j, double now, hta_input *in)
+{
+    memset(in, 0, sizeof(*in));
+    if (j->route_done || !j->net.connected || j->view.me < 0 || !j->view.me_alive) { j->step_at = now; return; }
+    if (!j->step) { j->step = j->route; j->step_at = now; }
+    while (*j->step == ';' || *j->step == ' ') j->step++;
+    if (!*j->step) { j->route_done = true; printf("join: route done\n"); return; }
+    const char *next = strchr(j->step, ';');
+    size_t len = next ? (size_t)(next - j->step) : strlen(j->step);
+    float x, y;
+    bool advance = false;
+    if (j->step[0] == 'L' && sscanf(j->step + 1, "%f,%f", &x, &y) == 2) {
+        j->cam.yaw = atan2f(y - j->player.pos[1], x - j->player.pos[0]); j->cam.pitch = 0.0f;
+        advance = true;
+    } else if (j->step[0] == 'B' && sscanf(j->step + 1, "%f,%f", &x, &y) == 2) {
+        float dx = x - j->player.pos[0], dy = y - j->player.pos[1];
+        if (dx * dx + dy * dy < 0.12f * 0.12f) {
+            printf("join: route: reached (%.2f %.2f), which should be blocked\n", x, y);
+            j->route_failed = j->route_done = true;
+        } else if (now - j->step_at > 3.0) {
+            printf("join: blocked at (%.2f %.2f) short of (%.2f %.2f), as expected\n", j->player.pos[0], j->player.pos[1], x, y);
+            advance = true;
+        } else { j->cam.yaw = atan2f(dy, dx); j->cam.pitch = 0.0f; in->move_forward = 1.0f; }
+    } else if (j->step[0] == 'E') {
+        in->use_pressed = true;
+        printf("join: use at (%.2f %.2f)\n", j->player.pos[0], j->player.pos[1]);
+        advance = true;
+    } else if (j->step[0] == 'w') {
+        advance = now - j->step_at >= atof(j->step + 1);
+    } else if (sscanf(j->step, "%f,%f", &x, &y) == 2) {
+        float dx = x - j->player.pos[0], dy = y - j->player.pos[1];
+        if (dx * dx + dy * dy < 0.12f * 0.12f || j->moved_by_host != j->moved_at_step) advance = true;
+        else {
+            j->cam.yaw = atan2f(dy, dx); j->cam.pitch = 0.0f;
+            /* Slow down near it: walking speed would overshoot. */
+            in->move_forward = sqrtf(dx * dx + dy * dy) < 0.4f ? 0.35f : 1.0f;
+        }
+        if (now - j->step_at > 15.0) {
+            printf("join: route stuck short of (%.2f %.2f) at (%.2f %.2f)\n", x, y, j->player.pos[0], j->player.pos[1]);
+            j->route_failed = j->route_done = true;
+        }
+    } else { printf("join: bad route step '%.*s'\n", (int)len, j->step); j->route_failed = j->route_done = true; }
+    if (advance) { j->step += len; j->step_at = now; j->moved_at_step = j->moved_by_host; }
 }
 
 static void scripted(double t, hta_input *in)
@@ -357,6 +445,13 @@ static void title(join *j, hta_desktop *d, double now, const char *host, unsigne
                  j->net.id, j->view.me_alive ? "" : " (dead)", j->view.team_score[0], j->view.team_score[1],
                  j->net.stats.ping_ms, hta_quality_name(j->video.preset), nf ? " | " : "");
     if (nf) strncat(t, feed[0], sizeof(t) - strlen(t) - 1);
+    float fwd[3];
+    hta_camera_forward(&j->cam, fwd);
+    int32_t use = hta_went_can_interact(&j->went, j->cam.pos, fwd);
+    if (use >= 0) {
+        strncat(t, " | [E] ", sizeof(t) - strlen(t) - 1);
+        strncat(t, j->went.defs->entity[use].id, sizeof(t) - strlen(t) - 1);
+    }
     if (d) hta_desktop_set_title(d, t);
 }
 
@@ -389,6 +484,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--weather") && i + 1 < argc && hta_weather_from_name(argv[i + 1], &wk)) { j.weather = (int)wk; i++; }
         else if (!strcmp(argv[i], "--auto") && i + 1 < argc) autos = atof(argv[++i]);
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
+        else if (!strcmp(argv[i], "--route") && i + 1 < argc) snprintf(j.route, sizeof(j.route), "%s", argv[++i]);
         else if (argv[i][0] != '-') port = (unsigned)atoi(argv[i]);
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
@@ -461,7 +557,8 @@ int main(int argc, char **argv)
                 hta_wfx_choose_weather(&j.wfx, j.weather);
             }
         }
-        if (autos || shot) scripted(now - t0, &in);
+        if (j.route[0]) route(&j, now, &in);
+        else if (autos || shot) scripted(now - t0, &in);
         play(&j, &in, now, dt);
         if (!frame(&j, g, now, dt) && d) {
             uint32_t w, h;
@@ -482,6 +579,7 @@ int main(int argc, char **argv)
         double limit = autos > 0 ? autos : 0;
         if (shot && limit <= 0) limit = 5.0;
         if (limit > 0 && now - t0 >= limit) break;
+        if (j.route[0] && j.route_done) break;
     }
     unsigned seen = 0, broken = 0;
     for (uint32_t i = 0; i < HTA_NET_MAX_ENTITIES; i++) seen += j.view.ent[i].live;
@@ -494,6 +592,17 @@ int main(int argc, char **argv)
            j.net.reject_reason == HTA_NET_REJECT_FULL ? "REFUSED (full)" : "NOT connected", j.net.id, seen,
            j.view.kills, j.view.gibs, j.view.fx, j.view.corrections, j.view.team_score[0], j.view.team_score[1],
            broken, j.wfx_audio.played);
+    for (uint32_t i = 0; j.went.loaded && i < j.went.defs->count; i++) {
+        if (j.went.defs->entity[i].kind != HTA_WDEF_MOVER) continue;
+        static const char *phase[] = { "closed", "opening", "open", "closing" };
+        float off[3];
+        hta_went_offset(&j.went, i, off);
+        printf("join: mover %s %s (t %.2f, offset %.2f %.2f %.2f), %u world states\n", j.went.defs->entity[i].id,
+               phase[j.went.st[i].phase & 3], j.went.st[i].t, off[0], off[1], off[2], j.world_states);
+    }
+    if (j.went.loaded || j.moved_by_host)
+        printf("join: moved by the host %u time(s); at (%.2f %.2f %.2f)%s\n", j.moved_by_host,
+               j.player.pos[0], j.player.pos[1], j.player.pos[2], j.route_failed ? "; ROUTE FAILED" : "");
     if (shot) {
         uint32_t w = j.video.window_width, h = j.video.window_height;
         uint8_t *px = malloc((size_t)w * h * 4);
@@ -507,13 +616,15 @@ int main(int argc, char **argv)
         }
         free(px);
     }
-    bool ok = j.net.connected && j.view.me >= 0;
+    bool ok = j.net.connected && j.view.me >= 0 && !j.route_failed;
     hta_net_client_close(&j.net);
     hta_audio_sdl_stop();
     hta_wfx_audio_free(&j.wfx_audio);
     for (uint32_t i = 0; i < HTA_NET_MAX_ENTITIES; i++)
         if (j.actor_loaded[i]) { hta_gfx_mesh_free(g, j.actor_gpu[i]); hta_actor_free(&j.actor[i]); }
     if (j.gpu_boxes) hta_gfx_mesh_free(g, j.gpu_boxes);
+    hta_went_gpu_free(&j.went_gpu, g);
+    hta_went_free(&j.went);
     if (j.wfx.ready) hta_wfx_gpu_free(&j.wfx, g);
     if (j.gpu_sky) hta_gfx_mesh_free(g, j.gpu_sky);
     if (j.gpu_world) hta_gfx_mesh_free(g, j.gpu_world);

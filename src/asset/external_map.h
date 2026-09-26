@@ -1,8 +1,12 @@
-/* Open Asset Lab .oalmap v1/v2 runtime adapter. V2 adds a lightmap texture
- * index to each material group; vertices retain the same lightmap UV fields. */
+/* Open Asset Lab .oalmap v1/v2/v3 runtime adapter. V2 adds a lightmap
+ * texture index to each material group; vertices retain the same lightmap UV
+ * fields. V3 is v2's layout plus a manifest "world_entities" section the
+ * runtime must implement (world_def.h): an engine without it refuses v3
+ * rather than load a world without its behaviour. */
 #ifndef HTA_EXTERNAL_MAP_H
 #define HTA_EXTERNAL_MAP_H
 #include "bsp.h"
+#include "world_def.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -32,6 +36,12 @@ typedef struct {
      * else an hta_weather_kind (1 rain, 2 storm, 3 snow, 4 ash, 5 sand). */
     int   weather;
     float weather_intensity;
+    /* v3: the world's generic entities (buttons, doors, triggers...) and,
+     * per submesh, the entity it draws plus one (0 none): a mover's
+     * triangles, which are not in solid_indices -- it owns its collision. */
+    uint32_t version;
+    hta_world_defs world_defs;
+    uint16_t *submesh_entity;
 } hta_external_map;
 
 typedef struct hta_external_breakable {
@@ -48,6 +58,8 @@ typedef struct hta_external_breakable {
 #define HTA_EXTERNAL_GROUP_ALPHA 2u
 /* One breakable prop's triangles; its index + 1 in bits 8..23. */
 #define HTA_EXTERNAL_GROUP_BREAKABLE 4u
+/* v3: one world entity's triangles (a mover); its index + 1 in bits 8..23. */
+#define HTA_EXTERNAL_GROUP_ENTITY 8u
 
 /* A mesh to build collision from: `render`'s vertices (which may have been
  * moved out of the package) with only the solid triangles. Borrows both;

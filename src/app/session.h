@@ -36,6 +36,7 @@
 #include "../engine/hud.h"
 #include "../engine/viewmodel.h"
 #include "../engine/audio.h"
+#include "../engine/world_entities.h"
 #include "../asset/dialogue.h"
 #include "../asset/cache.h"
 #include "../asset/bsp.h"
@@ -62,6 +63,7 @@
 #include "../game/world_fx.h"
 #include "../game/world_fx_audio.h"
 #include "../game/world_fx_gpu.h"
+#include "../game/world_entities_gpu.h"
 #include "report.h"
 
 #define HTA_SND_MAX_BANK  192u
@@ -463,7 +465,7 @@
     bool props_synced, props_count_warned;   /* LAN client: host's props applied */            \
     /* Vehicles' collision instances and the props', merged every frame                        \
      * into the one list the world grid points at. */                                          \
-    hta_collision_instance col_merged[HTA_VEHICLE_MAX + 256];                                  \
+    hta_collision_instance col_merged[HTA_VEHICLE_MAX + 256 + HTA_WDEF_MAX_ENTITIES];          \
     /* Diagnostics (app/report.h): frame times for the report, and when                        \
      * the session began. */                                                                   \
     hta_frame_stats frame_stats;                                                               \
@@ -476,6 +478,16 @@
     hta_prop_event prop_outbox[64];                                                            \
     uint32_t      prop_outbox_count;                                                           \
     bool          round_restarted;                                                             \
+    /* The world's generic entities (X1, docs/WORLD_ENTITIES.md): the                          \
+     * host runs their events; a LAN client applies the host's movers.                         \
+     * went_version: bumps when a mover changes (the platform redraws). */                     \
+    hta_world_entities went;                                                                   \
+    uint32_t      went_diag_seen;                                                              \
+    bool          went_synced;       /* LAN client: a first WORLD_STATE applied */              \
+    uint32_t      went_teleports;    /* host: players moved by teleports, for tests */          \
+    uint32_t      went_state_tick;   /* LAN client: the last WORLD_STATE applied */             \
+    hta_went_gpu  went_gpu;          /* the movers' meshes (the platform draws them) */       \
+    const void   *went_gpu_mesh;     /* the world upload they were cut from */                 \
 
 typedef struct hta_session {
     HTA_SESSION_FIELDS

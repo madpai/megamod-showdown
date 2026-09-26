@@ -320,6 +320,14 @@ void hta_match_begin(hta_session *s)
         hta_log("[net] map check %08x, content %016llx (%u characters, %u weapons)", crc,
                 (unsigned long long)content, s->imp_char_count, s->imp_weap_count);
     }
+    /* The world's own entities: a host runs them, a joiner follows. */
+    char err[HTA_ERRLEN];
+    if (!hta_went_load(&s->went, s->world_loaded ? &s->world_ext.world_defs : NULL, err, sizeof(err)))
+        hta_log("[world] entities refused: %s", err);
+    s->went.remote = s->net_enabled && !s->net_hosting;
+    s->went_synced = false;
+    if (s->went.loaded)
+        hta_log("[world] %u world entities, %u links", s->went.defs->count, s->went.defs->link_count);
     hta_match_nav_props(s);
     hta_game_start(&s->game);
     s->world_round = 1;

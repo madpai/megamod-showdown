@@ -141,7 +141,9 @@ void hta_host_mirror_local(hta_session *s)
 
 void hta_host_world(hta_session *s)
 {
-    if (!s->game_on || !s->net.connected) return;
+    /* A host with its own player waits for its loopback client; a
+     * headless one (no player) has none to wait for. */
+    if (!s->game_on || (s->me >= 0 && !s->net.connected)) return;
     hta_host_mirror_local(s);
     hta_net_world w={0};
     w.time=s->game.time; w.round=s->world_round;
@@ -306,5 +308,20 @@ void hta_host_world(hta_session *s)
     if (s->wfx.ready)
         gm.prop_count=(uint16_t)hta_props_broken_mask(&s->wfx.props,gm.prop_broken,HTA_NET_MAX_PROPS);
     hta_net_server_game(&s->host_server,&gm);
+    /* The world's movers, as they are now: a joiner, late or not, takes
+     * the state and never replays how it came about. */
+    if (s->went.loaded) {
+        hta_went_mover_state ms[HTA_NET_MAX_WORLD_STATE];
+        uint32_t n=hta_went_snapshot(&s->went,ms,HTA_NET_MAX_WORLD_STATE);
+        if (n) {
+            static hta_net_world_state ws;
+            memset(&ws,0,sizeof(ws));
+            for (uint32_t i=0;i<n;i++) {
+                ws.mover[i].entity=ms[i].index; ws.mover[i].phase=ms[i].phase; ws.mover[i].t=ms[i].t_q;
+            }
+            ws.count=(uint8_t)n;
+            hta_net_server_world_state(&s->host_server,&ws);
+        }
+    }
 }
 

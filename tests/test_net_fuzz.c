@@ -28,7 +28,7 @@ int main(void)
     static uint8_t buf[HTA_NET_MAX_PACKET + 64], again[HTA_NET_MAX_PACKET + 64];
     static hta_net_world w; static hta_net_game g; static hta_net_kill k; static hta_net_fx fx;
     static hta_net_projectiles pr; static hta_net_vehicles v; static hta_net_drops d;
-    static hta_net_player pl; static hta_net_event ev; static hta_net_info in; static hta_net_control ct;
+    static hta_net_world_state ws; static hta_net_player pl; static hta_net_event ev; static hta_net_info in; static hta_net_control ct;
     hta_net_packet pk;
     const size_t fixed[] = { HTA_NET_KILL_BYTES, HTA_NET_FX_BYTES, HTA_NET_GAME_BYTES, HTA_NET_CONTROL_BYTES,
                              HTA_NET_PLAYER_BYTES };
@@ -63,6 +63,11 @@ int main(void)
         if (hta_net_event_unpack(p, len, &ev)) accepted[9]++;
         if (hta_net_info_unpack(p, len, &in)) accepted[10]++;
         if (hta_net_control_unpack(p, len, &ct)) accepted[11]++;
+        if (hta_net_world_state_unpack(p, len, &ws)) {
+            accepted[12]++;
+            size_t n = 0;
+            assert(hta_net_world_state_pack(again, sizeof(again), &ws, &n) && n == len && !memcmp(again, p, len));
+        }
         free(p);
     }
     /* Valid packets, one bit flipped: decoders either refuse them or accept
@@ -85,10 +90,10 @@ int main(void)
         free(p);
     }
     printf("net fuzz: 400000 random cases; accepted: header %u, world %u, game %u, kill %u, fx %u, "
-           "projectiles %u, vehicles %u, drops %u, player %u, event %u, info %u, control %u; "
+           "projectiles %u, vehicles %u, drops %u, player %u, event %u, info %u, control %u, world state %u; "
            "%u/%u single-bit flips of a GAME still valid (and canonical)\n",
            accepted[0], accepted[1], accepted[2], accepted[3], accepted[4], accepted[5], accepted[6],
-           accepted[7], accepted[8], accepted[9], accepted[10], accepted[11], kept, flips);
+           accepted[7], accepted[8], accepted[9], accepted[10], accepted[11], accepted[12], kept, flips);
     puts("net fuzz OK");
     return 0;
 }

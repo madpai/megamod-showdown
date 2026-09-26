@@ -349,6 +349,27 @@ static void sessions(void)
       buf[32+HTA_NET_MAX_VEHICLES+40]=1; assert(!hta_net_game_unpack(buf,sizeof(buf),&ok));
       assert(hta_net_game_pack(buf,sizeof(buf),&gm)); buf[8]=0xFF;
       hta_net_game back; assert(!hta_net_game_unpack(buf,sizeof(buf),&back)); }
+    /* WORLD_STATE: the world's movers, over the same loopback. */
+    { hta_net_world_state ws; memset(&ws,0,sizeof(ws));
+      ws.count=2; ws.mover[0].entity=2; ws.mover[0].phase=1; ws.mover[0].t=12345;
+      ws.mover[1].entity=40; ws.mover[1].phase=2; ws.mover[1].t=65535;
+      assert(hta_net_server_world_state(&s,&ws));
+      assert(!hta_net_server_world_state(&s,&ws)); /* once per server tick */
+      hta_net_client_pump(&b,2.30585);
+      assert(b.have_world_state && b.world_state.count==2 && b.world_state.mover[0].entity==2 &&
+             b.world_state.mover[0].phase==1 && b.world_state.mover[0].t==12345 &&
+             b.world_state.mover[1].entity==40 && b.world_state.mover[1].t==65535);
+      uint8_t buf[1+HTA_NET_MAX_WORLD_STATE*HTA_NET_WORLD_STATE_BYTES]; size_t n; hta_net_world_state bad=ws, back;
+      bad.mover[1].entity=2; assert(!hta_net_world_state_pack(buf,sizeof(buf),&bad,&n));   /* not increasing */
+      bad=ws; bad.mover[0].phase=4; assert(!hta_net_world_state_pack(buf,sizeof(buf),&bad,&n));
+      bad=ws; bad.mover[1].entity=HTA_NET_MAX_WORLD_STATE; assert(!hta_net_world_state_pack(buf,sizeof(buf),&bad,&n));
+      bad=ws; bad.count=HTA_NET_MAX_WORLD_STATE+1; assert(!hta_net_world_state_pack(buf,sizeof(buf),&bad,&n));
+      assert(hta_net_world_state_pack(buf,sizeof(buf),&ws,&n) && n==9);
+      assert(hta_net_world_state_unpack(buf,n,&back) && back.count==2);
+      assert(!hta_net_world_state_unpack(buf,n-1,&back) && !hta_net_world_state_unpack(buf,n+1,&back));
+      buf[2+4]=9; assert(!hta_net_world_state_unpack(buf,n,&back));                    /* phase 9 */
+      buf[2+4]=2; buf[1+4]=1; assert(!hta_net_world_state_unpack(buf,n,&back));        /* entity 1 < 2 */
+      uint8_t empty=0; assert(hta_net_world_state_unpack(&empty,1,&back) && back.count==0); }
     hta_net_fx fx={.kind=HTA_NET_FX_FIRE,.entity=0,.weapon=1};
     assert(hta_net_server_fx(&s,&fx));
     hta_net_client_pump(&b,2.306);
