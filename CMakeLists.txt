@@ -36,6 +36,8 @@ if(ANDROID)
         src/app/report.c
         src/app/host_net.c
         src/app/input.c
+        src/app/fs.c
+        src/app/content.c
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
@@ -124,6 +126,10 @@ else()
     add_executable(megamod-server src/tools/server.c src/app/server_config.c src/app/scripted_match.c)
     target_link_libraries(megamod-server PRIVATE hta_net m)
     target_compile_options(megamod-server PRIVATE -Wall -Wextra)
+    # The phone's content set on the desktop, by name (app/fs.h, app/content.h).
+    add_executable(megamod-content src/tools/content.c src/app/content.c src/app/fs.c src/platform/platform_posix.c)
+    target_link_libraries(megamod-content PRIVATE hta_engine m)
+    target_compile_options(megamod-content PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
     add_executable(test_net_view tests/test_net_view.c)
     target_link_libraries(test_net_view PRIVATE hta_netview)
     add_test(NAME net_view COMMAND test_net_view)
@@ -185,7 +191,7 @@ else()
             pkg_check_modules(SDL2 QUIET IMPORTED_TARGET sdl2)
             if(SDL2_FOUND)
                 # The PC joins a LAN match (a phone's, or megamod-fakehost): protocol v9.
-                add_executable(megamod-join src/tools/join.c)
+                add_executable(megamod-join src/tools/join.c src/app/fs.c)
                 target_link_libraries(megamod-join PRIVATE hta_desktop hta_netview hta_engine hta_gfx_host hta_net PkgConfig::SDL2 m)
                 target_compile_options(megamod-join PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
                 add_executable(htaplay src/tools/htaplay.c)
@@ -351,6 +357,9 @@ else()
     add_executable(test_input tests/test_input.c src/app/input.c)
     target_link_libraries(test_input PRIVATE hta_engine m)
     add_test(NAME input COMMAND test_input)
+    add_executable(test_fs tests/test_fs.c src/app/fs.c)
+    target_include_directories(test_fs PRIVATE src)
+    add_test(NAME fs COMMAND test_fs)
     add_executable(test_sfx tests/test_sfx.c)
     target_link_libraries(test_sfx PRIVATE hta_engine m)
     add_test(NAME sfx COMMAND test_sfx)

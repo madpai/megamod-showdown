@@ -56,6 +56,18 @@ state / report / events say. Register it in CMakeLists.txt next to
 `playtest_sandbox` so ctest and CI run it. Assert on outcomes (a prop
 broke, the player moved), not exact floats.
 
+## The phone's content on the desktop
+Set once per shell (this machine's folders; the content itself never goes in git):
+```sh
+export HTA_TRIAL_DIR=/home/commander/halo-trial-data/extract/maps HTA_BUNDLE_DIR=$HOME/assetlab-private/bundle
+build-host/megamod-content                 # Trial maps, every bundled world, character, weapon
+build-host/megamod-join <phone IP> --world ctf_2fort --auto 120   # join a phone hosting that map
+```
+`--world` takes the host's map by name (bloodgulch, ctf_2fort, ...), so the
+map check matches the phone without paths. The phone drops a hosted match
+when its app is backgrounded: start a retry loop before asking the owner
+to host, and ask them not to switch apps until it has joined.
+
 ## Limits
 Desktop frame cost says nothing about the phone's GPU; touch and the Java
 HUD are phone-only. See "What the desktop will not tell you" in

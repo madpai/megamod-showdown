@@ -20,6 +20,7 @@
  * vehicles, dropped weapons, flags, the HUD's health, and first-person
  * weapons. The title bar carries the score, ping and kill feed. */
 #define _POSIX_C_SOURCE 200809L
+#include "app/fs.h"
 #include "asset/bitmap.h"
 #include "asset/bsp.h"
 #include "asset/cache.h"
@@ -40,20 +41,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static uint8_t *slurp(const char *path, size_t *size)
-{
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    if (fseek(f, 0, SEEK_END)) { fclose(f); return NULL; }
-    long n = ftell(f);
-    if (n <= 0 || fseek(f, 0, SEEK_SET)) { fclose(f); return NULL; }
-    uint8_t *p = malloc((size_t)n);
-    if (p && fread(p, 1, (size_t)n, f) != (size_t)n) { free(p); p = NULL; }
-    fclose(f);
-    if (p) *size = (size_t)n;
-    return p;
-}
-
 static uint32_t find_tag(const hta_cache *c, uint32_t cls, const char *part)
 {
     for (uint32_t i = 0; i < c->tag_count; i++) {
@@ -69,7 +56,7 @@ static uint32_t find_tag(const hta_cache *c, uint32_t cls, const char *part)
 typedef struct {
     /* the world */
     hta_cache cache; bool have_cache;
-    hta_resource_map bm; uint8_t *map_data, *bm_data;
+    hta_resource_map bm; hta_fs_blob map_blob, bm_blob;
     hta_bsp_mesh mesh, sky, coll_mesh;
     hta_external_map ext; bool have_ext;
     hta_collision col;
@@ -100,22 +87,29 @@ typedef struct {
     int weather;
 } join;
 
-static bool load_world(join *j, const char *map_path, const char *oalmap, char *err, size_t errlen)
+/* The Trial map from --map, else maps/bloodgulch.map through `fs`; the
+ * world from --oalmap, else --world's maps/NAME.oalmap through `fs` (the
+ * phone's own lookup, app/fs.h). */
+static bool load_world(join *j, const hta_fs *fs, const char *map_path, const char *oalmap,
+                       const char *world, char *err, size_t errlen)
 {
-    if (map_path) {
-        size_t n = 0, bn = 0;
-        j->map_data = slurp(map_path, &n);
-        if (!j->map_data || !hta_cache_open(&j->cache, j->map_data, n, err, errlen)) {
-            if (!err[0]) snprintf(err, errlen, "cannot read %s", map_path);
-            return false;
-        }
+    bool have_map = map_path ? hta_fs_map_path(map_path, &j->map_blob)
+                             : hta_fs_map(fs, "maps/bloodgulch.map", &j->map_blob);
+    if (map_path && !have_map) { snprintf(err, errlen, "cannot read %s", map_path); return false; }
+    if (have_map) {
+        if (!hta_cache_open(&j->cache, j->map_blob.data, j->map_blob.size, err, errlen)) return false;
         j->have_cache = true;
-        char bmpath[1024];
-        snprintf(bmpath, sizeof(bmpath), "%s", map_path);
-        char *slash = strrchr(bmpath, '/');
-        snprintf(slash ? slash + 1 : bmpath, sizeof(bmpath) - (size_t)(slash ? slash + 1 - bmpath : 0), "bitmaps.map");
-        j->bm_data = slurp(bmpath, &bn);
-        if (j->bm_data) hta_resource_open(&j->bm, j->bm_data, bn, err, errlen);
+        bool have_bm = false;
+        if (map_path) {
+            char bmpath[1024];
+            snprintf(bmpath, sizeof(bmpath), "%s", map_path);
+            char *slash = strrchr(bmpath, '/');
+            snprintf(slash ? slash + 1 : bmpath, sizeof(bmpath) - (size_t)(slash ? slash + 1 - bmpath : 0), "bitmaps.map");
+            have_bm = hta_fs_map_path(bmpath, &j->bm_blob);
+        } else {
+            have_bm = hta_fs_map(fs, "maps/bitmaps.map", &j->bm_blob);
+        }
+        if (have_bm) hta_resource_open(&j->bm, j->bm_blob.data, j->bm_blob.size, err, errlen);
         err[0] = 0;
         j->biped = find_tag(&j->cache, HTA_FOURCC('b','i','p','d'), "cyborg_mp");
         j->rifle = find_tag(&j->cache, HTA_FOURCC('m','o','d','2'), "weapons\\assault rifle\\assault rifle");
@@ -124,8 +118,19 @@ static bool load_world(join *j, const char *map_path, const char *oalmap, char *
         err[0] = 0;
         j->map_crc = j->cache.crc32;
     }
-    if (oalmap) {
-        if (!hta_external_map_load(oalmap, &j->ext, err, errlen)) return false;
+    bool imported_world = world && strcmp(world, "bloodgulch");
+    if (oalmap || imported_world) {
+        if (oalmap) {
+            if (!hta_external_map_load(oalmap, &j->ext, err, errlen)) return false;
+        } else {
+            char name[128];
+            hta_fs_blob b;
+            snprintf(name, sizeof(name), "maps/%s.oalmap", world);
+            if (!hta_fs_map(fs, name, &b)) { snprintf(err, errlen, "%s: not in the bundle", name); return false; }
+            bool ok = hta_external_map_load_memory(b.data, b.size, &j->ext, err, errlen);
+            hta_fs_unmap(&b);
+            if (!ok) return false;
+        }
         j->have_ext = true;
         j->mesh = j->ext.mesh;
         memset(&j->ext.mesh, 0, sizeof(j->ext.mesh));
@@ -356,12 +361,16 @@ static void title(join *j, hta_desktop *d, double now, const char *host, unsigne
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        fprintf(stderr, "usage: %s <host> [port] [--map bloodgulch.map] [--oalmap m.oalmap] [--preset P] "
-                        "[--weather W] [--auto S] [--shot out.ppm]\n", argv[0]);
+        fprintf(stderr, "usage: %s <host> [port] [--world NAME] [--trial DIR] [--bundle DIR]\n"
+                        "       [--map bloodgulch.map] [--oalmap m.oalmap] [--preset P] "
+                        "[--weather W] [--auto S] [--shot out.ppm]\n"
+                        "  --world picks the host's map by name (bloodgulch, ctf_2fort, ...) from the\n"
+                        "  Trial folder and the Asset Lab bundle (or HTA_TRIAL_DIR / HTA_BUNDLE_DIR)\n", argv[0]);
         return 2;
     }
     static join j;
-    const char *host = argv[1], *map = NULL, *oal = NULL, *shot = NULL;
+    const char *host = argv[1], *map = NULL, *oal = NULL, *shot = NULL, *world = NULL;
+    const char *trial = getenv("HTA_TRIAL_DIR"), *bundle = getenv("HTA_BUNDLE_DIR");
     unsigned port = 32270;
     double autos = 0;
     hta_gfx_settings_preset(&j.video, HTA_QUALITY_HIGH);
@@ -371,6 +380,9 @@ int main(int argc, char **argv)
         hta_weather_kind wk;
         if (!strcmp(argv[i], "--map") && i + 1 < argc) map = argv[++i];
         else if (!strcmp(argv[i], "--oalmap") && i + 1 < argc) oal = argv[++i];
+        else if (!strcmp(argv[i], "--world") && i + 1 < argc) world = argv[++i];
+        else if (!strcmp(argv[i], "--trial") && i + 1 < argc) trial = argv[++i];
+        else if (!strcmp(argv[i], "--bundle") && i + 1 < argc) bundle = argv[++i];
         else if (!strcmp(argv[i], "--preset") && i + 1 < argc && hta_quality_from_name(argv[i + 1], &q)) { hta_gfx_settings_preset(&j.video, q); i++; }
         else if (!strcmp(argv[i], "--weather") && i + 1 < argc && hta_weather_from_name(argv[i + 1], &wk)) { j.weather = (int)wk; i++; }
         else if (!strcmp(argv[i], "--auto") && i + 1 < argc) autos = atof(argv[++i]);
@@ -384,13 +396,16 @@ int main(int argc, char **argv)
     j.cam.znear = 0.02f; j.cam.zfar = 1000.0f;
     j.rng = 0x10AD;
     char err[512] = { 0 };
-    if (!load_world(&j, map, oal, err, sizeof(err))) { fprintf(stderr, "map: %s\n", err); return 1; }
+    static hta_fs fs;
+    hta_fs_init(&fs);
+    hta_fs_mount_content(&fs, trial, bundle);
+    if (!load_world(&j, &fs, map, oal, world, err, sizeof(err))) { fprintf(stderr, "map: %s\n", err); return 1; }
     hta_gfx_settings_clamp(&j.video);
     setup_effects(&j);
     if (!hta_net_client_open(&j.net, host, (uint16_t)port)) { fprintf(stderr, "bad host address %s\n", host); return 1; }
     j.net.map_crc = j.map_crc;
     hta_net_view_init(&j.view);
-    printf("join: %s:%u, %s%s, map check %08x, %s\n", host, port, oal ? oal : "Blood Gulch",
+    printf("join: %s:%u, %s%s, map check %08x, %s\n", host, port, oal ? oal : world ? world : "Blood Gulch",
            j.biped ? "" : " (stand-ins: no Trial map)", j.map_crc, hta_quality_name(j.video.preset));
 
     hta_desktop *d = NULL;

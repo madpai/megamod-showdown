@@ -99,6 +99,22 @@ the loop moves out. Pause, menus and class pick stay platform-side (the
 app shell, not the match). The gamepad's R1 is mapped to both fire and
 melee; fire wins, as before.
 
+**Status 2026-09-26: step 2 (files) is built, awaiting its phone check.**
+`src/app/fs.{h,c}`: content by name across ordered roots (`hta_fs_map`,
+`hta_fs_list` sorted by name -- the imported index LAN sends; `tests/test_fs.c`).
+Android mounts the APK (callbacks over AAssetManager) then app storage;
+the desktop mounts the Asset Lab bundle and the Trial folder where the APK
+keeps them (`hta_fs_mount_content`, `HTA_TRIAL_DIR` / `HTA_BUNDLE_DIR`).
+`src/app/content.{h,c}` loads the world package and the imported
+characters, weapons and UI sounds through it, for both. Desktop gains:
+`megamod-content` (loads the phone's whole set: 14 characters and 13
+weapons in the phone's order, 7 worlds, Blood Gulch crc e7e08c22) and
+`megamod-join --world NAME`. **Coupling that remains:** the Trial maps
+(bloodgulch, bitmaps, sounds, ui) are still found by Android's
+`find_map` search list and kept mapped by the platform; they move behind
+`hta_fs` with step 3's data-half load. Settings, nav cache and crash files
+still use app-storage paths.
+
 Steps 6-7 can start partly before 5: `megamod-sandbox` and `megamod-join`
 already run headless (`--demo`, `--shot`) and can grow `--events`,
 `--control` and `--report` first, so the harness is proven before the

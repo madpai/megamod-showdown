@@ -191,6 +191,21 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-26 step 2, files (build "Files by name").** docs/DESKTOP_AGENT.md
+step 2: bundled worlds and imported characters/weapons/UI sounds now load
+through `hta_fs` (APK first, then app storage) and the same code the
+desktop uses. Host gate: ctest 47/47 (new `fs`), ASan clean, ndkcheck
+clean, verify.sh 80/80; `megamod-content` loads the whole bundle on the
+desktop in the phone's order. **Phone check:** (1) solo Blood Gulch
+starts; (2) the class menu lists the same 14 characters and 13 weapons,
+and a match with an imported character and weapon plays; (3) two bundled
+maps start (ctf_2fort and one CS map), props break; (4) if a picked map
+is installed (IMPORTED in the map list), it starts; (5) host one match and
+the desktop joins with `--world`. Fail = a map or body missing from a
+menu, a load error on screen, or a different character on the joiner.
+If it fails: revert this build's commit; 0558bf8 is the known-good.
+
+
 **NEXT SESSION -- start here (written 2026-09-26 late morning).** Main is
 `af7814d`: S1, rate limiting, the vehicle-angle fix and step 1 (input in)
 all passed on the phone today. Next is docs/DESKTOP_AGENT.md **step 2

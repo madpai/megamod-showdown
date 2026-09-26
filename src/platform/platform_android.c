@@ -16,6 +16,8 @@
 #include "../app/report.h"
 #include "../app/host_net.h"
 #include "../app/input.h"
+#include "../app/fs.h"
+#include "../app/content.h"
 #include <dlfcn.h>
 #include <signal.h>
 #include <unwind.h>
@@ -143,6 +145,7 @@ typedef struct {
     bool          has_window;
     int32_t       win_w, win_h;  /* window size the current swapchain was built for */
     bool          probe_done;
+    hta_fs        fs;        /* the APK, then app storage (android_fs_init) */
 
     /* input */
     int32_t move_pointer, look_pointer;
@@ -233,36 +236,80 @@ static bool apk_has(hta_android *s, const char *name)
     return len > 0;
 }
 
-/* Maps a data file read-only, from disk or from the APK. */
-static bool map_data_file(hta_android *s, const char *path, uint8_t **out, size_t *out_size)
+/* The APK as an hta_fs root (app/fs.h): an asset stored uncompressed is
+ * mapped straight out of the file; a compressed one is copied. */
+static bool apk_fs_map(void *ctx, const char *rel, hta_fs_blob *out)
 {
-    int fd = -1;
+    AAssetManager *am = ctx;
+    memset(out, 0, sizeof(*out));
+    AAsset *a = am ? AAssetManager_open(am, rel, AASSET_MODE_UNKNOWN) : NULL;
+    if (!a) return false;
     off64_t start = 0, len = 0;
-    if (!strncmp(path, HTA_APK_PREFIX, strlen(HTA_APK_PREFIX))) {
-        AAssetManager *am = s->app->activity->assetManager;
-        AAsset *a = am ? AAssetManager_open(am, path + strlen(HTA_APK_PREFIX),
-                                            AASSET_MODE_UNKNOWN) : NULL;
-        if (!a) return false;
-        fd = AAsset_openFileDescriptor64(a, &start, &len);
+    int fd = AAsset_openFileDescriptor64(a, &start, &len);
+    if (fd < 0) {
+        size_t n = (size_t)AAsset_getLength(a);
+        const void *buf = AAsset_getBuffer(a);
+        void *copy = buf && n ? malloc(n) : NULL;
+        if (copy) memcpy(copy, buf, n);
         AAsset_close(a);
-    } else {
-        fd = open(path, O_RDONLY);
-        struct stat st;
-        if (fd >= 0 && fstat(fd, &st) == 0) len = st.st_size;
+        if (!copy) return false;
+        out->data = copy; out->size = n; out->base = copy; out->heap = true;
+        return true;
     }
-    if (fd < 0) return false;
-    if (len <= 0 || s->mapped_count >= 8) { close(fd); return false; }
+    AAsset_close(a);
+    if (len <= 0) { close(fd); return false; }
     long page = sysconf(_SC_PAGESIZE);
     off64_t aligned = start - (start % page);
     size_t maplen = (size_t)(len + (start - aligned));
     void *p = mmap(NULL, maplen, PROT_READ, MAP_PRIVATE, fd, aligned);
     close(fd);
     if (p == MAP_FAILED) return false;
-    s->mapped_base[s->mapped_count] = p;
-    s->mapped_len[s->mapped_count] = maplen;
+    out->data = (const uint8_t *)p + (start - aligned);
+    out->size = (size_t)len;
+    out->base = p;
+    out->base_len = maplen;
+    return true;
+}
+
+static void apk_fs_list(void *ctx, const char *rel_dir, hta_fs_name_fn fn, void *user)
+{
+    AAssetDir *d = ctx ? AAssetManager_openDir(ctx, rel_dir) : NULL;
+    if (!d) return;
+    const char *n;
+    while ((n = AAssetDir_getNextFileName(d))) fn(user, n);
+    AAssetDir_close(d);
+}
+
+/* Content by name: the APK's assets first, then the app's own storage
+ * (the picked external.oalmap lives there). */
+static void android_fs_init(hta_android *s)
+{
+    hta_fs_init(&s->fs);
+    hta_fs_mount(&s->fs, "", apk_fs_map, apk_fs_list, s->app->activity->assetManager);
+    const char *store = s->app->activity->externalDataPath;
+    if (!store) store = s->app->activity->internalDataPath;
+    if (store) hta_fs_mount_dir(&s->fs, "", store);
+}
+
+/* Maps a data file read-only, from disk or from the APK, and keeps it
+ * mapped for the run (the Trial's cache keeps pointers into it). */
+static bool map_data_file(hta_android *s, const char *path, uint8_t **out, size_t *out_size)
+{
+    if (s->mapped_count >= 8) return false;
+    hta_fs_blob b;
+    if (!strncmp(path, HTA_APK_PREFIX, strlen(HTA_APK_PREFIX))) {
+        if (!apk_fs_map(s->app->activity->assetManager, path + strlen(HTA_APK_PREFIX), &b))
+            return false;
+        if (b.heap) { hta_fs_unmap(&b); return false; }   /* compressed: apk_has says so */
+    } else if (!hta_fs_map_path(path, &b)) {
+        return false;
+    }
+    if (!b.base) return false;                              /* an empty file */
+    s->mapped_base[s->mapped_count] = b.base;
+    s->mapped_len[s->mapped_count] = b.base_len;
     s->mapped_count++;
-    *out = (uint8_t *)p + (start - aligned);
-    *out_size = (size_t)len;
+    *out = (uint8_t *)b.data;
+    *out_size = b.size;
     return true;
 }
 
@@ -1316,45 +1363,7 @@ static void game_gpu_free(hta_android *s);
  * the APK is mapped, read and unmapped: everything kept is copied out. */
 static bool load_world_package(hta_android *s, char *err, size_t errlen)
 {
-    for (const char *c = s->world; *c; c++)
-        if (!((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_' || *c == '-')) {
-            snprintf(err, errlen, "bad map name");
-            return false;
-        }
-    bool ok = false;
-    if (!strcmp(s->world, "imported")) {
-        const char *dir = s->app->activity->externalDataPath;
-        if (!dir) dir = s->app->activity->internalDataPath;
-        char path[600];
-        snprintf(path, sizeof(path), "%s/external.oalmap", dir ? dir : ".");
-        ok = hta_external_map_load(path, &s->world_ext, err, errlen);
-    } else {
-        char name[96];
-        snprintf(name, sizeof(name), "maps/%s.oalmap", s->world);
-        AAssetManager *am = s->app->activity->assetManager;
-        AAsset *a = am ? AAssetManager_open(am, name, AASSET_MODE_UNKNOWN) : NULL;
-        if (!a) { snprintf(err, errlen, "%s is not in this APK", name); return false; }
-        off64_t start = 0, len = 0;
-        int fd = AAsset_openFileDescriptor64(a, &start, &len);
-        AAsset_close(a);
-        if (fd < 0) { snprintf(err, errlen, "%s is compressed in the APK", name); return false; }
-        long page = sysconf(_SC_PAGESIZE);
-        off64_t aligned = start - (start % page);
-        size_t maplen = (size_t)(len + (start - aligned));
-        void *p = mmap(NULL, maplen, PROT_READ, MAP_PRIVATE, fd, aligned);
-        close(fd);
-        if (p == MAP_FAILED) { snprintf(err, errlen, "cannot map %s", name); return false; }
-        ok = hta_external_map_load_memory((const uint8_t *)p + (start - aligned), (size_t)len,
-                                          &s->world_ext, err, errlen);
-        munmap(p, maplen);
-    }
-    if (!ok) return false;
-    s->mesh = s->world_ext.mesh;
-    memset(&s->world_ext.mesh, 0, sizeof(s->world_ext.mesh));
-    s->world_loaded = true;
-    hta_log("[world] %s: %u triangles, %u textures, %u starts", s->world,
-            s->mesh.index_count / 3, s->mesh.texture_count, s->world_ext.spawn_count);
-    return true;
+    return hta_session_load_world(&s->session, &s->fs, err, errlen);
 }
 
 /* The imported world's walkable grid, built once and kept in app storage
@@ -1392,56 +1401,13 @@ static void world_nav(hta_android *s)
             (hta_time_seconds() - t0) * 1000.0);
 }
 
-/* The APK's imported characters and weapons (assets/characters/NAME.oalasset,
- * assets/weapons/NAME.oalasset): loaded once, for the menus and every match.
- * Personal builds only -- publish_apk.sh --with-assets puts them there. */
+/* The imported characters and weapons (characters/NAME.oalasset,
+ * weapons/NAME.oalasset; app/content.c): loaded once, for the menus and
+ * every match. Personal builds carry them in the APK -- publish_apk.sh
+ * --with-assets puts them there. */
 static void load_imported(hta_android *s)
 {
-    if (s->imported_loaded) return;
-    s->imported_loaded = true;
-    AAssetManager *am = s->app->activity->assetManager;
-    if (!am) return;
-    {
-        char err[HTA_ERRLEN];
-        AAsset *a = AAssetManager_open(am, "sounds/ui.oalasset", AASSET_MODE_BUFFER);
-        if (a) {
-            const void *buf = AAsset_getBuffer(a);
-            if (!buf || !hta_oal_load_memory((const uint8_t *)buf, (size_t)AAsset_getLength(a),
-                                             &s->ui_sounds, err, sizeof(err)))
-                hta_log("[imported] sounds/ui.oalasset: %s", err);
-            AAsset_close(a);
-        }
-    }
-    static const char *const DIRS[2] = { "characters", "weapons" };
-    for (int d = 0; d < 2; d++) {
-        AAssetDir *dir = AAssetManager_openDir(am, DIRS[d]);
-        if (!dir) continue;
-        const char *fn;
-        while ((fn = AAssetDir_getNextFileName(dir))) {
-            size_t n = strlen(fn);
-            if (n < 9 || strcmp(fn + n - 9, ".oalasset")) continue;
-            hta_oal_asset *slot = d ? &s->imp_weap[s->imp_weap_count] : &s->imp_char[s->imp_char_count];
-            if ((d ? s->imp_weap_count : s->imp_char_count) >= HTA_MAX_IMPORTED) break;
-            char name[128], err[HTA_ERRLEN];
-            snprintf(name, sizeof(name), "%s/%s", DIRS[d], fn);
-            AAsset *a = AAssetManager_open(am, name, AASSET_MODE_BUFFER);
-            if (!a) continue;
-            const void *buf = AAsset_getBuffer(a);
-            size_t len = (size_t)AAsset_getLength(a);
-            bool ok = buf && hta_oal_load_memory((const uint8_t *)buf, len, slot, err, sizeof(err));
-            AAsset_close(a);
-            if (!ok) { hta_log("[imported] %s: %s", name, err); continue; }
-            if (d) {
-                uint32_t k = s->imp_weap_count++;
-                s->imp_clip[k][0] = s->imp_clip[k][1] = HTA_AUDIO_NO_CLIP;
-            } else {
-                s->imp_voice[s->imp_char_count][0] = s->imp_voice[s->imp_char_count][1] = HTA_AUDIO_NO_CLIP;
-                s->imp_char_count++;
-            }
-            hta_log("[imported] %s '%s' (%s), %u models", slot->kind, slot->name, slot->display, slot->model_count);
-        }
-        AAssetDir_close(dir);
-    }
+    hta_session_load_imported(&s->session, &s->fs);
 }
 
 /* What the menus offer, for the Java side: one line per entry,
@@ -6036,6 +6002,7 @@ void android_main(struct android_app *app)
     memset(&state, 0, sizeof(state));
     for (unsigned i=0;i<HTA_NET_MAX_PLAYERS;i++) state.peer_unit[i]=-1;
     state.app = app;
+    android_fs_init(&state);
     state.vit = &state.vitals;
     state.move_pointer = state.look_pointer = -1;
     for (unsigned k = 0; k < HTA_CARRY_MAX; k++) state.held_asset[k] = state.start_asset[k] = -1;
