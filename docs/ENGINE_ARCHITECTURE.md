@@ -2,8 +2,14 @@
 
 The owner wants this engine to outlive Megamod: cross-platform, networked,
 with real physics, and a starting point for other games. This is how it is
-laid out today, what is already reusable, and the staged plan for the one
-big piece that is not.
+laid out **today**, what is already reusable, and the staged plan for the
+one big piece that is not.
+
+Where it is **going** -- MegaMod as an independent content-driven runtime,
+with Halo as one compatibility layer and a conceptual split into core
+runtime, game framework, content runtime and compatibility layers -- is
+[MEGAMOD_VISION.md](MEGAMOD_VISION.md). This file stays a description of
+the code as it is; update it as the code moves, not ahead of it.
 
 ## The layers
 
@@ -123,6 +129,16 @@ needs them.
 ## What stays out of the engine
 
 - Halo tag knowledge stays in `asset/` and in `game/` where it names tags.
-  The generic modules above never reference a tag.
-- Anything Megamod-specific (heroes, abilities, classes) stays in `game/`.
+  The generic modules above never reference a tag. **That is the Halo
+  compatibility layer**: it should increasingly *produce* generic
+  definitions (weapons, characters, worlds) that the rest of the engine
+  consumes, the way Open Asset Lab produces packages. Today `game.c` still
+  consumes tags directly, and `hta_game_load` needs a Halo cache even on
+  imported maps (MEGAMOD_VISION.md §4 lists this coupling in order).
+- Source/GMod formats and entity classes never enter the engine: Open
+  Asset Lab translates them into OALMAP/OALASSET fields with generic
+  meanings (a start's `"team"`, a group's breakable flag).
+- Anything Megamod-specific (heroes, abilities, classes) stays in `game/`
+  for now; heroes are the natural first candidates for data/script
+  definitions (vision §7).
 - Content never enters the repositories: not Halo's, not the Workshop's.

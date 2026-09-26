@@ -20,7 +20,20 @@ session's branch reaches the phone through a local agent following
   to Open Halo separately (cherry-pick onto `fp-animated-guns`), with the
   owner's say-so.
 
-The rest of this file is the shared engine's briefing.
+**Direction (owner, 2026-09-26): MegaMod is becoming its own engine.**
+Before major architectural work, read `docs/MEGAMOD_VISION.md`. MegaMod is
+evolving into an independent, content-driven runtime: **Halo is a
+compatibility layer, Source/GMod is an importer path through Open Asset
+Lab, and new systems should prefer generic engine concepts** (`Door`,
+`WeaponDefinition`, `TeleportTrigger`) over source-game-specific
+assumptions. Foreign terminology stays in importers and in the existing
+Halo layer. That is direction, not a rewrite order: preserve what works,
+refactor the minimum a real feature needs, verify Android, Blood Gulch and
+the imported bundle (vision §21). The briefing below still describes the
+engine as it is, Halo ancestry included.
+
+The rest of this file is the shared engine's briefing, written when the
+engine was the Halo Trial port; its hard rules all still apply.
 
 # halo-trial-android
 

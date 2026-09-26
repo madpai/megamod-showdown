@@ -2,11 +2,40 @@
 
 # MEGAMOD SHOWDOWN
 
-*A fork of the Open Halo Project: the same native Android engine, playing
-maps, characters and weapons imported from other games through
-[Open Asset Lab](https://github.com/madpai/open-asset-lab). Open Halo
-itself stays strictly Halo. No game content is included in this
-repository.*
+*A native Android game runtime, evolving from the Open Halo Project into
+**MegaMod**: a general, content-driven engine for imported and original
+worlds, characters, weapons and game rules, played natively and in
+multiplayer. Content is prepared by
+[Open Asset Lab](https://github.com/madpai/open-asset-lab). No game content
+is included in this repository.*
+
+</div>
+
+## What this is, and where it is going
+
+**Today** MEGAMOD SHOWDOWN is a crossover arena shooter on a native C/Vulkan
+Android engine. The engine was built against the free Halo Trial, and the
+game plays Blood Gulch plus maps, characters and weapons that Open Asset
+Lab converts from the owner's own Source and Garry's Mod content. Every
+match still loads the owner's Trial data for its core gameplay tags; the
+desktop sandbox is the only part that runs with no game data at all.
+
+**The direction** is an engine of its own. Worlds, characters, weapons,
+vehicles, abilities, scripts and rules become normalized building blocks,
+and an experience is a combination of them, launched without rebuilding
+the engine:
+
+```
+content (imported or original) → Open Asset Lab → MegaMod packages
+    → MegaMod engine → game / sandbox / experience → native multiplayer
+```
+
+**Halo is one compatibility layer. Source is one importer family. Steam
+Workshop is one provider.** The crossover roster is a stress test for that
+generality, not the identity. The north star, with what exists now versus
+what is planned, is [`docs/MEGAMOD_VISION.md`](docs/MEGAMOD_VISION.md).
+
+<div align="center">
 
 ## Built on: Open Halo Project
 
@@ -171,6 +200,11 @@ loop, what works, what's next, how to read Halo's tags, and the traps that
 have already cost a session. [`docs/JOURNAL.md`](docs/JOURNAL.md) is the
 session history. Search it by symptom.
 
+**Before architectural work, read [`docs/MEGAMOD_VISION.md`](docs/MEGAMOD_VISION.md).**
+New systems should be generic MegaMod capabilities (a `Door`, a
+`WeaponDefinition`), not special cases for one source game. Agents: see
+[`AGENTS.md`](AGENTS.md).
+
 ## Legal
 
 - **No Halo assets, executables or DLLs are ever committed here**, and no
@@ -188,6 +222,10 @@ session history. Search it by symptom.
 | Doc | Contents |
 |---|---|
 | [HANDOFF.md](docs/HANDOFF.md) | **Start here.** Current state, the loop, tag discipline, traps, invented constants |
+| [MEGAMOD_VISION.md](docs/MEGAMOD_VISION.md) | **The north star.** What MegaMod and Open Asset Lab are becoming; now vs next vs someday; the agent checklist |
+| [ENGINE_ARCHITECTURE.md](docs/ENGINE_ARCHITECTURE.md) | How the engine is laid out today and the loop-extraction plan |
+| [DESKTOP_AGENT.md](docs/DESKTOP_AGENT.md) | Desktop parity and the agent harness (headless runs, control channel, playtests) |
+| [DEDICATED_SERVER.md](docs/DEDICATED_SERVER.md) | `megamod-server`: config, binding, the path to a real headless match |
 | [JOURNAL.md](docs/JOURNAL.md) | Every session, newest first. The *why*. Search it by symptom |
 | [BUILD_ENVIRONMENT.md](docs/BUILD_ENVIRONMENT.md) | Exact toolchain versions |
 | [BLOOD_GULCH_ASSETS.md](docs/BLOOD_GULCH_ASSETS.md) | What is in the map |

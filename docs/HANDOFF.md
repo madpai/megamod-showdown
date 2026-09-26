@@ -3,6 +3,13 @@
 > **On branch `halo-sandbox` this is MEGAMOD SHOWDOWN** (public repo
 > madpai/megamod-showdown, remote `megamod`). See CLAUDE.md's top section
 > for where it pushes and what never goes to Open Halo.
+>
+> **Direction (2026-09-26):** MegaMod is becoming its own content-driven
+> engine; Halo is one compatibility layer, Source/GMod an importer path
+> through Open Asset Lab. **Before major architectural work read
+> [`docs/MEGAMOD_VISION.md`](MEGAMOD_VISION.md).** This handoff documents
+> the engine as it is -- including its Halo ancestry, which stays accurate
+> history and a supported compatibility layer.
 
 **Read this file. You should not need anything else to start.**
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
@@ -910,8 +917,9 @@ files. What in this engine they would replace:
 - **Packages** are Open Asset Lab `.oalmap` v1 (`src/asset/external_map.c`):
   world triangles, RGBA textures, starts. `hta_external_map_load_memory`
   reads one straight out of an mmapped APK asset; the manifest's
-  `spawn_points[].classname` gives teams (T red, CT blue, else
-  `HTA_EXTERNAL_TEAM_ANY`); `key` is FNV-1a of the manifest.
+  `spawn_points[].team` gives teams (Asset Lab maps source classes to it
+  since the 2026-09-23 generalization audit; the loader no longer reads
+  class names); `key` is FNV-1a of the manifest.
 - **What still comes from Blood Gulch**: every tag -- bipeds, weapons,
   sounds, the sky, the scenario's netgame equipment. No vehicles and no
   scenery on an imported map.
