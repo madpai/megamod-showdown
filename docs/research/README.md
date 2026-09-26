@@ -25,6 +25,10 @@ Research date: **2026-09-26**. This corpus informs [MegaMod's vision](../MEGAMOD
 | [Current boundary review](CURRENT_RUNTIME_CONTENT_BOUNDARY_REVIEW.md) | N1 SOURCE OBSERVATION; current code, not a replacement for Claude's inventory | Which fields and names currently cross OAL/MegaMod and LAN boundaries? |
 | [Content ID grammar](CONTENT_ID_GRAMMAR_RECOMMENDATION.md) | N2 RESEARCH ONLY; awaiting experiment | Small package-owned ID syntax and migration rules |
 | [World-event slice](WORLD_EVENT_SLICE_RECOMMENDATION.md) | X1 RESEARCH ONLY; awaiting synthetic prototype | Minimum host event, handle, collision and snapshot contract |
+| [Dense-index hazards](DENSE_INDEX_HAZARDS.md) | N1 FOLLOW-UP; source observation | Which other local positions can cross peers? |
+| [V10 fingerprint review](V10_FINGERPRINT_ARCHITECTURE_REVIEW.md) | N3 RESEARCH ONLY; Claude implementing | Required compatibility property and candidate canonical encoding |
+| [X1 original authoring path](X1_ORIGINAL_AUTHORING_PATH.md) | X1 RESEARCH ONLY | Small original fixture through OAL validation/compiler |
+| [Post-N3 order](POST_N3_ORDER_DECISION.md) | DECISION MEMO | Small test shell, X1 and full Step 5 sequence |
 
 `COMPLETE` means the documented comparison and recommendation are present, **not** that every upstream implementation is exhaustively audited. Follow-ups mark evidence that cannot yet support a stronger claim. No importer, Lua runtime, registry, network transport, or package format was implemented as part of this research.
 

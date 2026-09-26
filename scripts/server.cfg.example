@@ -6,7 +6,7 @@ motd =
 bind = tailscale               # tailscale | lan | all | an IPv4 address
 port = 32270
 max_players = 8                # 2..8
-password =                     # protocol v10: parsed, not enforced yet
+password =                     # planned protocol v11: parsed, not enforced yet
 
 maps = bloodgulch              # rotation, e.g.: bloodgulch, de_dust2, cs_office
 map_dir = /home/commander/assetlab-private/bundle

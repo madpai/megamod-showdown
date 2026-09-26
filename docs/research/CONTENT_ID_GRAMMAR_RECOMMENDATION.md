@@ -1,24 +1,37 @@
-# N2: first canonical content ID grammar
+# N2: canonical content ID grammar
 
-**Status:** RESEARCH ONLY, 2026-09-26. This is a recommendation for Claude's small validation experiment; it does not change OALMAP/OALASSET or existing saves/network packets.
+**Status:** research recommendation, 2026-09-26. This settles the research syntax; it does not change OALMAP/OALASSET, saves, network packets, or runtime registration. N2's read-only audit should test the rules against actual legacy names before a format adopts them.
 
-## Recommendation
+## Canonical form
 
-Use **`namespace:type/name`**, for example `megamod:weapon/ion_rifle` and `lab_demo:world/relay_test`. The package declares one `namespace` that it owns; definitions in that package must use it. A dependency may reference another package's ID only if that package is declared as a dependency. Treat the complete string as the authored identity; assign dense numeric indices only after loading a resolved content set. A placed object should have a separate ID unique within its world, and a reference to its definition by canonical content ID.
+`namespace:type/name`, for example `core:weapon/rocket_launcher`, `source:map/de_dust2`, `original:character/security_robot`, or `mypack:ability/plasma_burst`. The complete byte string is the definition's identity. `kind:namespace.name` in the earlier entity comparison was an inconsistent sketch and is superseded here. A placed object uses a separate world-local placed ID; it may refer to a definition by this canonical content ID.
 
-| Rule for the first experiment | Recommendation |
+The proposed ASCII grammar is:
+
+```text
+id          = namespace ":" type "/" local_path
+namespace   = lower (lower | digit | "_" | "-")*
+type        = lower (lower | digit | "_")*
+local_path  = segment ("/" segment)*
+segment     = lower (lower | digit | "_" | "-")*
+lower       = "a" ... "z"
+digit       = "0" ... "9"
+```
+
+| Rule | Recommendation |
 | --- | --- |
-| Character set | ASCII lowercase `a-z`, digits `0-9`, underscore `_`; allow a single hyphen `-` within namespace or name if existing names need it. The `:` and `/` are separators only. No spaces, dots, Unicode, percent escapes, path components, or additional separators. |
-| Segment shape | Each of namespace, type and name starts with a letter, then contains allowed characters; no empty segment. Reserve `type` as one known registry category such as `world`, `weapon`, or `character`. |
-| Length | At most 96 ASCII bytes total; at most 40 for namespace, 24 for type, 48 for name. These are proposed N2 limits, to be checked against actual current names before adoption. Reject overflow instead of truncating. |
-| Case and normalization | Canonical form is already lowercase ASCII. OAL may *suggest* a lowercase candidate for a legacy name, but must not silently fold two authored IDs into one. Hash and compare the exact canonical byte string. |
-| Ownership and duplicates | One owner per namespace in the resolved package set. Reject duplicate full IDs, including duplicates that arise through aliases. A changed package version keeps the same namespace if it is the same package lineage; version is package metadata, not part of a definition ID. |
-| Files and display | File paths, source engine class/tag names, presentation labels, and binary array indices are never identity. Moving an asset file or translating a label must not rename content. |
-| Aliases | No general alias graph in N2. Permit a small explicit `old_id → new_id` migration list only when a real legacy reference needs it. Reject cycles, duplicate old IDs, missing targets and collisions with live IDs. Never infer an alias from filename similarity. |
-| Legacy packages | Continue loading the current packages through their existing path/name rules. For the experiment, produce a report with proposed IDs and collisions; require an explicit mapping before using them in saved state or package hashes. Do not silently rewrite legacy manifests. |
+| Length | At most 96 ASCII bytes for the complete ID; namespace ≤40, type ≤24, local path ≤48, each segment ≤32, and at most four local segments. All limits apply together; reject overflow rather than truncating. These are proposed bounds, not current loader limits. |
+| Type | A registered closed category, initially `map`, `character`, `weapon`, `projectile`, `ability`, `vehicle`, `material`, `sound`, `animation`, `skeleton`, `world_entity`, `game_mode`, or `mutator`. An extension adds a type through a versioned schema, not by accepting arbitrary spelling. `map` denotes a world/map definition; `world_entity` denotes a reusable placed-entity kind. |
+| Case and normalization | The ID is already lowercase ASCII. Compare and hash its exact bytes. No Unicode normalization, case folding, percent decoding, path cleanup, whitespace trimming, or implicit replacement of punctuation. OAL may offer a proposed lowercase spelling as a diagnostic, but must not silently convert an authored ID. |
+| Reserved characters | Exactly one `:` and at least the first `/` are structural. Extra `/` separate local segments. `.`, `\\`, `@`, `#`, `%`, whitespace, control characters and non-ASCII are invalid. Empty segments, leading/trailing `/`, and `.`/`..` paths cannot occur. |
+| Local path meaning | Additional `/` is part of the stable local identity and can group names for authors. It grants no filesystem hierarchy, inheritance, ownership, fallback lookup, or relative-reference semantics. Renaming a segment changes the ID. |
+| Package ownership | A package declares one namespace, preferably equal to its canonical package ID, and may define only IDs under it. The resolved package closure has exactly one owner per namespace. Version is package metadata, not part of an ID; a later version of the same lineage may retain IDs. A reference to another namespace requires a declared dependency. |
+| Duplicates | Two definitions with the same full ID are an error even if bytes are identical or one would win by load order. A type change also changes the ID; no two package lineages may claim one namespace in a resolved closure. Diagnose exact duplicates and candidate collisions created by suggested legacy normalization. |
+| Aliases | No automatic aliases and no general alias graph in N2. When a real saved or cross-package reference must migrate, allow an explicit canonical `old_id → new_id` map owned by the namespace's package. Reject cycles, duplicate sources, live-ID collisions, missing targets, and cross-namespace redirects without an explicit migration/dependency policy. Never infer aliases from filenames or labels. |
+| Invalid input | OAL fails validation of an authored ID or reference with package, source location, rejected bytes and reason. A future runtime rejects an invalid compiled ID/required reference at load; it must not silently repair, truncate or substitute another definition. |
 
-**Why this shape:** [Factorio prototype names](FACTORIO.md) show the value of stable type/name lookup; [tModLoader ownership](TMODLOADER.md) shows mod-scoped identity; [Arma addon dependencies](ARMA3.md) make cross-package references explicit; [Bethesda/xEdit](BETHESDA_XEDIT.md) exposes the cost of identity tied to load order and conflict resolution. These are architectural comparisons, not claims that those engines use this syntax. The current [N1 review](CURRENT_RUNTIME_CONTENT_BOUNDARY_REVIEW.md) shows that `map_id` comes from a BSP stem, assets lack ownership, loadouts use labels, and network ordinals depend on filename sort.
+Legacy `map_id`, OALASSET `name`, Halo tag fragments, filenames, display labels and array positions remain legacy lookup/provenance data. They do not become canonical IDs merely because they happen to parse. N2 can report proposed mappings and collisions without rewriting packages. Existing packages continue through their current loader path until an explicit migration. A 96-byte ID needs new storage: OALASSET `name[48]` is too small.
 
-**N2 acceptance evidence:** with original synthetic packages, validate one own-namespace definition, one declared cross-package reference, one undeclared reference, one duplicate ID, one case collision suggestion, one invalid/overlong string, and one legacy mapping. Show diagnostics with package, source location, target ID and reason. A second build with renamed/moved files should produce the same canonical IDs. This validates grammar and tooling without promising save or multiplayer compatibility yet.
+**Why this shape:** [Factorio prototype names](FACTORIO.md) support stable type/name lookup; [tModLoader ownership](TMODLOADER.md) supports mod-scoped identity; [Arma dependencies](ARMA3.md) support explicit cross-package references; [Bethesda/xEdit](BETHESDA_XEDIT.md) shows the cost of load-order identity. These are architectural comparisons, not claims that those engines use this spelling. [N1](CURRENT_RUNTIME_CONTENT_BOUNDARY_REVIEW.md) shows current path, label and ordinal lookup are distinct migration cases.
 
-**Confidence:** MEDIUM. **MegaMod applicability:** CRITICAL. **OAL applicability:** CRITICAL. **Status:** RESEARCH ONLY. **Implementation urgency:** NOW. The precise length and hyphen rule should follow a read-only inventory of current authored names; the separation from paths, display labels and dense indices is high confidence.
+**N2 acceptance evidence:** synthetic own-namespace and declared cross-package references; undeclared reference; duplicate full ID; case-collision suggestion; invalid and overlong strings; explicit legacy mapping; and a file move/rename that leaves a deliberately authored ID unchanged. Diagnostics identify package, source location, target and reason.

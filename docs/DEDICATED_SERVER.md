@@ -15,7 +15,7 @@ connect to it exactly as they connect to a phone host today.
 | JSON status file (players and their addresses, packets, uptime) | done |
 | `sim = scripted`: a stand-in match to test clients and reachability | done, a real joiner played it over UDP |
 | `sim = match`: the real game, headless | **S1 written (host_net.c), awaiting a phone check; S2-S3 to do** |
-| Join password (protocol v10) | designed below; parsed, not enforced |
+| Join password (planned protocol v11) | design below; config parsed, not enforced |
 | Rate limiting per address | done: 600 packets/s, burst 1200, per IPv4 source; `rate_limited` in the status file |
 
 ## Running it
@@ -41,7 +41,7 @@ fix its `ExecStart` path to where the repo lives on that machine).
 
 `--check` prints the address it resolved and refuses (with the interface
 list) when the machine has no such address -- it never falls back to
-listening everywhere. Do not port-forward to it until v10's password is in (below); rate
+listening everywhere. Do not port-forward to it until the planned v11 password work is in (below); rate
 limiting is.
 
 ### The config
@@ -49,7 +49,7 @@ limiting is.
 `scripts/server.cfg.example` lists every key with its default. Unknown keys
 are warnings; bad values are errors with their line number. The keys:
 `name` (23 characters, what LAN browsers show), `motd`, `bind`, `port`,
-`max_players` (2-8), `password` (v10), `maps` (rotation: `bloodgulch` is
+`max_players` (2-8), `password` (planned v11), `maps` (rotation: `bloodgulch` is
 the Trial's, anything else a `<name>.oalmap` in `map_dir`), `map_dir`,
 `trial_dir` (the owner's Trial maps), `mode` (slayer, team, ctf),
 `score_limit`, `time_limit`, `respawn`, `bots`, `bot_skill`,
@@ -110,16 +110,19 @@ plays exactly as before; then `sim = match` on the desktop with two phones.
 Then `megamod-server` swaps its scripted match for `hta_session_tick` and
 rotates `maps` when a match ends.
 
-## Before the internet: protocol v10
+## Protocol version plan before internet play
 
-**Password.** v10 adds a 16-byte challenge-response to the join: the server's WELCOME-CHALLENGE sends a random
+- **v9:** previous/published LAN protocol before the content-compatibility work.
+- **v10:** planned mandatory gameplay-content fingerprint/compatibility handshake. It must reject absent, invalid or mismatched content before spawn. This is not password authentication; implementation is in progress on Claude's branch.
+- **v11:** reserved/planned join-password work described below, assuming that plan remains. The password setting is currently parsed but not enforced.
+
+**Password proposal for v11.** The planned design adds a 16-byte challenge-response to the join: the server's WELCOME-CHALLENGE sends a random
 nonce; the client answers `HMAC-SHA256(password, nonce || client nonce)`
 truncated to 16 bytes; a wrong answer gets `HTA_NET_REJECT_PASSWORD` (a new
 reason the phone shows as "WRONG PASSWORD"). The password never crosses
 the wire, and a replayed answer fails on a new nonce. The Android join
 screen gains a password field (Java) and INFO a `password required` flag so
-LAN browsers show a lock. Bump `HTA_NET_VERSION` to 10; v9 and v10 refuse
-each other, as always.
+LAN browsers show a lock. A future v11 implementation will bump `HTA_NET_VERSION` from v10 to 11; mismatched protocol versions refuse each other.
 
 **Rate limiting (done 2026-09-25).** `hta_net_server_pump` keeps a token
 bucket per source IPv4 address (32 sources, the longest-silent evicted),

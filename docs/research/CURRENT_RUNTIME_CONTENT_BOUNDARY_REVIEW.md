@@ -28,3 +28,5 @@
 4. Does the local content set contain duplicate asset `name` values under different filenames, duplicate display labels, or substring-ambiguous Halo bases? A read-only inventory can answer this without changing formats.
 
 **Inference:** N2 can begin with validation/reporting on existing manifests and a separate canonical ID field. A binary redesign is unnecessary for that proof. N3 should measure how much of the gameplay closure is outside the present map CRC before treating that CRC as package compatibility.
+
+**Post-N1 architecture follow-up:** [dense-index hazards](DENSE_INDEX_HAZARDS.md) records current character/weapon, vehicle, projectile-pool, prop and pickup ordinals, plus future package-array hazards. [The independent v10 fingerprint review](V10_FINGERPRINT_ARCHITECTURE_REVIEW.md) distinguishes required gameplay matching from cosmetic/provenance data. Both are read-only recommendations, not changes to Claude's in-flight v10 implementation.

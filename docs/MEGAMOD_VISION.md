@@ -108,7 +108,7 @@ directory layout to impose. How the code is laid out today is in
 | Halo compatibility | Reads the owner's Trial cache (Blood Gulch, bitmaps, sounds, ui) and takes gameplay values from the tags. **Every match, including on imported maps, still loads Blood Gulch's tags** for bipeds, weapons, sounds, sky, rules and equipment (`hta_game_load` on the Halo cache). Only `megamod-sandbox` runs with no game data. |
 | Imported content | OALMAP v1/v2 maps (v2 adds static Source lightmaps) and OALASSET v1 characters, weapons and sound banks, made by Open Asset Lab from Source/GMod. The owner's private bundle: six maps, 14 characters, 11 weapons. Hero stats and abilities come from `hero_roster.json` data plus special-cased C in `game.c`. |
 | Gameplay | Slayer, Team Slayer, CTF (C in `game.c`); bots on a nav grid; Halo vehicles on Blood Gulch only; heroes with flight and abilities; destructible props, gibs, weather, procedural sound. |
-| Multiplayer | Host-authoritative UDP, protocol v9, LAN discovery and direct IP, fuzzed decoders, per-source rate limiting. Feature-specific packets (WORLD, GAME, KILL, FX, VEHICLES, DROPS, …). No authentication yet (v10 plan in [DEDICATED_SERVER.md](DEDICATED_SERVER.md)). |
+| Multiplayer | Host-authoritative UDP, published protocol v9 before the in-progress v10 mandatory content-compatibility work, LAN discovery and direct IP, fuzzed decoders, per-source rate limiting. Feature-specific packets (WORLD, GAME, KILL, FX, VEHICLES, DROPS, …). No authentication yet; join-password work is planned for v11 in [DEDICATED_SERVER.md](DEDICATED_SERVER.md). |
 | Physics | Custom: triangle-grid collision with placed instances, biped movement, box/sphere rigid bodies for debris and props, Halo-derived vehicles, a single-body corpse tumble. **No articulated ragdolls, no joints or constraints.** |
 | Navigation | A 2D-ish grid built from collision, with directed links and prop blocking. **No ladders, lifts, doors, teleports or flight paths.** |
 | Materials | Halo shader interpretation for Halo content; imported maps carry baked RGBA albedo (+ optional lightmap) per group with alpha and breakable flags. **No shared material model.** |
@@ -350,7 +350,7 @@ component** rather than a growing list of feature packets:
 
 Policies: `server-authoritative`, `replicated`, `predicted`, `interpolated`,
 `local-only`. Keep strict protocol versioning, fuzzing and validation, and
-the per-source rate limit. Before any internet play: authentication (v10)
+the per-source rate limit. Before any internet play: authentication (planned v11)
 and host validation of client-reported state (today the host trusts a
 joiner's position).
 

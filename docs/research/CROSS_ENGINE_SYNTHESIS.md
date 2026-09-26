@@ -12,11 +12,11 @@ This synthesis groups **observed patterns** and **MegaMod inferences** by proble
 
 ## Content identity and registration
 
-**Observed:** Factorio uses named prototypes, [Arma](ARMA3.md) exposes config classes plus addon dependencies, [Bethesda/xEdit](BETHESDA_XEDIT.md) depends on FormIDs/masters and pays heavily for implicit overrides, and tModLoader records the owning mod in a full name. **Inference:** stable namespaced authoring IDs plus immutable startup registries and dense runtime indices. Explicit patch packages only after a real need; no load-order-derived identity or silent last-wins.
+**Observed:** Factorio uses named prototypes, [Arma](ARMA3.md) exposes config classes plus addon dependencies, [Bethesda/xEdit](BETHESDA_XEDIT.md) depends on FormIDs/masters and pays heavily for implicit overrides, and tModLoader records the owning mod in a full name. **Inference:** [`namespace:type/name`](CONTENT_ID_GRAMMAR_RECOMMENDATION.md) is the single research grammar for stable namespaced authoring IDs, followed by immutable startup registries and dense runtime indices. It is not yet a runtime format. Explicit patch packages only after a real need; no load-order-derived identity or silent last-wins.
 
 ## Networking and replication
 
-**Observed:** Source/GMod expose replication tables, prediction, and separate realms; Space Engineers' snapshot shows sync components; NS2 community docs declare custom network vars; [GameNetworkingSockets](GAME_NETWORKING_SOCKETS.md) solves transport delivery/connection problems, not gameplay authority. **Inference:** preserve MegaMod's v9 host-authoritative UDP protocol; declare schemas for modded entity state, compare content hashes at join, send bounded intents from clients, and separate lossy snapshots from reliable state transitions. Profile Internet needs before a transport replacement.
+**Observed:** Source/GMod expose replication tables, prediction, and separate realms; Space Engineers' snapshot shows sync components; NS2 community docs declare custom network vars; [GameNetworkingSockets](GAME_NETWORKING_SOCKETS.md) solves transport delivery/connection problems, not gameplay authority. **Inference:** preserve MegaMod's host-authoritative UDP architecture; the planned v10 handshake must compare effective indexed gameplay content before spawn (see [review](V10_FINGERPRINT_ARCHITECTURE_REVIEW.md)). Declare schemas for future modded entity state, send bounded intents from clients, and separate lossy snapshots from reliable state transitions. Profile Internet needs before a transport replacement.
 
 ## Mod dependencies and package conflicts
 

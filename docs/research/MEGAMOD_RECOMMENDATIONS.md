@@ -26,14 +26,30 @@ Use the bounded [initial ID grammar recommendation](CONTENT_ID_GRAMMAR_RECOMMEND
 - **Dependencies:** OAL manifest read/write and MegaMod loader inventory. **Prototype needed?** Yes, synthetic duplicate/missing-reference packages.
 - **Open Asset Lab impact:** implement offline checks and source-position diagnostics. **Networking impact:** canonical IDs enable package matching. **Android impact:** one startup lookup table at most.
 
-### N3. Measure network/package compatibility gaps on current v9
+### N3. Close the current v9 network/package compatibility gap
 
 - **Problem:** matching APKs and private roster packages are operational requirements, while future user packages need an explicit handshake.
 - **Observed solution:** NS2 file consistency, Factorio save/mod configuration alignment, GNS connection state.
-- **Proposed MegaMod adaptation:** inventory v9 handshake and content fields, add metrics/loss simulator first, then design a canonical gameplay-content hash when packages are stable.
+- **Proposed MegaMod adaptation:** make the planned v10 gameplay fingerprint mandatory before spawn for the current effective indexed content. [Independent review](V10_FINGERPRINT_ARCHITECTURE_REVIEW.md) records the safety property and exclusions. Metrics/loss simulation remain useful follow-up; a future package lockfile does not replace the immediate gate.
 - **Benefits:** prevents invisible mismatches. **Costs:** instrumentation and test fixtures. **Risks:** hash of nondeterministic manifest fields; canonicalize in OAL.
 - **Dependencies:** current net codec and package manifests. **Prototype needed?** Yes, two synthetic peers with mismatched content.
 - **Open Asset Lab impact:** deterministic closure hash/lockfile design. **Networking impact:** direct; fail before spawn. **Android impact:** small startup hash cost, no per-frame work.
+
+## Post-N3 dependency decision
+
+The [order memo](POST_N3_ORDER_DECISION.md) recommends a small desktop testing shell before X1, then full Step 5 after X1. The [X1 authoring comparison](X1_ORIGINAL_AUTHORING_PATH.md) recommends a programmatic normalized-world fixture through OAL's normal validator/compiler. N2 remains a read-only ID audit; its grammar is [settled as a research recommendation](CONTENT_ID_GRAMMAR_RECOMMENDATION.md), not a runtime migration.
+
+| Phase | Prerequisite | Concrete problem solved | Acceptance condition | Why no earlier |
+| --- | --- | --- | --- | --- |
+| N1 inventory | Current OAL/runtime source | Reveals actual gameplay fields and local ordinals | Field/loader/network inventory reconciled with code and OAL package docs | Must precede changes that assume the boundary |
+| N3 planned v10 | N1's current-index evidence | Stops peers joining with incompatible indexed gameplay content or zero bypass | Same-index compatibility gate is mandatory, cross-platform mismatch tests reject before spawn | Correctness bug exists now; no stable-ID migration needed |
+| N2 read-only audit | N1 names and OAL manifests | Exposes collisions and legacy mapping cost for `namespace:type/name` | Candidate-ID/collision/reference diagnostics on synthetic and current data; no runtime format change | Migration before v10 would enlarge the bug fix |
+| Small Step 5 testing shell | Shared `hta_session_tick`, N3 reject diagnostics | Drives two clients, late join and state inspection cheaply | Scripted host/join, mismatch rejection and late-join observations without native menu/audio | Before N3 it would test an unsafe join path; full Step 5 is larger than needed |
+| X1 world-event slice | N3 gate, testing shell, original OAL fixture | Generic Button → Relay → Door and Trigger → Teleport with host state/collision | Two clients and late join agree; OAL invalid-link tests fail; reordered placements and stale handles are safe | Needs real fixture and net test seams; no editor required |
+| Full Step 5 desktop | X1 behavior and shared player/action contract | Desktop parity and visual debugging | Desktop hosts/joins same match and action behavior as Android | X1 can reveal needed state/action UI without blocking engine proof |
+| X2 small immutable registry | X1 fields plus N2 evidence | Shared definition identity beyond ad hoc lists | Two definitions and cross-reference load without positional save identity | Avoid speculative general registry before X1 |
+| X3 host Lua | X1/X2 verbs and authority | Creator behavior beyond fixed C links | One bounded host ability/rule, deterministic state/late join | Scripting API needs proven handles/events |
+| X4 closure/lockfile | X2/X3 package dependency needs | Reproducible package-set resolution and compatibility | Missing/conflicting dependency rejects; closure digest reproducible | Existing v10 per-match gate solves today's LAN bug without container rewrite |
 
 ## NEXT
 
