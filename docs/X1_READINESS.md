@@ -17,39 +17,39 @@ Yes, without a new binary format:
   unique within the world; links name targets by placed ID.
 - **Runtime:** resolved once at world load into a dense table (slot +
   generation), as props are today.
-- **Network:** the dense slot is safe to send, because the whole manifest is
-  already in the map check (`world_ext.key` hashes every manifest byte;
-  [CONTENT_COMPATIBILITY.md](CONTENT_COMPATIBILITY.md)). Two peers with the
-  same package build the same table in the same order. No placed ID string
-  needs to cross the wire.
+- **Network:** if the placement table is fully specified by the manifest,
+  the current map key checks its bytes and order (`world_ext.key` hashes the
+  manifest; [CONTENT_COMPATIBILITY.md](CONTENT_COMPATIBILITY.md)). A dense
+  slot can then be sent without a placed ID string. The key does **not**
+  cover binary geometry/collision, so X1 must separately decide how a
+  moving collider derived from that payload is made compatible.
 - The manifest scanner in `src/asset/external_map.c` is key-by-key and
   order-sensitive; a placements section needs a real bounded parser (count,
   string length, link fan-out limits), fuzzed like the packet decoders.
 
 ## How should the first original test world be authored?
 
-**Recommended: A -- a tiny OAL world-description file compiled by the
-normal pipeline.** A JSON (or TOML) file listing axis-aligned boxes
-(floor, walls, a door slab, a button, trigger volumes) with a material each,
-spawn points, and the X1 placements and links. A small OAL module turns the
-boxes into triangles and writes an ordinary OALMAP through the existing
-writer (`compile_map`'s packaging half), including the placements section.
+**Reconciled recommendation: B for the integration fixture -- construct an
+ORIGINAL normalized OAL world programmatically, then compile it through the
+normal validator and package writer.** The test builder supplies simple
+floor/wall/door geometry, collision, spawn points, placements and links. It
+does not write OALMAP bytes directly or establish a public JSON/TOML world
+format. See the [option comparison](research/X1_ORIGINAL_AUTHORING_PATH.md).
 
-Why this and not the others:
+The other test paths have narrower roles:
 
-- **B (a synthetic OALMAP generated in C test code)** is good for MegaMod's
-  unit tests of the runtime half, and should exist too, but it skips OAL's
-  validation (missing targets, duplicate IDs, cycles) -- half of what X1 is
-  meant to prove.
+- **A C runtime fixture** is good for fast isolated MegaMod unit tests and
+  should exist too; it skips OAL validation, so it cannot replace the
+  compiled integration fixture.
 - **C (glTF + metadata)** brings a mesh importer and a scene-graph mapping
   into scope before anything needs them.
 - **A synthetic BSP** (OAL's tests already generate one) would push the test
   world through Source entity classes (`func_door`, `logic_relay`), which
   the vision forbids as the generic contract.
 
-A needs about 150-250 lines in OAL (boxes -> triangles, UV per box face,
-one solid-colour texture per material) and no editor. The same file format
-later serves any hand-made test arena.
+The programmatic builder needs only enough original geometry for the test;
+its reusable seam is the normal OAL validator/compiler, not a second input
+format or editor.
 
 ## Does Step 5 (the desktop game) improve X1 testing enough to go first?
 
@@ -76,18 +76,22 @@ being reworked for it.
   GAME packet's prop mask, sent every snapshot so a late joiner converges
   without replaying events. Teleports need nothing new: the actor's
   position is already replicated.
-- **Protocol:** one version bump for the new fields (v11), coordinated with
-  the password work (then v12, or folded into the same bump).
-- **Guard:** none new -- placements come from the OALMAP, already in the
-  map check.
+- **Protocol:** X1's packet fields need an explicit version bump. v11 remains
+  reserved for the planned password work; if that reservation holds, X1 uses
+  v12 or a later assigned version. No number is assigned by this note.
+- **Guard:** manifest placement IDs/links are covered by the current map
+  key; gameplay collider geometry in the binary payload is not. Add a
+  semantic package check if X1's behavior depends on that payload.
 
 ## Suggested order
 
-1. OAL: world-description compiler (A) + placements section + validation
+1. OAL: programmatic original normalized-world fixture (B) through the
+   ordinary validator/compiler + placements section + validation
    (unique IDs, known kinds, target existence, fan-out, cycle warning).
 2. MegaMod: bounded placements parser; dense table with generations; door
    collider through the existing instance path; host-side event queue with
    a per-tick budget; C unit tests on a B-style fixture.
-3. Network: CONTROL interact, per-placement state array; v11.
+3. Network: CONTROL interact and per-placement state array; assign a protocol
+   version without taking the v11 password reservation.
 4. `megamod-join` interact key; emulator + desktop two-client and late-join
-   runs on the A-authored world.
+   runs on the OAL-compiled original world.

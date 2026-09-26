@@ -1,6 +1,6 @@
 # N1 independent boundary review
 
-**Status:** source observation, 2026-09-26; supports Claude's contract inventory, not a replacement for it. Checked MegaMod `halo-sandbox` and Open Asset Lab `main` as present locally on this date. No package or runtime behavior was changed.
+**Status:** historical pre-v10 source observation, 2026-09-26. It explains why v10 exists; the [landed compatibility contract](../CONTENT_COMPATIBILITY.md) supersedes its handshake statements. No package or runtime behavior was changed by this review.
 
 ## Field roles at the current boundary
 
@@ -28,3 +28,5 @@
 4. Does the local content set contain duplicate asset `name` values under different filenames, duplicate display labels, or substring-ambiguous Halo bases? A read-only inventory can answer this without changing formats.
 
 **Inference:** N2 can begin with validation/reporting on existing manifests and a separate canonical ID field. A binary redesign is unnecessary for that proof. N3 should measure how much of the gameplay closure is outside the present map CRC before treating that CRC as package compatibility.
+
+**Post-N1 architecture follow-up:** [dense-index hazards](DENSE_INDEX_HAZARDS.md) classifies the remaining positional systems against landed v10. [The independent v10 review](V10_FINGERPRINT_ARCHITECTURE_REVIEW.md) records actual fingerprint behavior, float quantization and the world-key boundary.

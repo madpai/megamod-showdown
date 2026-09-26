@@ -13,13 +13,13 @@ are only valid if both built the same table from the same inputs in the
 same order. So a joiner is admitted only when:
 
 1. **map check** -- `cache.crc32 ^ world_ext.key` (`src/app/match_load.c`,
-   `hta_match_begin`) equals the host's: the same Trial map (its header CRC)
-   and the same imported world package (FNV-1a of its manifest bytes,
-   `src/asset/external_map.c`). Covers everything built from the Trial tags
-   and the `.oalmap`.
+   `hta_match_begin`) equals the host's: a 32-bit check combining the Trial
+   cache's **stored header CRC** and FNV-1a of the imported world manifest,
+   `src/asset/external_map.c`). It does not cover the `.oalmap` binary
+   geometry, collision or spawn payload. See the [world-key trace](research/V10_FINGERPRINT_ARCHITECTURE_REVIEW.md#exact-world-package-key-guarantee).
 2. **content fingerprint** (new in v10, `src/app/compat.c`) equals the
-   host's: the same imported characters and weapons, with the same gameplay
-   values, in the same order. Covers everything built from `.oalasset`.
+   host's: the same imported characters and weapons, with the hashed gameplay
+   fields in the same order and float values in the same rounding buckets.
 
 A host that knows neither (a test harness, `megamod-fakehost`) takes anyone.
 Before v10 a joiner sending a map check of 0 skipped check 1; it is now
@@ -80,10 +80,16 @@ Strings, not positions (safe): the class/loadout choice from the menus
   ability_name, ability_base, ability_damage/cooldown/duration/interval/
   radius/force/cone, ability_beam, knockback;
 - integers and booleans little-endian u32; floats rounded to 1/10000 as
-  i32 (clamped, NaN fixed), so ARM and x86 agree; strings length-prefixed,
+  i32 (clamped, NaN fixed), so ARM and x86 agree on the fingerprint;
+  strings length-prefixed,
   exactly as stored (no case folding: loadouts match display labels
   exactly, so a relabel is a gameplay change).
 - 0 is never produced (0 means "none").
+
+The 1/10000 rounding is **fingerprint equivalence only**. Gameplay uses
+the loaded float without this rounding. Distinct values within one rounding
+bucket can therefore affect movement or damage while passing the v10 content
+check; see the [targeted case](research/V10_FINGERPRINT_ARCHITECTURE_REVIEW.md#targeted-float-quantization-case).
 
 **Left out (cosmetic):** models, sounds, view mirroring, mount placement,
 hold type, crosshair, ability colour, file paths, provenance. A different
@@ -129,6 +135,8 @@ an empty-roster guest in with stand-ins would be a deliberate policy change
   of kind "character". Local UI; both sides identical under the fingerprint.
 - **World package key** hashes the whole manifest, provenance included: a
   provenance-only change refuses otherwise identical maps (safe direction).
+  Valid binary geometry, collision or spawn differences outside that manifest
+  are not detected by this key.
 - Kill feed and HUD strings are sent as text; no issue.
 
 ## Found alongside (fixed)

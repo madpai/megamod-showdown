@@ -1,12 +1,12 @@
 # MegaMod and Open Asset Lab recommendations
 
-**Status:** proposals from research on 2026-09-26, not implemented decisions. Follow [MegaMod's staged refactor rule](../MEGAMOD_VISION.md#21-do-not-over-refactor): a real limitation, minimal slice, tests, Android/Trial/imported-content regression. `NOW` means documentation/measurement that helps current work; `NEXT` means a bounded feature slice after evidence; `LATER` and `EXPERIMENTAL` require more proof. See [synthesis](CROSS_ENGINE_SYNTHESIS.md) and [Asset Lab consequences](https://github.com/madpai/open-asset-lab/blob/main/docs/RESEARCH_CONNECTIONS.md).
+**Status:** research roadmap reconciled with landed N1/N3/read-only N2 on 2026-09-26. X1 onward remain proposals. Follow [MegaMod's staged refactor rule](../MEGAMOD_VISION.md#21-do-not-over-refactor): a real limitation, minimal slice, tests, Android/Trial/imported-content regression. See [synthesis](CROSS_ENGINE_SYNTHESIS.md), [current v10 contract](../CONTENT_COMPATIBILITY.md) and [Asset Lab consequences](https://github.com/madpai/open-asset-lab/blob/main/docs/RESEARCH_CONNECTIONS.md).
 
 ## NOW
 
-### N1. Freeze the current runtime/content boundary in a contract inventory
+### N1. Runtime/content boundary inventory — done
 
-The independent [source review](CURRENT_RUNTIME_CONTENT_BOUNDARY_REVIEW.md) identifies current path/ID conflation, manifest gameplay fields, ordinal network dependencies and Halo-tag/display-name lookups. Claude's contract inventory should verify these against its implementation branch.
+The independent [source review](CURRENT_RUNTIME_CONTENT_BOUNDARY_REVIEW.md) identified path/ID conflation, manifest gameplay fields, ordinal network dependencies and Halo-tag/display-name lookups. The landed [v10 contract](../CONTENT_COMPATIBILITY.md) resolves the network inventory against code.
 
 - **Problem:** OALMAP/OALASSET and current gameplay data have different schemas and ownership assumptions.
 - **Observed solution:** Factorio publishes stage/API boundaries; Space Engineers distinguishes builders and runtime entities.
@@ -15,9 +15,9 @@ The independent [source review](CURRENT_RUNTIME_CONTENT_BOUNDARY_REVIEW.md) iden
 - **Dependencies:** existing package docs and loader source. **Prototype needed?** No.
 - **Open Asset Lab impact:** source-to-runtime field map and provenance matrix. **Networking impact:** identify fields affecting match compatibility. **Android impact:** no runtime cost.
 
-### N2. Add a creator-visible OAL validation report for stable IDs/references
+### N2. Read-only OAL stable-ID audit — done
 
-Use the bounded [initial ID grammar recommendation](CONTENT_ID_GRAMMAR_RECOMMENDATION.md) as the experiment input, subject to a current-name inventory; it is not yet a format decision.
+OAL's `assetlab ids` command now audits the [single proposed grammar](CONTENT_ID_GRAMMAR_RECOMMENDATION.md), current-name collisions and legacy references without changing package or runtime formats. The current bundle has one duplicate world identity and no declared namespaces; see [OAL's results](https://github.com/madpai/open-asset-lab/blob/main/docs/CONTENT_IDS.md).
 
 - **Problem:** content references and package dependencies become opaque as new asset kinds arrive.
 - **Observed solution:** Factorio prototype errors, Arma required addons, xEdit reference/conflict views.
@@ -26,14 +26,29 @@ Use the bounded [initial ID grammar recommendation](CONTENT_ID_GRAMMAR_RECOMMEND
 - **Dependencies:** OAL manifest read/write and MegaMod loader inventory. **Prototype needed?** Yes, synthetic duplicate/missing-reference packages.
 - **Open Asset Lab impact:** implement offline checks and source-position diagnostics. **Networking impact:** canonical IDs enable package matching. **Android impact:** one startup lookup table at most.
 
-### N3. Measure network/package compatibility gaps on current v9
+### N3. Protocol v10 imported-content compatibility — done
 
 - **Problem:** matching APKs and private roster packages are operational requirements, while future user packages need an explicit handshake.
 - **Observed solution:** NS2 file consistency, Factorio save/mod configuration alignment, GNS connection state.
-- **Proposed MegaMod adaptation:** inventory v9 handshake and content fields, add metrics/loss simulator first, then design a canonical gameplay-content hash when packages are stable.
+- **Landed MegaMod adaptation:** protocol v10 compares map and ordered imported character/weapon fingerprints before allocating a match slot. [Independent review](V10_FINGERPRINT_ARCHITECTURE_REVIEW.md) records its actual scope and remaining float/world-key limits. A future package lockfile does not replace this immediate gate.
 - **Benefits:** prevents invisible mismatches. **Costs:** instrumentation and test fixtures. **Risks:** hash of nondeterministic manifest fields; canonicalize in OAL.
 - **Dependencies:** current net codec and package manifests. **Prototype needed?** Yes, two synthetic peers with mismatched content.
 - **Open Asset Lab impact:** deterministic closure hash/lockfile design. **Networking impact:** direct; fail before spawn. **Android impact:** small startup hash cost, no per-frame work.
+
+## Post-N3 dependency decision
+
+The [order memo](POST_N3_ORDER_DECISION.md) now recommends X1 with the existing emulator/desktop joiner/headless paths, adding only an interact input as needed; full Step 5 follows X1. The [X1 authoring comparison](X1_ORIGINAL_AUTHORING_PATH.md) recommends a programmatic normalized-world integration fixture through OAL's normal validator/compiler, plus a C runtime unit fixture. N2's grammar is [audited](CONTENT_ID_GRAMMAR_RECOMMENDATION.md), not a runtime migration.
+
+| Phase | Prerequisite | Concrete problem solved | Acceptance condition | Why no earlier |
+| --- | --- | --- | --- | --- |
+| N1 inventory — done | Current OAL/runtime source | Reveals actual gameplay fields and local ordinals | [V10 contract](../CONTENT_COMPATIBILITY.md) reconciles field/loader/network inventory | Must precede changes that assume the boundary |
+| N3 v10 — done | N1's current-index evidence | Refuses mismatched imported rosters and missing joiner values before spawn | Cross-platform mismatch/zero tests reject before slot allocation | Correctness bug existed without stable-ID migration |
+| N2 read-only audit — done | N1 names and OAL manifests | Exposes collisions and legacy mapping cost for `namespace:type/name` | OAL audit and synthetic tests; no runtime format change | Migration before v10 would enlarge the bug fix |
+| X1 world-event slice — next | V10 gate, original OAL fixture, current emulator/joiner paths | Generic Button → Relay → Door and Trigger → Teleport destination with host state/collision | Real compiled package loads; two clients and late join agree; invalid-link, reorder and stale-handle tests pass | Needs real fixture and a bounded interact input, not full desktop gameplay |
+| Full Step 5 desktop | X1 behavior and shared player/action contract | Desktop parity and visual debugging | Desktop hosts/joins same match and action behavior as Android | X1 can reveal needed state/action UI without blocking engine proof |
+| X2 small immutable registry | X1 fields plus N2 evidence | Shared definition identity beyond ad hoc lists | Two definitions and cross-reference load without positional save identity | Avoid speculative general registry before X1 |
+| X3 host Lua | X1/X2 verbs and authority | Creator behavior beyond fixed C links | One bounded host ability/rule, deterministic state/late join | Scripting API needs proven handles/events |
+| X4 closure/lockfile | X2/X3 package dependency needs | Reproducible package-set resolution and compatibility | Missing/conflicting dependency rejects; closure digest reproducible | Existing v10 per-match gate solves today's LAN bug without container rewrite |
 
 ## NEXT
 
