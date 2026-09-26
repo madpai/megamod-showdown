@@ -5,12 +5,13 @@
  * a map loads and plays.
  *
  *   megamod-match [--trial DIR] [--bundle DIR] [--world NAME] [--bots N]
- *                 [--mode slayer|team|ctf] [--skill 0-3] [--seconds S]
+ *                 [--mode slayer|team|ctf] [--skill 0-3] [--score N] [--seconds S]
  *                 [--cache DIR]
  *   (or HTA_TRIAL_DIR / HTA_BUNDLE_DIR). Exit 0 if the match loaded and ran. */
 #include "app/fs.h"
 #include "app/match_load.h"
 #include "app/session.h"
+#include "app/session_tick.h"
 #include "platform/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,7 +30,7 @@ int main(int argc, char **argv)
 {
     const char *trial = getenv("HTA_TRIAL_DIR"), *bundle = getenv("HTA_BUNDLE_DIR");
     const char *world = "", *cache = NULL;
-    int bots = 7, mode = HTA_MODE_SLAYER, skill = 1;
+    int bots = 7, mode = HTA_MODE_SLAYER, skill = 1, score = 25;
     double seconds = 60.0;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
@@ -38,6 +39,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--world") && v) { world = strcmp(v, "bloodgulch") ? v : ""; i++; }
         else if (!strcmp(a, "--bots") && v) { bots = atoi(v); i++; }
         else if (!strcmp(a, "--skill") && v) { skill = atoi(v); i++; }
+        else if (!strcmp(a, "--score") && v) { score = atoi(v); i++; }
         else if (!strcmp(a, "--seconds") && v) { seconds = atof(v); i++; }
         else if (!strcmp(a, "--cache") && v) { cache = v; i++; }
         else if (!strcmp(a, "--mode") && v) {
@@ -45,7 +47,7 @@ int main(int argc, char **argv)
             i++;
         } else {
             fprintf(stderr, "usage: %s [--trial DIR] [--bundle DIR] [--world NAME] [--bots N] "
-                            "[--mode slayer|team|ctf] [--skill 0-3] [--seconds S] [--cache DIR]\n", argv[0]);
+                            "[--mode slayer|team|ctf] [--skill 0-3] [--score N] [--seconds S] [--cache DIR]\n", argv[0]);
             return 2;
         }
     }
@@ -70,13 +72,17 @@ int main(int argc, char **argv)
     }
     snprintf(s->world, sizeof(s->world), "%s", world);
     s->game_mode = mode; s->bot_count = bots; s->bot_skill = skill;
-    s->score_limit = 25; s->time_limit_min = 0; s->respawn_delay = 5.0f;
+    s->score_limit = score; s->time_limit_min = 0; s->respawn_delay = 5.0f;
     s->vehicle_roster = HTA_VROSTER_ALL;
+    /* World effects run headless: props break, block and come back; the
+     * debris is only a little physics nobody draws. */
+    hta_gfx_settings_preset(&s->video, HTA_QUALITY_LOW);
 
     double t0 = hta_time_seconds();
     if (!hta_match_load_world(s, &fs, cache)) { fprintf(stderr, "match: %s\n", s->status); return 1; }
     double t1 = hta_time_seconds();
     if (!hta_match_start(s, cache, false)) { fprintf(stderr, "match: no playable game on this map\n"); return 1; }
+    s->map_loaded = true;
     hta_match_begin(s);
     double t2 = hta_time_seconds();
     printf("match: %s, mode %d, %u units, nav %s, items %s; world %.0f ms, start %.0f ms\n",
@@ -85,19 +91,23 @@ int main(int argc, char **argv)
            (t1 - t0) * 1000.0, (t2 - t1) * 1000.0);
 
     const float dt = 1.0f / 60.0f;
-    unsigned kills = 0, frames = (unsigned)(seconds * 60.0);
+    unsigned kills = 0, broken = 0, rounds = 0, frames = (unsigned)(seconds * 60.0);
     double sim0 = hta_time_seconds();
     for (unsigned f = 0; f < frames; f++) {
         hta_pickups_update(&s->items, dt);
-        hta_game_update(&s->game, dt);
-        hta_game_event e;
-        while (hta_game_pop(&s->game, &e))
-            if (e.kind == HTA_EV_KILL) { kills++; printf("  %6.1f  %s\n", f * dt, e.text); }
+        hta_session_tick(s, dt, f * (double)dt, NULL);
+        for (uint32_t i = 0; i < s->outbox_count; i++)
+            if (s->outbox[i].kind == HTA_EV_KILL) { kills++; printf("  %6.1f  %s\n", f * dt, s->outbox[i].text); }
+        for (uint32_t i = 0; i < s->prop_outbox_count; i++)
+            broken += s->prop_outbox[i].kind == HTA_PROP_EV_BROKE;
+        rounds += s->round_restarted;
     }
     double sim = hta_time_seconds() - sim0;
     uint32_t alive = 0;
     for (uint32_t i = 0; i < s->game.unit_count; i++) alive += s->game.units[i].alive;
-    printf("match: %.0f s simulated in %.2f s (%.2f ms/frame), %u kills, %u of %u alive\n",
-           seconds, sim, frames ? sim * 1000.0 / frames : 0.0, kills, alive, s->game.unit_count);
+    printf("match: %.0f s simulated in %.2f s (%.2f ms/frame), %u kills, %u of %u alive, "
+           "%u props broken of %u, %u new rounds\n",
+           seconds, sim, frames ? sim * 1000.0 / frames : 0.0, kills, alive, s->game.unit_count,
+           broken, s->wfx.props.count, rounds);
     return 0;
 }

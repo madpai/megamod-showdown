@@ -19,6 +19,7 @@
 #include "../app/fs.h"
 #include "../app/content.h"
 #include "../app/match_load.h"
+#include "../app/session_tick.h"
 #include <dlfcn.h>
 #include <signal.h>
 #include <unwind.h>
@@ -2175,7 +2176,6 @@ static char g_game_text[1536];
 #define HTA_FEED_TIME    6.0f
 #define HTA_BANNER_TIME  3.0f
 /* Seconds the scoreboard shows after a game before the next begins. Ours. */
-#define HTA_POSTGAME     10.0f
 
 static uint32_t find_sound(const hta_cache *c, const char *path)
 {
@@ -2240,10 +2240,6 @@ static void feed_push(hta_android *s, const char *text)
 /* Bots walk round whole props and through where they stood: the nav grid
  * follows the props whenever one breaks or comes back. A CTF stand field
  * is worked out at the start, so sync just before it too. */
-static void nav_props(hta_android *s)
-{
-    hta_match_nav_props(&s->session);
-}
 static void start_game(hta_android *s)
 {
     g_phase = "starting match";
@@ -2793,24 +2789,34 @@ static void killcam(hta_android *s, float dt)
     }
 }
 
+/* The props the last tick broke or brought back: their triangles hidden
+ * or shown, and an explosive one's sparks and thunder. */
+static void props_shown(hta_android *s)
+{
+    for (uint32_t pi = 0; pi < s->prop_outbox_count; pi++) {
+        const hta_prop_event pe = s->prop_outbox[pi];
+        uint32_t tag = s->wfx.props.props[pe.prop].user;
+        for (uint32_t i = 0; tag && s->gpu_mesh && i < s->mesh.submesh_count &&
+                             s->world_loaded && s->world_ext.submesh_breakable; i++)
+            if (s->world_ext.submesh_breakable[i] == tag)
+                hta_gfx_mesh_set_draw_mode(s->gpu_mesh, i,
+                    pe.kind == HTA_PROP_EV_RESPAWNED ? s->mesh.submeshes[i].draw_mode : HTA_DRAW_SKIP);
+        if (pe.kind == HTA_PROP_EV_EXPLODED) {
+            hta_fx_burst(&s->wfx.fx, HTA_BURST_SPARKS, pe.pos, NULL, 40);
+            shake_thunder(s, 0.8f);
+        }
+    }
+    s->prop_outbox_count = 0;
+}
+
+/* What the last tick's events look and sound like here, and what they
+ * mean for our own player (app/session_tick.c did what they mean for the
+ * world: props hit, LAN effects and kills sent, the post-game timer). */
 static void game_events(hta_android *s)
 {
-    hta_game_event e;
     char buf[96];
-    while (hta_game_pop(&s->game, &e)) {
-        hta_wfx_game_event(&s->wfx, &e, &s->game);
-        if (s->net_hosting && (e.a==-1 || (e.a>=0 && e.a<HTA_GAME_MAX_UNITS)) &&
-            (e.kind==HTA_EV_FIRE || e.kind==HTA_EV_HIT_WORLD ||
-             e.kind==HTA_EV_DETONATE)) {
-            hta_net_fx fx={0};
-            fx.kind=e.kind==HTA_EV_FIRE ? HTA_NET_FX_FIRE :
-                    e.kind==HTA_EV_HIT_WORLD ? HTA_NET_FX_IMPACT : HTA_NET_FX_DETONATE;
-            fx.entity=e.a<0 ? 255 : (uint8_t)e.a;
-            fx.weapon=(uint8_t)(e.kind==HTA_EV_DETONATE ? e.pool : e.weapon);
-            fx.material=e.material;
-            for (int k=0;k<3;k++) { fx.pos[k]=e.pos[k]; fx.dir[k]=e.dir[k]; }
-            hta_net_server_fx(&s->host_server,&fx);
-        }
+    for (uint32_t ei = 0; ei < s->outbox_count; ei++) {
+        const hta_game_event e = s->outbox[ei];
         switch (e.kind) {
         case HTA_EV_FIRE:
             if (e.weapon < 0 || e.weapon >= HTA_GAME_MAX_WEAPONS) break;
@@ -2895,13 +2901,6 @@ static void game_events(hta_android *s)
             break;
         }
         case HTA_EV_WRECK:
-            if (s->net_hosting) {
-                hta_net_fx fx = { .kind = HTA_NET_FX_WRECK,
-                                  .entity = e.a >= 0 && e.a < HTA_GAME_MAX_UNITS ? (uint8_t)e.a : 255,
-                                  .weapon = (uint8_t)(e.b & 31), .material = 0 };
-                for (int k = 0; k < 3; k++) { fx.pos[k] = e.pos[k]; fx.dir[k] = e.dir[k]; }
-                hta_net_server_fx(&s->host_server, &fx);
-            }
             wreck_fx(s, e.pos);
             break;
         case HTA_EV_PICKUP:
@@ -2946,26 +2945,6 @@ static void game_events(hta_android *s)
                 if (e.weapon >= 0 && (uint32_t)e.weapon < s->game.weapon_count)
                     snprintf(s->killcam_weapon, sizeof(s->killcam_weapon), "%s", s->game.weapons[e.weapon].display);
             }
-            if (s->net_hosting && e.a>=0 && e.a<HTA_GAME_MAX_UNITS) {
-                hta_net_kill kill={0};
-                kill.victim=(uint8_t)e.a;
-                kill.killer=e.b>=0 && e.b<HTA_GAME_MAX_UNITS ? (uint8_t)e.b : 255;
-                size_t k=0;
-                while (k<sizeof(kill.text)-1 && e.text[k]) {
-                    unsigned char ch=(unsigned char)e.text[k];
-                    kill.text[k]=(char)(ch>=32 && ch<127 ? ch : '?'); k++;
-                }
-                kill.text[k]=0;
-                if (e.a<(int32_t)s->game.unit_count && s->game.units[e.a].gibbed) {
-                    kill.flags=HTA_NET_KILL_GIBBED;
-                    kill.amount=e.amount>4.25f ? 4.25f : e.amount>0.0f ? e.amount : 0.0f;
-                    for (int c=0;c<3;c++) {
-                        kill.pos[c]=fminf(fmaxf(e.pos[c],-99999.0f),99999.0f);
-                        kill.from[c]=fminf(fmaxf(e.dir[c],-99999.0f),99999.0f);
-                    }
-                }
-                hta_net_server_kill(&s->host_server,&kill,s->last_time);
-            }
             if (e.b == s->me && e.a != s->me) {
                 char fmt[64];
                 if (!hta_ustr_get(&s->cache, s->game.text_tag, 88, fmt, sizeof(fmt)))
@@ -3002,7 +2981,6 @@ static void game_events(hta_android *s)
         case HTA_EV_GAME_OVER:
             snprintf(s->banner, sizeof(s->banner), "%s", e.text);
             s->banner_age = 0.0f;
-            s->over_timer = HTA_POSTGAME;
             if (s->line_snd[HTA_LINE_GAME_OVER]) play_tag(s, s->line_snd[HTA_LINE_GAME_OVER], 1.0f);
             break;
         default:
@@ -4606,11 +4584,6 @@ static void host_unit_added(hta_session *session)
     game_gpu_upload((hta_android *)session);   /* the session is hta_android's first member */
 }
 
-static void net_host_peers(hta_android *s, double now)
-{
-    hta_host_peers(&s->session, now, host_unit_added);
-}
-
 static void mirror_local(hta_android *s) { hta_host_mirror_local(&s->session); }
 
 /* Put the gun in hand on the ground: swapped for another, it stays. */
@@ -4623,8 +4596,6 @@ static void drop_held(hta_android *s)
     float vel[3]={cosf(s->cam.yaw)*0.6f,sinf(s->cam.yaw)*0.6f,0.8f};
     hta_game_drop_weapon(&s->game,w,&s->ammo,at,s->cam.yaw,vel);
 }
-
-static void net_host_world(hta_android *s) { hta_host_world(&s->session); }
 
 /* The host's vehicles, as of its last snapshot and eased between them,
  * and who is sitting where. A client runs no vehicle physics. */
@@ -4896,7 +4867,7 @@ static void net_client_world(hta_android *s)
 static void net_frame(hta_android *s, double now, float dt, const hta_player_input *in)
 {
     if (!s->net_enabled) return;
-    if (s->net_hosting) hta_net_server_pump(&s->host_server,now);
+    /* A host's server side ran in the tick (app/session_tick.c). */
     hta_net_client_pump(&s->net,now);
     hta_net_fx fx;
     while (hta_net_client_pop_fx(&s->net,&fx)) {
@@ -4976,7 +4947,6 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
             feed_push(s,line);
         } else feed_push(s,kill.text);
     }
-    if (s->net_hosting) net_host_peers(s,now);
     if (!s->net.connected) {
         s->net_spawned=false; s->remote_visible=false;
         s->props_synced=false;
@@ -5150,7 +5120,7 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
         }
     }
 net_after_remote:
-    if (s->net_hosting) net_host_world(s);
+    return;
 }
 
 static void rebuild_gfx_if_size_changed(hta_android *s)
@@ -7020,26 +6990,16 @@ void android_main(struct android_app *app)
         /* Everybody else: the bots think and fight, their rounds fly, the
          * dead come back and the score is kept. Before the particles, so a
          * bot's explosion bursts this frame. */
+        hta_session_tick(&state.session, dt, now, host_unit_added);
+        props_shown(&state);
         if (state.game_on) {
-            if (!state.net_enabled || state.net_hosting) {
-                hta_game_update(&state.game, dt);
-                game_events(&state);
-            }
+            game_events(&state);
             hta_game_view_update(&state.gview, &state.game, view_skip(&state), dt);
             if (state.net_enabled && !state.net_hosting)
                 for (uint32_t i=0;i<state.game.unit_count;i++)
                     state.game.units[i].fired=state.game.units[i].meleed=
                     state.game.units[i].threw=state.game.units[i].hurt=false;
-            if ((!state.net_enabled || state.net_hosting) && state.over_timer > 0.0f) {
-                state.over_timer -= dt;
-                if (state.over_timer <= 0.0f) {
-                    nav_props(&state);
-                    hta_game_start(&state.game);
-                    if (state.net_hosting) state.world_round++;
-                    if (!state.dead) respawn(&state);
-                    hta_log("[game] a new game");
-                }
-            }
+            if (state.round_restarted && !state.dead) respawn(&state);
             game_text(&state, dt);
         }
         hta_particles_update(&state.parts, state.col.built ? &state.col : NULL,
@@ -7214,79 +7174,18 @@ void android_main(struct android_app *app)
                 dynlist[dyncount].vertex_color = true;
                 dyncount++;
             }
-            /* World effects: set up once the map's collision exists (and
-             * again for a new map), stepped every frame, drawn after the
-             * engine's own dynamic meshes. */
-            if (state.map_loaded && state.wfx_world != (const void *)state.mesh.vertices) {
-                if (!state.wfx.ready) {
-                    if (hta_wfx_init(&state.wfx, &state.col, &state.video)) {
-                        hta_wfx_choose_weather(&state.wfx,
-                            hta_wfx_parse_weather(state.video_cfg, state.video_cfg_len));
-                        hta_wfx_gpu_upload(&state.wfx, state.gfx);
-                    }
-                    /* The sounds Halo has none for: breaking props, debris
-                     * landing, gibs, rain and wind. Synthesised, no assets. */
-                    if (state.audio_ok && !state.wfx_audio.ready &&
-                        hta_wfx_audio_init(&state.wfx_audio, &state.audio, 0x5A7Du))
-                        hta_log("[wfx] %.1f MB of procedural sound", (double)state.wfx_audio.bank.bytes / 1048576.0);
-                } else {
-                    hta_wfx_reset(&state.wfx);
-                }
-                /* An imported map's breakables and weather. Props come back
-                 * after 30 s (ours) so a long match keeps its cover. */
-                hta_wfx_load_map(&state.wfx, state.world_loaded ? &state.world_ext : NULL, 30.0f);
-                state.props_synced = state.props_count_warned = false;
-                if (state.wfx.props.count)
-                    hta_log("[wfx] %u breakable props, weather %s", state.wfx.props.count,
-                            hta_weather_name(state.wfx.weather.kind));
-                state.wfx_world = state.mesh.vertices;
-            }
-            /* A LAN client breaks and rebuilds props only as the host says. */
-            state.wfx.props.remote = state.net_enabled && !state.net_hosting;
-            nav_props(&state);
-            /* Props are solid while whole: their instances ride with the
-             * vehicles' in the grid everyone collides with. */
-            if (state.wfx.ready && state.wfx.props.count) {
-                uint32_t nv = state.vehicles.loaded ? state.vehicles.count : 0u;
-                state.col.instance_count = hta_props_instances(&state.wfx.props, state.vehicles.inst, nv,
-                    state.col_merged, (uint32_t)(sizeof(state.col_merged) / sizeof(state.col_merged[0])));
-                state.col.instances = state.col_merged;
-                /* A broad phase over them: every ray, ground probe and
-                 * debris contact looks at the few near it, not all. */
-                hta_collision_index_instances(&state.col, &state.col_index, 0.25f);
-            }
-            /* Cars smash props they drive into (they do not collide). */
-            for (uint32_t i = 0; state.wfx.props.count && state.vehicles.loaded && i < state.vehicles.count; i++) {
-                const hta_vehicle *car = &state.vehicles.cars[i];
-                if (!car->active) continue;
-                float sp = hta_vehicles_speed(&state.vehicles, i);
-                float v3[3] = { cosf(car->yaw) * sp, sinf(car->yaw) * sp, 0.0f };
-                hta_wfx_ram(&state.wfx, car->pos, v3, car->body_radius > 0.1f ? car->body_radius : 1.0f);
-            }
-            /* What broke or came back: hide or show its triangles, and an
-             * explosive one is a real blast (the host's game hurts people). */
-            {
-                hta_prop_event pe;
-                while (state.wfx.ready && hta_props_pop(&state.wfx.props, &pe)) {
-                    uint32_t tag = state.wfx.props.props[pe.prop].user;
-                    for (uint32_t i = 0; tag && state.gpu_mesh && i < state.mesh.submesh_count &&
-                                         state.world_loaded && state.world_ext.submesh_breakable; i++)
-                        if (state.world_ext.submesh_breakable[i] == tag)
-                            hta_gfx_mesh_set_draw_mode(state.gpu_mesh, i,
-                                pe.kind == HTA_PROP_EV_RESPAWNED ? state.mesh.submeshes[i].draw_mode : HTA_DRAW_SKIP);
-                    if (pe.kind == HTA_PROP_EV_EXPLODED) {
-                        if (state.game_on && (!state.net_enabled || state.net_hosting))
-                            hta_game_blast(&state.game, -1, pe.pos, pe.damage, pe.radius * 0.3f, pe.radius);
-                        hta_props_blast(&state.wfx.props, pe.pos, pe.damage, pe.radius,
-                                        &state.wfx.rigid, &state.wfx.fx);
-                        hta_fx_burst(&state.wfx.fx, HTA_BURST_SPARKS, pe.pos, NULL, 40);
-                        shake_thunder(&state, 0.8f);
-                    }
-                }
-            }
+            /* World effects (stepped in the tick, app/session_tick.c):
+             * their meshes on the GPU once set up, their procedural sounds,
+             * and the props that broke or came back shown or hidden. */
+            if (state.wfx.ready && !state.wfx.gpu_debris)
+                hta_wfx_gpu_upload(&state.wfx, state.gfx);
+            /* The sounds Halo has none for: breaking props, debris
+             * landing, gibs, rain and wind. Synthesised, no assets. */
+            if (state.wfx.ready && state.audio_ok && !state.wfx_audio.ready &&
+                hta_wfx_audio_init(&state.wfx_audio, &state.audio, 0x5A7Du))
+                hta_log("[wfx] %.1f MB of procedural sound", (double)state.wfx_audio.bank.bytes / 1048576.0);
             hta_scene drawscene = state.scene;
             if (state.wfx.ready) {
-                hta_wfx_update(&state.wfx, dt, &state.cam);
                 /* Halo plays its own detonations and wrecks: skip those echoes. */
                 hta_wfx_audio_update(&state.wfx_audio, &state.wfx, &state.cam, dt, true);
                 hta_gfx_settings look;

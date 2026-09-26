@@ -468,6 +468,14 @@
      * the session began. */                                                                   \
     hta_frame_stats frame_stats;                                                               \
     double        started_at;                                                                  \
+    /* What the last tick did, for the platform to show (app/session.c):                       \
+     * the game's events and the props that broke or came back, and                            \
+     * whether a new round began (the platform respawns its player). */                        \
+    hta_game_event outbox[HTA_GAME_MAX_EVENTS * 2];                                            \
+    uint32_t      outbox_count;                                                                \
+    hta_prop_event prop_outbox[64];                                                            \
+    uint32_t      prop_outbox_count;                                                           \
+    bool          round_restarted;                                                             \
 
 typedef struct hta_session {
     HTA_SESSION_FIELDS
