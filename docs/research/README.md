@@ -29,6 +29,7 @@ Research date: **2026-09-26**. This corpus informs the [MegaMod Engine and Showd
 | [V10 fingerprint review](V10_FINGERPRINT_ARCHITECTURE_REVIEW.md) | LANDED IMPLEMENTATION REVIEW | Actual compatibility scope, float and world-key limits |
 | [X1 original authoring path](X1_ORIGINAL_AUTHORING_PATH.md) | X1 IMPLEMENTED as recommended (B: programmatic OAL world) | Small original fixture through OAL validation/compiler |
 | [Post-N3 order](POST_N3_ORDER_DECISION.md) | DECISION MEMO | X1 using current tools, then full Step 5 |
+| [Halo reconstruction comparison](halo-reconstruction/README.md) | RESEARCH ONLY; Xbox 2342 versus Trial needs validation | Halo behavior evidence, ancestry audit, universal-port lessons and independent tests |
 
 `COMPLETE` means the documented comparison and recommendation are present, **not** that every upstream implementation is exhaustively audited. Follow-ups mark evidence that cannot yet support a stronger claim. No importer, Lua runtime, registry, network transport, or package format was implemented as part of this research.
 
