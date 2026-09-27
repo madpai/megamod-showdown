@@ -195,6 +195,20 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-27 X3: host-side Lua (docs/SCRIPTING.md).** OAL's
+`x3_script_lab`: the purple button has no links -- the host's Lua
+`on_used` asks the engine to open door A; the ABILITY button (shown for
+Spartans in a world with an ability script) runs the host's Lua
+`on_ability`, which damages players within 2.5 wu through the native
+damage. Joiners never run Lua; script bytes are in the world key (a
+changed script, even a comment, is refused). Checked: host tests x3,
+ASan/UBSan (unit + X1/X2/X3 end to end), ndkcheck, verify.sh 85/85,
+`scripts/test_x3.sh`, and the emulator hosting X3 with desktop joiners and
+its own player. **Phone check (optional):** host `x3_script_lab`, press
+the purple button (door A slides), stand next to a second phone's player
+and press ABILITY (it dies; you get the kill); a second phone joining late
+sees door A open. **Unverified:** a phone *joiner* pressing ABILITY.
+
 **2026-09-26 X2: one mover definition, many doors; the world key
 (docs/WORLD_ENTITIES.md "X2").** OAL's `x2_definition_lab` places
 `x2:mover/basic_slide_door` three times (world_entities schema 2, OALMAP v3

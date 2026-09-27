@@ -5931,16 +5931,16 @@ void android_main(struct android_app *app)
                 bool swung = hw && hw->melee_only;
                 /* The ability: fire it on its button, show how ready. */
                 float charge = state.game_on ? hta_game_ability_charge(&state.game, state.me) : -1.0f;
+                /* No native ability, and the world scripts one (X3). */
+                bool world_ability = charge < 0.0f && state.game_on && state.went.loaded && state.went.defs->ability_script;
                 if (state.net_enabled && !state.net_hosting && state.me>=0 && state.game_on) {
                     hta_unit *mu=&state.game.units[state.me];
                     if(mu->ability_cool>0.0f) mu->ability_cool-=dt;
                 }
                 if (state.hud_ability) {
                     state.hud_ability = false;
-                    /* No native ability, and the world scripts one (X3): the
-                     * host runs it, a joiner asks the host. */
-                    bool scripted = charge < 0.0f && state.went.loaded && state.went.defs->ability_script;
-                    if (scripted && !state.dead) {
+                    /* The world's scripted ability: the host runs it, a joiner asks the host. */
+                    if (world_ability && !state.dead) {
                         if (!state.net_enabled || state.net_hosting) hta_session_ability(&state.session, state.me);
                         else state.net_ability_count++;
                     } else if (charge >= 1.0f && !state.dead) {
@@ -5958,7 +5958,7 @@ void android_main(struct android_app *app)
                     atomic_store(&g_ability_charge, (int)(charge * 1000.0f));
                     const hta_unit *mu = &state.game.units[state.me];
                     atomic_store(&g_ability_name, state.game.characters[mu->character]->ability_name);
-                } else if (state.game_on && state.went.loaded && state.went.defs->ability_script) {
+                } else if (world_ability) {
                     /* The world's scripted ability (X3): always ready here; the
                      * host keeps its own one-second cooldown. */
                     atomic_store(&g_ability_charge, 1000);
@@ -5981,7 +5981,7 @@ void android_main(struct android_app *app)
                         }
                     }
                 }
-                int caps = (charge >= 0.0f ? 128 : 0) | (charge >= 1.0f ? 64 : 0) |
+                int caps = (charge >= 0.0f || world_ability ? 128 : 0) | (charge >= 1.0f || world_ability ? 64 : 0) |
                            (body.can_fly && !broom ? 1 : 0) | (state.player.fly ? 2 : 0) |
                            (state.weap.zoom_levels > 0 ? 4 : 0) |
                            (!swung && state.ammo.recharge <= 0.0f && state.ammo.reserve_max > 0 ? 8 : 0) |

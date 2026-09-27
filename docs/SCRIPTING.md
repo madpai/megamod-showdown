@@ -222,6 +222,21 @@ the emulator).
   1 was killed by Player 2"), sees its own death from the host, and the
   second pulse finds nobody alive.
 
+## Emulator evidence (Android 14 x86_64, build 6be2ddb + HUD fix)
+
+**OBSERVED**, 2026-09-27: the APK hosting `x3_script_lab` logs `[script] 2
+scripts loaded (megamod.v1, host only); ability script on` (map check
+b6ca93e1, the desktop's). Desktop joiners through `scripts/emu/udprelay.py`:
+A found door A shut and blocked, pressed the scripted button (the phone's
+Lua: `on_used ... phase host.world.script ... ok, 1 requests`), pressed
+ability (`pulse by player 2 hit 1`, then the phone's own kill feed
+`Player 2 was killed by Player 3`); target T saw its own death; late
+joiner B found door A open, B and C shut; the one-character and
+comment-only packages were refused ("different map"), the provenance-only
+one admitted; no joiner logged a script line. The phone host's **own**
+player pressed the purple button (door A opened) and its ABILITY button
+(`on_ability ... hit 0`: nobody near).
+
 ## Limitations
 
 - Two callbacks; interactables are the only scripted entities; no timers,
