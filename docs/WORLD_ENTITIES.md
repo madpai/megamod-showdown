@@ -45,6 +45,15 @@ runtime knows a Source or Halo entity class.
 X5 (schema 4) also lets a mover definition name a `sound` resource, played
 when a mover starts to open or close (host and joiners alike).
 
+X6 (schema 5) adds `prefab_instances`: placements of prefabs imported from
+a library, each expanded at load into ordinary entities of the kinds above
+named `<ns>:entity/<instance>__<child>` (a schema 5 world's own IDs may not
+hold `__`); a prop may carry `yaw_degrees` and a uniform `scale` (its
+oriented box is drawn and collides); a prefab's mover may be drawn by a
+model and turned. Nothing below this table changed: expanded entities use
+the same queue, handles, collision, WORLD_STATE and limits
+([PREFABS.md](PREFABS.md)).
+
 A link is `(event, target placed ID, input)`. Names are text in the package
 (auditable JSON) and become small enums at load (`hta_wdef_event`,
 `hta_wdef_input`); nothing compares strings during play. Every event carries

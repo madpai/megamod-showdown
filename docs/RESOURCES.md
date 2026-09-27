@@ -2,6 +2,11 @@
 
 **Status:** X4 implemented 2026-09-27; **X5 (package-backed asset
 resources) implemented 2026-09-27** -- see "Asset resources (X5)" below.
+**X6 (prefabs) implemented 2026-09-27**: `prefab` is a supported,
+importable type; a library's `prefabs` member composes resources and entity
+kinds, and worlds place instances that expand into ordinary entities --
+[PREFABS.md](PREFABS.md). This file's rules (grammar, typed references,
+provides, the graph, the world key) are what prefabs build on.
 This is **infrastructure, not a gameplay feature**: one grammar for content
 IDs, one registry of resource types, typed references resolved once at
 load, explicit package declarations with provides and requires, a checked
@@ -61,9 +66,10 @@ whole                          at most 96 bytes
   exactly one spelling: the canonical serialisation is the ID itself.
 - Unchanged from the grammar X1-X3 used (`x3:script/button_logic` is valid
   as it was); X4 made it one implementation with one set of messages.
-- The type must be registered. A **reserved** type (`model`, `prefab`...)
-  parses but nothing may provide or reference one yet ("resource type
-  'model' is reserved, not loadable by this engine"), distinct from an
+- The type must be registered. A **reserved** type (`animation`,
+  `ruleset`; `model`... until X5, `prefab` until X6) parses but nothing may
+  provide or reference one yet ("resource type 'ruleset' is reserved, not
+  loadable by this engine"), distinct from an
   **unknown** type ("unknown resource type 'widget'").
 - Reserved namespaces, for built-in content: `halo_trial`, `megamod`. No
   package may provide into them.
@@ -98,7 +104,7 @@ file differs from it.
 | `texture` | texture | supported | definition | yes | yes | X5 | an RGBA8 image in a library package; a material names it |
 | `sound` | sound | supported | definition | yes | yes | X5 | one clip of 16-bit PCM in a library package; a mover definition may name it (not the UI 'sounds' pack) |
 | `animation` | animation | reserved | definition | - | - | X4 | reserved: a clip for a skeleton |
-| `prefab` | prefab | reserved | definition | - | - | X4 | reserved: a composed, reusable entity (a likely X6) |
+| `prefab` | prefab | supported | definition | yes | yes | X6 | a reusable composition of entity kinds and resources; a library provides it, a world places instances that expand into ordinary entities at load |
 | `ruleset` | ruleset | reserved | definition | - | - | X4 | reserved: game rules (team deathmatch...) |
 
 | Reference field | Expects | Resolves to | Since |
@@ -113,6 +119,10 @@ file differs from it.
 | `assets.models[].materials[]` | material | the same package or a declared import | X5 |
 | `world_entities.entities[].model` | model | the same package or a declared import | X5 |
 | `world_entities.mover_definitions[].sound` | sound | the same package or a declared import | X5 |
+| `prefabs.prefabs[].children[].model` | model | the same package or a declared import | X6 |
+| `prefabs.prefabs[].children[].sound` | sound | the same package or a declared import | X6 |
+| `prefabs.prefabs[].children[].script` | script | the same package or a declared import | X6 |
+| `world_entities.prefab_instances[].prefab` | prefab | the same package or a declared import | X6 |
 <!-- megamod-resources --markdown: end -->
 
 - **Scope.** *package*: identifies what a whole package is. *placement*: a
@@ -268,8 +278,9 @@ explicit stack (no recursion):
 **Resource references may be cyclic.** The substrate imposes no rule on
 them; a relationship that cannot allow a cycle says so itself. Entity links
 do (X1): a zero-delay chain that loops would run forever in one tick, so
-`link cycle through ...` is refused. A future relationship (prefabs naming
-each other, say) decides its own rule.
+`link cycle through ...` is refused. Prefabs (X6) avoid the question: a
+prefab may not contain another (no nesting in schema 1), and its children's
+links are checked acyclic like a world's.
 
 ## Compatibility identity
 
@@ -678,11 +689,23 @@ sound x5shared:sound/test_impact: x5:entity/door_a started opening` and A
 one-texel library was refused ("not the host's map"), the provenance-only
 one admitted, and a joiner without the library refused to load the world.
 
+## Prefabs (X6)
+
+A library may also provide PREFABS (`namespace:prefab/name`, its
+`prefabs` member): compositions of the world's entity kinds whose model,
+sound and script references resolve here, typed, **from the providing
+library's point of view**, once, when the set loads
+(`prefabs.prefabs[].children[].model|sound|script`). A world imports only
+the prefab (`world_entities.prefab_instances[].prefab`) and places
+instances, which expand at load into ordinary placed entities. The
+library's digest covers its `prefabs` member, so a changed child is a new
+world key; a library without one digests as before. Older engines refuse
+prefab packages (`resource type 'prefab' is reserved`). Everything:
+[PREFABS.md](PREFABS.md).
+
 ## Not in X5
 
-- **Prefabs** (X6): composing models, materials, sounds, scripts and
-  placements into a reusable entity. The resources exist now; composition
-  does not.
+- **Prefabs** -- done in X6 ([PREFABS.md](PREFABS.md)).
 - Worlds providing their own asset resources (only libraries do); props
   with rotation or scale; props that move, break or carry links; a model's
   own collision mesh (a prop collides as its bounds).

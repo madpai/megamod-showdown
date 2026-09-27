@@ -63,6 +63,14 @@ v3, `world_entities` **schema 3** (OAL `docs/RUNTIME_PACKAGE.md`).
   has megamod.v1)"). Callbacks are declared, and a declared callback the
   script does not define refuses the script. **TESTED.**
 - Older packages (schema 1/2, v1/v2 maps, Trial) never touch Lua.
+- **Prefabs (X6):** a prefab's interactable may name a script from its own
+  library (or one that library imports); when a world places the prefab,
+  that script is copied into the world's table once, like an import, and
+  runs as the world's own. Its `on_used` receives the INSTANTIATED button
+  (`x6:entity/north_door__button`); one environment per script, so its
+  state is shared by every instance. A world script may name an instance's
+  child by its ordinary placed ID (`world.entity('x6:entity/south_door__door')`).
+  No new callback or function ([PREFABS.md](PREFABS.md)).
 
 ## API megamod.v1
 

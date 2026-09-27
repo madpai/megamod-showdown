@@ -195,6 +195,34 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-27 X6: prefabs (docs/PREFABS.md).** `prefab` is a real,
+importable resource type: a LIBRARY's `prefabs` member composes the world's
+entity kinds (props, movers drawn by a model, buttons, relays, triggers,
+teleports) and resources (models, sounds, scripts) resolved from the
+library's own point of view; a world imports only the prefab and places
+instances (`world_entities` schema 5, `prefab_instances`: an instance ID and
+a translate / yaw / uniform-scale transform) that EXPAND at load into
+ordinary entities named `<ns>:entity/<instance>__<child>` -- no prefab
+runtime, message or Lua. Props and prefab movers turn and scale, and
+collide as their oriented box (`src/asset/prefab.c`, `world_def.c`
+`expand_prefabs`). OAL: `assetlab/prefabs.py`, libraries `x6.shared_assets`
+(art) and `x6.facility` (`x6:prefab/security_door`), worlds
+`x6_prefab_world` (north_door, south_door turned -90, a lockdown button whose
+world script toggles south's door) and `x6_second_world` (a gate at 45
+degrees, 1.25x). X1-X5 packages and keys unchanged; an X5 engine refuses
+X6 packages ("'prefab' is reserved"). Checked: host tests 54/54,
+`test_prefab`, ASan/UBSan (unit, and X6 end to end), ndkcheck, verify.sh,
+`scripts/test_x6.sh`, `scripts/test_cross_version.sh` (X3, X4, X5 engines
+from history), and the emulator hosting X6 with desktop joiners (see
+PREFABS.md). **Phone check (optional):** put `x6_prefab_world.oalmap` in
+`$HTA_IMPORTED` and both libraries in `$HTA_IMPORTED/packages/` (OAL:
+`assetlab fixture x6_prefab_world --output ... --packages ...`), host it
+with 0 bots: two yellow-and-black security doors in dark frames; the red
+button on the north door's left post (ACTION) slides only that door; the
+south one, turned, has its own; the purple plate on the west wall shuts
+the south door. **Unverified:** the hiss on a real phone speaker; frame
+lighting on Adreno.
+
 **2026-09-27 X5: package-backed asset resources (docs/RESOURCES.md "Asset
 resources").** Textures, materials, models and sounds are real resources a
 library package provides (`assets` member + payload members;
