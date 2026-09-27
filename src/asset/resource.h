@@ -127,6 +127,10 @@ typedef enum {
     HTA_REF_MODEL_MATERIAL,   /* assets.models[].materials[] (X5) */
     HTA_REF_PROP_MODEL,       /* world_entities.entities[].model (X5) */
     HTA_REF_MOVER_SOUND,      /* world_entities.mover_definitions[].sound (X5) */
+    HTA_REF_PREFAB_MODEL,     /* prefabs.prefabs[].children[].model (X6) */
+    HTA_REF_PREFAB_SOUND,     /* prefabs.prefabs[].children[].sound (X6) */
+    HTA_REF_PREFAB_SCRIPT,    /* prefabs.prefabs[].children[].script (X6) */
+    HTA_REF_PREFAB_INSTANCE,  /* world_entities.prefab_instances[].prefab (X6) */
     HTA_REF_FIELD_COUNT
 } hta_ref_field;
 

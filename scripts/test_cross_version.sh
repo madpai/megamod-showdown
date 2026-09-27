@@ -12,9 +12,14 @@
 #   X3 + an X5 world                           refused at load (unknown kind 'prop')
 #   X4 + an X5 world                           refused at load ('model' is reserved)
 #   X4 and this build on X4 worlds             the same keys (X5 changed none)
+#   X5 + an X6 prefab world                    refused at load ('prefab' is reserved)
+#   X5 + an X6 prefab library                  refused ('prefab' is reserved in its provides)
+#   X5 + a schema 5 world with no prefab       refused at load (unsupported schema)
+#   X5 and this build on X5 worlds             the same keys; an X5 joiner is admitted
+#                                              by this build's host (X6 changed none)
 #
 #   scripts/test_cross_version.sh     (HTA_TRIAL_DIR or HTA_MAP; OAL_DIR)
-# Slow the first time (two engine builds); not part of verify.sh.
+# Slow the first time (three engine builds); not part of verify.sh.
 set -e
 cd "$(dirname "$0")/.."
 trial=${HTA_TRIAL_DIR:-$(dirname "${HTA_MAP:-/nonexistent/x}")}
@@ -36,13 +41,13 @@ engine() {   # name commit -> builds scratch/engines/<name>
     fi
     echo "$here/$d/build-host"
 }
-x3=$(engine x3 a4e0318); x4=$(engine x4 e0ae793); now=$here/$build
+x3=$(engine x3 a4e0318); x4=$(engine x4 e0ae793); x5=$(engine x5 1b5a43e); now=$here/$build
 rm -rf "$out/p"; mkdir -p "$out/p"
 (cd "$oal" && "$py" - "$here/$out/p" <<'EOF'
 import sys
 from pathlib import Path
 from assetlab.dependencies import compile_library, mapping_source
-from assetlab.fixtures import x4_resource_lab, x4_shared, x5_resource_world, x5_shared_art
+from assetlab.fixtures import x4_resource_lab, x4_shared, x5_resource_world, x5_shared_art, x6_libraries, x6_prefab_world
 from assetlab.scripts import Script, load_source
 from assetlab.world import compile_world
 out = Path(sys.argv[1])
@@ -56,6 +61,24 @@ w.scripts.append(Script('x4:script/pulse_ability', load_source('x4shared/pulse_a
 w.ability_script, w.requires = 'x4:script/pulse_ability', []
 compile_world(w, out / 'selfcontained/maps/x4_resource_lab.oalmap')
 compile_world(x5_resource_world(), out / 'x5/maps/x5_resource_world.oalmap', mapping_source(libs))
+x6 = x6_libraries()
+for pid, lib in x6.items():
+    compile_library(lib, out / 'x6' / 'packages' / f'{pid}.oalasset', mapping_source(x6))
+compile_world(x6_prefab_world(), out / 'x6/maps/x6_prefab_world.oalmap', mapping_source(x6))
+# an X6 library alone, required by an X5-style world that imports nothing from it
+from assetlab.world import compile_world as cw
+w = x5_resource_world(); w.file_name = 'x6_lib_only'
+from assetlab.resources import Requirement
+w.requires = list(w.requires) + [Requirement('x6.facility', [])]
+both = dict(libs); both.update(x6)
+for pid, lib in x6.items():
+    compile_library(lib, out / 'x6lib' / 'packages' / f'{pid}.oalasset', mapping_source(x6))
+compile_library(x5_shared_art(), out / 'x6lib' / 'packages' / 'x5.shared_art.oalasset')
+cw(w, out / 'x6lib/maps/x6_lib_only.oalmap', mapping_source(both))
+# schema 5 without a prefab: a turned prop
+w = x5_resource_world(); w.entities[-1].yaw_degrees = 30.0
+compile_library(x5_shared_art(), out / 'schema5' / 'packages' / 'x5.shared_art.oalasset')
+compile_world(w, out / 'schema5/maps/x5_resource_world.oalmap', mapping_source(libs))
 EOF
 ) || fail "OAL could not build the packages"
 load() { "$1/megamod-content" --trial "$trial" --bundle "$out/p/$2" --world "$3" 2>&1 | grep -E "^world " || true; }
@@ -68,6 +91,12 @@ k3=$(key "$x3" selfcontained x4_resource_lab); k4=$(key "$x4" selfcontained x4_r
 load "$x3" x5 x5_resource_world | grep -q "FAILED: world entities: x5:entity/crate_a: unknown kind 'prop'" || fail "X3 did not refuse an X5 world"
 load "$x4" x5 x5_resource_world | grep -q "resource type 'model' is reserved, not loadable by this engine" || fail "X4 did not refuse an X5 world"
 [ "$(key "$x4" imports x4_resource_lab)" = "$(key "$now" imports x4_resource_lab)" ] || fail "this build changed an X4 world's key"
+load "$x5" x6 x6_prefab_world | grep -q "resource type 'prefab' is reserved, not loadable by this engine" || fail "X5 did not refuse an X6 prefab world"
+load "$x5" x6lib x6_lib_only | grep -q "provides 'x6:prefab/security_door': resource type 'prefab' is reserved" || fail "X5 did not refuse an X6 prefab library"
+load "$x5" schema5 x5_resource_world | grep -q "unsupported schema" || fail "X5 did not refuse a schema 5 world"
+load "$now" x6 x6_prefab_world | grep -q "FAILED" && fail "this build refused the X6 world"
+k5=$(key "$x5" x5 x5_resource_world); k6=$(key "$now" x5 x5_resource_world)
+[ -n "$k5" ] && [ "$k5" = "$k6" ] || fail "this build changed an X5 world's key ($k5 vs $k6)"
 export HTA_TRIAL_DIR="$trial"
 join() {   # host-bin joiner-bin port -> joiner's verdict
     "$1/megamod-match" --bundle "$out/p/selfcontained" --world x4_resource_lab --bots 0 --seconds 10 --host "$3" > "$out/h-$3.log" 2>&1 &
@@ -78,12 +107,17 @@ join() {   # host-bin joiner-bin port -> joiner's verdict
     wait $h 2>/dev/null || true
 }
 port=$((35300 + $$ % 300))
-a=$(join "$now" "$x3" $port); b=$(join "$x3" "$now" $((port + 1))); c=$(join "$now" "$x4" $((port + 2)))
+a=$(join "$now" "$x3" $port); b=$(join "$x3" "$now" $((port + 1))); c=$(join "$now" "$x4" $((port + 2))); d=$(join "$now" "$x5" $((port + 3)))
 [ "$a" = "REFUSED (not the host's map)" ] || fail "an X3 joiner was not refused by this build's host ($a)"
 [ "$b" = "REFUSED (not the host's map)" ] || fail "this build's joiner was not refused by an X3 host ($b)"
 [ "$c" = "join: connected" ] || fail "an X4 joiner was not admitted to the same X4 world ($c)"
+[ "$d" = "join: connected" ] || fail "an X5 joiner was not admitted to the same X4 world by this build ($d)"
 echo "  X3 + X4 world importing a script: refused at load"
 echo "  X3 + declared self-contained X4 world: key $k3, X4/this build $k4 -> joins refused both ways"
 echo "  X3 + X5 world: refused (unknown kind 'prop'); X4 + X5 world: refused ('model' reserved)"
 echo "  X4 joiner, this host, X4 world: admitted"
+echo "  X5 + X6 prefab world: $(load "$x5" x6 x6_prefab_world | sed 's/.*FAILED: //')"
+echo "  X5 + X6 prefab library: $(load "$x5" x6lib x6_lib_only | sed 's/.*FAILED: //')"
+echo "  X5 + schema 5 world (a turned prop, no prefab): $(load "$x5" schema5 x5_resource_world | sed 's/.*FAILED: //')"
+echo "  X5 world: key $k5 on X5 and on this build; an X5 joiner, this host, the X4 world: admitted"
 echo "cross-version test OK ($out)"

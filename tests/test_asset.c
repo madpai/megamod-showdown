@@ -380,8 +380,8 @@ static void refusals(void)
                       "t:mover/door: sound xs:model/crate is a model, expected a sound"));
     CHECK(world_fails(&DIR_, edit(WORLD, "\"model\":\"xs:model/crate\",\"position\":[1", "\"model\":\"Xs:model/crate\",\"position\":[1"),
                       "t:entity/crate_a: model 'Xs:model/crate' is not a resource ID: namespace has capital 'X'"));
-    CHECK(world_fails(&DIR_, edit(WORLD, "\"model\":\"xs:model/crate\",\"position\":[1", "\"model\":\"xs:prefab/crate\",\"position\":[1"),
-                      "resource type 'prefab' is reserved"));
+    CHECK(world_fails(&DIR_, edit(WORLD, "\"model\":\"xs:model/crate\",\"position\":[1", "\"model\":\"xs:ruleset/crate\",\"position\":[1"),
+                      "resource type 'ruleset' is reserved"));
     CHECK(world_fails(&DIR_, edit(WORLD, "\"schema\":4}}", "\"schema\":3}}"), "props and sounds need schema 4"));
     CHECK(world_fails(&DIR_, edit(WORLD, "\"kind\":\"prop\",\"links\":[],\"model\":\"xs:model/crate\",\"position\":[1,0,0.25]",
                                   "\"kind\":\"prop\",\"links\":[]"), "t:entity/crate_a: a prop needs a model"));

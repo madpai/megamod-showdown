@@ -199,6 +199,13 @@ static void setup_effects(join *j)
     j->went.remote = true;                          /* the host runs them */
     if (j->went.loaded)
         printf("join: %u world entities, %u links\n", j->went.defs->count, j->went.defs->link_count);
+    for (uint32_t i = 0; j->went.loaded && i < j->went.defs->prefab_instance_count; i++) {
+        const hta_wprefab_instance *in = &j->went.defs->prefab_instance[i];
+        printf("join: prefab instance %s: %s from %s -> entities %u..%u (%s .. %s)\n", in->id, in->prefab,
+               in->provider && in->provider <= j->ext.package.dep_count ? j->ext.package.dep[in->provider - 1] : "?",
+               in->first, in->first + in->count - 1u, j->went.defs->entity[in->first].id,
+               j->went.defs->entity[in->first + in->count - 1u].id);
+    }
     if (j->have_ext) {
         const hta_asset_table *a = &j->ext.assets;
         uint32_t bound = hta_world_sounds_bind(&j->sounds, &j->audio, a);

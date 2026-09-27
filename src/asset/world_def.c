@@ -7,6 +7,7 @@
 #include "mjson.h"
 #include "asset_res.h"
 #include "package.h"
+#include "prefab.h"
 #include "resource.h"
 #include <math.h>
 #include <stdarg.h>
@@ -122,6 +123,14 @@ typedef struct {
     char  ability[HTA_WDEF_ID_MAX + 1];
     char  api[HTA_WDEF_MAX_SCRIPTS][24];
     bool  has_ability;
+    /* X6: authored props' transform (schema 5), prefab instances' prefab
+     * references, which entities expansion generated, and how many the
+     * world authored itself (they come first). */
+    float   yaw_deg[HTA_WDEF_MAX_ENTITIES], scale[HTA_WDEF_MAX_ENTITIES];
+    uint8_t has_yaw[HTA_WDEF_MAX_ENTITIES], has_scale[HTA_WDEF_MAX_ENTITIES];
+    char    inst_prefab[HTA_WDEF_MAX_INSTANCES][HTA_WDEF_ID_MAX + 1];
+    uint8_t gen[HTA_WDEF_MAX_ENTITIES];
+    uint32_t authored;
     hta_res_set    rs;        /* what this world's references resolve against (X4) */
     hta_res_import imports[HTA_PKG_MAX_IMPORTS];
 } pending;
@@ -173,7 +182,10 @@ static bool parse_entity(rd *r, hta_world_defs *d, pending *pend, char *err, siz
             if (ok && !e->kind) return fail(err, n, "%s: unknown kind '%s'", where, kind);
         } else if (!strcmp(key, "position")) { ok = vec3(r, e->pos); pend->has_pos[me] = 1; }
         else if (!strcmp(key, "reach")) ok = fnum(r, &e->reach);
-        else if (!strcmp(key, "yaw_degrees")) { ok = fnum(r, &e->yaw); e->yaw *= 3.14159265358979f / 180.0f; }
+        else if (!strcmp(key, "yaw_degrees")) {
+            ok = fnum(r, &e->yaw); pend->yaw_deg[me] = e->yaw; pend->has_yaw[me] = 1;
+            e->yaw *= 3.14159265358979f / 180.0f;
+        } else if (!strcmp(key, "scale")) { ok = fnum(r, &pend->scale[me]); pend->has_scale[me] = 1; }
         else if (!strcmp(key, "move")) { ok = vec3(r, pend->move[me]); pend->has_move[me] = 1; }
         else if (!strcmp(key, "speed")) { ok = fnum(r, &pend->speed[me]); pend->has_speed[me] = 1; }
         else if (!strcmp(key, "definition")) { ok = str(r, pend->def[me], sizeof(pend->def[me])); pend->has_def[me] = 1; }
@@ -383,7 +395,7 @@ static bool resolve_scripts(hta_world_defs *d, const pending *pend, char *err, s
 {
     if (!any_script(d, pend)) return true;
     for (uint32_t i = 0; i < d->count; i++) {
-        if (!pend->has_script[i]) continue;
+        if (!pend->has_script[i] || pend->gen[i]) continue;
         hta_wdef *e = &d->entity[i];
         if (e->kind != HTA_WDEF_INTERACTABLE)
             return failv(err, n, "%s: only an interactable takes a script (it is a %s)", e->id, hta_wdef_kind_name(e->kind));
@@ -483,6 +495,25 @@ static bool check_provides(const hta_world_defs *d, const hta_package *p, char *
     return true;
 }
 
+/* X6: a prop with a transform stands as its model's bounds box, scaled
+ * and turned about +z around the prop's origin: an ORIENTED box (collision
+ * and drawing both use it), with min/max the world-axis box around it. */
+static void prop_place(hta_wdef *e, const hta_asset_model *am, double yaw_deg, float scale)
+{
+    float lc[3], lh[3], c, s;
+    hta_yaw_cossin(yaw_deg, &c, &s);
+    for (int k = 0; k < 3; k++) {
+        lc[k] = (am->mesh.bounds_min[k] + am->mesh.bounds_max[k]) * 0.5f;
+        lh[k] = (am->mesh.bounds_max[k] - am->mesh.bounds_min[k]) * 0.5f;
+    }
+    hta_xform x = { { e->pos[0], e->pos[1], e->pos[2] }, (float)yaw_deg, scale };
+    hta_xform_point(&x, c, s, lc, e->box_c);
+    for (int k = 0; k < 3; k++) e->box_h[k] = lh[k] * scale;
+    float hw[3] = { fabsf(c) * e->box_h[0] + fabsf(s) * e->box_h[1], fabsf(s) * e->box_h[0] + fabsf(c) * e->box_h[1], e->box_h[2] };
+    for (int k = 0; k < 3; k++) { e->min[k] = e->box_c[k] - hw[k]; e->max[k] = e->box_c[k] + hw[k]; }
+    e->xform = true; e->rot_c = c; e->rot_s = s; e->scale = scale;
+}
+
 /* X5: props name a model, mover definitions may name a sound -- typed
  * references into the libraries the world imports from, resolved once to
  * asset table indices. A prop stands where it is placed, solid as its
@@ -506,11 +537,16 @@ static bool resolve_assets(hta_world_defs *d, pending *pend, const hta_pkg_set *
     }
     for (uint32_t i = 0; i < d->count; i++) {
         hta_wdef *e = &d->entity[i];
+        if (pend->gen[i]) continue;      /* X6: placed when its instance expanded */
+        if (pend->has_scale[i] && e->kind != HTA_WDEF_PROP)
+            return failv(err, n, "%s: only a prop takes a scale (it is a %s)", e->id, hta_wdef_kind_name(e->kind));
         if (e->kind != HTA_WDEF_PROP) {
             if (pend->has_model[i])
                 return failv(err, n, "%s: only a prop takes a model (it is a %s)", e->id, hta_wdef_kind_name(e->kind));
             continue;
         }
+        if ((pend->has_yaw[i] || pend->has_scale[i]) && d->schema < 5)
+            return failv(err, n, "%s: a prop's yaw_degrees and scale need world_entities schema 5", e->id);
         if (!pend->has_model[i]) return failv(err, n, "%s: a prop needs a model", e->id);
         if (!pend->has_pos[i]) return failv(err, n, "%s: a prop needs a position", e->id);
         if (e->link_count) return failv(err, n, "%s: a prop emits nothing, so it has no links", e->id);
@@ -519,7 +555,16 @@ static bool resolve_assets(hta_world_defs *d, pending *pend, const hta_pkg_set *
         const hta_asset_model *am = hta_pkg_set_model(set, m->index);
         if (!am) return failv(err, n, "%s: model %s was not loaded", e->id, pend->model[i]);
         e->model = (uint16_t)(m->index + 1u);
-        for (int k = 0; k < 3; k++) { e->min[k] = e->pos[k] + am->mesh.bounds_min[k]; e->max[k] = e->pos[k] + am->mesh.bounds_max[k]; }
+        if (pend->has_yaw[i] || pend->has_scale[i]) {
+            float sc = pend->has_scale[i] ? pend->scale[i] : 1.0f, yaw = pend->has_yaw[i] ? pend->yaw_deg[i] : 0.0f;
+            if (!(sc >= HTA_PREFAB_SCALE_MIN && sc <= HTA_PREFAB_SCALE_MAX))
+                return failv(err, n, "%s: scale %g out of range (uniform, %g to %g)", e->id, (double)sc,
+                             (double)HTA_PREFAB_SCALE_MIN, (double)HTA_PREFAB_SCALE_MAX);
+            if (!(fabsf(yaw) <= HTA_PREFAB_MAX_YAW))
+                return failv(err, n, "%s: yaw_degrees out of range (|yaw| <= %g)", e->id, (double)HTA_PREFAB_MAX_YAW);
+            prop_place(e, am, yaw, sc);
+        } else
+            for (int k = 0; k < 3; k++) { e->min[k] = e->pos[k] + am->mesh.bounds_min[k]; e->max[k] = e->pos[k] + am->mesh.bounds_max[k]; }
     }
     return true;
 }
@@ -530,6 +575,7 @@ static bool resolve_movers(hta_world_defs *d, pending *pend, char *err, size_t n
 {
     for (uint32_t i = 0; i < d->count; i++) {
         hta_wdef *e = &d->entity[i];
+        if (pend->gen[i]) continue;      /* X6: a prefab child's definition is its own, made when it expanded */
         bool inline_params = pend->has_bounds[i] || pend->has_move[i] || pend->has_speed[i];
         if (e->kind != HTA_WDEF_MOVER) {
             if (pend->has_def[i])
@@ -568,6 +614,214 @@ static bool resolve_movers(hta_world_defs *d, pending *pend, char *err, size_t n
     return true;
 }
 
+
+/* ---- X6: prefab instances ------------------------------------------------- */
+
+/* One entry of "prefab_instances" (schema 5): {id, position, prefab[,
+ * scale][, yaw_degrees]}. Checked in the order id, position, yaw, scale
+ * (the same words as Open Asset Lab's). */
+static bool parse_instance(rd *r, hta_world_defs *d, pending *pend, char *err, size_t n)
+{
+    if (d->prefab_instance_count >= HTA_PREFAB_MAX_INSTANCES)
+        return failv(err, n, "world_entities: more than %u prefab instances", HTA_PREFAB_MAX_INSTANCES);
+    uint32_t me = d->prefab_instance_count;
+    hta_wprefab_instance *in = &d->prefab_instance[me];
+    memset(in, 0, sizeof(*in));
+    char key[16], idv[64] = "", who[160], why[128];
+    snprintf(who, sizeof(who), "prefab instance %u", me);
+    double pos[3] = { 0 }, yaw = 0.0, scale = 1.0;
+    bool have[5] = { 0 };   /* id position prefab scale yaw */
+    if (!eat(r, '{')) return failv(err, n, "%s: not an object", who);
+    if (!eat(r, '}')) do {
+        if (!str(r, key, sizeof(key)) || !eat(r, ':')) return failv(err, n, "%s: malformed field", who);
+        bool ok = true;
+        if (!strcmp(key, "id") && !have[0]) {
+            ok = str(r, idv, sizeof(idv)); have[0] = ok;
+            if (ok) snprintf(who, sizeof(who), "prefab instance %.40s", idv);
+        } else if (!strcmp(key, "position") && !have[1]) {
+            ok = eat(r, '[');
+            for (int k = 0; ok && k < 3; k++) ok = (!k || eat(r, ',')) && num(r, &pos[k]);
+            ok = ok && eat(r, ']'); have[1] = ok;
+        } else if (!strcmp(key, "prefab") && !have[2]) { ok = str(r, pend->inst_prefab[me], sizeof(pend->inst_prefab[me])); have[2] = ok; }
+        else if (!strcmp(key, "scale") && !have[3]) { ok = num(r, &scale); have[3] = ok; }
+        else if (!strcmp(key, "yaw_degrees") && !have[4]) { ok = num(r, &yaw); have[4] = ok; }
+        else return failv(err, n, "%s: unknown field '%s' (an instance has id, position, prefab, scale, yaw_degrees)", who, key);
+        if (!ok) return failv(err, n, "%s: malformed '%s'", who, key);
+    } while (eat(r, ','));
+    if (!eat(r, '}')) return failv(err, n, "%s: malformed instance", who);
+    if (!have[0] || !have[1] || !have[2]) return failv(err, n, "%s: an instance needs id, position and prefab", who);
+    if (!hta_prefab_local_valid(idv, "instance id", why, sizeof(why)))
+        return failv(err, n, "prefab instance '%s': %s", idv, why);
+    memcpy(in->id, idv, strlen(idv) + 1);
+    for (int k = 0; k < 3; k++)
+        if (!(fabs(pos[k]) <= HTA_WDEF_WORLD_LIMIT)) return failv(err, n, "%s: position must be finite and inside the world", who);
+    if (!(fabs(yaw) <= HTA_PREFAB_MAX_YAW))
+        return failv(err, n, "%s: yaw_degrees out of range (|yaw| <= %g)", who, (double)HTA_PREFAB_MAX_YAW);
+    if (!(scale >= HTA_PREFAB_SCALE_MIN && scale <= HTA_PREFAB_SCALE_MAX))
+        return failv(err, n, "%s: scale %g out of range (uniform, %g to %g)", who, scale, (double)HTA_PREFAB_SCALE_MIN,
+                     (double)HTA_PREFAB_SCALE_MAX);
+    for (int k = 0; k < 3; k++) in->pos[k] = (float)pos[k];
+    in->yaw_deg = (float)yaw; in->scale = (float)scale;
+    if (me) {
+        int c = strcmp(d->prefab_instance[me - 1].id, in->id);
+        if (!c) return failv(err, n, "prefab instance %s appears twice", in->id);
+        if (c > 0) return failv(err, n, "world_entities: prefab_instances are not in canonical (byte) order of id at %s", in->id);
+    }
+    d->prefab_instance_count++;
+    return true;
+}
+
+/* A library script a prefab child names, in the world's script table:
+ * found (the world imports it too, or another child named it first) or
+ * copied in after everything else, marked with its provider. Index + 1. */
+static bool prefab_script(hta_world_defs *d, const hta_pkg_set *set, uint8_t dep, uint16_t index, const char *who,
+                          uint16_t *out, char *err, size_t n)
+{
+    const hta_world_defs *lib = set->dep[dep - 1].scripts;
+    const hta_wscript_def *from = &lib->script[index];
+    int32_t k = hta_world_defs_find_script(d, from->id);
+    if (k < 0) {
+        if (d->script_count >= HTA_WDEF_MAX_SCRIPTS)
+            return failv(err, n, "%s: script %s makes more than %u scripts in the world", who, from->id, HTA_WDEF_MAX_SCRIPTS);
+        if (from->len > HTA_WDEF_SCRIPT_POOL - d->pool_used)
+            return failv(err, n, "%s: script %s makes the world's scripts exceed %u bytes", who, from->id, HTA_WDEF_SCRIPT_POOL);
+        hta_wscript_def *sc = &d->script[d->script_count];
+        *sc = *from;
+        sc->at = d->pool_used;
+        sc->provider = dep;
+        memcpy(d->pool + d->pool_used, lib->pool + from->at, from->len);
+        d->pool_used += from->len;
+        k = (int32_t)d->script_count++;
+    }
+    *out = (uint16_t)(k + 1);
+    return true;
+}
+
+/* Every instance, once: its prefab resolved through the typed resolver (the
+ * world must import it), then each child, in canonical local-ID order,
+ * appended as an ordinary placed entity -- its ID <ns>:entity/<instance>__
+ * <child>, its links to its own siblings' new indices, its parameters in
+ * world space, its references the prefab's, already resolved. Bounded
+ * before anything is written; every refusal names the instance, the
+ * prefab and the child. */
+static bool expand_prefabs(hta_world_defs *d, pending *pend, const hta_pkg_set *set, char *err, size_t n)
+{
+    if (!d->prefab_instance_count) return true;
+    if (d->schema < 5) return failv(err, n, "world_entities: prefab instances need schema 5");
+    const char *wid = set ? set->root.content_id : "";
+    const char *colon = strchr(wid, ':');
+    if (!set || !set->root.declared || !colon)
+        return failv(err, n, "world_entities: prefab instances need a declared world package (its namespace names their children)");
+    int nsl = (int)(colon - wid);
+    for (uint32_t i = 0; i < d->prefab_instance_count; i++) {
+        hta_wprefab_instance *in = &d->prefab_instance[i];
+        char who[160];
+        snprintf(who, sizeof(who), "prefab instance %s", in->id);
+        const hta_res_entry *re = hta_res_resolve(&pend->rs, HTA_REF_PREFAB_INSTANCE, who, pend->inst_prefab[i], err, n);
+        if (!re) return false;
+        if (!re->provider || re->provider > set->dep_count || re->index >= set->dep[re->provider - 1].prefabs->count)
+            return failv(err, n, "%s: prefab %s was not loaded", who, pend->inst_prefab[i]);
+        const hta_prefab *p = &set->dep[re->provider - 1].prefabs->prefab[re->index];
+        memcpy(in->prefab, p->id, sizeof(in->prefab));
+        in->provider = re->provider;
+        snprintf(who, sizeof(who), "prefab instance %s (%s)", in->id, p->id);
+        uint32_t movers = 0;
+        for (uint32_t c = 0; c < p->child_count; c++) movers += p->child[c].kind == HTA_WDEF_MOVER;
+        if (d->count + p->child_count > HTA_WDEF_MAX_ENTITIES)
+            return failv(err, n, "prefab instance %s expands the world to %u entities, exceeding limit %u", in->id,
+                         d->count + p->child_count, HTA_WDEF_MAX_ENTITIES);
+        if (d->link_count + p->link_count > HTA_WDEF_MAX_LINKS)
+            return failv(err, n, "prefab instance %s expands the world to %u links, exceeding limit %u", in->id,
+                         d->link_count + p->link_count, HTA_WDEF_MAX_LINKS);
+        if (d->mover_def_count + movers > HTA_WDEF_MAX_MOVER_DEFS)
+            return failv(err, n, "prefab instance %s expands the world to %u mover definitions, exceeding limit %u", in->id,
+                         d->mover_def_count + movers, HTA_WDEF_MAX_MOVER_DEFS);
+        in->first = (uint16_t)d->count;
+        in->count = (uint16_t)p->child_count;
+        float ic, is;
+        hta_yaw_cossin(in->yaw_deg, &ic, &is);
+        hta_xform ix = { { in->pos[0], in->pos[1], in->pos[2] }, in->yaw_deg, in->scale };
+        for (uint32_t c = 0; c < p->child_count; c++) {
+            const hta_prefab_child *ch = &p->child[c];
+            uint32_t at = d->count;
+            hta_wdef *e = &d->entity[at];
+            memset(e, 0, sizeof(*e));
+            e->def = HTA_WDEF_NO_DEF;
+            e->kind = ch->kind;
+            e->instance = (uint8_t)(i + 1);
+            e->child = (uint8_t)c;
+            snprintf(e->id, sizeof(e->id), "%.*s:entity/%s" HTA_PREFAB_SEP "%s", nsl, wid, in->id, ch->id);
+            if (hta_res_find(&pend->rs, e->id))
+                return failv(err, n, "%s child '%s' makes %s, which the world already has", who, ch->id, e->id);
+            if (!hta_res_add(&pend->rs, e->id, HTA_RT_ENTITY, 0, (uint16_t)at, err, n)) return false;
+            e->first_link = (uint16_t)d->link_count;
+            for (uint32_t k = 0; k < ch->link_count; k++) {
+                const hta_prefab_link *l = &p->link[ch->first_link + k];
+                hta_wdef_link *wl = &d->link[d->link_count++];
+                wl->event = l->event; wl->input = l->input; wl->target = (uint16_t)(in->first + l->target);
+                e->link_count++;
+            }
+            hta_xform_point(&ix, ic, is, ch->pos, e->pos);
+            double yaw = (double)in->yaw_deg + (double)ch->yaw_deg;
+            switch (ch->kind) {
+            case HTA_WDEF_INTERACTABLE:
+                e->reach = ch->reach * in->scale;
+                if (e->reach > HTA_WDEF_MAX_REACH)
+                    return failv(err, n, "%s child '%s': reach %g after scale %g exceeds %g wu", who, ch->id, (double)e->reach,
+                                 (double)in->scale, (double)HTA_WDEF_MAX_REACH);
+                if (ch->script_dep && !prefab_script(d, set, ch->script_dep, ch->script, who, &e->script, err, n)) return false;
+                break;
+            case HTA_WDEF_MOVER: {
+                hta_wmover_def *m = &d->mover_def[d->mover_def_count];
+                memset(m, 0, sizeof(*m));
+                m->generated = true;
+                for (int k = 0; k < 3; k++) m->size[k] = ch->size[k] * in->scale;
+                hta_xform_vector(in->scale, ic, is, ch->move, m->move);
+                m->speed = ch->speed * in->scale;
+                m->sound = ch->sound;
+                float len = sqrtf(m->move[0] * m->move[0] + m->move[1] * m->move[1] + m->move[2] * m->move[2]);
+                if (len > HTA_WDEF_MAX_MOVE || m->speed > HTA_WDEF_MAX_SPEED)
+                    return failv(err, n, "%s child '%s': mover move or speed exceeds the world's limit after scale %g", who, ch->id,
+                                 (double)in->scale);
+                e->def = (uint16_t)d->mover_def_count++;
+                e->model = ch->model;
+                e->xform = true; e->scale = in->scale;
+                hta_yaw_cossin(yaw, &e->rot_c, &e->rot_s);
+                break;
+            }
+            case HTA_WDEF_TRIGGER: {
+                if (!hta_yaw_axis_aligned(in->yaw_deg))
+                    return failv(err, n, "%s child '%s': a trigger is an axis-aligned box, so the instance's yaw must be a "
+                                 "multiple of 90 degrees (is %g)", who, ch->id, (double)in->yaw_deg);
+                for (int k = 0; k < 3; k++) { e->min[k] = 1e30f; e->max[k] = -1e30f; }
+                for (int corner = 0; corner < 8; corner++) {
+                    float lp[3] = { corner & 1 ? ch->max[0] : ch->min[0], corner & 2 ? ch->max[1] : ch->min[1],
+                                    corner & 4 ? ch->max[2] : ch->min[2] }, wp[3];
+                    hta_xform_point(&ix, ic, is, lp, wp);
+                    for (int k = 0; k < 3; k++) { if (wp[k] < e->min[k]) e->min[k] = wp[k]; if (wp[k] > e->max[k]) e->max[k] = wp[k]; }
+                }
+                memset(e->pos, 0, sizeof(e->pos));
+                break;
+            }
+            case HTA_WDEF_TELEPORT:
+                e->yaw = (float)(yaw * (3.14159265358979323846 / 180.0));
+                break;
+            case HTA_WDEF_PROP: {
+                const hta_asset_model *am = ch->model ? hta_pkg_set_model(set, ch->model - 1u) : NULL;
+                if (!am) return failv(err, n, "%s child '%s': model %s was not loaded", who, ch->id, ch->model_ref);
+                e->model = ch->model;
+                prop_place(e, am, yaw, in->scale);
+                break;
+            }
+            default: break;
+            }
+            pend->gen[at] = 1;
+            d->count++;
+        }
+    }
+    return true;
+}
+
 static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char *err, size_t n)
 {
     static pending pend;        /* 33 KB: not on a phone's stack */
@@ -579,7 +833,7 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
         if (!str(r, key, sizeof(key)) || !eat(r, ':')) return fail(err, n, "world_entities: malformed%s%s", NULL, NULL);
         if (!strcmp(key, "schema")) {
             double v;
-            if (!num(r, &v) || (v != 1.0 && v != 2.0 && v != 3.0 && v != 4.0))
+            if (!num(r, &v) || (v != 1.0 && v != 2.0 && v != 3.0 && v != 4.0 && v != 5.0))
                 return fail(err, n, "world_entities: unsupported schema%s%s", NULL, NULL);
             d->schema = (uint32_t)v;
             have_schema = true;
@@ -602,6 +856,12 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
             if (!eat(r, ']')) {
                 do { if (!parse_script(r, d, &pend, err, n)) return false; } while (eat(r, ','));
                 if (!eat(r, ']')) return fail(err, n, "world_entities: malformed scripts%s%s", NULL, NULL);
+            }
+        } else if (!strcmp(key, "prefab_instances")) {
+            if (!eat(r, '[')) return fail(err, n, "world_entities: prefab_instances is not a list%s%s", NULL, NULL);
+            if (!eat(r, ']')) {
+                do { if (!parse_instance(r, d, &pend, err, n)) return false; } while (eat(r, ','));
+                if (!eat(r, ']')) return fail(err, n, "world_entities: malformed prefab_instances%s%s", NULL, NULL);
             }
         } else if (!strcmp(key, "ability_script")) {
             if (!str(r, pend.ability, sizeof(pend.ability))) return fail(err, n, "world_entities: malformed ability_script%s%s", NULL, NULL);
@@ -626,10 +886,18 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
         for (uint32_t j = 0; j < i; j++)
             if (!strcmp(d->entity[j].id, d->entity[i].id))
                 return fail(err, n, "%s: duplicate placed ID%s", d->entity[i].id, NULL);
+        /* X6: "__" joins an instance to its child; a world that can hold
+         * instances may not author a name that looks like one. */
+        if (d->schema >= 5 && strstr(strchr(d->entity[i].id, '/'), HTA_PREFAB_SEP))
+            return failv(err, n, "%s: '__' is reserved for prefab children (<instance>__<child>)", d->entity[i].id);
     }
+    pend.authored = d->count;
     if (!check_scripts(d, &pend, err, n) || !build_resources(d, &pend, set, err, n)) return false;
-    /* Resolve every link's target ID to its entity, once. */
-    for (uint32_t i = 0; i < d->count; i++) {
+    /* X6: instances expand into ordinary entities before any link is
+     * resolved, so a world link (or world.entity) may name a child. */
+    if (!expand_prefabs(d, &pend, set, err, n)) return false;
+    /* Resolve every authored link's target ID to its entity, once. */
+    for (uint32_t i = 0; i < pend.authored; i++) {
         const hta_wdef *e = &d->entity[i];
         for (uint32_t k = 0; k < e->link_count; k++) {
             uint32_t li = e->first_link + k;
@@ -827,7 +1095,8 @@ static int chain(const hta_world_defs *d, uint32_t i, uint8_t *mark, int8_t *mem
 
 bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t n)
 {
-    if (!d || d->count > HTA_WDEF_MAX_ENTITIES || d->link_count > HTA_WDEF_MAX_LINKS)
+    if (!d || d->count > HTA_WDEF_MAX_ENTITIES || d->link_count > HTA_WDEF_MAX_LINKS ||
+        d->prefab_instance_count > HTA_WDEF_MAX_INSTANCES)
         return fail(err, n, "world entities over their limits%s%s", NULL, NULL);
     if (d->mover_def_count > HTA_WDEF_MAX_MOVER_DEFS)
         return fail(err, n, "mover definitions over their limit%s%s", NULL, NULL);
@@ -836,13 +1105,13 @@ bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t n)
         /* Unnamed: an X1 inline mover's own. Named: namespace:mover/name,
          * in the world's namespace, unique. */
         if (!memchr(m->id, 0, sizeof(m->id)) || (m->id[0] && !mover_id(m->id)) ||
-            (!m->id[0] && d->schema >= 2))
+            (!m->id[0] && d->schema >= 2 && !m->generated) || (m->generated && m->id[0]))
             return fail(err, n, "'%s': malformed mover definition ID (namespace:mover/name)%s", m->id, NULL);
         if (m->id[0] && d->count && !same_namespace(m->id, d->entity[0].id))
             return fail(err, n, "%s: not in the world's namespace (%s)", m->id, d->entity[0].id);
         for (uint32_t j = 0; j < i && m->id[0]; j++)
             if (!strcmp(d->mover_def[j].id, m->id)) return fail(err, n, "%s: duplicate mover definition ID%s", m->id, NULL);
-        const char *name = m->id[0] ? m->id : "(inline mover)";
+        const char *name = m->id[0] ? m->id : m->generated ? "(a prefab child's mover)" : "(inline mover)";
         for (int k = 0; k < 3; k++)
             if (!isfinite(m->size[k]) || !(m->size[k] >= 0.01f && m->size[k] <= HTA_WDEF_WORLD_LIMIT))
                 return fail(err, n, "%s: mover size must be finite, at least 0.01 wu%s", name, NULL);
@@ -898,7 +1167,22 @@ bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t n)
                 return fail(err, n, "%s: prop must be finite and inside the world%s", e->id, NULL);
             for (int k = 0; k < 3; k++)
                 if (e->max[k] < e->min[k]) return fail(err, n, "%s: prop bounds are inverted%s", e->id, NULL);
-        } else if (e->model) return fail(err, n, "%s: only a prop takes a model%s", e->id, NULL);
+        } else if (e->model && !(e->kind == HTA_WDEF_MOVER && e->instance && e->model <= d->asset_models))
+            return fail(err, n, "%s: only a prop (or a prefab's mover) takes a model%s", e->id, NULL);
+        if (e->xform) {
+            float r = e->rot_c * e->rot_c + e->rot_s * e->rot_s;
+            if (!isfinite(r) || fabsf(r - 1.0f) > 1e-3f || !(e->scale >= HTA_PREFAB_SCALE_MIN && e->scale <= HTA_PREFAB_SCALE_MAX) ||
+                (e->kind != HTA_WDEF_PROP && e->kind != HTA_WDEF_MOVER))
+                return fail(err, n, "%s: bad placement transform%s", e->id, NULL);
+            if (e->kind == HTA_WDEF_PROP && (!finite3(e->box_c, HTA_WDEF_WORLD_LIMIT) || !finite3(e->box_h, HTA_WDEF_WORLD_LIMIT)))
+                return fail(err, n, "%s: prop must be finite and inside the world%s", e->id, NULL);
+        }
+        if (e->instance && (e->instance > d->prefab_instance_count ||
+                            i < d->prefab_instance[e->instance - 1].first ||
+                            i >= (uint32_t)d->prefab_instance[e->instance - 1].first + d->prefab_instance[e->instance - 1].count))
+            return fail(err, n, "%s: bad prefab instance%s", e->id, NULL);
+        if (d->schema >= 5 && !e->instance && strchr(e->id, '/') && strstr(strchr(e->id, '/'), HTA_PREFAB_SEP))
+            return fail(err, n, "%s: '__' is reserved for prefab children (<instance>__<child>)%s", e->id, NULL);
         if (e->kind == HTA_WDEF_TRIGGER) {
             if (!finite3(e->min, HTA_WDEF_WORLD_LIMIT) || !finite3(e->max, HTA_WDEF_WORLD_LIMIT))
                 return fail(err, n, "%s: bounds must be finite%s", e->id, NULL);

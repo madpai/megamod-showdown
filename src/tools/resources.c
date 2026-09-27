@@ -87,6 +87,29 @@ static int inspect(const char *bundle, const char *world)
         json_str(d->script[i].provider ? pk->dep[d->script[i].provider - 1] : (pk->declared ? pk->id : "(this world)"));
         printf(", \"bytes\": %u}", d->script[i].len);
     }
+    /* X6: every prefab instance, what it placed, and what each child became. */
+    printf("],\n \"prefab_instances\": [");
+    for (uint32_t i = 0; i < d->prefab_instance_count; i++) {
+        const hta_wprefab_instance *in = &d->prefab_instance[i];
+        printf("%s\n  {\"instance\": ", i ? "," : ""); json_str(in->id);
+        printf(", \"prefab\": "); json_str(in->prefab);
+        printf(", \"provider\": "); json_str(in->provider && in->provider <= pk->dep_count ? pk->dep[in->provider - 1] : "?");
+        printf(", \"position\": [%.3f, %.3f, %.3f], \"yaw_degrees\": %g, \"scale\": %g, \"children\": [",
+               in->pos[0], in->pos[1], in->pos[2], (double)in->yaw_deg, (double)in->scale);
+        for (uint32_t c = 0; c < in->count; c++) {
+            uint32_t at = in->first + c;
+            const hta_wdef *e = &d->entity[at];
+            char path[64];
+            snprintf(path, sizeof(path), "%s/%s", in->id, strstr(e->id, "__") ? strstr(e->id, "__") + 2 : "?");
+            printf("%s{\"path\": ", c ? ", " : ""); json_str(path);
+            printf(", \"entity\": "); json_str(e->id);
+            printf(", \"kind\": \"%s\", \"index\": %u, \"position\": [%.3f, %.3f, %.3f]", hta_wdef_kind_name(e->kind), at,
+                   e->pos[0], e->pos[1], e->pos[2]);
+            if (e->kind == HTA_WDEF_MOVER) printf(", \"mover_definition\": %u", e->def);
+            printf("}");
+        }
+        printf("]}");
+    }
     printf("],\n \"resolved\": [");
     bool first = true;
 #define SEP() (first ? (first = false, "") : ",\n   ")
@@ -108,10 +131,18 @@ static int inspect(const char *bundle, const char *world)
         }
         if (e->script) {
             printf("%s{\"from\": ", SEP()); json_str(e->id);
-            printf(", \"field\": \"%s\", \"to\": ", hta_ref_get(HTA_REF_SCRIPT)->field);
+            printf(", \"field\": \"%s\", \"to\": ", hta_ref_get(e->instance ? HTA_REF_PREFAB_SCRIPT : HTA_REF_SCRIPT)->field);
             json_str(d->script[e->script - 1].id);
             printf(", \"index\": %u}", e->script - 1u);
         }
+    }
+    for (uint32_t i = 0; i < d->prefab_instance_count; i++) {
+        const hta_wprefab_instance *in = &d->prefab_instance[i];
+        printf("%s{\"from\": ", SEP()); json_str(in->id);
+        printf(", \"field\": \"%s\", \"to\": ", hta_ref_get(HTA_REF_PREFAB_INSTANCE)->field);
+        json_str(in->prefab);
+        printf(", \"provider\": "); json_str(in->provider && in->provider <= pk->dep_count ? pk->dep[in->provider - 1] : "?");
+        printf(", \"entities\": [%u, %u]}", in->first, in->first + in->count);
     }
     if (d->ability_script) {
         printf("%s{\"from\": \"ability_script\", \"field\": \"%s\", \"to\": ", SEP(), hta_ref_get(HTA_REF_ABILITY_SCRIPT)->field);
@@ -123,9 +154,9 @@ static int inspect(const char *bundle, const char *world)
 #define FROM(p) ((p) && (p) <= pk->dep_count ? pk->dep[(p) - 1] : "?")
     for (uint32_t i = 0; i < d->count; i++) {
         const hta_wdef *e = &d->entity[i];
-        if (e->kind != HTA_WDEF_PROP || !e->model || e->model > a->model_count) continue;
+        if ((e->kind != HTA_WDEF_PROP && e->kind != HTA_WDEF_MOVER) || !e->model || e->model > a->model_count) continue;
         printf("%s{\"from\": ", SEP()); json_str(e->id);
-        printf(", \"field\": \"%s\", \"to\": ", hta_ref_get(HTA_REF_PROP_MODEL)->field);
+        printf(", \"field\": \"%s\", \"to\": ", hta_ref_get(e->instance ? HTA_REF_PREFAB_MODEL : HTA_REF_PROP_MODEL)->field);
         json_str(a->model[e->model - 1].id);
         printf(", \"provider\": "); json_str(FROM(a->model[e->model - 1].provider));
         printf(", \"index\": %u}", e->model - 1u);
@@ -133,8 +164,11 @@ static int inspect(const char *bundle, const char *world)
     for (uint32_t i = 0; i < d->mover_def_count; i++) {
         const hta_wmover_def *md = &d->mover_def[i];
         if (!md->sound || md->sound > a->sound_count) continue;
-        printf("%s{\"from\": ", SEP()); json_str(md->id);
-        printf(", \"field\": \"%s\", \"to\": ", hta_ref_get(HTA_REF_MOVER_SOUND)->field);
+        const char *owner = md->id;
+        for (uint32_t k = 0; md->generated && k < d->count; k++)
+            if (d->entity[k].kind == HTA_WDEF_MOVER && d->entity[k].def == i) owner = d->entity[k].id;
+        printf("%s{\"from\": ", SEP()); json_str(owner);
+        printf(", \"field\": \"%s\", \"to\": ", hta_ref_get(md->generated ? HTA_REF_PREFAB_SOUND : HTA_REF_MOVER_SOUND)->field);
         json_str(a->sound[md->sound - 1].id);
         printf(", \"provider\": "); json_str(FROM(a->sound[md->sound - 1].provider));
         printf(", \"index\": %u}", md->sound - 1u);

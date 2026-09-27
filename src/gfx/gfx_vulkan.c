@@ -2170,6 +2170,11 @@ static void record_world(hta_gfx *g, VkCommandBuffer cb, const hta_camera *cam,
                                 L[0]*M[0] + L[1]*M[1] + L[2]*M[2],
                                 L[0]*M[4] + L[1]*M[5] + L[2]*M[6],
                                 L[0]*M[8] + L[1]*M[9] + L[2]*M[10], 0.0f };
+                            /* A uniformly scaled instance (X6 prefabs) would
+                             * scale the light too: keep it a unit vector.
+                             * Unscaled instances are left bit for bit. */
+                            float ll = sqrtf(ld[0]*ld[0] + ld[1]*ld[1] + ld[2]*ld[2]);
+                            if (ll > 1e-6f && fabsf(ll - 1.0f) > 1e-4f) { ld[0] /= ll; ld[1] /= ll; ld[2] /= ll; }
                             float lc[4] = { scene->light_color[0], scene->light_color[1],
                                             scene->light_color[2], 1.0f };
                             float am[4] = { scene->ambient[0], scene->ambient[1],

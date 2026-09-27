@@ -97,6 +97,7 @@ typedef struct {
 
 struct hta_world_defs;
 struct hta_asset_table;
+struct hta_prefab_table;
 
 typedef struct {
     hta_package decl;
@@ -108,6 +109,11 @@ typedef struct {
      * a material's texture and a model's slots hold indices into the
      * set's combined table (hta_pkg_set_asset_base). */
     struct hta_asset_table *assets;
+    /* X6: its prefabs (prefab.h), compiled (heap; never NULL once loaded).
+     * Their children's references are resolved when the set loads, from
+     * this library's point of view: models and sounds to combined asset
+     * indices, scripts to (dependency, script index). */
+    struct hta_prefab_table *prefabs;
 } hta_pkg_dep;
 
 /* A root package and every package it needs, loaded and checked. */

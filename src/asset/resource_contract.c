@@ -7,6 +7,7 @@
 #include "asset_res.h"
 #include "external_map.h"
 #include "package.h"
+#include "prefab.h"
 #include "resource.h"
 #include "world_def.h"
 #include <stdarg.h>
@@ -127,10 +128,57 @@ size_t hta_resource_contract_json(char *buf, size_t cap)
         HTA_ASSET_SCHEMA, HTA_ASSET_MEMBER_MAX, HTA_ASSET_MEMBER_SEGS, HTA_ASSET_TEX_MAX, HTA_ASSET_MAX_SLOTS,
         HTA_ASSET_MESH_MAX_VERTS, HTA_ASSET_MESH_MAX_INDICES, HTA_ASSET_MESH_MAX_GROUPS, HTA_ASSET_SOUND_MAX_FRAMES,
         HTA_ASSET_MAX_PER_TYPE, HTA_ASSET_MAX_MEMBERS, HTA_ASSET_MAX_PAYLOAD);
+    /* X6: prefabs (prefab.h), and how a world places them. */
+    put(&o, "  \"prefabs\": {\"member\": \"prefabs\", \"schema\": %u, \"in\": \"library packages\", \"fields\": [\"prefabs\", \"schema\"], "
+            "\"prefab_fields\": [\"children\", \"id\"], ", HTA_PREFAB_SCHEMA);
+    put(&o, "\"children\": {\"kinds\": [");
+    for (uint8_t k = 1; k < HTA_WDEF_KIND_COUNT; k++) put(&o, "%s\"%s\"", k > 1 ? ", " : "", hta_wdef_kind_name(k));
+    put(&o, "], \"common\": [\"id\", \"kind\", \"links\"], \"fields\": {"
+            "\"interactable\": {\"takes\": [\"position\", \"reach\", \"script\"], \"needs\": [\"position\", \"reach\"]}, "
+            "\"relay\": {\"takes\": [], \"needs\": []}, "
+            "\"mover\": {\"takes\": [\"position\", \"size\", \"move\", \"speed\", \"yaw_degrees\", \"sound\", \"model\"], \"needs\": [\"position\", \"size\", \"move\", \"speed\"]}, "
+            "\"trigger\": {\"takes\": [\"bounds\"], \"needs\": [\"bounds\"]}, "
+            "\"teleport\": {\"takes\": [\"position\", \"yaw_degrees\"], \"needs\": [\"position\"]}, "
+            "\"prop\": {\"takes\": [\"position\", \"model\", \"yaw_degrees\"], \"needs\": [\"position\", \"model\"]}}, "
+            "\"space\": \"prefab space: +z up, the instance's origin at 0; the world's own parameter meanings\", "
+            "\"mover\": \"size, move and speed inline (it becomes its own mover definition when expanded); an optional model draws it, "
+            "its origin at the box's centre\", "
+            "\"links\": \"{event, input, target}: target is a sibling's local id; the source must emit the event and the target accept the "
+            "input; no self-link, no cycle, chains of at most %u\"}, ", HTA_WDEF_MAX_CHAIN);
+    put(&o, "\"local_id\": {\"form\": \"[a-z][a-z0-9]*(_[a-z0-9]+)*\", \"max_bytes\": %u, "
+            "\"applies_to\": [\"a prefab child's id\", \"a world's prefab instance id\"], "
+            "\"identity\": \"local: never a resource ID; unique within its prefab (children) or world (instances)\"}, "
+            "\"child_entity\": {\"form\": \"<world namespace>:entity/<instance>__<child>\", \"separator\": \"%s\", "
+            "\"why\": \"neither part may hold __, so the split is unique; a schema 5 world's own placed IDs may not hold __ either\"}, ",
+        HTA_PREFAB_LOCAL_MAX, HTA_PREFAB_SEP);
+    put(&o, "\"order\": \"prefabs in canonical byte order of id, children in canonical byte order of local id, each once; a world's "
+            "instances in canonical byte order of id; expansion appends, after the world's own entities, each instance's children in "
+            "that order\", "
+            "\"references\": \"a child's model, sound and script resolve from the prefab's own package (its own or its imports); a "
+            "world imports only the prefab\", "
+            "\"nesting\": {\"supported\": false, \"max_depth\": 0, \"refusal\": \"a child of kind prefab, or naming a prefab, is refused\"}, "
+            "\"inheritance\": false, \"overrides\": \"none: an instance is the prefab, an instance id and a transform\", ");
+    put(&o, "\"transform\": {\"position\": \"[x, y, z] wu\", \"yaw_degrees\": \"about +z, counter-clockwise seen from above (+x turns "
+            "toward +y); |yaw| <= %g; exact at multiples of 90\", \"scale\": {\"uniform\": true, \"min\": %g, \"max\": %g, \"on\": "
+            "\"instances and props\"}, \"composition\": \"child world pos = I.pos + I.scale * Rz(I.yaw) * c.pos; yaw = I.yaw + c.yaw; "
+            "scale = I.scale; a mover's move turns with the instance, its box with its own yaw too; reach, size, move and speed scale\", "
+            "\"triggers\": \"axis-aligned boxes: an instance holding a trigger must have a yaw that is a multiple of 90\", "
+            "\"collision\": \"a prop and a prefab mover collide as their oriented box (the drawn model's bounds, turned and scaled)\"}, ",
+        (double)HTA_PREFAB_MAX_YAW, (double)HTA_PREFAB_SCALE_MIN, (double)HTA_PREFAB_SCALE_MAX);
+    put(&o, "\"limits\": {\"per_library\": %u, \"children\": %u, \"links\": %u, \"links_per_child\": %u, \"instances_per_world\": %u, "
+            "\"expanded_entities\": %u, \"expanded_mover_definitions\": %u, \"local_position\": %g, \"yaw_degrees\": %g}, "
+            "\"runtime\": \"expanded once when the world loads into ordinary placed entities (the same arrays, handles, links, "
+            "collision, replication, scripts); nothing during play knows a prefab\"},\n",
+        HTA_PREFAB_MAX_PER_LIBRARY, HTA_PREFAB_MAX_CHILDREN, HTA_PREFAB_MAX_LINKS, HTA_PREFAB_MAX_LINKS_PER, HTA_PREFAB_MAX_INSTANCES,
+        HTA_WDEF_MAX_ENTITIES, HTA_WDEF_MAX_MOVER_DEFS, (double)HTA_PREFAB_MAX_LOCAL, (double)HTA_PREFAB_MAX_YAW);
     put(&o, "  \"world_entities\": {\"schema\": %u, \"kinds\": [", HTA_WDEF_SCHEMA);
     for (uint8_t k = 1; k < HTA_WDEF_KIND_COUNT; k++) put(&o, "%s\"%s\"", k > 1 ? ", " : "", hta_wdef_kind_name(k));
     put(&o, "], \"prop\": \"schema 4: {id, kind prop, links [], model, position}: draws its model where it stands, solid as the "
-            "model's bounds\", \"mover_sound\": \"schema 4: a mover definition's optional sound, played when a mover starts to open or close\"},\n");
+            "model's bounds\", \"mover_sound\": \"schema 4: a mover definition's optional sound, played when a mover starts to open or close\", "
+            "\"prop_transform\": \"schema 5: a prop's optional yaw_degrees and scale (see prefabs.transform)\", "
+            "\"prefab_instances\": {\"schema\": 5, \"fields\": [\"id\", \"position\", \"prefab\", \"scale\", \"yaw_degrees\"], "
+            "\"needs\": [\"id\", \"position\", \"prefab\"], \"defaults\": {\"scale\": 1, \"yaw_degrees\": 0}, "
+            "\"order\": \"canonical byte order of id, each once\", \"reserved\": \"a schema 5 world's own placed IDs may not hold __\"}},\n");
     put(&o, "  \"scripts\": {\"api\": \"%s\", \"max_scripts\": %u, \"max_source_bytes\": %u, \"max_pool_bytes\": %u}\n}\n",
         HTA_WDEF_SCRIPT_API, HTA_WDEF_MAX_SCRIPTS, HTA_WDEF_SCRIPT_MAX_BYTES, HTA_WDEF_SCRIPT_POOL);
     return o.len;
@@ -178,6 +226,8 @@ static const char *const RID_CASES[] = {
     "showdown:ruleset/team_deathmatch", "megamod:script/x", "x4:script/a%s", "x4:script/a\\b", "x4:script/a\"b",
     "x5shared:model/test_crate", "x5shared:material/test_crate", "x5shared:texture/test_crate", "x5shared:sound/test_impact",
     "x5shared:model/models/test_crate", "x5shared:model/test_crate.mesh", "x5shared:Model/test_crate", "x5shared:sounds/impact",
+    "x6:prefab/security_door", "x6:prefab/Security_door", "x6:prefabs/security_door", "x6:prefab/security_door/button",
+    "x6:entity/north_door__button", "megamod:prefab/door",
 };
 static const char *const PKG_CASES[] = {
     "x4.resource_lab", "x4.shared", "showdown", "a.b.c.d.e.f.g.h", "common.gameplay_scripts2", "", "x4:resource_lab",
@@ -195,6 +245,13 @@ static const char *const PATH_CASES[] = {
     "models.x/a.mesh", "models/a-b.mesh", "models/a b.mesh", "models/a.mesh/", "C:/a.mesh", "models/a\xc3\xa9.mesh",
     "models/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.mesh",
     "models/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.mesh", "models/a:b.mesh", "%2e%2e/a.mesh",
+};
+
+/* Local IDs (X6, prefab.h): a prefab child's id and a world's instance id. */
+static const char *const LOCAL_CASES[] = {
+    "button", "door", "north_door", "frame_left", "a", "a1", "a_1", "door2_panel", "a2345678901234567890123",
+    "a23456789012345678901234", "", "Button", "1door", "_door", "door_", "door__panel", "a___b", "door-panel", "door.panel",
+    "door panel", "door/panel", "door:panel", "x6:entity/door", "d\xc3\xb6r", "north_door__button",
 };
 
 static void jstr(out *o, const char *s)
@@ -264,6 +321,17 @@ size_t hta_resource_conformance_json(char *buf, size_t cap)
         put(&o, ", \"valid\": %s, \"why\": ", ok ? "true" : "false");
         jstr(&o, why);
         put(&o, "}%s\n", i + 1 < sizeof(PATH_CASES) / sizeof(PATH_CASES[0]) ? "," : "");
+    }
+    put(&o, "  ],\n  \"local_ids\": [\n");
+    for (size_t i = 0; i < sizeof(LOCAL_CASES) / sizeof(LOCAL_CASES[0]); i++) {
+        char p[256], why[160];
+        unescape(LOCAL_CASES[i], p, sizeof(p));
+        bool ok = hta_prefab_local_valid(p, "local id", why, sizeof(why));
+        put(&o, "    {\"id\": ");
+        jstr(&o, p);
+        put(&o, ", \"valid\": %s, \"why\": ", ok ? "true" : "false");
+        jstr(&o, why);
+        put(&o, "}%s\n", i + 1 < sizeof(LOCAL_CASES) / sizeof(LOCAL_CASES[0]) ? "," : "");
     }
     put(&o, "  ]\n}\n");
     return o.len;

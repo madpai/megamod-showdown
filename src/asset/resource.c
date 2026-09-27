@@ -34,8 +34,8 @@ static const hta_rtype_info TYPES[HTA_RT_COUNT] = {
         "one clip of 16-bit PCM in a library package; a mover definition may name it (not the UI 'sounds' pack)" },
     [HTA_RT_ANIMATION] = { "animation", "animation", HTA_RT_RESERVED, HTA_RS_DEFINITION, false, false, "X4",
         "reserved: a clip for a skeleton" },
-    [HTA_RT_PREFAB] = { "prefab", "prefab", HTA_RT_RESERVED, HTA_RS_DEFINITION, false, false, "X4",
-        "reserved: a composed, reusable entity (a likely X6)" },
+    [HTA_RT_PREFAB] = { "prefab", "prefab", HTA_RT_SUPPORTED, HTA_RS_DEFINITION, true, true, "X6",
+        "a reusable composition of entity kinds and resources; a library provides it, a world places instances that expand into ordinary entities at load" },
     [HTA_RT_RULESET] = { "ruleset", "ruleset", HTA_RT_RESERVED, HTA_RS_DEFINITION, false, false, "X4",
         "reserved: game rules (team deathmatch...)" },
 };
@@ -179,6 +179,14 @@ static const hta_ref_info REFS[HTA_REF_FIELD_COUNT] = {
         "the model a placed prop draws (and collides as its bounds); imported from a library" },
     [HTA_REF_MOVER_SOUND] = { "world_entities.mover_definitions[].sound", "sound", HTA_RT_SOUND, HTA_REF_IMPORT, "X5",
         "the sound a mover makes when it starts to open or close; imported from a library" },
+    [HTA_REF_PREFAB_MODEL] = { "prefabs.prefabs[].children[].model", "model", HTA_RT_MODEL, HTA_REF_IMPORT, "X6",
+        "a prefab child's model (a prop's, or what draws a mover); resolved from the prefab's own package: its own or imported" },
+    [HTA_REF_PREFAB_SOUND] = { "prefabs.prefabs[].children[].sound", "sound", HTA_RT_SOUND, HTA_REF_IMPORT, "X6",
+        "a prefab mover child's sound; resolved from the prefab's own package: its own or imported" },
+    [HTA_REF_PREFAB_SCRIPT] = { "prefabs.prefabs[].children[].script", "script", HTA_RT_SCRIPT, HTA_REF_IMPORT, "X6",
+        "a prefab interactable child's script (declares on_used); resolved from the prefab's own package: its own or imported" },
+    [HTA_REF_PREFAB_INSTANCE] = { "world_entities.prefab_instances[].prefab", "prefab", HTA_RT_PREFAB, HTA_REF_IMPORT, "X6",
+        "the prefab a world's instance places; imported from a library (the world needs nothing else the prefab uses)" },
 };
 
 const hta_ref_info *hta_ref_get(uint8_t f) { return f < HTA_REF_FIELD_COUNT ? &REFS[f] : NULL; }

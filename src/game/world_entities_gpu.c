@@ -73,7 +73,9 @@ uint32_t hta_went_gpu_upload(hta_went_gpu *g, hta_gfx *gfx, const hta_bsp_mesh *
         g->model_count = assets->model_count;
         for (uint32_t e = 0; e < w->defs->count; e++) {
             const hta_wdef *d = &w->defs->entity[e];
-            if (d->kind != HTA_WDEF_PROP || !d->model || d->model > g->model_count || g->model[d->model - 1]) continue;
+            /* X6: a prefab's mover may be drawn by a model too. */
+            if ((d->kind != HTA_WDEF_PROP && d->kind != HTA_WDEF_MOVER) || !d->model || d->model > g->model_count ||
+                g->model[d->model - 1]) continue;
             char err[128];
             g->model[d->model - 1] = hta_gfx_mesh_upload(gfx, &assets->model[d->model - 1].mesh, err, sizeof(err));
             if (g->model[d->model - 1]) g->models_uploaded++;
@@ -89,6 +91,16 @@ uint32_t hta_went_gpu_upload(hta_went_gpu *g, hta_gfx *gfx, const hta_bsp_mesh *
         if (submesh_entity[i] && submesh_entity[i] <= w->defs->count && g->mesh[submesh_entity[i] - 1])
             hta_gfx_mesh_set_draw_mode(world_gpu, i, HTA_DRAW_SKIP);
     return g->count;
+}
+
+/* A placement's model matrix (column-major): translate `t`, then its
+ * rotation about +z and uniform scale (X6), identity without a transform. */
+static void placement_matrix(const hta_wdef *d, const float t[3], float m[16])
+{
+    memset(m, 0, 16 * sizeof(float));
+    float c = d->xform ? d->rot_c : 1.0f, s = d->xform ? d->rot_s : 0.0f, k = d->xform ? d->scale : 1.0f;
+    m[0] = c * k; m[1] = s * k; m[4] = -s * k; m[5] = c * k; m[10] = k; m[15] = 1.0f;
+    m[12] = t[0]; m[13] = t[1]; m[14] = t[2];
 }
 
 uint32_t hta_went_gpu_instances(const hta_went_gpu *g, const hta_world_entities *w,
@@ -113,9 +125,22 @@ uint32_t hta_went_gpu_instances(const hta_went_gpu *g, const hta_world_entities 
         hta_gfx_instance *in = &out[n++];
         memset(in, 0, sizeof(*in));
         in->mesh = g->model[d->model - 1];
-        in->model[0] = in->model[5] = in->model[10] = in->model[15] = 1.0f;
-        in->model[12] = d->pos[0]; in->model[13] = d->pos[1]; in->model[14] = d->pos[2];
+        placement_matrix(d, d->pos, in->model);
         in->lit = true;          /* a model is lit by the scene, like a body */
+    }
+    /* X6: a prefab mover drawn by its model, in its box's frame (the model's
+     * origin is the box's centre), where it has moved to. */
+    for (uint32_t e = 0; g && g->model && w && w->loaded && out && e < w->defs->count && n < cap; e++) {
+        const hta_wdef *d = &w->defs->entity[e];
+        if (d->kind != HTA_WDEF_MOVER || !d->model || d->model > g->model_count || !g->model[d->model - 1]) continue;
+        float off[3], t[3];
+        hta_went_offset(w, e, off);
+        for (int k = 0; k < 3; k++) t[k] = d->pos[k] + off[k];
+        hta_gfx_instance *in = &out[n++];
+        memset(in, 0, sizeof(*in));
+        in->mesh = g->model[d->model - 1];
+        placement_matrix(d, t, in->model);
+        in->lit = true;
     }
     return n;
 }

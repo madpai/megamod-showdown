@@ -97,5 +97,6 @@ int main(int argc, char **argv)
         hta_external_map_free(&s->world_ext);
     }
     printf("content: %s\n", failed ? "FAILED" : "ok");
+    free(s);
     return failed;
 }

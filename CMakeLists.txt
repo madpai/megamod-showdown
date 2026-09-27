@@ -46,7 +46,7 @@ if(ANDROID)
         src/engine/gore.c
         src/engine/props.c
         src/engine/world_entities.c
-        src/asset/world_def.c src/asset/mjson.c src/asset/resource.c src/asset/package.c src/asset/asset_res.c
+        src/asset/world_def.c src/asset/mjson.c src/asset/resource.c src/asset/package.c src/asset/asset_res.c src/asset/prefab.c
         src/script/script.c
         src/engine/weather.c
         src/engine/sfx.c
@@ -123,7 +123,7 @@ else()
         src/game/brain.c
         src/game/view.c
         src/game/menu.c
-        src/engine/world_entities.c src/asset/world_def.c src/asset/mjson.c src/asset/resource.c src/asset/package.c src/asset/asset_res.c src/asset/resource_contract.c src/script/script.c
+        src/engine/world_entities.c src/asset/world_def.c src/asset/mjson.c src/asset/resource.c src/asset/package.c src/asset/asset_res.c src/asset/prefab.c src/asset/resource_contract.c src/script/script.c
         src/asset/cache.c src/asset/bsp.c src/asset/external_map.c src/asset/oal_asset.c src/asset/bitmap.c src/asset/sound.c src/asset/ogg.c src/asset/effect.c src/asset/dialogue.c src/asset/strings.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
         src/asset/anim.c src/asset/model.c src/asset/font.c
         src/gfx/gfx_settings.c)
@@ -149,6 +149,9 @@ else()
     add_executable(test_asset tests/test_asset.c)
     target_link_libraries(test_asset PRIVATE hta_engine m)
     add_test(NAME asset COMMAND test_asset)
+    add_executable(test_prefab tests/test_prefab.c)
+    target_link_libraries(test_prefab PRIVATE hta_engine m)
+    add_test(NAME prefab COMMAND test_prefab)
     add_executable(test_resource tests/test_resource.c)
     target_link_libraries(test_resource PRIVATE hta_engine m)
     target_compile_definitions(test_resource PRIVATE HTA_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")

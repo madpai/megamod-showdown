@@ -69,11 +69,11 @@ static void ids(void)
         { "x4:script/d\xc3\xb6r", HTA_RID_MALFORMED, "name has \\xc3" },
         { "x4:widget/door", HTA_RID_UNKNOWN_TYPE, "unknown resource type 'widget'" },
         { "x4:scripts/door", HTA_RID_UNKNOWN_TYPE, "unknown resource type 'scripts'" },
-        { "showdown:prefab/security_door", HTA_RID_RESERVED_TYPE, "resource type 'prefab' is reserved" },
+        { "showdown:ruleset/security", HTA_RID_RESERVED_TYPE, "resource type 'ruleset' is reserved" },
         { "common:animation/rifle_run", HTA_RID_RESERVED_TYPE, "reserved" },
         { "showdown:model/red_crate", HTA_RID_OK, "" },            /* X5: supported */
         { "common:material/industrial_metal", HTA_RID_OK, "" },
-        { "showdown:prefab/security_door", HTA_RID_RESERVED_TYPE, "reserved" },
+        { "showdown:prefab/security_door", HTA_RID_OK, "" },      /* X6: supported */
         { "showdown:ruleset/team_deathmatch", HTA_RID_RESERVED_TYPE, "reserved" },
         { "community:animation/rifle_run", HTA_RID_RESERVED_TYPE, "reserved" },
     };
@@ -98,7 +98,7 @@ static void ids(void)
     CHECK(hta_rid_parse(NULL, &r, why, sizeof(why)) == HTA_RID_MALFORMED);
     CHECK(hta_rid_is("x1:entity/a", HTA_RT_ENTITY) && !hta_rid_is("x1:entity/a", HTA_RT_SCRIPT) &&
           hta_rid_is("x1:model/a", HTA_RT_MODEL) && !hta_rid_is("x1:model/a", HTA_RT_MATERIAL) &&
-          !hta_rid_is("x1:prefab/a", HTA_RT_PREFAB));
+          !hta_rid_is("x1:ruleset/a", HTA_RT_RULESET) && hta_rid_is("x1:prefab/a", HTA_RT_PREFAB));
     CHECK(hta_rid_same_namespace("x4:script/a", "x4:entity/b") && !hta_rid_same_namespace("x4:script/a", "x44:script/a"));
 
     /* Package IDs: a grammar of their own, never a resource ID. */
@@ -136,10 +136,11 @@ static void registry(void)
         CHECK(!(i->importable && i->scope == HTA_RS_PLACEMENT));
     }
     /* X5: model, material, texture and sound are supported and importable;
-     * animation, prefab and ruleset stay reserved. */
-    CHECK(supported == 11 && reserved == 3 && importable == 5 && hta_rtype_get(HTA_RT_SCRIPT)->importable &&
+     * X6: so is prefab. animation and ruleset stay reserved. */
+    CHECK(supported == 12 && reserved == 2 && importable == 6 && hta_rtype_get(HTA_RT_SCRIPT)->importable &&
           hta_rtype_get(HTA_RT_MODEL)->importable && hta_rtype_get(HTA_RT_SOUND)->importable &&
-          !hta_rtype_get(HTA_RT_SOUNDS)->importable && hta_rtype_get(HTA_RT_PREFAB)->status == HTA_RT_RESERVED);
+          !hta_rtype_get(HTA_RT_SOUNDS)->importable && hta_rtype_get(HTA_RT_PREFAB)->status == HTA_RT_SUPPORTED &&
+          hta_rtype_get(HTA_RT_PREFAB)->importable && hta_rtype_get(HTA_RT_RULESET)->status == HTA_RT_RESERVED);
     CHECK(!hta_rtype_get(0) && !hta_rtype_get(HTA_RT_COUNT) && hta_rtype_find("", 0) == HTA_RT_NONE);
     for (uint8_t f = 0; f < HTA_REF_FIELD_COUNT; f++) {
         const hta_ref_info *r = hta_ref_get(f);
@@ -199,7 +200,7 @@ static void resolution(void)
     CHECK(resolve_fails(&s, HTA_REF_SCRIPT, "x4:entity/door", "script x4:entity/door is a placed entity, expected a script"));
     CHECK(resolve_fails(&s, HTA_REF_LINK_TARGET, "x4:script/open_door", "link target x4:script/open_door is a script, expected a placed entity"));
     CHECK(resolve_fails(&s, HTA_REF_SCRIPT, "x4:weapon/door", "script 'x4:weapon/door' is not a script ID (namespace:script/name)"));
-    CHECK(resolve_fails(&s, HTA_REF_SCRIPT, "x4:prefab/door", "resource type 'prefab' is reserved"));
+    CHECK(resolve_fails(&s, HTA_REF_SCRIPT, "x4:ruleset/door", "resource type 'ruleset' is reserved"));
     CHECK(resolve_fails(&s, HTA_REF_SCRIPT, "x4:model/door", "x4:entity/button: script 'x4:model/door' is not a script ID"));
     CHECK(resolve_fails(&s, HTA_REF_SCRIPT, "x4:gizmo/door", "unknown resource type 'gizmo'"));
     CHECK(resolve_fails(&s, HTA_REF_SCRIPT, "X4:script/Open", "is not a resource ID: namespace has capital 'X'"));
@@ -269,7 +270,7 @@ static void declarations(void)
     CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[\"a:script/b\",\"a:script/a\"],\"requires\":[],\"schema\":1"), "not in canonical (byte) order at a:script/a"));
     CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[\"a:script/a\",\"a:script/a\"],\"requires\":[],\"schema\":1"), "lists a:script/a twice"));
     CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[\"a:entity/door\"],\"requires\":[],\"schema\":1"), "placed entity is a placement"));
-    CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[\"a:prefab/crate\"],\"requires\":[],\"schema\":1"), "resource type 'prefab' is reserved"));
+    CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[\"a:ruleset/crate\"],\"requires\":[],\"schema\":1"), "resource type 'ruleset' is reserved"));
     CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[\"megamod:script/x\"],\"requires\":[],\"schema\":1"), "namespace 'megamod' is reserved"));
     CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[\"a:Script/x\"],\"requires\":[],\"schema\":1"), "type has capital 'S'"));
     CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[],\"requires\":[{\"package\":\"b\",\"resources\":[\"b:mover/door\"]}],\"schema\":1"),

@@ -3,6 +3,7 @@
 #include "package.h"
 #include "asset_res.h"
 #include "mjson.h"
+#include "prefab.h"
 #include "world_def.h"
 #include <stdarg.h>
 #include <stdio.h>
@@ -221,7 +222,8 @@ static void top_string(const uint8_t *m, size_t len, const char *want, char *out
 /* What a library adds to a world key: FNV-1a 64 over "OALL", the schema,
  * then its played members (package, scripts) as key/value bytes, exactly
  * as stored, in manifest order. */
-static const char *const LIBRARY_PLAYED[] = { "assets", "package", "scripts" };
+/* X6 adds "prefabs": a library without one digests exactly as before. */
+static const char *const LIBRARY_PLAYED[] = { "assets", "package", "prefabs", "scripts" };
 const char *hta_library_key_played(uint32_t i)
 {
     return i < sizeof(LIBRARY_PLAYED) / sizeof(LIBRARY_PLAYED[0]) ? LIBRARY_PLAYED[i] : NULL;
@@ -251,6 +253,7 @@ static void lib_drop(hta_pkg_dep *out)
 {
     free(out->scripts); out->scripts = NULL;
     if (out->assets) { hta_asset_table_free(out->assets); free(out->assets); out->assets = NULL; }
+    if (out->prefabs) { hta_prefab_table_free(out->prefabs); free(out->prefabs); out->prefabs = NULL; }
 }
 
 void hta_pkg_dep_free(hta_pkg_dep *dep) { if (dep) lib_drop(dep); }
@@ -261,6 +264,7 @@ static bool lib_provides(const hta_pkg_dep *d, const char *name, char *err, size
     for (uint32_t i = 0; i < d->decl.provide_count; i++) {
         const hta_pkg_rid *p = &d->decl.provides[i];
         bool have = p->type == HTA_RT_SCRIPT ? hta_world_defs_find_script(d->scripts, p->id) >= 0 :
+                    p->type == HTA_RT_PREFAB ? hta_prefab_find(d->prefabs, p->id) >= 0 :
                     hta_asset_type(p->type) ? hta_asset_find(d->assets, p->type, p->id) >= 0 : false;
         if (!have) {
             const hta_rtype_info *t = hta_rtype_get(p->type);
@@ -278,6 +282,9 @@ static bool lib_provides(const hta_pkg_dep *d, const char *name, char *err, size
             if (!hta_package_provides(&d->decl, id))
                 return failv(err, n, "%s has %s %s but does not list it in provides", name, hta_rtype_get(T[k])->noun, id);
         }
+    for (uint32_t i = 0; i < d->prefabs->count; i++)
+        if (!hta_package_provides(&d->decl, d->prefabs->prefab[i].id))
+            return failv(err, n, "%s has prefab %s but does not list it in provides", name, d->prefabs->prefab[i].id);
     return true;
 }
 
@@ -303,7 +310,8 @@ bool hta_library_load(const uint8_t *data, size_t size, hta_pkg_dep *out, char *
     hta_package_name(&out->decl, name, sizeof(name));
     out->scripts = calloc(1, sizeof(*out->scripts));
     out->assets = calloc(1, sizeof(*out->assets));
-    if (!out->scripts || !out->assets) { lib_drop(out); return failv(err, n, "out of memory"); }
+    out->prefabs = calloc(1, sizeof(*out->prefabs));
+    if (!out->scripts || !out->assets || !out->prefabs) { lib_drop(out); return failv(err, n, "out of memory"); }
     char why[400];
     if (!hta_world_defs_parse_library(m, ml, out->scripts, why, sizeof(why))) {
         lib_drop(out);
@@ -313,6 +321,10 @@ bool hta_library_load(const uint8_t *data, size_t size, hta_pkg_dep *out, char *
     size_t plen = size - 32 - ml;
     bool has_assets = false;
     if (!hta_asset_parse(m, ml, payload, plen, name, out->assets, &has_assets, why, sizeof(why))) {
+        lib_drop(out);
+        return failv(err, n, "%s", why);
+    }
+    if (!hta_prefab_parse(m, ml, name, out->prefabs, NULL, why, sizeof(why))) {
         lib_drop(out);
         return failv(err, n, "%s", why);
     }
@@ -368,6 +380,7 @@ static void path(const hta_pkg_set *s, const uint32_t *stack, uint32_t from, uin
 }
 
 static bool link_assets(hta_pkg_set *set, char *err, size_t n);
+static bool link_prefabs(hta_pkg_set *set, char *err, size_t n);
 
 /* The message is written first: it may point into the set. */
 #define REFUSE(...) do { failv(err, n, __VA_ARGS__); hta_pkg_set_free(set); return false; } while (0)
@@ -459,6 +472,9 @@ bool hta_pkg_set_load(hta_pkg_set *set, const hta_package *root, const hta_pkg_s
         }
     /* X5: each library's asset references, resolved once, typed. */
     if (!link_assets(set, err, n)) { hta_pkg_set_free(set); return false; }
+    /* X6: each library's prefab children, resolved once, typed, from that
+     * library's own point of view. */
+    if (!link_prefabs(set, err, n)) { hta_pkg_set_free(set); return false; }
     return true;
 }
 
@@ -475,6 +491,7 @@ static int32_t entry_index(const hta_pkg_set *set, uint32_t k, const hta_pkg_rid
 {
     const hta_pkg_dep *d = &set->dep[k];
     if (p->type == HTA_RT_SCRIPT) return hta_world_defs_find_script(d->scripts, p->id);
+    if (p->type == HTA_RT_PREFAB) return hta_prefab_find(d->prefabs, p->id);
     if (!hta_asset_type(p->type)) return -1;
     int32_t at = hta_asset_find(d->assets, p->type, p->id);
     return at < 0 ? -1 : (int32_t)(hta_pkg_set_asset_base(set, k, p->type) + (uint32_t)at);
@@ -549,6 +566,58 @@ static bool link_assets(hta_pkg_set *set, char *err, size_t n)
                 const hta_res_entry *e = hta_res_resolve(rs, HTA_REF_MODEL_MATERIAL, t->model[i].id, t->model[i].slot_ref[s], err, n);
                 if (!e) ok = false; else t->model[i].slot[s] = e->index;
             }
+    }
+    free(rs); free(imports);
+    return ok;
+}
+
+/* Every prefab child's model, sound and script: resolved through the typed
+ * resolver from its library's point of view (its own resources, or ones it
+ * imports) -- never from a world that places it. A consumer imports the
+ * prefab; the prefab's implementation dependencies stay the provider's. */
+static bool link_prefabs(hta_pkg_set *set, char *err, size_t n)
+{
+    bool any = false;
+    for (uint32_t k = 0; k < set->dep_count; k++) any = any || set->dep[k].prefabs->count;
+    if (!any) return true;
+    hta_res_set *rs = malloc(sizeof(*rs));
+    hta_res_import *imports = malloc(HTA_PKG_MAX_IMPORTS * sizeof(*imports));
+    bool ok = rs && imports;
+    if (!ok) failv(err, n, "out of memory");
+    for (uint32_t k = 0; ok && k < set->dep_count; k++) {
+        hta_prefab_table *t = set->dep[k].prefabs;
+        if (!t->count) continue;
+        hta_res_init(rs);
+        if (!set_resources_for(set, (int32_t)k, rs, imports, err, n)) { ok = false; break; }
+        for (uint32_t i = 0; ok && i < t->count; i++) {
+            hta_prefab *p = &t->prefab[i];
+            for (uint32_t c = 0; ok && c < p->child_count; c++) {
+                hta_prefab_child *ch = &p->child[c];
+                char who[HTA_RID_MAX + HTA_PREFAB_LOCAL_MAX + 24];
+                snprintf(who, sizeof(who), "prefab %s child '%s'", p->id, ch->id);
+                const hta_res_entry *e;
+                if (ch->model_ref[0]) {
+                    if (!(e = hta_res_resolve(rs, HTA_REF_PREFAB_MODEL, who, ch->model_ref, err, n))) { ok = false; break; }
+                    ch->model = (uint16_t)(e->index + 1u);
+                }
+                if (ch->sound_ref[0]) {
+                    if (!(e = hta_res_resolve(rs, HTA_REF_PREFAB_SOUND, who, ch->sound_ref, err, n))) { ok = false; break; }
+                    ch->sound = (uint16_t)(e->index + 1u);
+                }
+                if (ch->script_ref[0]) {
+                    if (!(e = hta_res_resolve(rs, HTA_REF_PREFAB_SCRIPT, who, ch->script_ref, err, n))) { ok = false; break; }
+                    uint32_t dep = e->provider ? e->provider - 1u : k;
+                    const hta_world_defs *lib = set->dep[dep].scripts;
+                    if (e->index >= lib->script_count) { ok = failv(err, n, "%s: script %s was not loaded", who, ch->script_ref); break; }
+                    if (!(lib->script[e->index].callbacks & HTA_WCB_ON_USED)) {
+                        ok = failv(err, n, "%s: script %s does not declare on_used", who, ch->script_ref);
+                        break;
+                    }
+                    ch->script_dep = (uint8_t)(dep + 1u);
+                    ch->script = e->index;
+                }
+            }
+        }
     }
     free(rs); free(imports);
     return ok;

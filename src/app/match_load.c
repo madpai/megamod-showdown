@@ -335,6 +335,14 @@ void hta_match_begin(hta_session *s)
     s->went_synced = false;
     if (s->went.loaded)
         hta_log("[world] %u world entities, %u links", s->went.defs->count, s->went.defs->link_count);
+    /* X6: what each prefab instance expanded into (ordinary entities now). */
+    for (uint32_t i = 0; s->went.loaded && i < s->went.defs->prefab_instance_count; i++) {
+        const hta_wprefab_instance *in = &s->went.defs->prefab_instance[i];
+        hta_log("[world] prefab instance %s: %s from %s -> entities %u..%u (%s .. %s)", in->id, in->prefab,
+                in->provider && in->provider <= s->world_ext.package.dep_count ? s->world_ext.package.dep[in->provider - 1] : "?",
+                in->first, in->first + in->count - 1u, s->went.defs->entity[in->first].id,
+                s->went.defs->entity[in->first + in->count - 1u].id);
+    }
     /* X5: the world's asset resources (loaded with its package set). */
     if (s->world_loaded) {
         const hta_asset_table *a = &s->world_ext.assets;

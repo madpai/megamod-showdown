@@ -46,6 +46,17 @@ static void place(hta_world_entities *w, uint32_t i)
     for (int k = 0; k < 3; k++) in->pos[k] = d->pos[k] + m->move[k] * w->st[i].t;
 }
 
+/* X6: a placement's rotation about +z, row-major local -> world (the
+ * collision instance's convention); identity without a transform. */
+static void set_rot(hta_collision_instance *in, const hta_wdef *d)
+{
+    memset(in->rot, 0, sizeof(in->rot));
+    in->rot[0] = in->rot[4] = in->rot[8] = 1.0f;
+    if (!d->xform) return;
+    in->rot[0] = d->rot_c; in->rot[1] = -d->rot_s;
+    in->rot[3] = d->rot_s; in->rot[4] = d->rot_c;
+}
+
 /* A box grid of half extents `h`, in its own space around the centre. */
 static bool box_build(hta_bsp_mesh *m, hta_vertex v[8], uint32_t idx[36], hta_collision *coll, const float h[3])
 {
@@ -80,14 +91,16 @@ static bool prop_build(hta_world_entities *w, uint32_t i)
     const hta_wdef *d = &w->defs->entity[i];
     float h[3], c[3];
     for (int k = 0; k < 3; k++) {
-        h[k] = (d->max[k] - d->min[k]) * 0.5f;
+        /* X6: a transformed prop is its oriented box, not the world-axis
+         * box around it -- collision is what is drawn. */
+        h[k] = d->xform ? d->box_h[k] : (d->max[k] - d->min[k]) * 0.5f;
         if (h[k] < 0.005f) h[k] = 0.005f;
-        c[k] = (d->max[k] + d->min[k]) * 0.5f;
+        c[k] = d->xform ? d->box_c[k] : (d->max[k] + d->min[k]) * 0.5f;
     }
     if (!box_build(&w->prop_mesh[i], w->prop_verts[i], w->prop_idx[i], &w->prop_coll[i], h)) return false;
     hta_collision_instance *in = &w->inst[i];
     memset(in, 0, sizeof(*in));
-    in->rot[0] = in->rot[4] = in->rot[8] = 1.0f;
+    set_rot(in, d);
     in->grid = &w->prop_coll[i];
     memcpy(in->pos, c, sizeof(c));
     in->radius = sqrtf(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]) + 0.05f;
@@ -101,7 +114,7 @@ static void mover_place_init(hta_world_entities *w, uint32_t i)
     const hta_wmover_def *md = mdef(w, i);
     hta_collision_instance *in = &w->inst[i];
     memset(in, 0, sizeof(*in));
-    in->rot[0] = in->rot[4] = in->rot[8] = 1.0f;
+    set_rot(in, &w->defs->entity[i]);      /* X6: a prefab's mover turns with it */
     in->grid = &w->mover_coll[w->defs->entity[i].def];
     in->radius = 0.5f * sqrtf(md->size[0] * md->size[0] + md->size[1] * md->size[1] + md->size[2] * md->size[2]) + 0.05f;
     in->active = true;
