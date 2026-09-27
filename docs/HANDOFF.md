@@ -195,6 +195,25 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-27 X5: package-backed asset resources (docs/RESOURCES.md "Asset
+resources").** Textures, materials, models and sounds are real resources a
+library package provides (`assets` member + payload members;
+`src/asset/asset_res.c`), imported through X4's typed references, decoded
+once into the world's asset table, drawn (`prop`: a placed model, solid as
+its bounds) and played (a mover definition's `sound`). OAL's `x5.shared_art`
+library serves two worlds, `x5_resource_world` (two cyan crates, doors that
+knock) and `x5_second_world` (one crate); `assetlab asset-library` turns
+Source models into such libraries. X1-X4 packages and every imported map
+keep their bytes and keys. Checked: host tests 53/53, ASan/UBSan/LSan,
+ndkcheck, verify.sh, `scripts/test_x5.sh`, `scripts/test_cross_version.sh`
+(X3 and X4 engines built from history), the emulator hosting X5 (see
+RESOURCES.md). **Phone check (optional):** put `x5_resource_world.oalmap`
+in `$HTA_IMPORTED` and `x5.shared_art.oalasset` in `$HTA_IMPORTED/packages/`
+(OAL: `assetlab fixture x5_resource_world --output ... --packages ...`),
+host it: two cyan crates stand in the west room and block you; the
+red button A (by the south door) opens door A with a knock. **Unverified:** the
+knock's loudness and pan on a real phone speaker.
+
 **2026-09-27 X4: resource identity and package dependencies
 (docs/RESOURCES.md).** Infrastructure, not a feature: one ID grammar and
 type registry (`src/asset/resource.c`), typed references resolved once at
@@ -1694,6 +1713,8 @@ wrong, this list is the first place to look — they are all one constant.
 |---|---|---|
 | imported-map daylight | dir (0.35,0.4,0.85), ambient 0.7 | packages carry no lightmaps |
 | package limits (X4) | 256 provides, 16 requires, 64 imports, 16 packages, depth 8, 512 resources/set | `asset/package.h`, `resource.h`: bounds on untrusted declarations |
+| asset limits (X5) | 64 per type per library, 256 members, 96 MB payload, member path 96 bytes / 6 segments, texture side 2048, mesh 262144 vertices / 786432 indices / 64 groups / 16 slots, sound 60 s at 48 kHz | `asset/asset_res.h`: bounds on untrusted asset libraries |
+| world sound hearing (X5) | full within 2 wu, silent beyond 40 wu, squared falloff | `game/world_sounds.h`; ours |
 | bot item give-up | 1.5 s / 25 s, off 30 s | `brain.c`, unreachable items |
 | failed-path retry wait | 1 s per goal node | `brain.c` `plan_wait` |
 | imported spawn lift | 0.1 wu | `HTA_EXTERNAL_SPAWN_LIFT`: packages ground starts |
@@ -1993,7 +2014,7 @@ Put them in the session scratchpad, not the repo. Relink after every rebuild.
 | `docs/ANDROID_PORT_INVESTIGATION.md` | the original feasibility work |
 | `docs/PROGRESS.md` | early milestone log |
 | `docs/ENGINE_ARCHITECTURE.md` | layers, what is reusable, the staged plan to move the game loop out of `platform_android.c` |
-| `docs/RESOURCES.md` | X4: resource IDs, the type registry, typed references, packages, dependencies, the world key over them |
+| `docs/RESOURCES.md` | X4: resource IDs, the type registry, typed references, packages, dependencies, the world key over them; X5: asset resources (texture, material, model, sound) in libraries, props, mover sounds, older engines vs newer packages |
 
 ---
 

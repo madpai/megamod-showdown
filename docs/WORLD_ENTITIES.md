@@ -40,6 +40,10 @@ runtime knows a Source or Halo entity class.
 | `mover` | - | `open`, `close`, `toggle` | `bounds` (closed box), `move` (offset when open), `speed` (wu/s) |
 | `trigger` | `entered` | - | `bounds` |
 | `teleport` | - | `teleport` | `position`, `yaw_degrees` |
+| `prop` (X5, schema 4) | - | - | `model` (a model resource imported from a library), `position`; drawn with the model's materials, solid as its bounds (docs/RESOURCES.md "Asset resources") |
+
+X5 (schema 4) also lets a mover definition name a `sound` resource, played
+when a mover starts to open or close (host and joiners alike).
 
 A link is `(event, target placed ID, input)`. Names are text in the package
 (auditable JSON) and become small enums at load (`hta_wdef_event`,

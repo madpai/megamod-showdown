@@ -1,16 +1,23 @@
-# Resource identity and package dependencies (X4)
+# Resource identity, package dependencies and asset resources (X4, X5)
 
-**Status:** implemented 2026-09-27 (X4). This is **infrastructure, not a
-gameplay feature**: one grammar for content IDs, one registry of resource
-types, typed references resolved once at load, explicit package
-declarations with provides and requires, a checked dependency graph, and a
-world key that covers what a world depends on. It describes the code as it
-is. The code: `src/asset/resource.{h,c}` (grammar, registry, typed
-resolution), `src/asset/package.{h,c}` (declarations, libraries, the graph),
-`src/asset/resource_contract.c` (the contract, printed), `src/asset/
-world_def.c` (the first consumer), `src/asset/external_map.c` (loading, the
-world key), `src/app/content.c` (where required packages come from),
-`src/tools/resources.c` (`megamod-resources`).
+**Status:** X4 implemented 2026-09-27; **X5 (package-backed asset
+resources) implemented 2026-09-27** -- see "Asset resources (X5)" below.
+This is **infrastructure, not a gameplay feature**: one grammar for content
+IDs, one registry of resource types, typed references resolved once at
+load, explicit package declarations with provides and requires, a checked
+dependency graph, a world key that covers what a world depends on, and
+(X5) textures, materials, models and sounds that live in library packages
+behind those IDs. It describes the code as it is. The code:
+`src/asset/resource.{h,c}` (grammar, registry, typed resolution),
+`src/asset/package.{h,c}` (declarations, libraries, the graph, asset
+linking), `src/asset/asset_res.{h,c}` (X5: asset descriptors, member paths,
+payloads), `src/asset/resource_contract.c` (the contract, printed),
+`src/asset/world_def.c` (the first consumer; props and mover sounds),
+`src/asset/external_map.c` (loading, the world key, the asset table),
+`src/engine/world_entities.c` (props' collision, mover sound cues),
+`src/game/world_entities_gpu.c` (props drawn), `src/game/world_sounds.c`
+(sound resources in the mixer), `src/app/content.c` (where required
+packages come from), `src/tools/resources.c` (`megamod-resources`).
 
 > Any piece of content should be able to identify, reference, depend on and
 > validate another piece of content deterministically.
@@ -85,13 +92,13 @@ file differs from it.
 | `script` | script | supported | definition | yes | yes | X3 | host-side Lua source (megamod.v1); a world's own, or imported from a library package (X4) |
 | `character` | character | supported | package | - | - | N2 | an imported character (.oalasset); still loaded by file name, its ID is audit-only |
 | `weapon` | weapon | supported | package | - | - | N2 | an imported weapon (.oalasset); still loaded by file name, its ID is audit-only |
-| `sounds` | sound pack | supported | package | - | - | N2 | the UI sound pack (.oalasset); loaded by file name, its ID is audit-only |
-| `model` | model | reserved | definition | - | - | X4 | reserved: a mesh a package provides for others to place |
-| `material` | material | reserved | definition | - | - | X4 | reserved: a surface (textures, surface kind) |
-| `texture` | texture | reserved | definition | - | - | X4 | reserved: an image |
-| `sound` | sound | reserved | definition | - | - | X4 | reserved: one sound (not the UI 'sounds' pack) |
+| `sounds` | sound pack | supported | package | - | - | N2 | the UI sound pack: a container of role-named clips (.oalasset kind sounds); loaded by file name, its ID is audit-only -- one addressable clip is a 'sound' |
+| `model` | model | supported | definition | yes | yes | X5 | a static mesh (mesh1) drawn with its material slots; a library provides it, a world's props place it |
+| `material` | material | supported | definition | yes | yes | X5 | a surface: one texture and a draw mode (opaque, alpha); a model's slots name it |
+| `texture` | texture | supported | definition | yes | yes | X5 | an RGBA8 image in a library package; a material names it |
+| `sound` | sound | supported | definition | yes | yes | X5 | one clip of 16-bit PCM in a library package; a mover definition may name it (not the UI 'sounds' pack) |
 | `animation` | animation | reserved | definition | - | - | X4 | reserved: a clip for a skeleton |
-| `prefab` | prefab | reserved | definition | - | - | X4 | reserved: a composed, reusable entity (a likely X5) |
+| `prefab` | prefab | reserved | definition | - | - | X4 | reserved: a composed, reusable entity (a likely X6) |
 | `ruleset` | ruleset | reserved | definition | - | - | X4 | reserved: game rules (team deathmatch...) |
 
 | Reference field | Expects | Resolves to | Since |
@@ -102,22 +109,32 @@ file differs from it.
 | `world_entities.ability_script` | script | the same package or a declared import | X3 |
 | `world.entity(id)` | placed entity | the same package | X3 |
 | `package.requires[].resources[]` | any importable type | the required package it is listed under | X4 |
+| `assets.materials[].texture` | texture | the same package or a declared import | X5 |
+| `assets.models[].materials[]` | material | the same package or a declared import | X5 |
+| `world_entities.entities[].model` | model | the same package or a declared import | X5 |
+| `world_entities.mover_definitions[].sound` | sound | the same package or a declared import | X5 |
 <!-- megamod-resources --markdown: end -->
 
 - **Scope.** *package*: identifies what a whole package is. *placement*: a
   thing placed in one world, never listed in provides, never taken from
   another package. *definition*: reusable content a package defines and
   lists.
-- **Importable** (another package may require it): `script` only, in X4 --
-  the one type the runtime resolves across packages and the proof needed.
-  Mover definitions stay inside their world (a library has no geometry
-  to draw them with). A future type becomes importable by flipping the
-  registry row and adding its runtime binding; the declaration, graph and
-  key already handle any importable type.
+- **Importable** (another package may require it): `script` (X4) and, since
+  X5, `model`, `material`, `texture` and `sound`. Mover definitions stay
+  inside their world (a library has no geometry to draw them with). A
+  future type becomes importable by flipping the registry row and adding
+  its runtime binding; the declaration, graph and key already handle any
+  importable type -- X5 did exactly that.
 - `character`, `weapon`, `sounds` IDs are recognised (Open Asset Lab's `ids`
   audit proposes them) but those packages are still loaded by file name
   and matched by the content fingerprint (CONTENT_COMPATIBILITY.md); they do
   not declare packages yet.
+- **`sounds` is not `sound`.** `sounds` is the UI sound PACK: one
+  `.oalasset` of kind `sounds` holding role-named clips (the hit ding, the
+  kill ding), found by file name. `sound` (X5) is ONE addressable clip a
+  library provides as a resource, `x5shared:sound/test_impact`, which a
+  mover definition names. Both stay; the pack is legacy, the resource is
+  the model new content uses.
 - The type numbers (`hta_rtype`) are internal: never in a package, never on
   the wire.
 
@@ -207,7 +224,7 @@ Two kinds of package:
 | Kind | Container | Provides | Found |
 |---|---|---|---|
 | world | OALMAP v3 (unchanged format; the `package` member is additive) | its world, mover definitions, own scripts | `maps/<name>.oalmap`, picked by file name as before |
-| library | OALASSET v1 of kind `library`, manifest only (no models, no sounds, nothing after it) | its scripts | `packages/<package id>.oalasset`, by the ID a requirement names |
+| library | OALASSET v1 of kind `library`: the manifest, then (X5) the bytes of its asset members; no OALASSET model or sound records | its scripts and its asset resources | `packages/<package id>.oalasset`, by the ID a requirement names |
 
 Only libraries can be required (a world is what a match plays, not
 something another package includes). A library may require other
@@ -266,14 +283,24 @@ peers compare before a joiner spawns. X4 extends it additively:
 - **Dependencies are hashed.** After the members, for every package in the
   closure, sorted by package ID: `"OALD"`, u32 ID length, the ID, and that
   library's own 64-bit digest -- FNV-1a 64 over `"OALL"`, u32 schema, and its
-  `package` and `scripts` members exactly as stored. A one-character change
-  to a library's Lua changes the key of every world requiring it, though
-  the world's own bytes did not change. **TESTED** (unit, OAL, and
-  `test_x4.sh` through the real join: refused before spawn).
+  `assets` (X5), `package` and `scripts` members exactly as stored, then,
+  when it declares assets, `"OALP"`, u32 payload length and **every
+  payload byte**. A one-character change to a library's Lua, or one texel,
+  vertex or sample of its assets, changes the key of every world requiring
+  it, though the world's own bytes did not change. **TESTED** (unit, OAL,
+  and `test_x4.sh`/`test_x5.sh` through the real join: refused before
+  spawn). A library without assets has no `assets` member and no payload,
+  so X4 libraries digest exactly as before.
 - **Not hashed:** provenance, display names, importer versions -- the
   world's and the library's (`source_provenance`, `importer_version`,
-  `display_name`, `asset_version`). A provenance-only change is admitted.
-  **TESTED**.
+  `display_name`, `asset_version`, and X5's per-resource `provenance`
+  member). A provenance-only change is admitted. **TESTED**.
+- **Texture pixels.** A world's OWN baked textures stay out of its key, as
+  they always were (the pre-X4 rule: pixels change how a world looks, not
+  what it does) -- so every existing key is unchanged. A LIBRARY's asset
+  payload is hashed whole: an asset resource is content other packages
+  build on, and a peer drawing a different model at the same place is a
+  different world. Two rules, both deliberate, both documented here.
 - **Ordering.** Lists in the declaration must be canonical, so there is one
   byte form per declaration and nothing to normalise; the closure is hashed
   in package-ID order, so the order requirements were walked in or packages
@@ -283,10 +310,9 @@ peers compare before a joiner spawns. X4 extends it additively:
   a world without one has no dependencies to append, so the stream is
   byte-identical to X2/X3's and so is every key (x1 `552c1757`, x2
   `73bd2d8b`, x3 `512a1fc3`, the imported maps). No key schema bump:
-  `HTA_WORLD_KEY_SCHEMA` stays 1. An X3 build and an X4 build agree on every
-  pre-X4 world; on a declared world the X3 build ignores the member,
-  computes another key, and they refuse each other -- the safe direction
-  (an X3 build cannot load a world that imports scripts at all).
+  `HTA_WORLD_KEY_SCHEMA` stays 1, through X5 too (x4 `46bee75f` unchanged).
+  What older engines do with newer packages is measured, not assumed:
+  "Older engines and newer packages" below.
 - **Desktop and Android** compute the key from the same bytes with the same
   portable C; the emulator's key equals the desktop's and Open Asset Lab's
   (below).
@@ -317,13 +343,27 @@ megamod-resources --bundle DIR --world NAME
                                  the loader's refusal (exit 1)
 ```
 
+X5 extends each: `--json` gains `assets` (the member, descriptor fields
+per type, formats, payload layouts, member-path rules, limits) and
+`world_entities` (schema 4, the `prop` kind, a mover definition's `sound`),
+and the four asset types and four new reference fields in `types` and
+`references`; `--markdown` prints them in the tables above;
+`--conformance` gains `member_paths` (a corpus of package-local paths with
+this engine's verdict and words) and asset-type IDs; `--bundle` shows every
+asset reference (prop -> model, mover definition -> sound, material ->
+texture, model slot -> material) with its provider package and asset table
+index, and the world's asset table.
+
 All of it is printed from the tables and code the loader uses. Drift is
 caught three ways: `test_resource` compares the tables in this file with
 `--markdown`; Open Asset Lab keeps `--json` and `--conformance` as
 `assetlab/data/megamod_resources.json` and `megamod_id_conformance.json`,
 reads its registry and limits from the first and checks its own grammar
-against every verdict in the second; `scripts/test_x4.sh` checks both copies
-equal this build's output. (Like `megamod-script-api` for scripting.)
+(and, X5, its member-path rules) against every verdict in the second;
+`scripts/test_x4.sh` and `test_x5.sh` check both copies equal this build's
+output. (Like `megamod-script-api` for scripting.) After a contract change:
+`megamod-resources --json > assetlab/data/megamod_resources.json`, the same
+for `--conformance`, and `scripts/regen_resource_tables.sh` for this file.
 
 ## Open Asset Lab
 
@@ -389,6 +429,271 @@ but it is not present"). No joiner logged a script line.
 | `tests/test_world_entities.c`, `test_script.c`, `test_external_map.c` | X1-X3 unchanged through the new resolver; `world.entity` typed refusals |
 | `scripts/test_x4.sh` | above |
 | OAL `tests/test_resources.py` | conformance with the engine's corpus, the contract as the registry's source, resolution, declarations, graphs, libraries, world packages, keys, X1-X3 fixtures byte-identical, never running Lua |
+| `tests/test_asset.c` (ctest `asset`, X5) | a library's assets decoded and linked; prop -> model -> material -> texture resolved once, pixels shared not copied; props solid; a mover's sound cued once per start, silent on a join's snap and a round reset, heard through the mixer; the sound bank reusing a clip; two consumers, one library; a library importing another's texture; every refusal (graph, imports, missing, wrong type in each field, malformed, reserved, provides both ways, missing/unsafe/unused/shared members, sizes, formats, duplicate descriptors, corrupt meshes, duplicate provider, a liar); the world key over texel, vertex, sample and draw changes, not provenance; older-engine pins; 200 load/free cycles and failures halfway through a set (ASan/LSan); 4000 mutated libraries, 3000 mutated worlds, 20000 member paths (same answer twice, printable messages); 7 libraries / 391 textures / 60 props resolved in milliseconds |
+| `scripts/test_x5.sh` | "The X5 proof" |
+| `scripts/test_cross_version.sh` | "Older engines and newer packages" (builds the X3 and X4 engines from history; not in verify.sh) |
+| OAL `tests/test_assets.py` | member paths against the engine's corpus, limits from its contract, libraries (round trip, determinism, digest over payload and not provenance, X4 library bytes pinned, refusals in the engine's words, validation before writing, a library importing another's texture), worlds (props, sounds, refusals, inline movers stay schema 1), pinned X5 keys, two consumers, X4 fixture bytes pinned, a Source model imported as resources |
+
+## Asset resources (X5)
+
+> How does an actual reusable asset live behind a resource identity?
+
+X4 answered what a resource is, who provides it and who may reference it;
+only scripts crossed packages. X5 makes four kinds of ordinary content
+real resources a LIBRARY provides and any package imports:
+
+| Type | ID | Descriptor fields | Payload (a package member) | Runtime | Owner |
+|---|---|---|---|---|---|
+| texture | `x5shared:texture/test_crate` | format `rgba8`, width, height, member | width x height x 4 bytes (an OALMAP texture record's pixels) | `hta_asset_texture`: pixels | the world's asset table |
+| material | `x5shared:material/test_crate` | draw (`opaque`, `alpha`), texture (a typed reference) | none | `hta_asset_material`: texture index, draw mode | the world's asset table |
+| model | `x5shared:model/test_crate` | format `mesh1`, materials (typed references, one per slot), member | `MSH1`, u32 vertex/index/group counts, 40-byte vertices (the OALMAP's), u32 indices, groups of (first, count, slot) | `hta_asset_model`: an `hta_bsp_mesh` in model space whose submeshes draw with their slots' textures (borrowed) | the world's asset table; the GPU mesh: the renderer's `hta_went_gpu` |
+| sound | `x5shared:sound/test_impact` | format `pcm_s16le`, rate, channels, frames, member | frames x channels x 2 bytes (an OALASSET sound record's samples) | `hta_asset_sound`: samples | the world's asset table; the mixer's copy: the session's `hta_world_sounds` bank |
+
+Formats reuse what the engine already read; nothing is transcoded at run
+time. `megamod-resources --json` ("assets") is the exact schema and limits.
+
+### A library that provides them
+
+```json
+"assets": {"schema": 1,
+  "members":   [{"path": "models/test_crate.mesh", "size": 1132}, {"path": "sounds/test_impact.pcm", "size": 11024},
+                {"path": "textures/test_crate.rgba", "size": 1024}],
+  "textures":  [{"format": "rgba8", "height": 16, "id": "x5shared:texture/test_crate", "member": "textures/test_crate.rgba", "width": 16}],
+  "materials": [{"draw": "opaque", "id": "x5shared:material/test_crate", "texture": "x5shared:texture/test_crate"}],
+  "models":    [{"format": "mesh1", "id": "x5shared:model/test_crate", "materials": ["x5shared:material/test_crate"], "member": "models/test_crate.mesh"}],
+  "sounds":    [{"channels": 1, "format": "pcm_s16le", "frames": 5512, "id": "x5shared:sound/test_impact", "member": "sounds/test_impact.pcm", "rate": 22050}]},
+"package": {"id": "x5.shared_art", "provides": ["x5shared:material/test_crate", "x5shared:model/test_crate",
+            "x5shared:sound/test_impact", "x5shared:texture/test_crate"], "requires": [], "schema": 1},
+"provenance": {"x5shared:model/test_crate": {"provider": "original", "license": "GPL-3.0-or-later", ...}}
+```
+
+then the members' bytes, in `members` order, right after the manifest.
+
+- **A resource ID is identity; a member path is storage.** `models/
+  test_crate.mesh` is where the bytes sit inside this package -- never
+  looked up by any other package, never joined to a host path (the payload
+  is found by offset in the package's bytes, desktop and APK alike), never
+  a resource ID. A path is lowercase `[a-z0-9_]` segments joined by `/`,
+  one extension on the last, at most 96 bytes and 6 segments: no `..`, no
+  leading `/`, no `\`, no NUL, no capitals -- refused, never repaired.
+- **Strict and canonical.** Every descriptor field is required and nothing
+  else is allowed; lists are in canonical ID (members: path) order, each
+  once; every member backs exactly one resource and every resource's
+  member exists; sizes must equal what the descriptor says; a mesh's
+  counts, offsets, indices, groups and slots are all checked; nothing is
+  allocated before its size is known to fit.
+- **provides == content**, scripts and assets alike, both directions.
+- **Internal references are typed references.** A material's `texture`
+  and a model's `materials` go through `hta_res_resolve` from the
+  library's own point of view: its own resources, or ones it imports from
+  a library it requires. A slot never takes a texture; a library can build
+  materials on another library's textures (TESTED).
+- **Only libraries provide assets** (for now): a world imports them. A world
+  that lists a model in its provides is refused ("the world defines no
+  such model").
+
+### A world that uses them (world_entities schema 4)
+
+```json
+{"id": "x5:entity/crate_a", "kind": "prop", "links": [], "model": "x5shared:model/test_crate", "position": [-2.0, 1.2, 0.25]}
+{"id": "x5:mover/basic_slide_door", "move": [0, 1.25, 0], "size": [0.1, 1.2, 1.1], "sound": "x5shared:sound/test_impact", "speed": 1}
+```
+
+- A **prop** (a new placement kind: emits and accepts nothing) draws its
+  model where it stands and is solid as the model's bounds there (one box
+  collision grid, built once; it never moves). Axis-aligned: no rotation
+  yet.
+- A mover definition's optional **sound** plays when a mover starts to open
+  or close -- on the host from its own events and on every joiner from the
+  host's replicated mover state (no protocol change; a joiner that finds a
+  door already moving, or a new round, is silent).
+- Schema 4 is required for either, and a schema 4 world gives every mover a
+  definition (inline movers stay X1's schema 1).
+
+### Reference flow, once, at load
+
+```
+package set loads (each package once, by ID)
+  -> each library: assets parsed, members bound, payloads decoded and checked
+  -> provides == content; digest over played members + payload
+  -> set sorted by package ID; each library's material/slot references
+     resolved typed (its own or its imports) to combined-table indices
+  -> the world: prop.model / definition.sound resolved typed
+     (world_entities.entities[].model, ...mover_definitions[].sound) against
+     the world's own resources + its declared imports only
+  -> the combined table MOVED to the world (hta_external_map.assets):
+     textures by package ID then resource ID, and so on per type -- the
+     same indices on every peer; each model bound to its slots' textures
+  -> gameplay and rendering hold indices: prop -> model index,
+     definition -> sound index; no name is looked up during play
+```
+
+`megamod-resources --bundle` prints every one of those references with its
+provider package and index.
+
+### Lifetime and ownership
+
+- The **world** (`hta_external_map`) owns the asset table: texture pixels,
+  model meshes, sound samples. Freed with the world
+  (`hta_external_map_free`), which happens when the match's world is
+  replaced or the app exits; never during a round.
+- **Materials own no pixels** and **models borrow** their textures'
+  pixels: one copy of every texture however many models, props or
+  consumers use it.
+- A **package set** is scratch while loading: libraries decode into it,
+  then everything moves to the world (`hta_pkg_set_take_assets`) and the
+  set is freed. A failure anywhere -- a library halfway through a set, a
+  bad reference after the set loaded -- frees everything decoded so far
+  (TESTED under ASan/LSan: 200 load/free cycles, failures at each stage).
+- The **renderer** uploads each model a prop places once
+  (`hta_went_gpu.model[]`, shared by every prop naming it) and frees those
+  GPU meshes with the rest of the world's entity meshes.
+- The **mixer's** clips are append-only and read on the audio thread, so it
+  never borrows a world's samples: `hta_world_sounds` copies each DISTINCT
+  sound once (matched by content) into a bank that lives as long as the
+  session and is freed after the audio device stops. A later world with the
+  same sound reuses the clip.
+- **Round reset** changes nothing here (props are static, assets
+  immutable; movers close silently). **Lua** never sees or owns any of it.
+
+### Compatibility identity
+
+A library's digest covers its `assets` member and every payload byte
+("Compatibility identity" above); a world's key covers its required
+libraries' digests in package-ID order. So one texel, vertex, sample or a
+material's draw mode in a required library is a different world, and a
+joiner holding it is refused before spawn, while a provenance-only change
+is admitted (TESTED, desktop and Android). The world's own bytes carry the
+references (the `world_entities` and `package` members); the library
+carries the content. The canonical bytes decide, never a runtime struct:
+desktop x86-64 and the Android emulator computed the same keys (below).
+
+### Legacy content keeps working
+
+Imported maps keep their baked props and textures; characters, weapons and
+the UI sound pack still load by file name and are still matched by the
+content fingerprint. No X1-X4 package changed a byte and no key moved:
+x1 `552c1757`, x2 `73bd2d8b`, x3 `512a1fc3`, x4 `46bee75f`, de_dust2
+`52fb3b08` (TESTED, pinned in OAL).
+
+### Refusals (the engine's words, and Open Asset Lab's)
+
+| Case | Message |
+|---|---|
+| dependency omitted | `x5:mover/basic_slide_door references missing sound x5shared:sound/test_impact (no package in this set provides namespace 'x5shared': is a requirement missing?)` |
+| provider package missing | `package x5.resource_world requires package x5.shared_art, but it is not present (looked for packages/x5.shared_art.oalasset)` |
+| missing resource | `x5:entity/crate_a references missing model x5shared:model/test_crates` |
+| wrong type | `x5:entity/crate_a: model x5shared:material/test_crate is a material, expected a model` |
+| malformed ID | `x5:entity/crate_a: model 'X5shared:model/test_crate' is not a resource ID: namespace has capital 'X' ...` |
+| undeclared import | `x5:entity/crate_a: model x5shared:model/test_crate is provided by package x5.shared_art, which package x5.resource_world requires but does not import it from ...` |
+| duplicate provider | `x5shared:texture/test_crate: provided by both package x5.dup_art and package x5.shared_art (duplicate providers are refused, never picked)` |
+| file declares another package | `package x5.resource_world requires package x5.shared_art, but packages/x5.shared_art.oalasset declares package x5.other_art` |
+| missing payload | `x5shared:model/test_crate declares package member models/test_crate2.mesh, but that member is missing` |
+| invalid payload path | `x5shared:model/test_crate: member path 'models/Test_crate.mesh': has capital 'T' (paths are lowercase; nothing is folded)` |
+| path traversal | `member path '../models/test_crate.mesh': has '..' (no parent references)` |
+| duplicate descriptor | `package x5.shared_art: x5shared:texture/test_crate is declared twice` |
+| provides disagrees | `package x5.shared_art has material x5shared:material/test_crate but does not list it in provides` |
+| payload size | `x5shared:texture/test_crate: 5x4 rgba8 is 80 bytes, but member textures/crate.rgba holds 64` |
+| corrupt mesh | `...: member models/crate.mesh: index 2 names vertex 24 of 24` (and counts, groups, slots, non-finite) |
+| slot of the wrong type | `x5shared:model/test_crate: material slot x5shared:texture/test_crate is a texture, expected a material` |
+| a library's import not declared | `sk:material/glass: texture xs:texture/crate is provided by package t.art, which package t.skin requires but does not import it from ...` |
+
+### Older engines and newer packages
+
+Measured with real binaries built from this repository's history
+(`scripts/test_cross_version.sh`, OBSERVED 2026-09-27):
+
+| Engine | Package | Result |
+|---|---|---|
+| X3 (a4e0318) | X4 world importing a library script | refused at load: `ability_script references missing script x4shared:script/pulse_ability` |
+| X3 | declared X4 world needing no library | loads (it ignores the `package` member; the world plays the same), key `a902e83c` vs X4+ `ab402328`: X3 and X4+ peers refuse each other before spawn, **both directions** (`REFUSED (not the host's map)`) |
+| X3 | X5 world | refused at load: `unknown kind 'prop'` |
+| X4 (e0ae793) | X5 world | refused at load: `resource type 'model' is reserved, not loadable by this engine` |
+| X4 | X5 library | refused (`a library carries a manifest only`; its provides hold reserved types) |
+| X4 and X5 | X4 worlds | the same keys (`46bee75f`); an X4 joiner is admitted by an X5 host |
+
+So no older engine reaches multiplayer with newer semantics: it either
+refuses the package, or plays a world whose semantics it fully has and
+computes a key no newer peer shares. `test_asset` pins the mechanism
+without old binaries: a declared world's key always differs from the key of
+its bytes read the pre-X4 way (this build reproduces the X3 binary's
+`a902e83c` exactly that way), and an X5 world always carries
+world_entities schema 4 and imports of types X4 reserved. No key schema
+bump was needed.
+
+### Open Asset Lab
+
+- `assetlab/assets.py`: `Texture`, `Material`, `Model`, `Sound`; the
+  descriptors, mesh1, member paths (checked against the engine's
+  conformance verdicts), and a reader with the engine's checks and words.
+- `assetlab/dependencies.py`: a `Library` carries assets; its manifest gets
+  `assets` and a per-resource `provenance` member (never played), its bytes
+  the payload; `read_library`, `link_assets` and the digest mirror the
+  engine. A library without assets is written byte-for-byte as X4 wrote it.
+- `assetlab/world.py`: `Entity(kind='prop', model=...)`,
+  `MoverDefinition(sound=...)`, schema 4, every reference typed.
+- **Source/GMod**: `assets.from_source_model` (CLI `assetlab asset-library
+  MDL... --package ID --namespace NS`) turns a Source static model into
+  `ns:model/<name>`, one material and texture per Source material, in
+  runtime units -- the MDL, VMT and VTF paths, provider, Workshop item and
+  licence kept as provenance only. OBSERVED: two CS:S props (de_dust crate,
+  de_nuke crate) converted into scratch, placed by a test world and drawn
+  by the engine through their resource IDs.
+
+## The X5 proof
+
+`scripts/test_x5.sh` (in `verify.sh`), with Open Asset Lab's library
+`x5.shared_art` and its two consumers `x5_resource_world` and
+`x5_second_world`:
+
+1. OAL's copies of the contract and conformance corpus (member paths
+   included) are this build's.
+2. Keys: engine == OAL (`1b067045`, second world `6748f47e`); the
+   resolved references (prop -> model -> material -> texture, definition ->
+   sound) each from `x5.shared_art`; both consumers hold one library (the
+   same digest); neither world carries the library's bytes.
+3. Every refusal in the table above but the last four, by OAL's checker
+   AND the engine, the same words.
+4. Host + joiner A: A is blocked by crate A; presses button A; door A opens
+   and the library's sound starts on the host and on A. Late joiner B finds
+   door A open (and hears nothing); B's picture has both crates in the
+   library's texture. The second world hosts and admits its joiner, crate
+   drawn. No joiner runs Lua.
+5. One texel of the library (world bytes identical) is refused before
+   spawn; a provenance-only library change is admitted; a joiner without
+   the library says what it lacks.
+
+### Emulator evidence (Android 14 x86_64)
+
+**OBSERVED**, 2026-09-27: the emulator APK carried `assets/maps/
+x5_resource_world.oalmap`, `x5_second_world.oalmap` and `assets/packages/
+x5.shared_art.oalasset`. Hosting X5 it logged `[world] assets: 1 textures,
+1 materials, 1 models, 1 sounds (12 KB), 2 props, 1 sounds bound` and
+`[world] 3 movers drawn, 1 prop models`, its map check `fce6fc67` equal
+to the desktop's for the same world, and drew both crates in the library's
+texture. Desktop joiners through `scripts/emu/udprelay.py`: A was blocked
+at (-2.45, 1.20) by crate A, pressed button A -- the phone logged `[world]
+sound x5shared:sound/test_impact: x5:entity/door_a started opening` and A
+`join: sound ... started moving`; late joiner B found door A open; the
+one-texel library was refused ("not the host's map"), the provenance-only
+one admitted, and a joiner without the library refused to load the world.
+
+## Not in X5
+
+- **Prefabs** (X6): composing models, materials, sounds, scripts and
+  placements into a reusable entity. The resources exist now; composition
+  does not.
+- Worlds providing their own asset resources (only libraries do); props
+  with rotation or scale; props that move, break or carry links; a model's
+  own collision mesh (a prop collides as its bounds).
+- Animation, skeletal models, characters and weapons as resources (still
+  loaded by file name); the UI sound pack as resources.
+- Sounds anywhere but a mover definition's start; materials beyond one
+  texture and a draw mode (no shaders, no lightmaps, no surface kinds).
+- GPU texture sharing between models (each model's GPU mesh uploads its
+  slots' textures; the CPU copy is single).
+- Streaming, downloading or transferring packages; a peer must already
+  hold every package (a missing one is refused, named).
 
 ## Not in X4
 
