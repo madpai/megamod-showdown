@@ -416,6 +416,18 @@ The world-entity runtime never runs Lua; it records the call
 (`hta_went_call`, 16 per step). Everything else -- scripts, handles,
 limits, the phase -- is in [SCRIPTING.md](SCRIPTING.md).
 
+## X7: event bindings
+
+Since X7 a world (world_entities schema 6) and a prefab (prefab schema 2)
+may carry declarative event bindings: an event of an entity (`used`,
+`activated` -- X1's `fired` --, `entered`, `deactivated`, `opened`,
+`closed`), read-only conditions (`mover_state`, `relay_state`) and actions
+(`open`, `close`, `toggle`, `activate`, `deactivate`, `teleport`, `use`,
+`damage`, `play_sound`) that go through this same bounded queue, links
+first, then bindings. Links are unchanged. A relay now remembers whether it
+was last activated or deactivated (host only). See
+[EVENT_BINDINGS.md](EVENT_BINDINGS.md).
+
 ## Future Source translation (documentation only)
 
 | Source | Generic |

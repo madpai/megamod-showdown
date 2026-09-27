@@ -195,6 +195,36 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-27 X7: declarative event bindings (docs/EVENT_BINDINGS.md).**
+Simple behaviour is data: a binding is an event of an entity (`used`,
+`activated`, `entered`, `deactivated`, `opened`, `closed`), read-only
+conditions (`mover_state`, `relay_state`) and actions (`open`, `close`,
+`toggle`, `activate`, `deactivate`, `teleport`, `use`, `damage`,
+`play_sound`) requested through the same bounded queue, damage pipeline and
+X5 sounds that links and Lua use (one action seam, `hta_went_request`;
+per-kind capabilities in `megamod-resources --json`). Worlds carry them in
+`world_entities` schema 6, prefabs in prefab schema 2 (each instance gets
+its own, bound to its own children). Loops are bounded (chain 16, 128
+binding actions per root cascade) and named; OAL refuses a binding cycle no
+condition can break. Protocol v10: a binding's sound reaches joiners as a
+new FX kind; everything else is replicated state. No Lua API change; X1-X6
+bytes and keys unchanged. OAL: `assetlab/bindings.py`, library
+`x7.facility` (`x7:prefab/security_door`, a POWERED door, no Lua), worlds
+`x7_facility_world` and `x7_second_world`. Checked: host tests 55/55,
+`test_bindings`, ASan/UBSan/LSan, ndkcheck, verify.sh, `scripts/test_x7.sh`,
+`scripts/test_cross_version.sh` (the real X6 binary refuses X7 packages;
+X6 and this build share X6 worlds), and the emulator hosting X7 with
+desktop joiners (EVENT_BINDINGS.md). **Phone check (optional):** put
+`x7_facility_world.oalmap` in `$HTA_IMPORTED` and `x7.facility` +
+`x6.shared_assets` in `$HTA_IMPORTED/packages/`, host it with 0 bots: the
+north door's upper red button buzzes (locked) while unpowered; the lower
+red button powers it -- the door hisses open and chimes; the upper button
+then toggles it; the lower one again powers down and closes it. The purple
+plate on the west wall: every second press opens north's door (Lua). The
+red pad in the east room shocks (40 damage) and sends you to the purple
+pad in the west room. **Unverified:** the buzz and chime on a real phone
+speaker; the phone host's own player pressing (checked in X6).
+
 **2026-09-27 X6: prefabs (docs/PREFABS.md).** `prefab` is a real,
 importable resource type: a LIBRARY's `prefabs` member composes the world's
 entity kinds (props, movers drawn by a model, buttons, relays, triggers,

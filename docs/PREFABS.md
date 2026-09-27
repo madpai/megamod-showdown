@@ -407,6 +407,14 @@ changed-texel joiners were refused (`not the host's map`), the
 provenance-only one admitted, and a joiner without `x6.facility` refused
 to load the world. No joiner logged a script line.
 
+## X7: prefab bindings
+
+Prefab schema 2 adds a prefab's own event bindings, naming its children by
+local ID; every instance gets its own copy bound to its own children, so
+two instances of a powered door behave independently without Lua. A
+schema 1 member reads exactly as before; Open Asset Lab writes schema 1
+whenever no prefab has bindings. See [EVENT_BINDINGS.md](EVENT_BINDINGS.md).
+
 ## Not in X6
 
 - Nested prefabs, inheritance, variants, per-instance overrides.

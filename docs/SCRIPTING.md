@@ -72,6 +72,13 @@ v3, `world_entities` **schema 3** (OAL `docs/RUNTIME_PACKAGE.md`).
   child by its ordinary placed ID (`world.entity('x6:entity/south_door__door')`).
   No new callback or function ([PREFABS.md](PREFABS.md)).
 
+- **Event bindings (X7):** simple behaviour no longer needs a script
+  ([EVENT_BINDINGS.md](EVENT_BINDINGS.md)). The API is unchanged:
+  `world.send` goes through the same action seam as a binding
+  (`hta_went_request`), with the same names, limits and words. On one use,
+  the interactable's links and bindings queue first, its `on_used` runs in
+  the script phase and its requests queue after them.
+
 ## API megamod.v1
 
 Printed by **`megamod-script-api --json`** from the same tables that
