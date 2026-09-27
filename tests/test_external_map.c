@@ -155,7 +155,7 @@ int main(void)
         /* A broken link refuses the whole package, and says why. */
         char *t=strstr((char*)w+64,"t:entity/d\"}");assert(t);t[9]='x';
         assert(!hta_external_map_load_memory(w,n3,&m,err,sizeof(err)));
-        assert(strstr(err,"world entities: t:entity/b references missing target t:entity/x"));
+        assert(strstr(err,"world entities: t:entity/b references missing placed entity t:entity/x"));
         t[9]='d';
         /* The same manifest in a v2 package: the section is not read. */
         u32(w+4,2);

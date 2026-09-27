@@ -37,8 +37,17 @@
  * ability press). References resolve to indices here, once. What a script
  * may do is script/script.h's business; this file only holds the text.
  *
- * Portable C11, no allocation: everything is bounded by the limits below,
- * which Open Asset Lab's validator shares (assetlab/world.py). */
+ * Resource identity (X4, asset/resource.h): every ID above is parsed by
+ * the one grammar, and every reference (link target, definition, script,
+ * ability_script) is resolved through one typed resolver, once, into the
+ * index the runtime keeps. A world that declares a package (asset/
+ * package.h) may also import scripts from the library packages it
+ * requires: they are copied into this table at load, marked with their
+ * provider, and run exactly as the world's own.
+ *
+ * Portable C11. The definitions are bounded by the limits below, which
+ * Open Asset Lab's validator shares (assetlab/world.py); parsing allocates
+ * only transiently (a package set). */
 #ifndef HTA_WORLD_DEF_H
 #define HTA_WORLD_DEF_H
 
@@ -51,6 +60,7 @@
 #define HTA_WDEF_NO_DEF 0xFFFFu
 #define HTA_WDEF_MAX_SCRIPTS 16u
 #define HTA_WDEF_SCRIPT_POOL (64u * 1024u)  /* all scripts' source, bytes */
+#define HTA_WDEF_SCRIPT_MAX_BYTES (32u * 1024u)  /* one script's source */
 #define HTA_WDEF_SCRIPT_API "megamod.v1"
 /* Callbacks a script may declare (script/script.h implements them). */
 enum { HTA_WCB_ON_USED = 1u, HTA_WCB_ON_ABILITY = 2u };
@@ -99,6 +109,7 @@ typedef struct {
     char     id[HTA_WDEF_ID_MAX + 1];  /* namespace:script/name */
     uint32_t callbacks;       /* HTA_WCB_* it declares */
     uint32_t at, len;
+    uint8_t  provider;        /* 0: the world's own; k: imported from the set's k-th dependency (X4) */
 } hta_wscript_def;
 
 typedef struct {
@@ -115,7 +126,7 @@ typedef struct {
     float    min[3], max[3];  /* trigger: its volume */
 } hta_wdef;
 
-typedef struct {
+typedef struct hta_world_defs {
     hta_wdef      entity[HTA_WDEF_MAX_ENTITIES];
     uint32_t      count;
     hta_wdef_link link[HTA_WDEF_MAX_LINKS];
@@ -136,6 +147,22 @@ typedef struct {
  * hta_world_defs_check): false, with `err` naming the placement. */
 bool hta_world_defs_parse(const uint8_t *manifest, size_t len, hta_world_defs *out,
                           char *err, size_t errlen);
+
+struct hta_pkg_set_s;
+/* The same, resolving against a loaded package set (asset/package.h): the
+ * world's own package is `set->root` (its declared provides are checked
+ * against what the section defines) and imported scripts come from its
+ * dependencies. hta_world_defs_parse is this with a set holding only the
+ * manifest's own declaration (a world that requires packages is refused
+ * there: it needs a package source). */
+bool hta_world_defs_parse_env(const uint8_t *manifest, size_t len, const struct hta_pkg_set_s *set,
+                              hta_world_defs *out, char *err, size_t errlen);
+
+/* A library package's "scripts" (X4): parsed and checked like a world's
+ * (ID, API, callbacks, source limits) into `out` (no entities); any
+ * namespace but a reserved one. */
+bool hta_world_defs_parse_library(const uint8_t *manifest, size_t len, hta_world_defs *out,
+                                  char *err, size_t errlen);
 
 /* Every rule Open Asset Lab applies, again: IDs well-formed and unique,
  * links resolved, events the source emits, inputs the target accepts, no

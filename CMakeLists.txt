@@ -46,7 +46,7 @@ if(ANDROID)
         src/engine/gore.c
         src/engine/props.c
         src/engine/world_entities.c
-        src/asset/world_def.c
+        src/asset/world_def.c src/asset/mjson.c src/asset/resource.c src/asset/package.c
         src/script/script.c
         src/engine/weather.c
         src/engine/sfx.c
@@ -122,7 +122,7 @@ else()
         src/game/brain.c
         src/game/view.c
         src/game/menu.c
-        src/engine/world_entities.c src/asset/world_def.c src/script/script.c
+        src/engine/world_entities.c src/asset/world_def.c src/asset/mjson.c src/asset/resource.c src/asset/package.c src/asset/resource_contract.c src/script/script.c
         src/asset/cache.c src/asset/bsp.c src/asset/external_map.c src/asset/oal_asset.c src/asset/bitmap.c src/asset/sound.c src/asset/ogg.c src/asset/effect.c src/asset/dialogue.c src/asset/strings.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
         src/asset/anim.c src/asset/model.c src/asset/font.c
         src/gfx/gfx_settings.c)
@@ -143,6 +143,15 @@ else()
     # The scripting API as data, from the registered tables (docs/SCRIPTING.md).
     add_executable(megamod-script-api src/tools/script_api.c)
     target_link_libraries(megamod-script-api PRIVATE hta_engine m)
+    # Resource identity and packages (X4, docs/RESOURCES.md): the contract
+    # as data from the registry, and a validator for real worlds.
+    add_executable(test_resource tests/test_resource.c)
+    target_link_libraries(test_resource PRIVATE hta_engine m)
+    target_compile_definitions(test_resource PRIVATE HTA_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME resource COMMAND test_resource)
+    add_executable(megamod-resources src/tools/resources.c src/app/content.c src/app/compat.c src/app/fs.c src/platform/platform_posix.c)
+    target_link_libraries(megamod-resources PRIVATE hta_engine m)
+    target_compile_options(megamod-resources PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
     add_executable(test_net tests/test_net.c)
     target_link_libraries(test_net PRIVATE hta_net m)
     add_test(NAME net COMMAND test_net)

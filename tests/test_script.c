@@ -151,9 +151,9 @@ static void test_package(void)
     PATCH("\"script\":\"x3:script/button_logic\"", "\"script\":\"x3:script/button_logik\"",
           "x3:entity/button_script references missing script x3:script/button_logik");
     PATCH("\"script\":\"x3:script/button_logic\"", "\"script\":\"x3:entity/door_a\"",
-          "x3:entity/button_script: script x3:entity/door_a is not a script");
+          "x3:entity/button_script: script x3:entity/door_a is a placed entity, expected a script");
     PATCH("\"script\":\"x3:script/button_logic\"", "\"script\":\"x3:weapon/button_logic\"",
-          "x3:entity/button_script: 'x3:weapon/button_logic' is not a script ID");
+          "x3:entity/button_script: script 'x3:weapon/button_logic' is not a script ID");
     PATCH("\"id\":\"x3:script/pulse_ability\"", "\"id\":\"x3:script/button_logic\"", "x3:script/button_logic: duplicate script ID");
     PATCH("\"id\":\"x3:script/pulse_ability\"", "\"id\":\"x3:script/Pulse\"", "'x3:script/Pulse': malformed script ID");
     PATCH("\"callbacks\":[\"on_ability\"]", "\"callbacks\":[\"on_tick\"]", "unknown callback 'on_tick'");
@@ -182,6 +182,14 @@ static void test_package(void)
     assert(!h && strstr(err, "exceeded instruction budget"));
     h = load(world_json("local d = world.entity('x3:entity/nope')\nfunction on_used() end\n", "\"on_used\"", NULL, NULL), err, sizeof(err));
     assert(!h && strstr(err, "unknown entity 'x3:entity/nope'"));
+    /* world.entity is a typed reference too (X4): a script ID, a malformed
+     * ID and a reserved type are each named for what they are. */
+    h = load(world_json("local d = world.entity('x3:script/button_logic')\nfunction on_used() end\n", "\"on_used\"", NULL, NULL), err, sizeof(err));
+    assert(!h && strstr(err, "world.entity: 'x3:script/button_logic' is a script ID, expected a placed entity"));
+    h = load(world_json("local d = world.entity('X3:entity/door_a')\nfunction on_used() end\n", "\"on_used\"", NULL, NULL), err, sizeof(err));
+    assert(!h && strstr(err, "world.entity: 'X3:entity/door_a' is not a resource ID: namespace has capital 'X'"));
+    h = load(world_json("local d = world.entity('x3:model/door_a')\nfunction on_used() end\n", "\"on_used\"", NULL, NULL), err, sizeof(err));
+    assert(!h && strstr(err, "resource type 'model' is reserved"));
     /* A world without scripts makes no Lua state at all. */
     static const char *plain = "{\"world_entities\":{\"entities\":[{\"id\":\"x1:entity/r\",\"kind\":\"relay\",\"links\":[]}],\"schema\":1}}";
     assert(parse(plain, &defs, err, sizeof(err)) && hta_went_load(&went, &defs, err, sizeof(err)));

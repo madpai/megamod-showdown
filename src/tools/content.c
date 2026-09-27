@@ -81,6 +81,14 @@ int main(int argc, char **argv)
         printf("world   %-16s %u triangles, %u textures, %u starts, %u breakables, key %08x (digest %016llx)\n", worlds[i],
                s->mesh.index_count / 3, s->mesh.texture_count, s->world_ext.spawn_count,
                s->world_ext.breakable_count, s->world_ext.key, (unsigned long long)s->world_ext.digest);
+        const hta_external_package *pk = &s->world_ext.package;
+        if (pk->declared) {
+            printf("        package %s: provides %u, requires %u (%u imports), %u in its set\n", pk->id,
+                   pk->provides, pk->requires, pk->imports, pk->dep_count);
+            for (uint32_t k = 0; k < pk->dep_count; k++)
+                printf("        needs   %s (%s) digest %016llx\n", pk->dep[k], pk->dep_direct[k] ? "required" : "via another",
+                       (unsigned long long)pk->dep_digest[k]);
+        }
         hta_bsp_free(&s->mesh);
         hta_external_map_free(&s->world_ext);
     }

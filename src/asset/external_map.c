@@ -214,8 +214,23 @@ static void flag_points(const unsigned char *m, size_t ml, hta_external_map *out
  * identical worlds. Texture pixels are left out too: they change how the
  * world looks, not where anything is or what it does. */
 static const char *const PLAYED_KEYS[] = {
-    "breakables", "flag_points", "spawn_points", "weather", "world_entities",
+    "breakables", "flag_points", "package", "spawn_points", "weather", "world_entities",
 };
+/* X4: "package" (a world's declaration: its ID, provides and requires --
+ * which packages and scripts its references resolve to) is played. No
+ * pre-X4 package has one, so their keys are unchanged; an X3 build ignores
+ * the member, computes a different key for a declared world, and the two
+ * refuse each other -- the safe direction. After the members, every
+ * package the world needs (the closure, sorted by package ID) adds
+ * "OALD", u32 ID length, its ID, and its own 64-bit digest (package.c:
+ * its "package" and "scripts" bytes as stored). A dependency's content is
+ * therefore part of the world's identity; the order requirements are
+ * written or found in is not. */
+
+const char *hta_world_key_played(uint32_t i)
+{
+    return i < sizeof(PLAYED_KEYS) / sizeof(PLAYED_KEYS[0]) ? PLAYED_KEYS[i] : NULL;
+}
 
 typedef struct { uint64_t h; } key_fnv;
 
@@ -266,6 +281,14 @@ bool hta_external_map_load(const char *path, hta_external_map *out, char *err, s
 bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external_map *out,
                                   char *err, size_t errlen)
 {
+    return hta_external_map_load_with(data,size,NULL,out,err,errlen);
+}
+
+bool hta_external_map_load_with(const uint8_t *data, size_t size, const hta_pkg_source *src,
+                                hta_external_map *out, char *err, size_t errlen)
+{
+    hta_pkg_set *set=NULL;
+    hta_package *root=NULL;
     if(!data||!out)return fail(err,errlen,"invalid arguments");
     memset(out,0,sizeof(*out));
     if(size<64||size>FILE_MAX)return fail(err,errlen,"package size out of range");
@@ -366,10 +389,39 @@ bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external
     flag_points(data+64,ml,out);
     breakables(data+64,ml,out);
     weather(data+64,ml,out);
+    /* X4: the world's package declaration and everything it requires,
+     * loaded by package ID through `src` and checked as a graph. */
+    set=calloc(1,sizeof(*set));
+    root=calloc(1,sizeof(*root));
+    if(!set||!root){fail(err,errlen,"out of memory");goto done;}
+    {
+        char why[400];
+        /* Only v3 declares packages: v1/v2 manifests are read loosely, as
+         * before X4, and stay implicit packages. */
+        root->kind=HTA_PKG_WORLD;
+        if(version>=3&&!hta_package_parse(data+64,ml,HTA_PKG_WORLD,root,why,sizeof(why))){
+            if(err&&errlen) snprintf(err,errlen,"package: %s",why);
+            goto done;
+        }
+        if(!hta_pkg_set_load(set,root,src,why,sizeof(why))){
+            if(err&&errlen) snprintf(err,errlen,"package: %s",why);
+            goto done;
+        }
+        hta_external_package *pk=&out->package;
+        pk->declared=root->declared;
+        memcpy(pk->id,root->id,sizeof(pk->id));
+        pk->provides=root->provide_count; pk->requires=root->require_count; pk->imports=root->import_count;
+        pk->dep_count=set->dep_count;
+        for(uint32_t i=0;i<set->dep_count;i++){
+            memcpy(pk->dep[i],set->dep[i].decl.id,sizeof(pk->dep[i]));
+            pk->dep_digest[i]=set->dep[i].digest;
+            pk->dep_direct[i]=set->dep[i].direct;
+        }
+    }
     /* v3's entities: parsed and checked whole, or the package is refused. */
     if(version>=3){
-        char why[200];
-        if(!hta_world_defs_parse(data+64,ml,&out->world_defs,why,sizeof(why))){
+        char why[400];
+        if(!hta_world_defs_parse_env(data+64,ml,set,&out->world_defs,why,sizeof(why))){
             if(err&&errlen) snprintf(err,errlen,"world entities: %s",why);
             goto done;
         }
@@ -396,12 +448,21 @@ bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external
         key_fnv probe=f;
         if(ml && hta_manifest_members(data+64,ml,key_member,&probe)) f=probe;
         else if(ml){ kbytes(&f,"RAW",3); ku32(&f,ml); kbytes(&f,data+64,ml); }
+        for(uint32_t i=0;i<set->dep_count;i++){
+            const char *id=set->dep[i].decl.id;
+            uint64_t dg=set->dep[i].digest;
+            kbytes(&f,"OALD",4); ku32(&f,(uint32_t)strlen(id)); kbytes(&f,id,strlen(id));
+            ku32(&f,(uint32_t)dg); ku32(&f,(uint32_t)(dg>>32));
+        }
         out->digest=f.h?f.h:1u;
         out->key=hta_world_key_fold(out->digest);
     }
     out->mesh.ambient[0]=out->mesh.ambient[1]=out->mesh.ambient[2]=0.8f;
     ok=true;
 done:
+    if(set)hta_pkg_set_free(set);
+    free(set);
+    free(root);
     if(!ok)hta_external_map_free(out);
     return ok;
 }

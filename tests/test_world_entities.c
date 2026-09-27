@@ -133,7 +133,7 @@ static void test_parse(void)
 
     expect_fail(patch("\"id\":\"x1:entity/relay_main\"", "\"id\":\"x1:entity/button_main\""), "duplicate placed ID");
     expect_fail(patch("\"target\":\"x1:entity/relay_main\"", "\"target\":\"x1:entity/relay_mian\""),
-                "x1:entity/button_main references missing target x1:entity/relay_mian");
+                "x1:entity/button_main references missing placed entity x1:entity/relay_mian");
     expect_fail(patch("\"id\":\"x1:entity/door_main\"", "\"id\":\"x1:entity/Door-Main\""), "'x1:entity/Door-Main': malformed placed ID");
     expect_fail(patch("\"id\":\"x1:entity/relay_main\",", "\"id\":\"x1:weapon/relay_main\","), "malformed placed ID");
     expect_fail(patch("{\"bounds\":{\"max\":[0.05", "{\"id\":\"other:entity/relay_z\",\"kind\":\"relay\"},{\"bounds\":{\"max\":[0.05"),

@@ -10,6 +10,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "app/fs.h"
+#include "asset/external_map.h"
 #include "asset/oal_asset.h"
 
 typedef struct hta_session hta_session;
@@ -31,5 +32,11 @@ uint64_t hta_content_fingerprint_fs(const hta_fs *fs);
  * owner picked, external.oalmap in app storage -- into s->world_ext, its
  * mesh moved to s->mesh. */
 bool hta_session_load_world(hta_session *s, const hta_fs *fs, char *err, size_t errlen);
+
+/* A world package by name from `fs`, with every package it requires (X4)
+ * from packages/<id>.oalasset in the same roots. */
+bool hta_content_load_world(const hta_fs *fs, const char *name, hta_external_map *out, char *err, size_t errlen);
+/* The package source that answers from `fs` (for tools that load by hand). */
+hta_pkg_source hta_content_package_source(const hta_fs *fs);
 
 #endif

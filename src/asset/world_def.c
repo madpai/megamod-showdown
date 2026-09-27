@@ -4,6 +4,9 @@
  * nesting respected, so a key that merely appears inside another value is
  * never mistaken for the section. */
 #include "world_def.h"
+#include "mjson.h"
+#include "package.h"
+#include "resource.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -43,34 +46,16 @@ static bool fail(char *err, size_t n, const char *fmt, const char *a, const char
     return false;
 }
 
-static bool segment(const char *s, size_t len, size_t max)
-{
-    if (!len || len > max || s[0] < 'a' || s[0] > 'z') return false;
-    for (size_t i = 1; i < len; i++)
-        if (!((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '_')) return false;
-    return true;
-}
-
 static bool failv(char *err, size_t n, const char *fmt, ...)
 {
     if (err && n) { va_list a; va_start(a, fmt); vsnprintf(err, n, fmt, a); va_end(a); }
     return false;
 }
 
-/* namespace:<type>/name, lowercase ASCII segments. */
-static bool content_id(const char *id, const char *type)
-{
-    const char *colon = strchr(id, ':'), *slash = colon ? strchr(colon, '/') : NULL;
-    size_t len = strlen(id), tl = strlen(type);
-    if (!colon || !slash || len > HTA_WDEF_ID_MAX || strchr(colon + 1, ':') || strchr(slash + 1, '/')) return false;
-    return segment(id, (size_t)(colon - id), 40) &&
-           (size_t)(slash - colon - 1) == tl && !memcmp(colon + 1, type, tl) &&
-           segment(slash + 1, strlen(slash + 1), 48);
-}
-
-static bool placed_id(const char *id) { return content_id(id, "entity"); }
-static bool mover_id(const char *id) { return content_id(id, "mover"); }
-static bool script_id(const char *id) { return content_id(id, "script"); }
+/* The one content-ID grammar and type registry (asset/resource.h). */
+static bool placed_id(const char *id) { return hta_rid_is(id, HTA_RT_ENTITY); }
+static bool mover_id(const char *id) { return hta_rid_is(id, HTA_RT_MOVER); }
+static bool script_id(const char *id) { return hta_rid_is(id, HTA_RT_SCRIPT); }
 
 static const char *const CALLBACK[] = { "on_used", "on_ability" };   /* bit k: HTA_WCB 1 << k */
 
@@ -80,115 +65,17 @@ const char *hta_wscript_callback_name(uint32_t cb)
     return "?";
 }
 
-static bool same_namespace(const char *a, const char *b)
-{
-    const char *ca = strchr(a, ':'), *cb = strchr(b, ':');
-    return ca && cb && ca - a == cb - b && !memcmp(a, b, (size_t)(ca - a));
-}
+static bool same_namespace(const char *a, const char *b) { return hta_rid_same_namespace(a, b); }
 
-/* ---- a bounded JSON reader -------------------------------------------- */
+/* ---- the bounded JSON reader (mjson.h) ---------------------------------- */
 
-typedef struct {
-    const uint8_t *p, *end;
-    bool bad;
-} rd;
-
-#define MAX_DEPTH 64
-
-static void ws(rd *r) { while (r->p < r->end && (*r->p == ' ' || *r->p == '\t' || *r->p == '\n' || *r->p == '\r')) r->p++; }
-static bool eat(rd *r, char c) { ws(r); if (r->p < r->end && *r->p == c) { r->p++; return true; } return false; }
-static bool peek(rd *r, char c) { ws(r); return r->p < r->end && *r->p == c; }
-
-/* A string into `out` (NUL-terminated, at most cap-1 bytes; longer is an
- * error), or skipped when out is NULL. Escapes are accepted and, when
- * kept, must decode to printable ASCII. */
-static bool str(rd *r, char *out, size_t cap)
-{
-    size_t n = 0;
-    if (!eat(r, '"')) return false;
-    while (r->p < r->end) {
-        uint8_t c = *r->p++;
-        if (c == '"') { if (out) out[n] = 0; return true; }
-        if (c < 0x20) return false;
-        if (c == '\\') {
-            if (r->p >= r->end) return false;
-            uint8_t e = *r->p++;
-            if (e == 'u') {
-                unsigned v = 0;
-                for (int k = 0; k < 4; k++) {
-                    if (r->p >= r->end) return false;
-                    uint8_t h = *r->p++;
-                    v = v * 16 + (h >= '0' && h <= '9' ? h - '0' : h >= 'a' && h <= 'f' ? h - 'a' + 10 :
-                                  h >= 'A' && h <= 'F' ? h - 'A' + 10 : 99);
-                    if (v > 0xFFFF) return false;
-                }
-                c = v >= 0x20 && v < 0x7F ? (uint8_t)v : 0;
-            } else {
-                const char *m = strchr("\"\\/bfnrt", e);
-                if (!m || !e) return false;
-                c = (uint8_t)"\"\\/\b\f\n\r\t"[m - "\"\\/bfnrt"];
-            }
-            if (out && (c < 0x20 || c >= 0x7F)) return false;
-        } else if (out && c >= 0x7F) return false;
-        if (out) { if (n + 1 >= cap) return false; out[n++] = (char)c; }
-    }
-    return false;
-}
-
-static bool num(rd *r, double *out)
-{
-    ws(r);
-    char buf[40]; size_t n = 0;
-    while (r->p < r->end && n + 1 < sizeof(buf) && strchr("+-.0123456789eE", *r->p) && *r->p) buf[n++] = (char)*r->p++;
-    if (!n || (r->p < r->end && strchr("+-.0123456789eE", *r->p) && *r->p)) return false;
-    buf[n] = 0;
-    char *e;
-    double v = strtod(buf, &e);
-    if (*e || !isfinite(v)) return false;
-    *out = v;
-    return true;
-}
-
-/* Any value, skipped. Iterative over nesting, bounded depth. */
-static bool skip(rd *r)
-{
-    int depth = 0;
-    do {
-        ws(r);
-        if (r->p >= r->end) return false;
-        uint8_t c = *r->p;
-        if (c == '"') { if (!str(r, NULL, 0)) return false; }
-        else if (c == '{' || c == '[') {
-            if (++depth > MAX_DEPTH) return false;
-            r->p++;
-            if (eat(r, c == '{' ? '}' : ']')) { depth--; goto next; }
-            if (c == '{') { if (!str(r, NULL, 0) || !eat(r, ':')) return false; }
-            continue;
-        } else if (c == '-' || (c >= '0' && c <= '9')) { double d; if (!num(r, &d)) return false; }
-        else if ((size_t)(r->end - r->p) >= 4 && !memcmp(r->p, "true", 4)) r->p += 4;
-        else if ((size_t)(r->end - r->p) >= 5 && !memcmp(r->p, "false", 5)) r->p += 5;
-        else if ((size_t)(r->end - r->p) >= 4 && !memcmp(r->p, "null", 4)) r->p += 4;
-        else return false;
-next:
-        /* After a value: a comma continues the container, a close ends it. */
-        while (depth > 0) {
-            ws(r);
-            if (r->p >= r->end) return false;
-            if (*r->p == ',') {
-                r->p++;
-                /* In an object the next member starts with its key. The
-                 * container kind is not tracked; a key is a string then ':'. */
-                const uint8_t *save = r->p;
-                if (peek(r, '"') && str(r, NULL, 0) && eat(r, ':')) break;
-                r->p = save;
-                break;
-            }
-            if (*r->p == '}' || *r->p == ']') { r->p++; depth--; continue; }
-            return false;
-        }
-    } while (depth > 0);
-    return true;
-}
+typedef hta_mj rd;
+static void ws(rd *r) { hta_mj_ws(r); }
+static bool eat(rd *r, char c) { return hta_mj_eat(r, c); }
+static bool peek(rd *r, char c) { return hta_mj_peek(r, c); }
+static bool str(rd *r, char *out, size_t cap) { return hta_mj_str(r, out, cap); }
+static bool num(rd *r, double *out) { return hta_mj_num(r, out); }
+static bool skip(rd *r) { return hta_mj_skip(r); }
 
 static bool vec3(rd *r, float out[3])
 {
@@ -230,6 +117,8 @@ typedef struct {
     char  ability[HTA_WDEF_ID_MAX + 1];
     char  api[HTA_WDEF_MAX_SCRIPTS][24];
     bool  has_ability;
+    hta_res_set    rs;        /* what this world's references resolve against (X4) */
+    hta_res_import imports[HTA_PKG_MAX_IMPORTS];
 } pending;
 
 static bool parse_link(rd *r, hta_wdef_link *l, char *target, const char *owner, char *err, size_t n)
@@ -357,7 +246,7 @@ static bool parse_mover_def(rd *r, hta_world_defs *d, char *err, size_t n)
 /* A script's source: a JSON string decoded into the pool. Printable ASCII,
  * tab, CR and LF only (a script is ASCII text); bounded per script and in
  * all. */
-#define SCRIPT_MAX_BYTES (32u * 1024u)
+#define SCRIPT_MAX_BYTES HTA_WDEF_SCRIPT_MAX_BYTES
 static bool source(rd *r, hta_world_defs *d, hta_wscript_def *sc)
 {
     if (!eat(r, '"')) return false;
@@ -439,30 +328,32 @@ static bool parse_script(rd *r, hta_world_defs *d, pending *pend, char *err, siz
     return true;
 }
 
-/* A reference to a script, resolved once: its index, or a refusal that
+/* A reference to a script, resolved once through the typed resolver (the
+ * world's own scripts, or one it imports): its index + 1, or a refusal that
  * names the referrer, the reference and why. */
-static bool script_ref(const hta_world_defs *d, const char *who, const char *ref, uint32_t cb,
-                       uint16_t *out, char *err, size_t n)
+static bool script_ref(const hta_world_defs *d, const hta_res_set *rs, uint8_t field, const char *who,
+                       const char *ref, uint32_t cb, uint16_t *out, char *err, size_t n)
 {
+    if (!hta_res_resolve(rs, field, who, ref, err, n)) return false;
     int32_t k = hta_world_defs_find_script(d, ref);
-    if (k < 0) {
-        if (hta_world_defs_find(d, ref) >= 0 || hta_world_defs_find_mover(d, ref) >= 0)
-            return failv(err, n, "%s: script %s is not a script, expected namespace:script/name", who, ref);
-        if (!script_id(ref))
-            return failv(err, n, "%s: '%s' is not a script ID (namespace:script/name)", who, ref);
-        return failv(err, n, "%s references missing script %s", who, ref);
-    }
+    if (k < 0) return failv(err, n, "%s: script %s was not loaded", who, ref);
     if (!(d->script[k].callbacks & cb))
         return failv(err, n, "%s: script %s does not declare %s", who, ref, hta_wscript_callback_name(cb));
     *out = (uint16_t)(k + 1);
     return true;
 }
 
-static bool resolve_scripts(hta_world_defs *d, const pending *pend, char *err, size_t n)
+static bool any_script(const hta_world_defs *d, const pending *pend)
 {
     bool any = d->script_count || pend->has_ability;
     for (uint32_t i = 0; i < d->count; i++) any = any || pend->has_script[i];
-    if (!any) return true;
+    return any;
+}
+
+/* The world's own scripts, before anything refers to them. */
+static bool check_scripts(const hta_world_defs *d, const pending *pend, char *err, size_t n)
+{
+    if (!any_script(d, pend)) return true;
     if (d->schema < 3) return fail(err, n, "world_entities: scripts need schema 3%s%s", NULL, NULL);
     for (uint32_t i = 0; i < d->script_count; i++) {
         const hta_wscript_def *sc = &d->script[i];
@@ -476,21 +367,116 @@ static bool resolve_scripts(hta_world_defs *d, const pending *pend, char *err, s
         if (d->count && !same_namespace(sc->id, d->entity[0].id))
             return fail(err, n, "%s: not in the world's namespace (%s)", sc->id, d->entity[0].id);
     }
+    return true;
+}
+
+static bool resolve_scripts(hta_world_defs *d, const pending *pend, char *err, size_t n)
+{
+    if (!any_script(d, pend)) return true;
     for (uint32_t i = 0; i < d->count; i++) {
         if (!pend->has_script[i]) continue;
         hta_wdef *e = &d->entity[i];
         if (e->kind != HTA_WDEF_INTERACTABLE)
             return failv(err, n, "%s: only an interactable takes a script (it is a %s)", e->id, hta_wdef_kind_name(e->kind));
-        if (!script_ref(d, e->id, pend->script[i], HTA_WCB_ON_USED, &e->script, err, n)) return false;
+        if (!script_ref(d, &pend->rs, HTA_REF_SCRIPT, e->id, pend->script[i], HTA_WCB_ON_USED, &e->script, err, n))
+            return false;
     }
-    if (pend->has_ability && !script_ref(d, "ability_script", pend->ability, HTA_WCB_ON_ABILITY, &d->ability_script, err, n))
+    if (pend->has_ability &&
+        !script_ref(d, &pend->rs, HTA_REF_ABILITY_SCRIPT, "ability_script", pend->ability, HTA_WCB_ON_ABILITY,
+                    &d->ability_script, err, n))
         return false;
+    return true;
+}
+
+/* Every resource this world's references may resolve against (X4): its
+ * own -- placements, named mover definitions, scripts, its world ID when
+ * it declares a package -- then its dependencies' (package.h). Then the
+ * scripts it imports are copied in, in canonical order (by package ID,
+ * then resource ID), so the script table is the same on every peer. */
+static bool build_resources(hta_world_defs *d, pending *pend, const hta_pkg_set *set, char *err, size_t n)
+{
+    hta_res_set *rs = &pend->rs;
+    hta_res_init(rs);
+    rs->provider_count = set ? set->dep_count + 1 : 1;
+    if (set && set->root.declared) snprintf(rs->provider[0], sizeof(rs->provider[0]), "%s", set->root.id);
+    for (uint32_t i = 0; i < d->count; i++)
+        if (!hta_res_add(rs, d->entity[i].id, HTA_RT_ENTITY, 0, (uint16_t)i, err, n)) return false;
+    for (uint32_t i = 0; i < d->mover_def_count; i++)
+        if (d->mover_def[i].id[0] && !hta_res_add(rs, d->mover_def[i].id, HTA_RT_MOVER, 0, (uint16_t)i, err, n)) return false;
+    for (uint32_t i = 0; i < d->script_count; i++)
+        if (!hta_res_add(rs, d->script[i].id, HTA_RT_SCRIPT, 0, (uint16_t)i, err, n)) return false;
+    if (!set) return true;
+    if (set->root.declared && hta_rid_is(set->root.content_id, HTA_RT_WORLD) &&
+        !hta_res_add(rs, set->root.content_id, HTA_RT_WORLD, 0, 0, err, n)) return false;
+    if (!hta_pkg_set_resources(set, rs, pend->imports, err, n)) return false;
+    for (uint32_t i = 0; i < rs->import_count; i++) {
+        const hta_res_entry *e = hta_res_find(rs, rs->imports[i].id);
+        if (!e || e->type != HTA_RT_SCRIPT) continue;
+        if (e->provider != rs->imports[i].provider) {
+            char a[HTA_PKG_ID_MAX + 16], b[HTA_PKG_ID_MAX + 16];
+            return failv(err, n, "%s: imports %s from %s, but it is provided by %s", rs->provider[0], e->id,
+                         hta_res_provider_name(rs, rs->imports[i].provider, a, sizeof(a)),
+                         hta_res_provider_name(rs, e->provider, b, sizeof(b)));
+        }
+        const hta_world_defs *lib = set->dep[e->provider - 1].scripts;
+        const hta_wscript_def *from = &lib->script[e->index];
+        if (d->script_count >= HTA_WDEF_MAX_SCRIPTS)
+            return failv(err, n, "importing %s: more than %u scripts in the world with its imports", e->id, HTA_WDEF_MAX_SCRIPTS);
+        if (from->len > HTA_WDEF_SCRIPT_POOL - d->pool_used)
+            return failv(err, n, "importing %s: the world's scripts with its imports exceed %u bytes", e->id,
+                         HTA_WDEF_SCRIPT_POOL);
+        hta_wscript_def *sc = &d->script[d->script_count++];
+        *sc = *from;
+        sc->at = d->pool_used;
+        sc->provider = e->provider;
+        memcpy(d->pool + d->pool_used, lib->pool + from->at, from->len);
+        d->pool_used += from->len;
+    }
+    return true;
+}
+
+/* A declared world package's provides must be exactly what it defines:
+ * its world, its named mover definitions and its own scripts. */
+static bool check_provides(const hta_world_defs *d, const hta_package *p, char *err, size_t n)
+{
+    if (!p || !p->declared) return true;
+    char name[HTA_PKG_ID_MAX + 16];
+    snprintf(name, sizeof(name), "package %s", p->id);
+    if (!hta_rid_is(p->content_id, HTA_RT_WORLD))
+        return failv(err, n, "%s: the manifest's id '%s' is not a world ID (namespace:world/name)", name, p->content_id);
+    if (d->count && !same_namespace(p->content_id, d->entity[0].id))
+        return failv(err, n, "%s: world %s is not in its entities' namespace", name, p->content_id);
+    uint32_t mine = 1;
+    if (!hta_package_provides(p, p->content_id))
+        return failv(err, n, "%s defines world %s but does not list it in provides", name, p->content_id);
+    for (uint32_t i = 0; i < d->mover_def_count; i++) {
+        if (!d->mover_def[i].id[0]) continue;
+        mine++;
+        if (!hta_package_provides(p, d->mover_def[i].id))
+            return failv(err, n, "%s defines mover definition %s but does not list it in provides", name, d->mover_def[i].id);
+    }
+    for (uint32_t i = 0; i < d->script_count; i++) {
+        if (d->script[i].provider) continue;
+        mine++;
+        if (!hta_package_provides(p, d->script[i].id))
+            return failv(err, n, "%s defines script %s but does not list it in provides", name, d->script[i].id);
+    }
+    if (mine != p->provide_count)
+        for (uint32_t i = 0; i < p->provide_count; i++) {
+            const char *id = p->provides[i].id;
+            bool have = !strcmp(id, p->content_id) || hta_world_defs_find_mover(d, id) >= 0;
+            int32_t k = hta_world_defs_find_script(d, id);
+            have = have || (k >= 0 && !d->script[k].provider);
+            if (!have)
+                return failv(err, n, "%s lists %s in provides, but the world defines no such %s", name, id,
+                             hta_rtype_get(p->provides[i].type)->noun);
+        }
     return true;
 }
 
 /* Movers get their definitions: by reference (schema 2) or, for an X1
  * package, an unnamed one each from their inline parameters. */
-static bool resolve_movers(hta_world_defs *d, const pending *pend, char *err, size_t n)
+static bool resolve_movers(hta_world_defs *d, pending *pend, char *err, size_t n)
 {
     for (uint32_t i = 0; i < d->count; i++) {
         hta_wdef *e = &d->entity[i];
@@ -525,21 +511,14 @@ static bool resolve_movers(hta_world_defs *d, const pending *pend, char *err, si
             return failv(err, n, "%s: a mover takes its size, move and speed from its definition (schema 2)", e->id);
         if (!pend->has_def[i]) return failv(err, n, "%s: mover has no definition", e->id);
         if (!pend->has_pos[i]) return failv(err, n, "%s: mover has no position", e->id);
-        const char *ref = pend->def[i];
-        int32_t k = hta_world_defs_find_mover(d, ref);
-        if (k < 0) {
-            if (hta_world_defs_find(d, ref) >= 0)
-                return failv(err, n, "%s: definition %s is a placed entity, expected a mover definition", e->id, ref);
-            if (!mover_id(ref))
-                return failv(err, n, "%s: definition '%s' is not a mover definition ID (namespace:mover/name)", e->id, ref);
-            return failv(err, n, "%s references missing mover definition %s", e->id, ref);
-        }
-        e->def = (uint16_t)k;
+        const hta_res_entry *m = hta_res_resolve(&pend->rs, HTA_REF_MOVER_DEF, e->id, pend->def[i], err, n);
+        if (!m) return false;
+        e->def = m->index;
     }
     return true;
 }
 
-static bool parse_section(rd *r, hta_world_defs *d, char *err, size_t n)
+static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char *err, size_t n)
 {
     static pending pend;        /* 33 KB: not on a phone's stack */
     memset(&pend, 0, sizeof(pend));
@@ -598,30 +577,29 @@ static bool parse_section(rd *r, hta_world_defs *d, char *err, size_t n)
             if (!strcmp(d->entity[j].id, d->entity[i].id))
                 return fail(err, n, "%s: duplicate placed ID%s", d->entity[i].id, NULL);
     }
+    if (!check_scripts(d, &pend, err, n) || !build_resources(d, &pend, set, err, n)) return false;
     /* Resolve every link's target ID to its entity, once. */
     for (uint32_t i = 0; i < d->count; i++) {
         const hta_wdef *e = &d->entity[i];
         for (uint32_t k = 0; k < e->link_count; k++) {
             uint32_t li = e->first_link + k;
-            int32_t t = hta_world_defs_find(d, pend.target[li]);
-            if (t < 0 && hta_world_defs_find_script(d, pend.target[li]) >= 0)
-                return fail(err, n, "%s: link target %s is a script, expected a placed entity", e->id, pend.target[li]);
-            if (t < 0 && hta_world_defs_find_mover(d, pend.target[li]) >= 0)
-                return fail(err, n, "%s: link target %s is a mover definition, expected a placed entity", e->id, pend.target[li]);
-            if (t < 0) return fail(err, n, "%s references missing target %s", e->id, pend.target[li]);
-            d->link[li].target = (uint16_t)t;
+            const hta_res_entry *t = hta_res_resolve(&pend.rs, HTA_REF_LINK_TARGET, e->id, pend.target[li], err, n);
+            if (!t) return false;
+            d->link[li].target = t->index;
         }
     }
-    return resolve_movers(d, &pend, err, n) && resolve_scripts(d, &pend, err, n);
+    return resolve_movers(d, &pend, err, n) && resolve_scripts(d, &pend, err, n) &&
+           check_provides(d, set ? &set->root : NULL, err, n);
 }
 
-bool hta_world_defs_parse(const uint8_t *manifest, size_t len, hta_world_defs *out, char *err, size_t errlen)
+bool hta_world_defs_parse_env(const uint8_t *manifest, size_t len, const hta_pkg_set *set, hta_world_defs *out,
+                              char *err, size_t errlen)
 {
     if (!out) return false;
     memset(out, 0, sizeof(*out));
     if (err && errlen) err[0] = 0;
     if (!manifest) return fail(err, errlen, "no manifest%s%s", NULL, NULL);
-    rd r = { manifest, manifest + len, false };
+    rd r = { manifest, manifest + len, false, false };
     char key[64];
     if (!eat(&r, '{')) return fail(err, errlen, "manifest is not an object%s%s", NULL, NULL);
     if (eat(&r, '}')) return true;
@@ -633,14 +611,84 @@ bool hta_world_defs_parse(const uint8_t *manifest, size_t len, hta_world_defs *o
         if (!eat(&r, ':')) return fail(err, errlen, "malformed manifest%s%s", NULL, NULL);
         if (!strcmp(key, "world_entities")) {
             if (found) return fail(err, errlen, "world_entities appears twice%s%s", NULL, NULL);
-            if (!parse_section(&r, out, err, errlen)) { memset(out, 0, sizeof(*out)); return false; }
+            if (!parse_section(&r, out, set, err, errlen)) { memset(out, 0, sizeof(*out)); return false; }
             found = true;
         } else if (!skip(&r)) return fail(err, errlen, "malformed manifest%s%s", NULL, NULL);
     } while (eat(&r, ','));
     if (!eat(&r, '}')) return fail(err, errlen, "malformed manifest%s%s", NULL, NULL);
     ws(&r);
     if (r.p != r.end) return fail(err, errlen, "trailing bytes after the manifest%s%s", NULL, NULL);
+    /* A declared package with no world_entities still lists what it has. */
+    if (!found && set && !check_provides(out, &set->root, err, errlen)) { memset(out, 0, sizeof(*out)); return false; }
     if (!hta_world_defs_check(out, err, errlen)) { memset(out, 0, sizeof(*out)); return false; }
+    return true;
+}
+
+bool hta_world_defs_parse(const uint8_t *manifest, size_t len, hta_world_defs *out, char *err, size_t errlen)
+{
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    hta_pkg_set *set = calloc(1, sizeof(*set));
+    hta_package *root = calloc(1, sizeof(*root));
+    bool ok = set && root;
+    if (!ok) fail(err, errlen, "out of memory%s%s", NULL, NULL);
+    ok = ok && hta_package_parse(manifest, len, HTA_PKG_WORLD, root, err, errlen) &&
+         hta_pkg_set_load(set, root, NULL, err, errlen) &&
+         hta_world_defs_parse_env(manifest, len, set, out, err, errlen);
+    if (set) hta_pkg_set_free(set);
+    free(set);
+    free(root);
+    return ok;
+}
+
+bool hta_world_defs_parse_library(const uint8_t *manifest, size_t len, hta_world_defs *out, char *err, size_t n)
+{
+    static pending pend;
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    memset(&pend, 0, sizeof(pend));
+    if (err && n) err[0] = 0;
+    if (!manifest) return fail(err, n, "no manifest%s%s", NULL, NULL);
+    rd r = { manifest, manifest + len, false, false };
+    char key[64];
+    bool found = false;
+    if (!eat(&r, '{')) return fail(err, n, "manifest is not an object%s%s", NULL, NULL);
+    if (!eat(&r, '}')) {
+        do {
+            const uint8_t *at = r.p;
+            if (!str(&r, key, sizeof(key))) { r.p = at; if (!str(&r, NULL, 0)) return fail(err, n, "malformed manifest%s%s", NULL, NULL); key[0] = 0; }
+            if (!eat(&r, ':')) return fail(err, n, "malformed manifest%s%s", NULL, NULL);
+            if (!strcmp(key, "scripts")) {
+                if (found) return fail(err, n, "scripts appears twice%s%s", NULL, NULL);
+                found = true;
+                if (!eat(&r, '[')) return fail(err, n, "scripts is not a list%s%s", NULL, NULL);
+                if (!eat(&r, ']')) {
+                    do { if (!parse_script(&r, out, &pend, err, n)) return false; } while (eat(&r, ','));
+                    if (!eat(&r, ']')) return fail(err, n, "malformed scripts%s%s", NULL, NULL);
+                }
+            } else if (!skip(&r)) return fail(err, n, "malformed manifest%s%s", NULL, NULL);
+        } while (eat(&r, ','));
+        if (!eat(&r, '}')) return fail(err, n, "malformed manifest%s%s", NULL, NULL);
+    }
+    ws(&r);
+    if (r.p != r.end) return fail(err, n, "trailing bytes after the manifest%s%s", NULL, NULL);
+    if (!found) return fail(err, n, "a library has no scripts member%s%s", NULL, NULL);
+    for (uint32_t i = 0; i < out->script_count; i++) {
+        const hta_wscript_def *sc = &out->script[i];
+        char why[128];
+        hta_rid rid;
+        int rc = hta_rid_parse(sc->id, &rid, why, sizeof(why));
+        if (rc != HTA_RID_OK || rid.type != HTA_RT_SCRIPT)
+            return failv(err, n, "'%s': not a script ID (namespace:script/name)%s%s", sc->id, rc ? ": " : "", rc ? why : "");
+        if (hta_rid_reserved_namespace(sc->id, rid.ns_len))
+            return failv(err, n, "%s: namespace '%.*s' is reserved for built-in content", sc->id, rid.ns_len, sc->id);
+        for (uint32_t j = 0; j < i; j++)
+            if (!strcmp(out->script[j].id, sc->id)) return fail(err, n, "%s: duplicate script ID%s", sc->id, NULL);
+        if (strcmp(pend.api[i], HTA_WDEF_SCRIPT_API))
+            return failv(err, n, "%s: unsupported script API '%s' (this engine has %s)", sc->id, pend.api[i], HTA_WDEF_SCRIPT_API);
+        if (!sc->callbacks) return fail(err, n, "%s: declares no callbacks%s", sc->id, NULL);
+    }
+    out->schema = HTA_WDEF_SCHEMA;
     return true;
 }
 
@@ -683,7 +731,7 @@ void hta_wdef_mover_box(const hta_world_defs *d, uint32_t entity, float min[3], 
 bool hta_manifest_members(const uint8_t *manifest, size_t len, hta_manifest_member_fn fn, void *ctx)
 {
     if (!manifest) return false;
-    rd r = { manifest, manifest + len, false };
+    rd r = { manifest, manifest + len, false, false };
     char key[64];
     if (!eat(&r, '{')) return false;
     if (eat(&r, '}')) { ws(&r); return r.p == r.end; }
@@ -760,8 +808,9 @@ bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t n)
         const hta_wscript_def *sc = &d->script[i];
         if (!memchr(sc->id, 0, sizeof(sc->id)) || !script_id(sc->id))
             return fail(err, n, "'%s': malformed script ID (namespace:script/name)%s", sc->id, NULL);
-        if (d->count && !same_namespace(sc->id, d->entity[0].id))
+        if (!sc->provider && d->count && !same_namespace(sc->id, d->entity[0].id))
             return fail(err, n, "%s: not in the world's namespace (%s)", sc->id, d->entity[0].id);
+        if (sc->provider >= HTA_RES_MAX_PROVIDERS) return fail(err, n, "%s: bad provider%s", sc->id, NULL);
         if ((uint64_t)sc->at + sc->len > d->pool_used || !sc->callbacks || (sc->callbacks & ~3u))
             return fail(err, n, "%s: malformed script%s", sc->id, NULL);
     }

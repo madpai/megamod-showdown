@@ -149,12 +149,8 @@ static bool load_world(join *j, const hta_fs *fs, const char *map_path, const ch
             if (!hta_external_map_load(oalmap, &j->ext, err, errlen)) return false;
         } else {
             char name[128];
-            hta_fs_blob b;
             snprintf(name, sizeof(name), "maps/%s.oalmap", world);
-            if (!hta_fs_map(fs, name, &b)) { snprintf(err, errlen, "%s: not in the bundle", name); return false; }
-            bool ok = hta_external_map_load_memory(b.data, b.size, &j->ext, err, errlen);
-            hta_fs_unmap(&b);
-            if (!ok) return false;
+            if (!hta_content_load_world(fs, name, &j->ext, err, errlen)) return false;
         }
         j->have_ext = true;
         j->mesh = j->ext.mesh;

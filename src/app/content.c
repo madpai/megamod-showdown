@@ -68,6 +68,46 @@ uint64_t hta_content_fingerprint_fs(const hta_fs *fs)
     return fp;
 }
 
+/* Required packages (X4) come from the same content roots, by package ID:
+ * packages/<id>.oalasset. The ID was checked against the package-ID
+ * grammar before it gets here (no '/', no ".."); the package found must
+ * still declare that ID (package.c). */
+static bool fs_package_open(void *ctx, const char *id, const uint8_t **data, size_t *size, void **handle,
+                            char *where, size_t wherelen)
+{
+    const hta_fs *fs = ctx;
+    char name[HTA_PKG_ID_MAX + 32];
+    snprintf(name, sizeof(name), "%s/%s.oalasset", HTA_PKG_LIBRARY_DIR, id);
+    snprintf(where, wherelen, "%s", name);
+    hta_fs_blob *b = calloc(1, sizeof(*b));
+    if (!b) return false;
+    if (!hta_fs_map(fs, name, b)) { free(b); return false; }
+    *data = b->data; *size = b->size; *handle = b;
+    return true;
+}
+
+static void fs_package_close(void *ctx, void *handle)
+{
+    (void)ctx;
+    if (handle) { hta_fs_unmap(handle); free(handle); }
+}
+
+hta_pkg_source hta_content_package_source(const hta_fs *fs)
+{
+    hta_pkg_source src = { fs_package_open, fs_package_close, (void *)fs };
+    return src;
+}
+
+bool hta_content_load_world(const hta_fs *fs, const char *name, hta_external_map *out, char *err, size_t errlen)
+{
+    hta_fs_blob b;
+    if (!hta_fs_map(fs, name, &b)) { snprintf(err, errlen, "%s: not found", name); return false; }
+    hta_pkg_source src = hta_content_package_source(fs);
+    bool ok = hta_external_map_load_with(b.data, b.size, &src, out, err, errlen);
+    hta_fs_unmap(&b);
+    return ok;
+}
+
 bool hta_session_load_world(hta_session *s, const hta_fs *fs, char *err, size_t errlen)
 {
     for (const char *c = s->world; *c; c++)
@@ -79,11 +119,7 @@ bool hta_session_load_world(hta_session *s, const hta_fs *fs, char *err, size_t 
     char name[96];
     if (!strcmp(s->world, "imported")) snprintf(name, sizeof(name), "external.oalmap");
     else snprintf(name, sizeof(name), "maps/%s.oalmap", s->world);
-    hta_fs_blob b;
-    if (!hta_fs_map(fs, name, &b)) { snprintf(err, errlen, "%s: not found", name); return false; }
-    bool ok = hta_external_map_load_memory(b.data, b.size, &s->world_ext, err, errlen);
-    hta_fs_unmap(&b);
-    if (!ok) return false;
+    if (!hta_content_load_world(fs, name, &s->world_ext, err, errlen)) return false;
     s->mesh = s->world_ext.mesh;
     memset(&s->world_ext.mesh, 0, sizeof(s->world_ext.mesh));
     s->world_loaded = true;

@@ -1,5 +1,6 @@
 /* Host-side Lua gameplay scripting (script.h, docs/SCRIPTING.md). */
 #include "script.h"
+#include "asset/resource.h"
 #include "lua.h"
 #include "lauxlib.h"
 #include "lualib.h"
@@ -186,7 +187,18 @@ static int l_entity(lua_State *L)
     const char *id = luaL_checkstring(L, 1);
     if (strcmp(h->callback, "load")) luaL_error(L, "world.entity is load-time only (resolve '%s' at the top of the script)", id);
     int32_t i = hta_world_defs_find(h->defs, id);
-    if (i < 0) luaL_error(L, "unknown entity '%s'", id);
+    if (i < 0) {
+        /* The one grammar and registry (asset/resource.h): say what is wrong. */
+        char why[128];
+        hta_rid r;
+        int rc = hta_rid_parse(id, &r, why, sizeof(why));
+        if (rc == HTA_RID_MALFORMED) luaL_error(L, "world.entity: '%s' is not a resource ID: %s", id, why);
+        if (rc != HTA_RID_OK) luaL_error(L, "world.entity: '%s': %s (expected a placed entity)", id, why);
+        if (r.type != HTA_RT_ENTITY)
+            luaL_error(L, "world.entity: '%s' is a %s ID, expected a placed entity (namespace:entity/name)", id,
+                       hta_rtype_get(r.type)->noun);
+        luaL_error(L, "unknown entity '%s'", id);
+    }
     push_entity(L, (uint32_t)i);
     return 1;
 }

@@ -6,10 +6,23 @@
 #ifndef HTA_EXTERNAL_MAP_H
 #define HTA_EXTERNAL_MAP_H
 #include "bsp.h"
+#include "package.h"
 #include "world_def.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+/* What the world's package declared and loaded with it (X4): kept for
+ * reports (megamod-content, megamod-resources); play never reads it. */
+typedef struct {
+    bool     declared;
+    char     id[HTA_PKG_ID_MAX + 1];
+    uint32_t provides, requires, imports;
+    uint32_t dep_count;                              /* the closure, canonical order */
+    char     dep[HTA_PKG_MAX_SET - 1][HTA_PKG_ID_MAX + 1];
+    uint64_t dep_digest[HTA_PKG_MAX_SET - 1];
+    bool     dep_direct[HTA_PKG_MAX_SET - 1];
+} hta_external_package;
 
 typedef struct {
     hta_bsp_mesh mesh;
@@ -46,6 +59,7 @@ typedef struct {
      * triangles, which are not in solid_indices -- it owns its collision. */
     uint32_t version;
     hta_world_defs world_defs;
+    hta_external_package package;
     uint16_t *submesh_entity;
 } hta_external_map;
 
@@ -85,5 +99,12 @@ bool hta_external_map_load(const char *path, hta_external_map *out, char *err, s
  * what it keeps; `data` may be unmapped afterwards. */
 bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external_map *out,
                                   char *err, size_t errlen);
+/* The same, loading every package the world requires (X4) through `src`
+ * (NULL: a world that requires any is refused, naming what it needs). The
+ * dependencies' content joins the world key. */
+bool hta_external_map_load_with(const uint8_t *data, size_t size, const hta_pkg_source *src,
+                                hta_external_map *out, char *err, size_t errlen);
 void hta_external_map_free(hta_external_map *m);
+/* The manifest members the world key covers, by index (NULL past the end). */
+const char *hta_world_key_played(uint32_t i);
 #endif
