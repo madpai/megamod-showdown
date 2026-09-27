@@ -364,6 +364,23 @@ the package.
    before spawn; a provenance-only library change is admitted; a joiner
    without the library cannot load the world and says what it lacks.
 
+## Emulator evidence (Android 14 x86_64, build fc5f587)
+
+**OBSERVED**, 2026-09-27: the emulator APK carried `assets/maps/
+x4_resource_lab.oalmap` and `assets/packages/x4.shared.oalasset`; hosting
+X4 it logged `[script] 2 scripts loaded (megamod.v1, host only); ability
+script on` -- the world's own script and the library's, loaded from the APK
+through the same fs path as the desktop. Desktop joiners through
+`scripts/emu/udprelay.py` were admitted (so the phone's world key, library
+digest included, equals the desktop's): A found door A shut and blocked,
+pressed the button (the phone's Lua: `x4:script/open_door on_used ... ok, 1
+requests`), pressed ability (`x4shared:script/pulse_ability: pulse by
+player 2 hit 1`, then `Player 2 was killed by Player 3`); target T saw its
+death; late joiner B found door A open; the library-modified joiner was
+refused ("different map"), the provenance-only one admitted, and a joiner
+without the library refused to load the world ("requires package x4.shared,
+but it is not present"). No joiner logged a script line.
+
 ## Tests
 
 | Test | Covers |
