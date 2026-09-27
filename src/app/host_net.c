@@ -6,6 +6,7 @@
  * unit needs its look uploaded to the GPU -- is the platform's callback. */
 #include "host_net.h"
 #include "../platform/platform.h"
+#include "../script/script.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -99,7 +100,7 @@ void hta_host_peers(hta_session *s, double now, void (*unit_added)(hta_session *
         u->body.fly_speed=held && held->mount ? held->asset->fly_speed : attr.fly_speed;
         if (s->peer_ability_seen[i]!=c->ability_count) {
             s->peer_ability_seen[i]=c->ability_count;
-            hta_game_ability(&s->game,unit);
+            hta_session_ability(s,unit);
         }
         if (u->slot!=c->weapon_slot) in->swap=true;
         if (s->peer_melee_seen[i]!=c->melee_count) {
@@ -325,3 +326,9 @@ void hta_host_world(hta_session *s)
     }
 }
 
+
+void hta_session_ability(hta_session *s, int32_t unit)
+{
+    if (hta_game_ability(&s->game, unit)) return;
+    if (s->script && hta_game_ability_charge(&s->game, unit) < 0.0f) hta_script_ability(s->script, unit);
+}

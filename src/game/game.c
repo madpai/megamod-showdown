@@ -467,7 +467,9 @@ int32_t hta_game_add(hta_game *g, hta_unit_kind kind, const char *name, uint8_t 
         idx = (int32_t)g->unit_count++;
     }
     hta_unit *u = &g->units[idx];
+    uint16_t gen = u->generation;
     memset(u, 0, sizeof(*u));
+    u->generation = (uint16_t)(gen + 1u) ? (uint16_t)(gen + 1u) : 1u;
     if (team == HTA_TEAM_AUTO) {
         /* The smaller side; red when they are even. */
         int n[2] = { 0, 0 };
@@ -523,6 +525,7 @@ void hta_game_remove(hta_game *g, int32_t idx)
     drop_flag(g, idx, false);
     g->units[idx].kind = HTA_UNIT_NONE;
     g->units[idx].alive = false;
+    g->units[idx].generation = (uint16_t)(g->units[idx].generation + 1u) ? (uint16_t)(g->units[idx].generation + 1u) : 1u;
     if (g->local == idx) g->local = HTA_GAME_NONE;
 }
 
@@ -790,6 +793,9 @@ static void flags_home(hta_game *g)
 void hta_game_start(hta_game *g)
 {
     if (!g) return;
+    /* A new round: every unit's handle goes stale. */
+    for (uint32_t i = 0; i < g->unit_count; i++)
+        g->units[i].generation = (uint16_t)(g->units[i].generation + 1u) ? (uint16_t)(g->units[i].generation + 1u) : 1u;
     g->over = false;
     g->winner = HTA_GAME_NONE;
     g->winner_team = -1;

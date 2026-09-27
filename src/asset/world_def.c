@@ -17,6 +17,11 @@ static const char *const INPUT[HTA_WIN_COUNT] = { "", "activate", "open", "close
 const char *hta_wdef_kind_name(uint8_t k) { return k < HTA_WDEF_KIND_COUNT ? KIND[k] : "?"; }
 const char *hta_wdef_event_name(uint8_t e) { return e < HTA_WEV_COUNT ? EVENT[e] : "?"; }
 const char *hta_wdef_input_name(uint8_t i) { return i < HTA_WIN_COUNT ? INPUT[i] : "?"; }
+uint8_t hta_wdef_input_from_name(const char *name)
+{
+    for (int i = 1; name && i < HTA_WIN_COUNT; i++) if (!strcmp(INPUT[i], name)) return (uint8_t)i;
+    return HTA_WIN_NONE;
+}
 
 bool hta_wdef_emits(uint8_t kind, uint8_t event)
 {
@@ -65,6 +70,15 @@ static bool content_id(const char *id, const char *type)
 
 static bool placed_id(const char *id) { return content_id(id, "entity"); }
 static bool mover_id(const char *id) { return content_id(id, "mover"); }
+static bool script_id(const char *id) { return content_id(id, "script"); }
+
+static const char *const CALLBACK[] = { "on_used", "on_ability" };   /* bit k: HTA_WCB 1 << k */
+
+const char *hta_wscript_callback_name(uint32_t cb)
+{
+    for (uint32_t k = 0; k < sizeof(CALLBACK) / sizeof(CALLBACK[0]); k++) if (cb == (1u << k)) return CALLBACK[k];
+    return "?";
+}
 
 static bool same_namespace(const char *a, const char *b)
 {
@@ -211,7 +225,11 @@ typedef struct {
     float move[HTA_WDEF_MAX_ENTITIES][3], speed[HTA_WDEF_MAX_ENTITIES];
     uint8_t has_def[HTA_WDEF_MAX_ENTITIES], has_bounds[HTA_WDEF_MAX_ENTITIES],
             has_move[HTA_WDEF_MAX_ENTITIES], has_speed[HTA_WDEF_MAX_ENTITIES],
-            has_pos[HTA_WDEF_MAX_ENTITIES];
+            has_pos[HTA_WDEF_MAX_ENTITIES], has_script[HTA_WDEF_MAX_ENTITIES];
+    char  script[HTA_WDEF_MAX_ENTITIES][HTA_WDEF_ID_MAX + 1];
+    char  ability[HTA_WDEF_ID_MAX + 1];
+    char  api[HTA_WDEF_MAX_SCRIPTS][24];
+    bool  has_ability;
 } pending;
 
 static bool parse_link(rd *r, hta_wdef_link *l, char *target, const char *owner, char *err, size_t n)
@@ -265,6 +283,7 @@ static bool parse_entity(rd *r, hta_world_defs *d, pending *pend, char *err, siz
         else if (!strcmp(key, "move")) { ok = vec3(r, pend->move[me]); pend->has_move[me] = 1; }
         else if (!strcmp(key, "speed")) { ok = fnum(r, &pend->speed[me]); pend->has_speed[me] = 1; }
         else if (!strcmp(key, "definition")) { ok = str(r, pend->def[me], sizeof(pend->def[me])); pend->has_def[me] = 1; }
+        else if (!strcmp(key, "script")) { ok = str(r, pend->script[me], sizeof(pend->script[me])); pend->has_script[me] = 1; }
         else if (!strcmp(key, "bounds")) {
             char k2[8]; bool mn = false, mx = false;
             ok = eat(r, '{');
@@ -335,6 +354,140 @@ static bool parse_mover_def(rd *r, hta_world_defs *d, char *err, size_t n)
     return true;
 }
 
+/* A script's source: a JSON string decoded into the pool. Printable ASCII,
+ * tab, CR and LF only (a script is ASCII text); bounded per script and in
+ * all. */
+#define SCRIPT_MAX_BYTES (32u * 1024u)
+static bool source(rd *r, hta_world_defs *d, hta_wscript_def *sc)
+{
+    if (!eat(r, '"')) return false;
+    sc->at = d->pool_used; sc->len = 0;
+    while (r->p < r->end) {
+        uint8_t c = *r->p++;
+        if (c == '"') return true;
+        if (c < 0x20 || c >= 0x7F) return false;
+        if (c == '\\') {
+            if (r->p >= r->end) return false;
+            uint8_t e = *r->p++;
+            if (e == 'u') {
+                unsigned v = 0;
+                for (int k = 0; k < 4; k++) {
+                    if (r->p >= r->end) return false;
+                    uint8_t h = *r->p++;
+                    int x = h >= '0' && h <= '9' ? h - '0' : h >= 'a' && h <= 'f' ? h - 'a' + 10 : h >= 'A' && h <= 'F' ? h - 'A' + 10 : -1;
+                    if (x < 0) return false;
+                    v = v * 16 + (unsigned)x;
+                }
+                c = (uint8_t)v;
+                if (v >= 0x7F || (v < 0x20 && v != '\t' && v != '\n' && v != '\r')) return false;
+            } else {
+                const char *m = strchr("\"\\/bfnrt", e);
+                if (!m || !e || e == 'b' || e == 'f') return false;
+                c = (uint8_t)"\"\\/\b\f\n\r\t"[m - "\"\\/bfnrt"];
+            }
+        }
+        if (sc->len >= SCRIPT_MAX_BYTES || d->pool_used >= HTA_WDEF_SCRIPT_POOL) return false;
+        d->pool[d->pool_used++] = (char)c;
+        sc->len++;
+    }
+    return false;
+}
+
+/* One entry of "scripts" (schema 3). */
+static bool parse_script(rd *r, hta_world_defs *d, pending *pend, char *err, size_t n)
+{
+    if (d->script_count >= HTA_WDEF_MAX_SCRIPTS) return fail(err, n, "more than 16 scripts%s%s", NULL, NULL);
+    uint32_t me = d->script_count;
+    hta_wscript_def *sc = &d->script[me];
+    memset(sc, 0, sizeof(*sc));
+    char key[16], where[HTA_WDEF_ID_MAX + 32];
+    snprintf(where, sizeof(where), "script %u", me);
+    bool have[4] = { 0 };
+    if (!eat(r, '{')) return fail(err, n, "%s: not an object", where, NULL);
+    if (!eat(r, '}')) do {
+        if (!str(r, key, sizeof(key)) || !eat(r, ':')) return fail(err, n, "%s: malformed field", where, NULL);
+        bool ok = true;
+        if (!strcmp(key, "id")) {
+            ok = str(r, sc->id, sizeof(sc->id)); have[0] = ok;
+            if (ok) snprintf(where, sizeof(where), "%s", sc->id);
+        } else if (!strcmp(key, "api")) { ok = str(r, pend->api[me], sizeof(pend->api[me])); have[1] = ok; }
+        else if (!strcmp(key, "callbacks")) {
+            ok = eat(r, '[');
+            if (ok && !eat(r, ']')) {
+                do {
+                    char cb[24];
+                    if (!str(r, cb, sizeof(cb))) return fail(err, n, "%s: malformed callbacks", where, NULL);
+                    uint32_t k = 0;
+                    while (k < sizeof(CALLBACK) / sizeof(CALLBACK[0]) && strcmp(CALLBACK[k], cb)) k++;
+                    if (k == sizeof(CALLBACK) / sizeof(CALLBACK[0]))
+                        return failv(err, n, "%s: unknown callback '%s' (megamod.v1 has on_used, on_ability)", where, cb);
+                    sc->callbacks |= 1u << k;
+                } while (eat(r, ','));
+                ok = eat(r, ']');
+            }
+            have[2] = ok;
+        } else if (!strcmp(key, "source")) {
+            ok = source(r, d, sc); have[3] = ok;
+            if (!ok) return failv(err, n, "%s: source is not ASCII text, or over 32 KB (64 KB for all scripts)", where);
+        } else return fail(err, n, "%s: unknown field '%s'", where, key);
+        if (!ok) return fail(err, n, "%s: malformed '%s'", where, key);
+    } while (eat(r, ','));
+    if (!eat(r, '}')) return fail(err, n, "%s: malformed script", where, NULL);
+    if (!have[0]) return fail(err, n, "%s: has no id", where, NULL);
+    if (!have[1] || !have[2] || !have[3]) return fail(err, n, "%s: needs api, callbacks and source", where, NULL);
+    d->script_count++;
+    return true;
+}
+
+/* A reference to a script, resolved once: its index, or a refusal that
+ * names the referrer, the reference and why. */
+static bool script_ref(const hta_world_defs *d, const char *who, const char *ref, uint32_t cb,
+                       uint16_t *out, char *err, size_t n)
+{
+    int32_t k = hta_world_defs_find_script(d, ref);
+    if (k < 0) {
+        if (hta_world_defs_find(d, ref) >= 0 || hta_world_defs_find_mover(d, ref) >= 0)
+            return failv(err, n, "%s: script %s is not a script, expected namespace:script/name", who, ref);
+        if (!script_id(ref))
+            return failv(err, n, "%s: '%s' is not a script ID (namespace:script/name)", who, ref);
+        return failv(err, n, "%s references missing script %s", who, ref);
+    }
+    if (!(d->script[k].callbacks & cb))
+        return failv(err, n, "%s: script %s does not declare %s", who, ref, hta_wscript_callback_name(cb));
+    *out = (uint16_t)(k + 1);
+    return true;
+}
+
+static bool resolve_scripts(hta_world_defs *d, const pending *pend, char *err, size_t n)
+{
+    bool any = d->script_count || pend->has_ability;
+    for (uint32_t i = 0; i < d->count; i++) any = any || pend->has_script[i];
+    if (!any) return true;
+    if (d->schema < 3) return fail(err, n, "world_entities: scripts need schema 3%s%s", NULL, NULL);
+    for (uint32_t i = 0; i < d->script_count; i++) {
+        const hta_wscript_def *sc = &d->script[i];
+        if (!script_id(sc->id))
+            return fail(err, n, "'%s': malformed script ID (namespace:script/name)%s", sc->id, NULL);
+        for (uint32_t j = 0; j < i; j++)
+            if (!strcmp(d->script[j].id, sc->id)) return fail(err, n, "%s: duplicate script ID%s", sc->id, NULL);
+        if (strcmp(pend->api[i], HTA_WDEF_SCRIPT_API))
+            return failv(err, n, "%s: unsupported script API '%s' (this engine has %s)", sc->id, pend->api[i], HTA_WDEF_SCRIPT_API);
+        if (!sc->callbacks) return fail(err, n, "%s: declares no callbacks%s", sc->id, NULL);
+        if (d->count && !same_namespace(sc->id, d->entity[0].id))
+            return fail(err, n, "%s: not in the world's namespace (%s)", sc->id, d->entity[0].id);
+    }
+    for (uint32_t i = 0; i < d->count; i++) {
+        if (!pend->has_script[i]) continue;
+        hta_wdef *e = &d->entity[i];
+        if (e->kind != HTA_WDEF_INTERACTABLE)
+            return failv(err, n, "%s: only an interactable takes a script (it is a %s)", e->id, hta_wdef_kind_name(e->kind));
+        if (!script_ref(d, e->id, pend->script[i], HTA_WCB_ON_USED, &e->script, err, n)) return false;
+    }
+    if (pend->has_ability && !script_ref(d, "ability_script", pend->ability, HTA_WCB_ON_ABILITY, &d->ability_script, err, n))
+        return false;
+    return true;
+}
+
 /* Movers get their definitions: by reference (schema 2) or, for an X1
  * package, an unnamed one each from their inline parameters. */
 static bool resolve_movers(hta_world_defs *d, const pending *pend, char *err, size_t n)
@@ -397,7 +550,7 @@ static bool parse_section(rd *r, hta_world_defs *d, char *err, size_t n)
         if (!str(r, key, sizeof(key)) || !eat(r, ':')) return fail(err, n, "world_entities: malformed%s%s", NULL, NULL);
         if (!strcmp(key, "schema")) {
             double v;
-            if (!num(r, &v) || (v != 1.0 && v != 2.0))
+            if (!num(r, &v) || (v != 1.0 && v != 2.0 && v != 3.0))
                 return fail(err, n, "world_entities: unsupported schema%s%s", NULL, NULL);
             d->schema = (uint32_t)v;
             have_schema = true;
@@ -415,6 +568,15 @@ static bool parse_section(rd *r, hta_world_defs *d, char *err, size_t n)
                 if (!eat(r, ']')) return fail(err, n, "world_entities: malformed mover_definitions%s%s", NULL, NULL);
             }
             have_defs = true;
+        } else if (!strcmp(key, "scripts")) {
+            if (!eat(r, '[')) return fail(err, n, "world_entities: scripts is not a list%s%s", NULL, NULL);
+            if (!eat(r, ']')) {
+                do { if (!parse_script(r, d, &pend, err, n)) return false; } while (eat(r, ','));
+                if (!eat(r, ']')) return fail(err, n, "world_entities: malformed scripts%s%s", NULL, NULL);
+            }
+        } else if (!strcmp(key, "ability_script")) {
+            if (!str(r, pend.ability, sizeof(pend.ability))) return fail(err, n, "world_entities: malformed ability_script%s%s", NULL, NULL);
+            pend.has_ability = true;
         } else return fail(err, n, "world_entities: unknown field '%s'%s", key, NULL);
     } while (eat(r, ','));
     if (!eat(r, '}') || !have_schema || !have_entities)
@@ -442,13 +604,15 @@ static bool parse_section(rd *r, hta_world_defs *d, char *err, size_t n)
         for (uint32_t k = 0; k < e->link_count; k++) {
             uint32_t li = e->first_link + k;
             int32_t t = hta_world_defs_find(d, pend.target[li]);
+            if (t < 0 && hta_world_defs_find_script(d, pend.target[li]) >= 0)
+                return fail(err, n, "%s: link target %s is a script, expected a placed entity", e->id, pend.target[li]);
             if (t < 0 && hta_world_defs_find_mover(d, pend.target[li]) >= 0)
                 return fail(err, n, "%s: link target %s is a mover definition, expected a placed entity", e->id, pend.target[li]);
             if (t < 0) return fail(err, n, "%s references missing target %s", e->id, pend.target[li]);
             d->link[li].target = (uint16_t)t;
         }
     }
-    return resolve_movers(d, &pend, err, n);
+    return resolve_movers(d, &pend, err, n) && resolve_scripts(d, &pend, err, n);
 }
 
 bool hta_world_defs_parse(const uint8_t *manifest, size_t len, hta_world_defs *out, char *err, size_t errlen)
@@ -483,6 +647,13 @@ bool hta_world_defs_parse(const uint8_t *manifest, size_t len, hta_world_defs *o
 int32_t hta_world_defs_find(const hta_world_defs *d, const char *id)
 {
     for (uint32_t i = 0; d && id && i < d->count; i++) if (!strcmp(d->entity[i].id, id)) return (int32_t)i;
+    return -1;
+}
+
+int32_t hta_world_defs_find_script(const hta_world_defs *d, const char *id)
+{
+    for (uint32_t i = 0; d && id && *id && i < d->script_count; i++)
+        if (!strcmp(d->script[i].id, id)) return (int32_t)i;
     return -1;
 }
 
@@ -583,9 +754,27 @@ bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t n)
         if (!(m->speed > 0.0f && m->speed <= HTA_WDEF_MAX_SPEED))
             return fail(err, n, "%s: mover speed out of range%s", name, NULL);
     }
+    if (d->script_count > HTA_WDEF_MAX_SCRIPTS || d->pool_used > HTA_WDEF_SCRIPT_POOL)
+        return fail(err, n, "scripts over their limits%s%s", NULL, NULL);
+    for (uint32_t i = 0; i < d->script_count; i++) {
+        const hta_wscript_def *sc = &d->script[i];
+        if (!memchr(sc->id, 0, sizeof(sc->id)) || !script_id(sc->id))
+            return fail(err, n, "'%s': malformed script ID (namespace:script/name)%s", sc->id, NULL);
+        if (d->count && !same_namespace(sc->id, d->entity[0].id))
+            return fail(err, n, "%s: not in the world's namespace (%s)", sc->id, d->entity[0].id);
+        if ((uint64_t)sc->at + sc->len > d->pool_used || !sc->callbacks || (sc->callbacks & ~3u))
+            return fail(err, n, "%s: malformed script%s", sc->id, NULL);
+    }
+    if (d->ability_script &&
+        (d->ability_script > d->script_count || !(d->script[d->ability_script - 1].callbacks & HTA_WCB_ON_ABILITY)))
+        return fail(err, n, "ability_script: not a script with on_ability%s%s", NULL, NULL);
     char ns[48] = "";
     for (uint32_t i = 0; i < d->count; i++) {
         const hta_wdef *e = &d->entity[i];
+        if (e->script &&
+            (e->kind != HTA_WDEF_INTERACTABLE || e->script > d->script_count ||
+             !(d->script[e->script - 1].callbacks & HTA_WCB_ON_USED)))
+            return fail(err, n, "%s: bad script reference%s", e->id, NULL);
         if (!memchr(e->id, 0, sizeof(e->id)) || !placed_id(e->id))
             return fail(err, n, "'%s': malformed placed ID (namespace:entity/name)%s", e->id, NULL);
         size_t nl = (size_t)(strchr(e->id, ':') - e->id);

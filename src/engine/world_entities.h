@@ -38,6 +38,7 @@
 #define HTA_WENT_MAX_TELEPORTS 16u
 #define HTA_WENT_COOLDOWN 0.5f          /* an interactable, between uses (ours) */
 #define HTA_WENT_NO_ACTOR 0xFFu
+#define HTA_WENT_MAX_CALLS 16u          /* scripted uses waiting for the script phase, per step */
 
 /* A checked reference: slot in the low 16 bits, generation in the high.
  * Generation 0 never occurs, so 0 is "no handle". */
@@ -67,6 +68,11 @@ typedef struct {
 
 typedef struct { uint8_t actor; float pos[3], yaw; } hta_went_teleport;
 
+/* A scripted interactable was used (X3): the host's script phase
+ * (script/script.h) calls its script's on_used, then forgets it. This
+ * file never runs a script; it only says one is due. */
+typedef struct { uint8_t entity, actor; } hta_went_call;
+
 typedef struct {
     uint64_t dispatched, deferred, dropped_full, dropped_depth, dropped_stale, dropped_input;
     uint32_t max_queue;
@@ -89,6 +95,8 @@ typedef struct hta_world_entities {
     /* what the step decided the caller must do */
     hta_went_teleport teleports[HTA_WENT_MAX_TELEPORTS];
     uint32_t        teleport_count;
+    hta_went_call   calls[HTA_WENT_MAX_CALLS];
+    uint32_t        call_count;
     bool            remote;              /* a LAN client: the host decides */
     bool            loaded;
     uint32_t        version;             /* bumps when any mover's state changes */

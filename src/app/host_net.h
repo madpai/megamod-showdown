@@ -15,5 +15,9 @@ void hta_host_peers(hta_session *s, double now, void (*unit_added)(hta_session *
 void hta_host_mirror_local(hta_session *s);
 /* The match out to every joiner: WORLD, projectiles, vehicles, drops, GAME. */
 void hta_host_world(hta_session *s);
+/* A player pressed ability (a joiner's CONTROL or the host's own button):
+ * its character's native ability if it has one, else the world's scripted
+ * on_ability when the world names one (X3). Host only. */
+void hta_session_ability(hta_session *s, int32_t unit);
 
 #endif

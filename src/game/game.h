@@ -302,6 +302,10 @@ typedef struct {
     float    protect;
 
     uint32_t rng;
+    /* Moves on whenever the slot's occupant or the round changes: a
+     * checked handle (slot | generation << 16, never 0) names this unit
+     * for this life of the slot only (script/script.h). */
+    uint16_t generation;
 } hta_unit;
 
 /* ---- Things the caller turns into sound, words and effects ---------- */

@@ -68,6 +68,11 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
     if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x2.sh > scratch/test_x2.log 2>&1; then
       ok "X2 world: shared mover definition, independent doors, late join, world key refuses geometry/definition changes"
     else bad "X2 world: shared mover definition, independent doors, late join, world key refuses geometry/definition changes"; fi
+    # X3: host-side Lua -- scripted button opens a door through the queue,
+    # scripted ability kills through native damage; script changes refused.
+    if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x3.sh > scratch/test_x3.log 2>&1; then
+      ok "X3 world: host Lua on_used -> door, on_ability -> native damage, late join, modified script refused"
+    else bad "X3 world: host Lua on_used -> door, on_ability -> native damage, late join, modified script refused"; fi
   fi
   if ./build-host/test_particle "$HTA_MAP" >/dev/null 2>&1; then ok "effect particles from the effect tags"; else bad "effect particles from the effect tags"; fi
   if ./build-host/test_vitals "$HTA_MAP" >/dev/null 2>&1; then ok "vitality and falling from the Trial tags"; else bad "vitality and falling from the Trial tags"; fi

@@ -488,6 +488,9 @@
     uint32_t      went_state_tick;   /* LAN client: the last WORLD_STATE applied */             \
     hta_went_gpu  went_gpu;          /* the movers' meshes (the platform draws them) */       \
     const void   *went_gpu_mesh;     /* the world upload they were cut from */                 \
+    /* Host-side Lua (X3, docs/SCRIPTING.md): made at match begin by a host \
+     * or offline game whose world has scripts; never on a joiner. */        \
+    struct hta_script_host *script;                                                          \
 
 typedef struct hta_session {
     HTA_SESSION_FIELDS

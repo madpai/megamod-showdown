@@ -49,6 +49,7 @@ refused ("not the host's map").
 | Breakable props (GAME prop mask) | `.oalmap` `breakables` in manifest order | manifest order | map check (package key) |
 | World entities (X1: WORLD_STATE mover index) | OALMAP v3 manifest `world_entities` | manifest order | map check (the world key covers every entity, link, mover definition and the drawn geometry; [WORLD_ENTITIES.md](WORLD_ENTITIES.md)) |
 | Mover definitions (X2) | `world_entities.mover_definitions` | resolved to an index at load; never on the wire | map check (world key) |
+| Scripts (X3, host only) | `world_entities.scripts` (source bytes), `script`, `ability_script` | resolved at load; never on the wire; joiners never run them | map check (world key hashes the packaged source bytes: a comment-only change refuses too; [SCRIPTING.md](SCRIPTING.md)) |
 | Units, peers, flag carrier, winner | runtime slots | host-assigned | host-authoritative, not content |
 
 Imported weapons whose `base` is not found are dropped on every peer alike

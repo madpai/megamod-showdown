@@ -128,6 +128,7 @@ void hta_went_reset(hta_world_entities *w)
     resolve_links(w);
     w->head = w->count = 0;
     w->teleport_count = 0;
+    w->call_count = 0;
     w->version++;
 }
 
@@ -200,6 +201,10 @@ int32_t hta_went_interact(hta_world_entities *w, uint8_t actor, const float eye[
     if (w->st[i].cooldown > 0.0f) return i;
     w->st[i].cooldown = HTA_WENT_COOLDOWN;
     emit(w, (uint32_t)i, HTA_WEV_USED, actor, 1);
+    if (w->defs->entity[i].script) {
+        if (w->call_count < HTA_WENT_MAX_CALLS) w->calls[w->call_count++] = (hta_went_call){ (uint8_t)i, actor };
+        else diag(w, "world events: too many scripted uses this step, one dropped", (uint32_t)i);
+    }
     return i;
 }
 

@@ -19,6 +19,7 @@
 #include "app/session.h"
 #include "app/session_tick.h"
 #include "platform/platform.h"
+#include "script/script.h"
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
@@ -150,6 +151,20 @@ int main(int argc, char **argv)
         for (uint32_t i = 0; i < s->went.defs->count; i++)
             if (s->went.defs->entity[i].kind == HTA_WDEF_MOVER)
                 printf("match: mover %s phase %u t %.2f\n", s->went.defs->entity[i].id, s->went.st[i].phase, s->went.st[i].t);
+    }
+    if (s->script) {
+        const hta_script_stats *st = hta_script_get_stats(s->script);
+        printf("match: scripts: %llu callbacks, %llu requests (%llu refused), %llu errors (%llu over budget), "
+               "memory %zu bytes (peak %zu)\n", (unsigned long long)st->callbacks, (unsigned long long)st->requests,
+               (unsigned long long)st->refused_requests, (unsigned long long)st->errors,
+               (unsigned long long)st->budget_aborts, st->memory, st->memory_peak);
+        for (uint32_t i = 0; i < s->game.unit_count; i++)
+            if (s->game.units[i].kind != HTA_UNIT_NONE)
+                printf("match: unit %u kills %d deaths %d score %d\n", i, s->game.units[i].kills,
+                       s->game.units[i].deaths, s->game.units[i].score);
+        size_t left = hta_script_destroy(s->script);
+        s->script = NULL;
+        printf("match: Lua state closed, %zu bytes left\n", left);
     }
     if (host_port)
         printf("match: hosted on UDP %d: %llu joiners refused, %u peers at the end\n", host_port,

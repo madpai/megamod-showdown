@@ -28,6 +28,15 @@
  * their parameters inline; the parser gives each an unnamed definition of
  * its own, so the runtime has one path.
  *
+ * Scripts (X3, schema 3): host-side Lua gameplay scripts are content here
+ * too -- `namespace:script/name`, the API they were written for
+ * (`megamod.v1`), the callbacks they declare and their source text, kept
+ * in a bounded pool. An interactable may name a script (its `on_used`
+ * runs instead of nothing when used; its links still fire), and the world
+ * may name one `ability_script` (its `on_ability` answers a player's
+ * ability press). References resolve to indices here, once. What a script
+ * may do is script/script.h's business; this file only holds the text.
+ *
  * Portable C11, no allocation: everything is bounded by the limits below,
  * which Open Asset Lab's validator shares (assetlab/world.py). */
 #ifndef HTA_WORLD_DEF_H
@@ -37,9 +46,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define HTA_WDEF_SCHEMA 2u            /* newest understood; 1 (X1) still loads */
+#define HTA_WDEF_SCHEMA 3u            /* newest understood; 1 (X1) and 2 (X2) still load */
 #define HTA_WDEF_MAX_MOVER_DEFS 64u   /* one per mover at most (schema 1) */
 #define HTA_WDEF_NO_DEF 0xFFFFu
+#define HTA_WDEF_MAX_SCRIPTS 16u
+#define HTA_WDEF_SCRIPT_POOL (64u * 1024u)  /* all scripts' source, bytes */
+#define HTA_WDEF_SCRIPT_API "megamod.v1"
+/* Callbacks a script may declare (script/script.h implements them). */
+enum { HTA_WCB_ON_USED = 1u, HTA_WCB_ON_ABILITY = 2u };
 #define HTA_WDEF_MAX_ENTITIES 64u
 #define HTA_WDEF_MAX_LINKS_PER 8u
 #define HTA_WDEF_MAX_LINKS 256u
@@ -79,12 +93,21 @@ typedef struct {
     float    speed;           /* wu/s */
 } hta_wmover_def;
 
+/* A script: immutable content. Its source is `len` bytes at `at` in the
+ * pool (not NUL-terminated there). */
+typedef struct {
+    char     id[HTA_WDEF_ID_MAX + 1];  /* namespace:script/name */
+    uint32_t callbacks;       /* HTA_WCB_* it declares */
+    uint32_t at, len;
+} hta_wscript_def;
+
 typedef struct {
     char     id[HTA_WDEF_ID_MAX + 1];
     uint8_t  kind;            /* hta_wdef_kind */
     uint8_t  link_count;
     uint16_t first_link;
     uint16_t def;             /* mover: its definition's index; else HTA_WDEF_NO_DEF */
+    uint16_t script;          /* interactable: its script's index + 1; 0 none */
     float    pos[3];          /* interactable: where it is used; teleport: destination;
                                  mover: its box's centre when closed */
     float    reach;           /* interactable: from the user's eye, wu */
@@ -99,7 +122,12 @@ typedef struct {
     uint32_t      link_count;
     hta_wmover_def mover_def[HTA_WDEF_MAX_MOVER_DEFS];
     uint32_t      mover_def_count;
-    uint32_t      schema;     /* the section's schema (1 or 2) */
+    uint32_t      schema;     /* the section's schema (1, 2 or 3) */
+    hta_wscript_def script[HTA_WDEF_MAX_SCRIPTS];
+    uint32_t      script_count;
+    uint16_t      ability_script;   /* the on_ability script's index + 1; 0 none */
+    uint32_t      pool_used;
+    char          pool[HTA_WDEF_SCRIPT_POOL];
 } hta_world_defs;
 
 /* The "world_entities" section of an OALMAP manifest (canonical JSON). The
@@ -120,6 +148,9 @@ bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t errlen);
 int32_t hta_world_defs_find(const hta_world_defs *d, const char *id);
 /* Load-time lookup: the mover definition with this ID, or -1. */
 int32_t hta_world_defs_find_mover(const hta_world_defs *d, const char *id);
+/* Load-time lookup: the script with this ID, or -1. */
+int32_t hta_world_defs_find_script(const hta_world_defs *d, const char *id);
+const char *hta_wscript_callback_name(uint32_t cb);
 /* The mover definition a placed mover uses (NULL for any other kind). */
 const hta_wmover_def *hta_wdef_mover(const hta_world_defs *d, uint32_t entity);
 /* A placed mover's box when closed. */
@@ -136,5 +167,7 @@ bool hta_wdef_accepts(uint8_t kind, uint8_t input);
 const char *hta_wdef_kind_name(uint8_t kind);
 const char *hta_wdef_event_name(uint8_t event);
 const char *hta_wdef_input_name(uint8_t input);
+/* An input by its name ("open"...), HTA_WIN_NONE when there is none. */
+uint8_t hta_wdef_input_from_name(const char *name);
 
 #endif

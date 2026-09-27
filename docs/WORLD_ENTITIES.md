@@ -379,6 +379,16 @@ report any value.
   pushing, no `opened` events, no line-of-sight for buttons).
 - The world key is 32 bits on the wire.
 
+## X3: scripted interactables
+
+Since X3 an interactable may name a host-side Lua script (world_entities
+schema 3): when used, its authored links fire as before and the host's
+script phase calls the script's `on_used`, which can only *request*
+inputs through this same bounded queue (`world.send` -> `hta_went_send`).
+The world-entity runtime never runs Lua; it records the call
+(`hta_went_call`, 16 per step). Everything else -- scripts, handles,
+limits, the phase -- is in [SCRIPTING.md](SCRIPTING.md).
+
 ## Future Source translation (documentation only)
 
 | Source | Generic |

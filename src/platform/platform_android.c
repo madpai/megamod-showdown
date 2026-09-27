@@ -5937,7 +5937,13 @@ void android_main(struct android_app *app)
                 }
                 if (state.hud_ability) {
                     state.hud_ability = false;
-                    if (charge >= 1.0f && !state.dead) {
+                    /* No native ability, and the world scripts one (X3): the
+                     * host runs it, a joiner asks the host. */
+                    bool scripted = charge < 0.0f && state.went.loaded && state.went.defs->ability_script;
+                    if (scripted && !state.dead) {
+                        if (!state.net_enabled || state.net_hosting) hta_session_ability(&state.session, state.me);
+                        else state.net_ability_count++;
+                    } else if (charge >= 1.0f && !state.dead) {
                         if (!state.net_enabled || state.net_hosting) hta_game_ability(&state.game,state.me);
                         else {
                             state.net_ability_count++;
@@ -5952,6 +5958,11 @@ void android_main(struct android_app *app)
                     atomic_store(&g_ability_charge, (int)(charge * 1000.0f));
                     const hta_unit *mu = &state.game.units[state.me];
                     atomic_store(&g_ability_name, state.game.characters[mu->character]->ability_name);
+                } else if (state.game_on && state.went.loaded && state.went.defs->ability_script) {
+                    /* The world's scripted ability (X3): always ready here; the
+                     * host keeps its own one-second cooldown. */
+                    atomic_store(&g_ability_charge, 1000);
+                    atomic_store(&g_ability_name, "ABILITY");
                 } else {
                     atomic_store(&g_ability_charge, 0);
                     atomic_store(&g_ability_name, NULL);

@@ -5,6 +5,7 @@
 #include "app/content.h"
 #include "app/session.h"
 #include "platform/platform.h"
+#include "script/script.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -303,6 +304,12 @@ bool hta_match_start(hta_session *s, const char *writable_dir, bool local_player
     return true;
 }
 
+static void script_log(void *ctx, const char *line)
+{
+    (void)ctx;
+    hta_log("%s", line);
+}
+
 void hta_match_begin(hta_session *s)
 {
     s->game_on = true;
@@ -328,6 +335,17 @@ void hta_match_begin(hta_session *s)
     s->went_synced = false;
     if (s->went.loaded)
         hta_log("[world] %u world entities, %u links", s->went.defs->count, s->went.defs->link_count);
+    /* Its scripts: a host (or offline game) only; a joiner never runs one. */
+    size_t left = hta_script_destroy(s->script);
+    s->script = NULL;
+    if (left) hta_log("[script] the last match's Lua state kept %zu bytes", left);
+    if (s->went.loaded && s->went.defs->script_count && !s->went.remote) {
+        s->script = hta_script_create(s->went.defs, &s->went, &s->game, script_log, s, err, sizeof(err));
+        if (s->script)
+            hta_log("[script] %u scripts loaded (%s, host only)%s", s->went.defs->script_count, HTA_SCRIPT_API,
+                    s->went.defs->ability_script ? "; ability script on" : "");
+        else hta_log("[script] scripts refused, the world runs without them: %s", err);
+    }
     hta_match_nav_props(s);
     hta_game_start(&s->game);
     s->world_round = 1;

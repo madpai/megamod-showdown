@@ -6,6 +6,7 @@
 #include "app/match_load.h"
 #include "app/session.h"
 #include "platform/platform.h"
+#include "script/script.h"
 #include <math.h>
 #include <string.h>
 
@@ -164,6 +165,10 @@ static void world_entities(hta_session *s, float dt, bool authority)
             bool here = u && u->kind != HTA_UNIT_NONE && u->alive && u->vehicle < 0;
             hta_went_sense(w, (uint8_t)i, here ? u->body.pos : NULL, here);
         }
+        /* The script phase (X3): scripted uses and ability presses, whose
+         * requests the queue below dispatches this same tick. */
+        if (s->script) hta_script_phase(s->script, dt);
+        else w->call_count = 0;
     }
     hta_went_step(w, dt);
     for (uint32_t k = 0; authority && k < w->teleport_count; k++) {
@@ -201,6 +206,7 @@ void hta_session_tick(hta_session *s, float dt, double now, void (*unit_added)(h
                 hta_match_nav_props(s);
                 hta_game_start(&s->game);
                 hta_went_reset(&s->went);
+                if (s->script) hta_script_reset(s->script);
                 if (s->net_hosting) s->world_round++;
                 s->round_restarted = true;
                 hta_log("[game] a new game");

@@ -19,7 +19,7 @@
  * jump, C crouch, F2 preset, F3 weather.
  *
  * --route drives the player instead (tests, docs/WORLD_ENTITIES.md): walk
- * to each "x,y" in turn, "E" presses use where it stands, "wS" waits S
+ * to each "x,y" in turn, "E" presses use where it stands, "Q" ability, "wS" waits S
  * seconds, "Lx,y" looks toward a point, "Bx,y" walks toward one for 3 s
  * and fails if it gets there (something should block it: a closed door).
  * A walk the host interrupts by moving us (a teleport) ends there. The run ends when the route does, or at --auto. It reports what
@@ -100,6 +100,9 @@ typedef struct {
     hta_world_entities went;
     hta_went_gpu went_gpu;
     uint32_t world_states;
+    float    last_vitals;
+    bool     vitals_seen, was_alive;
+    uint32_t deaths;
     /* --route */
     char route[512];
     const char *step;
@@ -363,6 +366,16 @@ static void play(join *j, const hta_input *in, double now, float dt)
         j->moved_by_host++;
         printf("join: the host moved us to (%.2f %.2f %.2f)\n", j->player.pos[0], j->player.pos[1], j->player.pos[2]);
     }
+    /* Our own vitals, as the host reports them: a hit and a death are the
+     * host's word, never ours. */
+    if (j->view.me >= 0 && j->view.me < (int32_t)HTA_NET_MAX_ENTITIES && j->view.ent[j->view.me].live) {
+        const hta_net_entity *me = &j->view.ent[j->view.me].to;
+        float hp = me->health + me->shield;
+        if (j->vitals_seen && hp < j->last_vitals - 0.01f)
+            printf("join: the host says we were hurt: health %.2f shield %.2f\n", me->health, me->shield);
+        if (j->vitals_seen && j->was_alive && !j->view.me_alive) { j->deaths++; printf("join: the host says we died\n"); }
+        j->last_vitals = hp; j->was_alive = j->view.me_alive; j->vitals_seen = true;
+    }
     /* The host's movers; ours only animate between its words. The first
      * word is the world as we found it on joining (state, not history). */
     if (hta_net_view_world_state(&j->view, &j->net, &j->went) && ++j->world_states == 1) movers(j, "on joining");
@@ -413,6 +426,10 @@ static void route(join *j, double now, hta_input *in)
             printf("join: blocked at (%.2f %.2f) short of (%.2f %.2f), as expected\n", j->player.pos[0], j->player.pos[1], x, y);
             advance = true;
         } else { j->cam.yaw = atan2f(dy, dx); j->cam.pitch = 0.0f; in->move_forward = 1.0f; }
+    } else if (j->step[0] == 'Q') {
+        in->ability = true;
+        printf("join: ability at (%.2f %.2f)\n", j->player.pos[0], j->player.pos[1]);
+        advance = true;
     } else if (j->step[0] == 'E') {
         in->use_pressed = true;
         printf("join: use at (%.2f %.2f)\n", j->player.pos[0], j->player.pos[1]);
@@ -471,6 +488,7 @@ static void title(join *j, hta_desktop *d, double now, const char *host, unsigne
 
 int main(int argc, char **argv)
 {
+    setvbuf(stdout, NULL, _IOLBF, 0);   /* line by line: tests read the log while we run */
     if (argc < 2) {
         fprintf(stderr, "usage: %s <host> [port] [--world NAME] [--trial DIR] [--bundle DIR]\n"
                         "       [--map bloodgulch.map] [--oalmap m.oalmap] [--preset P] "

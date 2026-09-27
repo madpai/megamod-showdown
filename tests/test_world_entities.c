@@ -142,7 +142,7 @@ static void test_parse(void)
     expect_fail(patch("\"input\":\"open\"", "\"input\":\"teleport\""), "target does not accept x1:entity/door_main.teleport");
     expect_fail(patch("\"event\":\"fired\"", "\"event\":\"used\""), "does not emit 'used'");
     expect_fail(patch("\"kind\":\"relay\"", "\"kind\":\"logic_relay\""), "unknown kind 'logic_relay'");
-    expect_fail(patch("\"schema\":1", "\"schema\":3"), "unsupported schema");
+    expect_fail(patch("\"schema\":1", "\"schema\":4"), "unsupported schema");
     expect_fail(patch("\"links\":[],\"move\"", "\"definition\":\"x1:mover/door\",\"links\":[],\"move\""),
                 "x1:entity/door_main: mover definitions need world_entities schema 2");
     expect_fail(patch("\"schema\":1}", "\"mover_definitions\":[],\"schema\":1}"), "mover_definitions need schema 2");

@@ -4,6 +4,20 @@ project(halo_trial_android C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# Lua 5.4.9, vendored (third_party/lua/README.md): the core and the base,
+# string, table and math libraries only -- io, os, package, debug and
+# coroutine are not built. Host-side gameplay scripting (src/script).
+add_library(hta_lua STATIC
+    third_party/lua/lapi.c third_party/lua/lcode.c third_party/lua/lctype.c third_party/lua/ldebug.c
+    third_party/lua/ldo.c third_party/lua/ldump.c third_party/lua/lfunc.c third_party/lua/lgc.c
+    third_party/lua/llex.c third_party/lua/lmem.c third_party/lua/lobject.c third_party/lua/lopcodes.c
+    third_party/lua/lparser.c third_party/lua/lstate.c third_party/lua/lstring.c third_party/lua/ltable.c
+    third_party/lua/ltm.c third_party/lua/lundump.c third_party/lua/lvm.c third_party/lua/lzio.c
+    third_party/lua/lauxlib.c third_party/lua/lbaselib.c third_party/lua/lstrlib.c third_party/lua/ltablib.c
+    third_party/lua/lmathlib.c)
+target_include_directories(hta_lua PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lua)
+set_target_properties(hta_lua PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 if(ANDROID)
     add_library(hta_native SHARED
         src/net/protocol.c
@@ -33,6 +47,7 @@ if(ANDROID)
         src/engine/props.c
         src/engine/world_entities.c
         src/asset/world_def.c
+        src/script/script.c
         src/engine/weather.c
         src/engine/sfx.c
         src/app/report.c
@@ -79,7 +94,7 @@ if(ANDROID)
         ${ANDROID_NDK}/sources/android/native_app_glue
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
-    target_link_libraries(hta_native PRIVATE android log vulkan aaudio m)
+    target_link_libraries(hta_native PRIVATE hta_lua android log vulkan aaudio m)
     # Vulkan structs are idiomatically brace-initialised with only sType set.
     target_compile_options(hta_native PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
     # native_app_glue registers android_main via a constructor; keep it.
@@ -107,12 +122,13 @@ else()
         src/game/brain.c
         src/game/view.c
         src/game/menu.c
-        src/engine/world_entities.c src/asset/world_def.c
+        src/engine/world_entities.c src/asset/world_def.c src/script/script.c
         src/asset/cache.c src/asset/bsp.c src/asset/external_map.c src/asset/oal_asset.c src/asset/bitmap.c src/asset/sound.c src/asset/ogg.c src/asset/effect.c src/asset/dialogue.c src/asset/strings.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
         src/asset/anim.c src/asset/model.c src/asset/font.c
         src/gfx/gfx_settings.c)
     target_include_directories(hta_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(hta_engine PRIVATE -Wall -Wextra)
+    target_link_libraries(hta_engine PUBLIC hta_lua m)
 
     enable_testing()
     add_executable(test_external_map tests/test_external_map.c)
@@ -121,6 +137,12 @@ else()
     add_executable(test_world_entities tests/test_world_entities.c)
     target_link_libraries(test_world_entities PRIVATE hta_engine m)
     add_test(NAME world_entities COMMAND test_world_entities)
+    add_executable(test_script tests/test_script.c)
+    target_link_libraries(test_script PRIVATE hta_engine m)
+    add_test(NAME script COMMAND test_script)
+    # The scripting API as data, from the registered tables (docs/SCRIPTING.md).
+    add_executable(megamod-script-api src/tools/script_api.c)
+    target_link_libraries(megamod-script-api PRIVATE hta_engine m)
     add_executable(test_net tests/test_net.c)
     target_link_libraries(test_net PRIVATE hta_net m)
     add_test(NAME net COMMAND test_net)
