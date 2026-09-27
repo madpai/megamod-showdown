@@ -1,6 +1,8 @@
-# World entities (X1): generic, source-independent world behaviour
+# World entities (X1, X2): generic, source-independent world behaviour
 
-**Status:** implemented 2026-09-26 (X1). This describes the code as it is.
+**Status:** X1 implemented 2026-09-26; X2 (reusable mover definitions and
+the world key) the same day, [below](#x2-reusable-mover-definitions). This
+describes the code as it is.
 The design question it answers is in
 [research/WORLD_EVENT_SLICE_RECOMMENDATION.md](research/WORLD_EVENT_SLICE_RECOMMENDATION.md);
 where the implementation differs from that proposal it says so below.
@@ -57,7 +59,7 @@ lowercase `[a-z][a-z0-9_]*` segments, namespace <= 40, name <= 48, whole
 (`x1:world/event_lab` -> `x1:entity/...`); unique within the world.
 
 Placed IDs are **load-time only**. They do not cross the network: the map
-check already hashes the whole manifest, so two admitted peers built the
+check covers the whole `world_entities` section (the world key, X2), so two admitted peers built the
 same definition table in the same order, and a dense entity index is a safe
 wire name for the *current* world (`CONTENT_COMPATIBILITY.md`).
 
@@ -160,12 +162,11 @@ the handshake, the map check and the fingerprint are unchanged. A future
 change that alters an existing packet, or sends something on v1/v2 worlds,
 needs a real version bump.
 
-**Compatibility.** The world check (`cache CRC ^ FNV(manifest)`) covers
-every definition field (kinds, links, bounds, move, speed, destinations),
-so a different X1 package is refused before spawn
-(`scripts/test_x1.sh` step C). The door's *drawn* triangles are binary and
-not in the manifest hash (the known v10 limitation); its collision comes
-from the manifest `bounds`, so gameplay stays covered.
+**Compatibility.** The map check covers every definition field (kinds,
+links, bounds, move, speed, destinations), so a different X1 package is
+refused before spawn (`scripts/test_x1.sh` step C). Since X2 it also covers
+the drawn triangles and every other played byte of the package: see
+[World compatibility](#world-compatibility-x2).
 
 ## Open Asset Lab side
 
@@ -184,7 +185,7 @@ destination on a blue platform back in the west room. 156 triangles, 22 KB.
 | Test | Covers |
 |---|---|
 | `tests/test_world_entities.c` (ctest `world_entities`) | the C fixture (B-style, no package): manifest parsing incl. a decoy key and every truncation, each load-time refusal (duplicate/malformed ID, namespace, missing target, unknown kind/event/input, input not accepted, self-link, cycle, bad mover/trigger/destination, schema, unknown field, trailing bytes), placement reordering, button->relay->door in one step, door collision before/after, repeated and cooldown presses, trigger once-per-entry, re-arm, one teleport per actor, stale handles across a reset, runtime cycle/overflow/budget/bad input, client never dispatching, replication and late-join snap, garbage state rejected |
-| `tests/test_external_map.c` | v3 loads entities; entity group rules; a broken link refuses the package; v2 ignores the section; v4 refused |
+| `tests/test_external_map.c` | v3 loads entities; entity group rules; a broken link refuses the package; v2 ignores the section; v4 refused; the world key's coverage (X2, below) |
 | `tests/test_net.c`, `test_net_fuzz.c` | WORLD_STATE codec, loopback, malformed input |
 | `scripts/test_x1.sh` | OAL builds the world; `megamod-match --host` + `megamod-join --route`: closed door blocks, button opens it on the host, joiner walks through and is teleported once, late joiner sees it open and walks through, different package refused |
 | OAL `tests/test_world.py` | fixture compile, determinism, reorder, ID audit, every validator diagnostic |
@@ -207,8 +208,175 @@ destination on a blue platform back in the west room. 156 triangles, 22 KB.
 - The scripted route must pause briefly after `E` before turning: CONTROL
   carries the look direction at its 20 Hz send.
 - Trigger occupancy covers 64 actors (unit slots 0..63); units are fewer.
-- The door's rendered triangles are outside the manifest hash (v10 limit).
 - No Source import of these kinds yet (below).
+
+## X2: reusable mover definitions
+
+X1 put every mover's parameters on the placement. X2 gives movers one
+shared, immutable **definition** that any number of placed movers name --
+the first real second use of definition vs instance. It is **only for
+movers**: there is no generic definition registry, no definitions for any
+other kind, and nothing shared with weapons or characters (X1 found no
+overlap worth abstracting).
+
+### The boundary
+
+| | Where | What |
+|---|---|---|
+| Definition (immutable) | `hta_wmover_def` in `hta_world_defs.mover_def[]` (`asset/world_def.h`) | `id` (`namespace:mover/name`), `size` (the box's extent), `move` (offset when open), `speed` |
+| Placement (immutable) | `hta_wdef` | its placed ID, `pos` (the closed box's centre), `def` (the definition's index), its links |
+| Instance (mutable) | `hta_went_state` + `inst[i]` (`engine/world_entities.h`) | phase, progress `t`, generation, its collision instance's current position |
+| Built once per definition | `mover_coll[def]` | the definition's box grid; every placement's collision instance points at it |
+
+The runtime holds the definitions through a `const` pointer and never
+writes them (a test compares every byte after opening, closing, resetting
+and replicating). Opening `door_a` moves only `door_a`'s instance, even
+though `door_b` and `door_c` place the same grid.
+
+### Identity and resolution
+
+`x2:mover/basic_slide_door`: the content-ID grammar with a new registered
+type **`mover`** (added deliberately; OAL `docs/CONTENT_IDS.md`), lowercase
+segments, in the world's namespace, unique among the world's definitions.
+At load (`hta_world_defs_parse`):
+
+```
+"mover_definitions": [{"id","size","move","speed"}]  -> mover_def[k]
+placed mover {"definition": "<id>", "position": [...]} -> entity.def = k   (once)
+```
+
+Nothing looks a name up during play: a test scribbles every entity and
+definition ID after loading and the button -> relay -> door chain still
+runs. Refusals name the placement, the reference and the reason:
+
+- `x2:entity/door_b references missing mover definition x2:mover/basic_slide_dor`
+- `x2:entity/door_a: definition x2:entity/relay_a is a placed entity, expected a mover definition`
+- `x2:entity/door_a: definition 'x2:weapon/basic_slide_door' is not a mover definition ID (namespace:mover/name)`
+- `x2:entity/relay_a: link target x2:mover/basic_slide_door is a mover definition, expected a placed entity`
+- `x2:mover/basic_slide_door: duplicate mover definition ID`, `'x2:mover/Basic-Door': malformed mover definition ID`
+- `x2:entity/relay_b: only a mover takes a definition (it is a relay)`
+- `x2:entity/door_b: a mover takes its size, move and speed from its definition (schema 2)`
+- `x2:mover/basic_slide_door: mover speed out of range` (and size, move)
+
+At most 64 definitions (`HTA_WDEF_MAX_MOVER_DEFS`); 64 entities as before.
+
+### Package format: OALMAP v3 kept, `world_entities` schema 2
+
+The addition fits v3's explicitly versioned section: `world_entities`
+carries a `schema` number, which X1 runtimes already check. Schema 2 adds
+`mover_definitions` and movers written as `definition` + `position`; a
+schema 2 mover with inline `bounds`/`move`/`speed` is refused, and so is a
+definition in schema 1. An X1 runtime refuses a schema 2 world
+("unsupported schema" / unknown field) instead of misreading it, and the
+binary layout is unchanged, so no OALMAP bump. **Schema 1 still loads**:
+each inline mover becomes an unnamed definition of its own at parse time
+(`size = max - min`, `pos` = the box's centre), so the runtime has one
+path. OAL writes schema 1 byte-for-byte as before when a world has no
+definitions (the `x1_event_lab` package is unchanged, sha256 b6654d0d...).
+
+### The X2 world
+
+OAL `x2_definition_lab` (`assetlab fixture x2_definition_lab`): a dividing
+wall with three doorways at y = -3, 0, 3, each closed by a placement of
+`x2:mover/basic_slide_door` (0.1 x 1.2 x 1.1, slides +1.25 y at 1 wu/s):
+
+```
+button_a -> relay_a -> door_a      button_b -> relay_b -> door_b
+door_c: the same definition, nothing opens it
+teleport_trigger -> teleport_destination
+```
+
+240 triangles, 30 KB. OAL draws each placement as one box of the
+definition's material; the definition itself carries no mesh.
+
+## World compatibility (X2)
+
+Two peers may share a match only if their gameplay and spatial world
+agrees. X1's map check hashed the manifest text: binary geometry could
+differ unseen, and provenance could split identical worlds. X2 replaces the
+package half of the map check with the **world key**
+(`src/asset/external_map.c`, schema `HTA_WORLD_KEY_SCHEMA` 1), computed at
+load from the package's own canonical bytes -- Open Asset Lab writes them
+deterministically, so nothing is re-derived:
+
+```
+FNV-1a 64 over:
+  "OALW", u32 key schema, u32 OALMAP version,
+  u32 vertex, index, group and spawn counts,
+  header world bounds (24 bytes),
+  every vertex record (position, normal, uv, lightmap uv), as stored,
+  every index, as stored,
+  every material-group record (range, texture slot, flags incl. collision,
+    alpha, breakable/entity owner, lightmap slot), as stored,
+  every spawn record (position, facing), as stored,
+  each PLAYED manifest member in manifest order:
+    u32 key length, key, u32 value length, the value's exact bytes
+PLAYED = spawn_points, flag_points, breakables, weather, world_entities
+key (v10 map check) = low 32 bits XOR high 32 bits
+```
+
+**Covered:** geometry, collision (solid/non-solid, breakable and entity
+ownership), world bounds, spawns and their teams, flags, breakables,
+weather, every world entity (placement, kind, links, trigger volume,
+teleport destination and facing, interactable reach) and every mover
+definition. A manifest the reader cannot walk is hashed whole (stricter,
+never looser).
+
+**Excluded:** every other manifest member -- `source_provenance`,
+`source_reference`, `source_sha256`, `importer_version`, `display_name`,
+`id`/`namespace`, geometry statistics, `compatibility` reports,
+`warnings`/`conversion_warnings`, dependency lists -- and texture pixels
+(appearance only; an alpha *flag* change is in the group records). A
+manifest member the runtime starts to play by must be added to `PLAYED`
+here and in OAL's `assetlab/worldkey.py` together, with a schema bump.
+
+**Two implementations, one value.** OAL's `assetlab/worldkey.py` is the
+reference (`assetlab world-key PKG`; `compile_world` reports it);
+`scripts/test_x2.sh` checks the engine's key equals OAL's, and they agree
+on the imported maps too (de_dust2 `52fb3b08`, gm_construct `c7500401`,
+de_aztec `8efd01d2`).
+
+**Cost:** one pass over the geometry at load; all seven imported maps
+(2fort's 1.24 M triangles included) load and key in 0.85 s total on the
+desktop.
+
+**Integrity vs compatibility.** The key answers "would these worlds play
+the same", not "are these bytes intact": a package has no stored digest to
+verify, and the loader's own structural checks remain the integrity guard.
+Content-addressing or a stored integrity digest is left for later; the
+64-bit digest (`hta_external_map.digest`) is there for it.
+
+**Protocol v10 kept.** The map check field and its meaning ("both peers
+stand in the same world") are unchanged; only how the value is computed
+is stronger. An X1-era build and an X2 build compute different keys for
+the same world and refuse each other ("not the host's map") -- the safe
+direction; false compatibility would not be. v11 stays reserved.
+
+**Width.** The wire carries 32 bits (a HELLO field); accidental collision
+between two different worlds is ~2^-32 per pair. Widening needs a protocol
+change and was not worth one here. Not a security measure: a peer can
+report any value.
+
+### X2 tests
+
+| Test | Covers |
+|---|---|
+| `tests/test_world_entities.c` (x2 cases) | schema 2 parse and resolution (either key order); every refusal above; runtime check refuses a corrupted `def`; three doors share one grid; A opens, B and C stay shut, B opens independently, closing A leaves B; round reset closes all and stales handles; definitions byte-identical after play; IDs scribbled after load and the chain still runs; bounded queue; late joiner gets A open / B shut / C shut, then everyone converges; every truncation refused |
+| `tests/test_external_map.c` (world key) | same bytes same key; vertex, index, group flag, spawn record, header bounds change it; texture pixels do not; manifest edits: provenance, importer version, warnings order, display name, source path do not; spawn team, placement, definition move/size/speed, link input, trigger volume, teleport position/yaw do |
+| `tests/test_compat.c` | exact-float fingerprint: 1.2 vs 1.20001 and one ulp differ, -0 == 0 |
+| `scripts/test_x2.sh` (in `verify.sh`) | OAL builds the X2 world; engine key == OAL key; host + joiner A (both shut on joining; B blocks; opens A; walks through A; teleported once) + late joiner B (finds A open, B shut, C shut; opens B; walks through) -> host, A and B all end A open, B open, C shut; a changed-definition package and a changed-geometry package **with a byte-identical manifest** are refused before spawn; a provenance-only package is admitted |
+| OAL `tests/test_world.py` | X2 fixture (schema 2, determinism, groups), every definition diagnostic, X1 still schema 1; world key: same/rebuild equal, 14 gameplay edits change it, name/colour/provenance do not |
+
+### X2 limitations
+
+- Definitions exist for movers only; placements cannot rotate (a
+  definition's `move` is in world axes, so doors sharing one slide the same
+  way).
+- A definition carries no mesh: OAL draws each placement as a box of its
+  material.
+- Everything in X1's list still applies (linear movers, box collision, no
+  pushing, no `opened` events, no line-of-sight for buttons).
+- The world key is 32 bits on the wire.
 
 ## Future Source translation (documentation only)
 

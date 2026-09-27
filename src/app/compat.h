@@ -19,7 +19,7 @@
 /* The version of what the fingerprint covers and how it is encoded. A
  * change to either is a new number: two builds that disagree on it hash
  * differently and refuse each other, which is right. */
-#define HTA_CONTENT_SCHEMA 1u
+#define HTA_CONTENT_SCHEMA 2u
 
 /* A 64-bit FNV-1a over the rosters' gameplay values in roster order.
  * Never 0 (0 means "not computed"). Cosmetic values -- models, sounds,

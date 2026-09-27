@@ -15,7 +15,12 @@ typedef struct {
     hta_bsp_mesh mesh;
     hta_spawn_point *spawns;
     uint32_t spawn_count;
-    uint32_t key;          /* FNV-1a of the manifest: tells two packages apart */
+    /* The world key: what two peers must agree on to share this world --
+     * geometry, collision flags, spawns and every manifest member the
+     * runtime plays by, not provenance (external_map.c). `digest` is the
+     * 64-bit value, `key` its fold into the v10 map check's 32 bits. */
+    uint64_t digest;
+    uint32_t key;
     /* The triangles that collide: every group but those flagged
      * HTA_EXTERNAL_GROUP_NO_COLLISION (Source's non-solid props). */
     uint32_t *solid_indices;
@@ -70,6 +75,10 @@ void hta_external_map_collision_view(const hta_bsp_mesh *render, const hta_exter
 /* Spawn team_index from the manifest's "team": 0 red, 1 blue; a start
  * with no team is shared by both teams. */
 #define HTA_EXTERNAL_TEAM_ANY 0xFFFFu
+
+/* The world key's encoding; a change to what it covers is a new number. */
+#define HTA_WORLD_KEY_SCHEMA 1u
+static inline uint32_t hta_world_key_fold(uint64_t d) { return (uint32_t)d ^ (uint32_t)(d >> 32); }
 
 bool hta_external_map_load(const char *path, hta_external_map *out, char *err, size_t errlen);
 /* The same from bytes already in memory (an mmapped APK asset). Copies

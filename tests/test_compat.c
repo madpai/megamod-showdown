@@ -7,6 +7,7 @@
 #include "app/content.h"
 #include "app/fs.h"
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -133,12 +134,18 @@ int main(void)
     uint64_t none = hta_content_fingerprint(NULL, 0, NULL, 0);
     assert(none != 0 && none != base);
     assert(hta_content_fingerprint(&a, 1, NULL, 0) != hta_content_fingerprint(NULL, 0, &a, 1));
-    /* Floats are compared to 1/10000: parse noise does not split peers. */
+    /* Floats are compared by their exact runtime value (schema 2): the same
+     * text parses to the same float everywhere; any difference the game
+     * would play by splits peers -- 1.2 vs 1.20001 did not in schema 1. */
     hta_oal_asset b = a;
-    a.damage_scale = 1.6f; b.damage_scale = 1.60000002f;
+    a.damage_scale = 1.6f; b.damage_scale = 1.60000002f;      /* the same float */
     assert(hta_content_fingerprint(NULL, 0, &a, 1) == hta_content_fingerprint(NULL, 0, &b, 1));
-    b.damage_scale = 1.6002f;
+    a.damage_scale = strtof("1.2", NULL); b.damage_scale = strtof("1.20001", NULL);
     assert(hta_content_fingerprint(NULL, 0, &a, 1) != hta_content_fingerprint(NULL, 0, &b, 1));
+    b.damage_scale = nextafterf(a.damage_scale, 2.0f);        /* one ulp */
+    assert(hta_content_fingerprint(NULL, 0, &a, 1) != hta_content_fingerprint(NULL, 0, &b, 1));
+    a.knockback = 0.0f; b = a; b.knockback = -0.0f;           /* -0 is 0 */
+    assert(hta_content_fingerprint(NULL, 0, &a, 1) == hta_content_fingerprint(NULL, 0, &b, 1));
 
     printf("content fingerprint %016llx\n", (unsigned long long)base);
     puts("compat OK");

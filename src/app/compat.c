@@ -1,15 +1,17 @@
 /* The imported rosters' gameplay fingerprint (app/compat.h).
  *
- * Encoding, fixed (HTA_CONTENT_SCHEMA 1):
+ * Encoding, fixed (HTA_CONTENT_SCHEMA 2):
  * - the stream starts with the schema number, then the character roster,
  *   then the weapon roster, each as a u32 count followed by its entries in
  *   roster order (the order the network indexes);
  * - an entry is its fields in the order below, each tagged with a one-byte
  *   field number so a moved or missing field cannot alias another;
  * - integers and booleans: little-endian u32 (booleans 0/1);
- * - floats: rounded to 1/10000 and written as a little-endian i32
- *   (values beyond +-200000 are clamped; NaN is written as INT32_MIN), so
- *   ARM and x86 agree however the manifest's decimals parsed;
+ * - floats: the runtime value's exact IEEE-754 bits, little-endian u32
+ *   (-0 written as +0, any NaN as 0x7FC00000). Every fingerprinted float
+ *   is strtof() of the manifest's text (asset/oal_asset.c json_num), which
+ *   is correctly rounded on glibc and bionic alike, so ARM and x86 agree;
+ *   schema 1 rounded to 1/10000 and let 1.2 and 1.20001 pass as equal;
  * - strings: bytes up to the first NUL, length-prefixed (u32), as stored --
  *   no case folding: a renamed label is a different label, and loadouts
  *   match labels exactly.
@@ -36,15 +38,13 @@ static void tag(fnv *f, uint8_t t) { bytes(f, &t, 1); }
 
 static void num(fnv *f, uint8_t t, float x)
 {
-    int32_t q;
-    if (isnan(x)) q = INT32_MIN;
+    uint32_t bits;
+    if (isnan(x)) bits = 0x7FC00000u;
     else {
-        double d = (double)x * 10000.0;
-        if (d > 2e9) d = 2e9;
-        if (d < -2e9) d = -2e9;
-        q = (int32_t)lround(d);
+        if (x == 0.0f) x = 0.0f;          /* -0 is 0 */
+        memcpy(&bits, &x, 4);
     }
-    tag(f, t); u32(f, (uint32_t)q);
+    tag(f, t); u32(f, bits);
 }
 
 static void integer(fnv *f, uint8_t t, int32_t v) { tag(f, t); u32(f, (uint32_t)v); }

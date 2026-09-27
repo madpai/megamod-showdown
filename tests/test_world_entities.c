@@ -20,6 +20,7 @@ static uint32_t add(hta_world_defs *d, const char *name, uint8_t kind)
     snprintf(e->id, sizeof(e->id), "x1:entity/%s", name);
     e->kind = kind;
     e->first_link = (uint16_t)d->link_count;
+    e->def = HTA_WDEF_NO_DEF;
     return d->count++;
 }
 
@@ -44,9 +45,11 @@ static void x1_fixture(hta_world_defs *d)
     link(d, r, HTA_WEV_FIRED, DOOR, HTA_WIN_OPEN);
     uint32_t door = add(d, "door_main", HTA_WDEF_MOVER);
     hta_wdef *dd = &d->entity[door];
-    dd->min[0] = -0.05f; dd->min[1] = -0.6f; dd->min[2] = 0.0f;
-    dd->max[0] = 0.05f; dd->max[1] = 0.6f; dd->max[2] = 1.1f;
-    dd->move[1] = 1.25f; dd->speed = 1.0f;
+    dd->pos[2] = 0.55f;                   /* the closed box -0.05..0.05, -0.6..0.6, 0..1.1 */
+    hta_wmover_def *md = &d->mover_def[d->mover_def_count];
+    md->size[0] = 0.1f; md->size[1] = 1.2f; md->size[2] = 1.1f;
+    md->move[1] = 1.25f; md->speed = 1.0f;
+    dd->def = (uint16_t)d->mover_def_count++;
     uint32_t t = add(d, "teleport_trigger", HTA_WDEF_TRIGGER);
     hta_wdef *tt = &d->entity[t];
     tt->min[0] = 2.5f; tt->min[1] = -0.5f; tt->min[2] = -0.1f;
@@ -107,7 +110,11 @@ static void test_parse(void)
     assert(d.link[0].target == 1 && d.link[0].event == HTA_WEV_USED && d.link[0].input == HTA_WIN_ACTIVATE);
     assert(d.link[1].target == 2 && d.link[1].input == HTA_WIN_OPEN);
     assert(d.link[2].target == 4 && d.link[2].input == HTA_WIN_TELEPORT);
-    assert(fabsf(d.entity[2].move[1] - 1.25f) < 1e-6f && d.entity[2].speed == 1.0f);
+    /* Schema 1: the door's inline parameters became an unnamed definition. */
+    assert(d.schema == 1 && d.mover_def_count == 1 && d.entity[2].def == 0 && !d.mover_def[0].id[0]);
+    assert(fabsf(d.mover_def[0].move[1] - 1.25f) < 1e-6f && d.mover_def[0].speed == 1.0f);
+    assert(fabsf(d.mover_def[0].size[1] - 1.2f) < 1e-6f && fabsf(d.entity[2].pos[2] - 0.55f) < 1e-6f);
+    assert(d.entity[0].def == HTA_WDEF_NO_DEF && hta_wdef_mover(&d, 0) == NULL && hta_wdef_mover(&d, 2) == &d.mover_def[0]);
     assert(fabsf(d.entity[4].yaw - 1.5707963f) < 1e-5f);
     assert(hta_world_defs_find(&d, "x1:entity/door_main") == 2);
     /* No section: nothing, and fine. */
@@ -135,7 +142,12 @@ static void test_parse(void)
     expect_fail(patch("\"input\":\"open\"", "\"input\":\"teleport\""), "target does not accept x1:entity/door_main.teleport");
     expect_fail(patch("\"event\":\"fired\"", "\"event\":\"used\""), "does not emit 'used'");
     expect_fail(patch("\"kind\":\"relay\"", "\"kind\":\"logic_relay\""), "unknown kind 'logic_relay'");
-    expect_fail(patch("\"schema\":1", "\"schema\":2"), "unsupported schema");
+    expect_fail(patch("\"schema\":1", "\"schema\":3"), "unsupported schema");
+    expect_fail(patch("\"links\":[],\"move\"", "\"definition\":\"x1:mover/door\",\"links\":[],\"move\""),
+                "x1:entity/door_main: mover definitions need world_entities schema 2");
+    expect_fail(patch("\"schema\":1}", "\"mover_definitions\":[],\"schema\":1}"), "mover_definitions need schema 2");
+    expect_fail(patch(",\"speed\":1.0}", "}"), "a schema 1 mover needs bounds, move and speed");
+    expect_fail(patch("\"kind\":\"relay\",", "\"kind\":\"relay\",\"speed\":2,"), "x1:entity/relay_main: only a mover takes move and speed");
     expect_fail(patch("\"speed\":1.0", "\"speed\":1.0,\"flags\":7"), "unknown field 'flags'");
     expect_fail(patch("\"speed\":1.0", "\"speed\":-1.0"), "mover speed out of range");
     expect_fail(patch("\"move\":[0.0,1.25,0.0]", "\"move\":[0.0,0.0,0.0]"), "mover move out of range");
@@ -405,6 +417,233 @@ static void test_replication(void)
     printf("  replication and late join: ok\n");
 }
 
+/* ---- X2: one reusable mover definition, three placed doors ---- */
+
+/* What Open Asset Lab writes for x2_definition_lab's entities (schema 2),
+ * less its trigger and teleport (X1 covers those): button_a -> relay_a ->
+ * door_a, button_b -> relay_b -> door_b, and door_c, never linked. All
+ * three doors name x2:mover/basic_slide_door. */
+static const char *X2 =
+    "{\"id\":\"x2:world/definition_lab\",\"source_provenance\":\"ours\",\"world_entities\":{\"entities\":["
+    "{\"id\":\"x2:entity/button_a\",\"kind\":\"interactable\",\"links\":[{\"event\":\"used\",\"input\":\"activate\",\"target\":\"x2:entity/relay_a\"}],\"position\":[-0.14,-4.2,0.55],\"reach\":1.0},"
+    "{\"id\":\"x2:entity/relay_a\",\"kind\":\"relay\",\"links\":[{\"event\":\"fired\",\"input\":\"open\",\"target\":\"x2:entity/door_a\"}]},"
+    "{\"definition\":\"x2:mover/basic_slide_door\",\"id\":\"x2:entity/door_a\",\"kind\":\"mover\",\"links\":[],\"position\":[0.0,-3.0,0.55]},"
+    "{\"id\":\"x2:entity/button_b\",\"kind\":\"interactable\",\"links\":[{\"event\":\"used\",\"input\":\"activate\",\"target\":\"x2:entity/relay_b\"}],\"position\":[-0.14,-1.3,0.55],\"reach\":1.0},"
+    "{\"id\":\"x2:entity/relay_b\",\"kind\":\"relay\",\"links\":[{\"event\":\"fired\",\"input\":\"open\",\"target\":\"x2:entity/door_b\"}]},"
+    "{\"definition\":\"x2:mover/basic_slide_door\",\"id\":\"x2:entity/door_b\",\"kind\":\"mover\",\"links\":[],\"position\":[0.0,0.0,0.55]},"
+    "{\"definition\":\"x2:mover/basic_slide_door\",\"id\":\"x2:entity/door_c\",\"kind\":\"mover\",\"links\":[],\"position\":[0.0,3.0,0.55]}"
+    "],\"mover_definitions\":[{\"id\":\"x2:mover/basic_slide_door\",\"move\":[0.0,1.25,0.0],\"size\":[0.1,1.2,1.1],\"speed\":1.0}],"
+    "\"schema\":2}}";
+
+enum { BUTTON_A, RELAY_A, DOOR_A, BUTTON_B, RELAY_B, DOOR_B, DOOR_C };
+
+static const char *x2_patch(const char *from, const char *to)
+{
+    static char buf[8192];
+    const char *at = strstr(X2, from);
+    assert(at);
+    snprintf(buf, sizeof(buf), "%.*s%s%s", (int)(at - X2), X2, to, at + strlen(from));
+    return buf;
+}
+
+static void x2_load(hta_world_defs *d)
+{
+    char err[256];
+    if (!hta_world_defs_parse((const uint8_t *)X2, strlen(X2), d, err, sizeof(err))) { fprintf(stderr, "%s\n", err); assert(0); }
+}
+
+/* A ray across doorway `y` (x from -1 to +1 at knee height): blocked? */
+static bool doorway_blocked(hta_world_entities *w, hta_collision *c, float y)
+{
+    static hta_collision_instance inst[8];
+    c->instances = inst;
+    c->instance_count = hta_went_instances(w, inst, 8);
+    const float from[3] = { -1.0f, y, 0.5f }, dir[3] = { 1, 0, 0 };
+    float t, hit[3], nrm[3];
+    return hta_collision_ray(c, from, dir, 2.0f, &t, hit, nrm) && fabsf(hit[0] + 0.05f) < 0.01f;
+}
+
+static void test_x2_parse(void)
+{
+    static hta_world_defs d;
+    char err[256];
+    x2_load(&d);
+    /* One definition, three placements naming it: resolved to an index once. */
+    assert(d.schema == 2 && d.count == 7 && d.mover_def_count == 1);
+    assert(!strcmp(d.mover_def[0].id, "x2:mover/basic_slide_door") && d.mover_def[0].speed == 1.0f);
+    assert(hta_world_defs_find_mover(&d, "x2:mover/basic_slide_door") == 0 && hta_world_defs_find_mover(&d, "x2:entity/door_a") < 0);
+    assert(hta_world_defs_find(&d, "x2:mover/basic_slide_door") < 0);
+    for (int i = DOOR_A; i <= DOOR_C; i++) if (d.entity[i].kind == HTA_WDEF_MOVER) assert(d.entity[i].def == 0);
+    assert(hta_wdef_mover(&d, DOOR_A) == hta_wdef_mover(&d, DOOR_B) && hta_wdef_mover(&d, DOOR_B) == hta_wdef_mover(&d, DOOR_C));
+    assert(d.entity[RELAY_A].def == HTA_WDEF_NO_DEF && d.link[1].target == DOOR_A && d.link[3].target == DOOR_B);
+    float lo[3], hi[3];
+    hta_wdef_mover_box(&d, DOOR_B, lo, hi);
+    assert(fabsf(lo[0] + 0.05f) < 1e-6f && fabsf(lo[1] + 0.6f) < 1e-6f && fabsf(hi[1] - 0.6f) < 1e-6f && fabsf(hi[2] - 1.1f) < 1e-6f);
+    /* The list may come before the placements too (resolution waits for both). */
+    {
+        static char re[8192];
+        const char *ents = strstr(X2, "\"entities\":["), *defs = strstr(X2, "\"mover_definitions\":["), *sch = strstr(X2, ",\"schema\"");
+        snprintf(re, sizeof(re), "%.*s%.*s,%.*s%s", (int)(ents - X2), X2, (int)(sch - defs), defs, (int)(defs - ents - 1), ents, sch);
+        static hta_world_defs r;
+        assert(hta_world_defs_parse((const uint8_t *)re, strlen(re), &r, err, sizeof(err)) || (fprintf(stderr, "%s\n", err), 0));
+        assert(r.mover_def_count == 1 && r.entity[DOOR_C].def == 0);
+    }
+    /* Bad references fail, naming the placement, the reference and why. */
+    struct { const char *from, *to, *want; } bad[] = {
+        { "\"definition\":\"x2:mover/basic_slide_door\",\"id\":\"x2:entity/door_b\"", "\"definition\":\"x2:mover/basic_slide_dor\",\"id\":\"x2:entity/door_b\"",
+          "x2:entity/door_b references missing mover definition x2:mover/basic_slide_dor" },
+        { "\"definition\":\"x2:mover/basic_slide_door\",\"id\":\"x2:entity/door_a\"", "\"definition\":\"x2:entity/relay_a\",\"id\":\"x2:entity/door_a\"",
+          "x2:entity/door_a: definition x2:entity/relay_a is a placed entity, expected a mover definition" },
+        { "\"definition\":\"x2:mover/basic_slide_door\",\"id\":\"x2:entity/door_a\"", "\"definition\":\"x2:weapon/basic_slide_door\",\"id\":\"x2:entity/door_a\"",
+          "x2:entity/door_a: definition 'x2:weapon/basic_slide_door' is not a mover definition ID" },
+        { "\"target\":\"x2:entity/door_a\"", "\"target\":\"x2:mover/basic_slide_door\"",
+          "x2:entity/relay_a: link target x2:mover/basic_slide_door is a mover definition, expected a placed entity" },
+        { "[{\"id\":\"x2:mover/basic_slide_door\"", "[{\"id\":\"x2:mover/basic_slide_door\",\"move\":[1,0,0],\"size\":[1,1,1],\"speed\":1},{\"id\":\"x2:mover/basic_slide_door\"",
+          "x2:mover/basic_slide_door: duplicate mover definition ID" },
+        { "[{\"id\":\"x2:mover/basic_slide_door\"", "[{\"id\":\"x2:mover/Basic-Door\",\"move\":[1,0,0],\"size\":[1,1,1],\"speed\":1},{\"id\":\"x2:mover/basic_slide_door\"",
+          "'x2:mover/Basic-Door': malformed mover definition ID" },
+        { "[{\"id\":\"x2:mover/basic_slide_door\"", "[{\"id\":\"x2:entity/basic_slide_door\"", "malformed mover definition ID" },
+        { "[{\"id\":\"x2:mover/basic_slide_door\"", "[{\"id\":\"zz:mover/other\",\"move\":[1,0,0],\"size\":[1,1,1],\"speed\":1},{\"id\":\"x2:mover/basic_slide_door\"",
+          "zz:mover/other: not in the world's namespace" },
+        { "\"definition\":\"x2:mover/basic_slide_door\",\"id\":\"x2:entity/door_c\"", "\"id\":\"x2:entity/door_c\"", "x2:entity/door_c: mover has no definition" },
+        { "\"id\":\"x2:entity/relay_b\",", "\"definition\":\"x2:mover/basic_slide_door\",\"id\":\"x2:entity/relay_b\",",
+          "x2:entity/relay_b: only a mover takes a definition (it is a relay)" },
+        { "\"links\":[],\"position\":[0.0,0.0,0.55]", "\"links\":[],\"position\":[0.0,0.0,0.55],\"speed\":3",
+          "x2:entity/door_b: a mover takes its size, move and speed from its definition (schema 2)" },
+        { "\"speed\":1.0}]", "\"speed\":0}]", "x2:mover/basic_slide_door: mover speed out of range" },
+        { "\"size\":[0.1,1.2,1.1]", "\"size\":[0.1,0,1.1]", "x2:mover/basic_slide_door: mover size must be finite" },
+        { "\"move\":[0.0,1.25,0.0],", "", "x2:mover/basic_slide_door: needs size, move and speed" },
+        { "\"speed\":1.0}]", "\"speed\":1.0,\"colour\":1}]", "x2:mover/basic_slide_door: unknown field 'colour'" },
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        static hta_world_defs t;
+        const char *json = x2_patch(bad[i].from, bad[i].to);
+        bool ok = hta_world_defs_parse((const uint8_t *)json, strlen(json), &t, err, sizeof(err));
+        if (ok || !strstr(err, bad[i].want)) {
+            fprintf(stderr, "x2 case %zu: wanted '%s', got %s '%s'\n", i, bad[i].want, ok ? "success" : "failure", err);
+            assert(0);
+        }
+    }
+    /* The runtime's own check refuses a corrupted reference too. */
+    x2_load(&d);
+    d.entity[DOOR_B].def = 5;
+    static hta_world_entities w;
+    assert(!hta_went_load(&w, &d, err, sizeof(err)) && strstr(err, "x2:entity/door_b: mover has no definition"));
+    x2_load(&d);
+    d.entity[RELAY_A].def = 0;
+    assert(!hta_went_load(&w, &d, err, sizeof(err)) && strstr(err, "x2:entity/relay_a: only a mover takes a definition"));
+    for (size_t n = 0; n < strlen(X2); n++) {
+        static hta_world_defs t;
+        assert(!hta_world_defs_parse((const uint8_t *)X2, n, &t, err, sizeof(err)));
+    }
+    printf("  x2 definitions parse, resolve, refuse: ok\n");
+}
+
+static void test_x2_independent(void)
+{
+    static hta_world_defs d, before;
+    static hta_world_entities w;
+    char err[256];
+    x2_load(&d);
+    memcpy(&before, &d, sizeof(d));
+    assert(hta_went_load(&w, &d, err, sizeof(err)) || (fprintf(stderr, "%s\n", err), 0));
+    /* One grid for the definition; each door its own instance of it. */
+    assert(w.inst[DOOR_A].grid == &w.mover_coll[0] && w.inst[DOOR_B].grid == &w.mover_coll[0] && w.inst[DOOR_C].grid == &w.mover_coll[0]);
+    assert(w.inst[DOOR_A].pos[1] == -3.0f && w.inst[DOOR_B].pos[1] == 0.0f && w.inst[DOOR_C].pos[1] == 3.0f);
+    static hta_world_defs scribbled;
+    memcpy(&scribbled, &d, sizeof(d));
+    hta_collision c; hta_bsp_mesh m;
+    floor_grid(&c, &m);
+    assert(doorway_blocked(&w, &c, -3.0f) && doorway_blocked(&w, &c, 0.0f));
+    /* Button A: door A opens; B and C stay shut. */
+    const float eye_a[3] = { -0.6f, -4.2f, 0.62f }, eye_b[3] = { -0.6f, -1.3f, 0.62f }, fwd[3] = { 1, 0, 0 };
+    assert(hta_went_interact(&w, 1, eye_a, fwd) == BUTTON_A);
+    run(&w, 0.3f);
+    assert(w.st[DOOR_A].phase == HTA_MOVER_OPENING && w.st[DOOR_A].t > 0.1f);
+    assert(w.st[DOOR_B].phase == HTA_MOVER_CLOSED && w.st[DOOR_B].t == 0.0f);
+    assert(w.st[DOOR_C].phase == HTA_MOVER_CLOSED && w.st[DOOR_C].t == 0.0f);
+    run(&w, 1.5f);
+    float off[3];
+    hta_went_offset(&w, DOOR_A, off); assert(fabsf(off[1] - 1.25f) < 1e-6f);
+    hta_went_offset(&w, DOOR_B, off); assert(off[0] == 0 && off[1] == 0 && off[2] == 0);
+    assert(!doorway_blocked(&w, &c, -3.0f) && doorway_blocked(&w, &c, 0.0f));
+    /* Then B, on its own button: both open, C still shut. */
+    assert(hta_went_interact(&w, 2, eye_b, fwd) == BUTTON_B);
+    run(&w, 1.5f);
+    assert(w.st[DOOR_A].phase == HTA_MOVER_OPEN && w.st[DOOR_B].phase == HTA_MOVER_OPEN && w.st[DOOR_C].phase == HTA_MOVER_CLOSED);
+    assert(!doorway_blocked(&w, &c, -3.0f) && !doorway_blocked(&w, &c, 0.0f));
+    /* Closing A leaves B open. */
+    assert(hta_went_send(&w, DOOR_A, HTA_WIN_CLOSE, 1));
+    run(&w, 1.5f);
+    assert(w.st[DOOR_A].phase == HTA_MOVER_CLOSED && w.st[DOOR_B].phase == HTA_MOVER_OPEN && doorway_blocked(&w, &c, -3.0f));
+    /* A new round: all shut, handles moved on. */
+    hta_went_handle ha = hta_went_handle_of(&w, DOOR_B);
+    hta_went_reset(&w);
+    hta_went_step(&w, 0.0f);
+    for (int i = DOOR_A; i <= DOOR_C; i++) if (d.entity[i].kind == HTA_WDEF_MOVER) assert(w.st[i].phase == HTA_MOVER_CLOSED && w.st[i].t == 0.0f);
+    assert(hta_went_resolve(&w, ha) < 0 && doorway_blocked(&w, &c, 0.0f));
+    /* The definitions were never written: byte for byte what was loaded. */
+    assert(!memcmp(&before, &d, sizeof(d)));
+    hta_went_free(&w);
+    /* Authored names are load-time only: after loading, scribble every one
+     * of them and the world still runs (nothing during play looks anything
+     * up by name). */
+    assert(hta_went_load(&w, &scribbled, err, sizeof(err)) || (fprintf(stderr, "%s\n", err), 0));
+    for (uint32_t i = 0; i < scribbled.count; i++) memset(scribbled.entity[i].id, 'z', 20);
+    for (uint32_t i = 0; i < scribbled.mover_def_count; i++) memset(scribbled.mover_def[i].id, 'z', 20);
+    assert(hta_went_interact(&w, 1, eye_b, fwd) == BUTTON_B);
+    run(&w, 1.5f);
+    assert(w.st[DOOR_B].phase == HTA_MOVER_OPEN && w.st[DOOR_A].phase == HTA_MOVER_CLOSED);
+    hta_went_free(&w);
+    /* Bounded as before: a flood of activations on relay A. */
+    assert(hta_went_load(&w, &d, NULL, 0));
+    for (uint32_t i = 0; i < HTA_WENT_QUEUE + 3; i++) hta_went_send(&w, RELAY_A, HTA_WIN_ACTIVATE, 1);
+    assert(w.count == HTA_WENT_QUEUE && w.stats.dropped_full == 3);
+    for (int i = 0; i < 8; i++) hta_went_step(&w, 1.0f / 60.0f);
+    assert(w.count == 0 && w.st[DOOR_A].phase != HTA_MOVER_CLOSED && w.st[DOOR_B].phase == HTA_MOVER_CLOSED);
+    hta_went_free(&w);
+    hta_collision_free(&c);
+    printf("  x2 shared definition, independent doors: ok\n");
+}
+
+static void test_x2_late_join(void)
+{
+    static hta_world_defs d;
+    static hta_world_entities host, a, late;
+    x2_load(&d);
+    assert(hta_went_load(&host, &d, NULL, 0) && hta_went_load(&a, &d, NULL, 0) && hta_went_load(&late, &d, NULL, 0));
+    a.remote = late.remote = true;
+    hta_went_mover_state ms[8];
+    uint32_t n = hta_went_snapshot(&host, ms, 8);
+    assert(n == 3 && ms[0].index == DOOR_A && ms[1].index == DOOR_B && ms[2].index == DOOR_C);
+    for (uint32_t k = 0; k < n; k++) assert(hta_went_apply(&a, &ms[k], true));
+    const float eye_a[3] = { -0.6f, -4.2f, 0.62f }, eye_b[3] = { -0.6f, -1.3f, 0.62f }, fwd[3] = { 1, 0, 0 };
+    assert(hta_went_interact(&host, 1, eye_a, fwd) == BUTTON_A);
+    for (int i = 0; i < 120; i++) {
+        hta_went_step(&host, 1.0f / 60.0f); hta_went_step(&a, 1.0f / 60.0f);
+        if (i % 3 == 0) { n = hta_went_snapshot(&host, ms, 8); for (uint32_t k = 0; k < n; k++) hta_went_apply(&a, &ms[k], false); }
+    }
+    assert(a.st[DOOR_A].phase == HTA_MOVER_OPEN && a.st[DOOR_B].phase == HTA_MOVER_CLOSED && a.st[DOOR_B].t == 0.0f);
+    /* The late joiner: one snapshot, each door as it is. */
+    n = hta_went_snapshot(&host, ms, 8);
+    for (uint32_t k = 0; k < n; k++) assert(hta_went_apply(&late, &ms[k], true));
+    assert(late.st[DOOR_A].phase == HTA_MOVER_OPEN && late.st[DOOR_A].t == 1.0f);
+    assert(late.st[DOOR_B].phase == HTA_MOVER_CLOSED && late.st[DOOR_B].t == 0.0f && late.st[DOOR_C].phase == HTA_MOVER_CLOSED);
+    /* Then B opens; everyone converges on A open, B open. */
+    assert(hta_went_interact(&host, 2, eye_b, fwd) == BUTTON_B);
+    for (int i = 0; i < 120; i++) {
+        hta_went_step(&host, 1.0f / 60.0f); hta_went_step(&a, 1.0f / 60.0f); hta_went_step(&late, 1.0f / 60.0f);
+        if (i % 3 == 0) {
+            n = hta_went_snapshot(&host, ms, 8);
+            for (uint32_t k = 0; k < n; k++) { hta_went_apply(&a, &ms[k], false); hta_went_apply(&late, &ms[k], false); }
+        }
+    }
+    for (hta_world_entities *c = &a; c; c = c == &a ? &late : NULL)
+        assert(c->st[DOOR_A].phase == HTA_MOVER_OPEN && c->st[DOOR_B].phase == HTA_MOVER_OPEN && c->st[DOOR_C].phase == HTA_MOVER_CLOSED);
+    hta_went_free(&host); hta_went_free(&a); hta_went_free(&late);
+    printf("  x2 late join sees each door as it is: ok\n");
+}
+
 int main(void)
 {
     test_parse();
@@ -413,6 +652,9 @@ int main(void)
     test_handles();
     test_bounds();
     test_replication();
+    test_x2_parse();
+    test_x2_independent();
+    test_x2_late_join();
     printf("world entities: all ok\n");
     return 0;
 }

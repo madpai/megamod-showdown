@@ -5,6 +5,7 @@
  * never mistaken for the section. */
 #include "world_def.h"
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,15 +46,30 @@ static bool segment(const char *s, size_t len, size_t max)
     return true;
 }
 
-/* namespace:entity/name, lowercase ASCII segments. */
-static bool placed_id(const char *id)
+static bool failv(char *err, size_t n, const char *fmt, ...)
+{
+    if (err && n) { va_list a; va_start(a, fmt); vsnprintf(err, n, fmt, a); va_end(a); }
+    return false;
+}
+
+/* namespace:<type>/name, lowercase ASCII segments. */
+static bool content_id(const char *id, const char *type)
 {
     const char *colon = strchr(id, ':'), *slash = colon ? strchr(colon, '/') : NULL;
-    size_t len = strlen(id);
+    size_t len = strlen(id), tl = strlen(type);
     if (!colon || !slash || len > HTA_WDEF_ID_MAX || strchr(colon + 1, ':') || strchr(slash + 1, '/')) return false;
     return segment(id, (size_t)(colon - id), 40) &&
-           (size_t)(slash - colon - 1) == 6 && !memcmp(colon + 1, "entity", 6) &&
+           (size_t)(slash - colon - 1) == tl && !memcmp(colon + 1, type, tl) &&
            segment(slash + 1, strlen(slash + 1), 48);
+}
+
+static bool placed_id(const char *id) { return content_id(id, "entity"); }
+static bool mover_id(const char *id) { return content_id(id, "mover"); }
+
+static bool same_namespace(const char *a, const char *b)
+{
+    const char *ca = strchr(a, ':'), *cb = strchr(b, ':');
+    return ca && cb && ca - a == cb - b && !memcmp(a, b, (size_t)(ca - a));
 }
 
 /* ---- a bounded JSON reader -------------------------------------------- */
@@ -185,8 +201,18 @@ static int lookup(const char *const *names, int n, const char *s)
     return 0;
 }
 
-/* Per-link target IDs until they are resolved. */
-typedef struct { char target[HTA_WDEF_MAX_LINKS][HTA_WDEF_ID_MAX + 1]; } pending;
+/* What is read before it can be checked or resolved: per-link target
+ * IDs, and per entity its definition reference or (schema 1) its inline
+ * mover parameters. Keys arrive sorted ("entities" before "schema"), so
+ * nothing is interpreted until the whole section has been read. */
+typedef struct {
+    char  target[HTA_WDEF_MAX_LINKS][HTA_WDEF_ID_MAX + 1];
+    char  def[HTA_WDEF_MAX_ENTITIES][HTA_WDEF_ID_MAX + 1];
+    float move[HTA_WDEF_MAX_ENTITIES][3], speed[HTA_WDEF_MAX_ENTITIES];
+    uint8_t has_def[HTA_WDEF_MAX_ENTITIES], has_bounds[HTA_WDEF_MAX_ENTITIES],
+            has_move[HTA_WDEF_MAX_ENTITIES], has_speed[HTA_WDEF_MAX_ENTITIES],
+            has_pos[HTA_WDEF_MAX_ENTITIES];
+} pending;
 
 static bool parse_link(rd *r, hta_wdef_link *l, char *target, const char *owner, char *err, size_t n)
 {
@@ -216,6 +242,8 @@ static bool parse_entity(rd *r, hta_world_defs *d, pending *pend, char *err, siz
     hta_wdef *e = &d->entity[d->count];
     memset(e, 0, sizeof(*e));
     e->first_link = (uint16_t)d->link_count;
+    e->def = HTA_WDEF_NO_DEF;
+    uint32_t me = d->count;
     char key[16], kind[16] = "";
     char where[HTA_WDEF_ID_MAX + 16];
     snprintf(where, sizeof(where), "world entity %u", d->count);
@@ -231,11 +259,12 @@ static bool parse_entity(rd *r, hta_world_defs *d, pending *pend, char *err, siz
             ok = str(r, kind, sizeof(kind));
             e->kind = (uint8_t)lookup(KIND, HTA_WDEF_KIND_COUNT, kind);
             if (ok && !e->kind) return fail(err, n, "%s: unknown kind '%s'", where, kind);
-        } else if (!strcmp(key, "position")) ok = vec3(r, e->pos);
+        } else if (!strcmp(key, "position")) { ok = vec3(r, e->pos); pend->has_pos[me] = 1; }
         else if (!strcmp(key, "reach")) ok = fnum(r, &e->reach);
         else if (!strcmp(key, "yaw_degrees")) { ok = fnum(r, &e->yaw); e->yaw *= 3.14159265358979f / 180.0f; }
-        else if (!strcmp(key, "move")) ok = vec3(r, e->move);
-        else if (!strcmp(key, "speed")) ok = fnum(r, &e->speed);
+        else if (!strcmp(key, "move")) { ok = vec3(r, pend->move[me]); pend->has_move[me] = 1; }
+        else if (!strcmp(key, "speed")) { ok = fnum(r, &pend->speed[me]); pend->has_speed[me] = 1; }
+        else if (!strcmp(key, "definition")) { ok = str(r, pend->def[me], sizeof(pend->def[me])); pend->has_def[me] = 1; }
         else if (!strcmp(key, "bounds")) {
             char k2[8]; bool mn = false, mx = false;
             ok = eat(r, '{');
@@ -269,24 +298,108 @@ static bool parse_entity(rd *r, hta_world_defs *d, pending *pend, char *err, siz
     if (!eat(r, '}')) return fail(err, n, "%s: malformed entity", where, NULL);
     if (!have_id) return fail(err, n, "%s: has no id", where, NULL);
     if (!e->kind) return fail(err, n, "%s: has no kind", where, NULL);
-    if ((e->kind == HTA_WDEF_TRIGGER || e->kind == HTA_WDEF_MOVER) && !have_bounds)
+    if (e->kind == HTA_WDEF_TRIGGER && !have_bounds)
         return fail(err, n, "%s: needs bounds", where, NULL);
+    pend->has_bounds[me] = have_bounds;
     d->count++;
+    return true;
+}
+
+/* One entry of "mover_definitions" (schema 2). */
+static bool parse_mover_def(rd *r, hta_world_defs *d, char *err, size_t n)
+{
+    if (d->mover_def_count >= HTA_WDEF_MAX_MOVER_DEFS)
+        return fail(err, n, "more than 64 mover definitions%s%s", NULL, NULL);
+    hta_wmover_def *m = &d->mover_def[d->mover_def_count];
+    memset(m, 0, sizeof(*m));
+    char key[16], where[HTA_WDEF_ID_MAX + 32];
+    snprintf(where, sizeof(where), "mover definition %u", d->mover_def_count);
+    bool have[4] = { 0 };
+    if (!eat(r, '{')) return fail(err, n, "%s: not an object", where, NULL);
+    if (!eat(r, '}')) do {
+        if (!str(r, key, sizeof(key)) || !eat(r, ':')) return fail(err, n, "%s: malformed field", where, NULL);
+        bool ok;
+        if (!strcmp(key, "id")) {
+            ok = str(r, m->id, sizeof(m->id)); have[0] = ok;
+            if (ok) snprintf(where, sizeof(where), "%s", m->id);
+        } else if (!strcmp(key, "size")) { ok = vec3(r, m->size); have[1] = ok; }
+        else if (!strcmp(key, "move")) { ok = vec3(r, m->move); have[2] = ok; }
+        else if (!strcmp(key, "speed")) { ok = fnum(r, &m->speed); have[3] = ok; }
+        else return fail(err, n, "%s: unknown field '%s'", where, key);
+        if (!ok) return fail(err, n, "%s: malformed '%s'", where, key);
+    } while (eat(r, ','));
+    if (!eat(r, '}')) return fail(err, n, "%s: malformed definition", where, NULL);
+    if (!have[0]) return fail(err, n, "%s: has no id", where, NULL);
+    if (!have[1] || !have[2] || !have[3]) return fail(err, n, "%s: needs size, move and speed", where, NULL);
+    d->mover_def_count++;
+    return true;
+}
+
+/* Movers get their definitions: by reference (schema 2) or, for an X1
+ * package, an unnamed one each from their inline parameters. */
+static bool resolve_movers(hta_world_defs *d, const pending *pend, char *err, size_t n)
+{
+    for (uint32_t i = 0; i < d->count; i++) {
+        hta_wdef *e = &d->entity[i];
+        bool inline_params = pend->has_bounds[i] || pend->has_move[i] || pend->has_speed[i];
+        if (e->kind != HTA_WDEF_MOVER) {
+            if (pend->has_def[i])
+                return failv(err, n, "%s: only a mover takes a definition (it is a %s)", e->id, hta_wdef_kind_name(e->kind));
+            if (pend->has_move[i] || pend->has_speed[i])
+                return failv(err, n, "%s: only a mover takes move and speed (it is a %s)", e->id, hta_wdef_kind_name(e->kind));
+            continue;
+        }
+        if (d->schema == 1) {
+            if (pend->has_def[i])
+                return failv(err, n, "%s: mover definitions need world_entities schema 2", e->id);
+            if (!pend->has_bounds[i] || !pend->has_move[i] || !pend->has_speed[i])
+                return failv(err, n, "%s: a schema 1 mover needs bounds, move and speed", e->id);
+            if (d->mover_def_count >= HTA_WDEF_MAX_MOVER_DEFS)
+                return failv(err, n, "%s: too many movers", e->id);
+            hta_wmover_def *m = &d->mover_def[d->mover_def_count];
+            memset(m, 0, sizeof(*m));
+            for (int k = 0; k < 3; k++) {
+                m->size[k] = e->max[k] - e->min[k];
+                m->move[k] = pend->move[i][k];
+                e->pos[k] = (e->min[k] + e->max[k]) * 0.5f;
+            }
+            m->speed = pend->speed[i];
+            memset(e->min, 0, sizeof(e->min)); memset(e->max, 0, sizeof(e->max));
+            e->def = (uint16_t)d->mover_def_count++;
+            continue;
+        }
+        if (inline_params)
+            return failv(err, n, "%s: a mover takes its size, move and speed from its definition (schema 2)", e->id);
+        if (!pend->has_def[i]) return failv(err, n, "%s: mover has no definition", e->id);
+        if (!pend->has_pos[i]) return failv(err, n, "%s: mover has no position", e->id);
+        const char *ref = pend->def[i];
+        int32_t k = hta_world_defs_find_mover(d, ref);
+        if (k < 0) {
+            if (hta_world_defs_find(d, ref) >= 0)
+                return failv(err, n, "%s: definition %s is a placed entity, expected a mover definition", e->id, ref);
+            if (!mover_id(ref))
+                return failv(err, n, "%s: definition '%s' is not a mover definition ID (namespace:mover/name)", e->id, ref);
+            return failv(err, n, "%s references missing mover definition %s", e->id, ref);
+        }
+        e->def = (uint16_t)k;
+    }
     return true;
 }
 
 static bool parse_section(rd *r, hta_world_defs *d, char *err, size_t n)
 {
-    static pending pend;        /* 25 KB: not on a phone's stack */
-    char key[16];
-    bool have_schema = false, have_entities = false;
+    static pending pend;        /* 33 KB: not on a phone's stack */
+    memset(&pend, 0, sizeof(pend));
+    char key[24];
+    bool have_schema = false, have_entities = false, have_defs = false;
     if (!eat(r, '{')) return fail(err, n, "world_entities: not an object%s%s", NULL, NULL);
     if (!eat(r, '}')) do {
         if (!str(r, key, sizeof(key)) || !eat(r, ':')) return fail(err, n, "world_entities: malformed%s%s", NULL, NULL);
         if (!strcmp(key, "schema")) {
             double v;
-            if (!num(r, &v) || v != (double)HTA_WDEF_SCHEMA)
+            if (!num(r, &v) || (v != 1.0 && v != 2.0))
                 return fail(err, n, "world_entities: unsupported schema%s%s", NULL, NULL);
+            d->schema = (uint32_t)v;
             have_schema = true;
         } else if (!strcmp(key, "entities")) {
             if (!eat(r, '[')) return fail(err, n, "world_entities: entities is not a list%s%s", NULL, NULL);
@@ -295,11 +408,27 @@ static bool parse_section(rd *r, hta_world_defs *d, char *err, size_t n)
                 if (!eat(r, ']')) return fail(err, n, "world_entities: malformed entity list%s%s", NULL, NULL);
             }
             have_entities = true;
+        } else if (!strcmp(key, "mover_definitions")) {
+            if (!eat(r, '[')) return fail(err, n, "world_entities: mover_definitions is not a list%s%s", NULL, NULL);
+            if (!eat(r, ']')) {
+                do { if (!parse_mover_def(r, d, err, n)) return false; } while (eat(r, ','));
+                if (!eat(r, ']')) return fail(err, n, "world_entities: malformed mover_definitions%s%s", NULL, NULL);
+            }
+            have_defs = true;
         } else return fail(err, n, "world_entities: unknown field '%s'%s", key, NULL);
     } while (eat(r, ','));
     if (!eat(r, '}') || !have_schema || !have_entities)
         return fail(err, n, "world_entities: needs schema and entities%s%s", NULL, NULL);
+    if (have_defs && d->schema < 2)
+        return fail(err, n, "world_entities: mover_definitions need schema 2%s%s", NULL, NULL);
     /* IDs first, so a duplicate is reported as one, not as a link to it. */
+    for (uint32_t i = 0; i < d->mover_def_count; i++) {
+        if (!mover_id(d->mover_def[i].id))
+            return fail(err, n, "'%s': malformed mover definition ID (namespace:mover/name)%s", d->mover_def[i].id, NULL);
+        for (uint32_t j = 0; j < i; j++)
+            if (!strcmp(d->mover_def[j].id, d->mover_def[i].id))
+                return fail(err, n, "%s: duplicate mover definition ID%s", d->mover_def[i].id, NULL);
+    }
     for (uint32_t i = 0; i < d->count; i++) {
         if (!placed_id(d->entity[i].id))
             return fail(err, n, "'%s': malformed placed ID (namespace:entity/name)%s", d->entity[i].id, NULL);
@@ -313,11 +442,13 @@ static bool parse_section(rd *r, hta_world_defs *d, char *err, size_t n)
         for (uint32_t k = 0; k < e->link_count; k++) {
             uint32_t li = e->first_link + k;
             int32_t t = hta_world_defs_find(d, pend.target[li]);
+            if (t < 0 && hta_world_defs_find_mover(d, pend.target[li]) >= 0)
+                return fail(err, n, "%s: link target %s is a mover definition, expected a placed entity", e->id, pend.target[li]);
             if (t < 0) return fail(err, n, "%s references missing target %s", e->id, pend.target[li]);
             d->link[li].target = (uint16_t)t;
         }
     }
-    return true;
+    return resolve_movers(d, &pend, err, n);
 }
 
 bool hta_world_defs_parse(const uint8_t *manifest, size_t len, hta_world_defs *out, char *err, size_t errlen)
@@ -355,6 +486,50 @@ int32_t hta_world_defs_find(const hta_world_defs *d, const char *id)
     return -1;
 }
 
+int32_t hta_world_defs_find_mover(const hta_world_defs *d, const char *id)
+{
+    for (uint32_t i = 0; d && id && *id && i < d->mover_def_count; i++)
+        if (!strcmp(d->mover_def[i].id, id)) return (int32_t)i;
+    return -1;
+}
+
+const hta_wmover_def *hta_wdef_mover(const hta_world_defs *d, uint32_t entity)
+{
+    if (!d || entity >= d->count || d->entity[entity].kind != HTA_WDEF_MOVER ||
+        d->entity[entity].def >= d->mover_def_count) return NULL;
+    return &d->mover_def[d->entity[entity].def];
+}
+
+void hta_wdef_mover_box(const hta_world_defs *d, uint32_t entity, float min[3], float max[3])
+{
+    const hta_wmover_def *m = hta_wdef_mover(d, entity);
+    for (int k = 0; k < 3; k++) {
+        float c = m ? d->entity[entity].pos[k] : 0.0f, h = m ? m->size[k] * 0.5f : 0.0f;
+        min[k] = c - h; max[k] = c + h;
+    }
+}
+
+bool hta_manifest_members(const uint8_t *manifest, size_t len, hta_manifest_member_fn fn, void *ctx)
+{
+    if (!manifest) return false;
+    rd r = { manifest, manifest + len, false };
+    char key[64];
+    if (!eat(&r, '{')) return false;
+    if (eat(&r, '}')) { ws(&r); return r.p == r.end; }
+    do {
+        const uint8_t *at = r.p;
+        if (!str(&r, key, sizeof(key))) { r.p = at; if (!str(&r, NULL, 0)) return false; key[0] = 0; }
+        if (!eat(&r, ':')) return false;
+        ws(&r);
+        const uint8_t *v = r.p;
+        if (!skip(&r)) return false;
+        if (fn) fn(ctx, key, v, (size_t)(r.p - v));
+    } while (eat(&r, ','));
+    if (!eat(&r, '}')) return false;
+    ws(&r);
+    return r.p == r.end;
+}
+
 /* ---- the rules -------------------------------------------------------- */
 
 static bool finite3(const float v[3], float lim)
@@ -385,6 +560,29 @@ bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t n)
 {
     if (!d || d->count > HTA_WDEF_MAX_ENTITIES || d->link_count > HTA_WDEF_MAX_LINKS)
         return fail(err, n, "world entities over their limits%s%s", NULL, NULL);
+    if (d->mover_def_count > HTA_WDEF_MAX_MOVER_DEFS)
+        return fail(err, n, "mover definitions over their limit%s%s", NULL, NULL);
+    for (uint32_t i = 0; i < d->mover_def_count; i++) {
+        const hta_wmover_def *m = &d->mover_def[i];
+        /* Unnamed: an X1 inline mover's own. Named: namespace:mover/name,
+         * in the world's namespace, unique. */
+        if (!memchr(m->id, 0, sizeof(m->id)) || (m->id[0] && !mover_id(m->id)) ||
+            (!m->id[0] && d->schema >= 2))
+            return fail(err, n, "'%s': malformed mover definition ID (namespace:mover/name)%s", m->id, NULL);
+        if (m->id[0] && d->count && !same_namespace(m->id, d->entity[0].id))
+            return fail(err, n, "%s: not in the world's namespace (%s)", m->id, d->entity[0].id);
+        for (uint32_t j = 0; j < i && m->id[0]; j++)
+            if (!strcmp(d->mover_def[j].id, m->id)) return fail(err, n, "%s: duplicate mover definition ID%s", m->id, NULL);
+        const char *name = m->id[0] ? m->id : "(inline mover)";
+        for (int k = 0; k < 3; k++)
+            if (!isfinite(m->size[k]) || !(m->size[k] >= 0.01f && m->size[k] <= HTA_WDEF_WORLD_LIMIT))
+                return fail(err, n, "%s: mover size must be finite, at least 0.01 wu%s", name, NULL);
+        float len = sqrtf(m->move[0] * m->move[0] + m->move[1] * m->move[1] + m->move[2] * m->move[2]);
+        if (!finite3(m->move, HTA_WDEF_MAX_MOVE) || !(len >= 0.01f && len <= HTA_WDEF_MAX_MOVE))
+            return fail(err, n, "%s: mover move out of range%s", name, NULL);
+        if (!(m->speed > 0.0f && m->speed <= HTA_WDEF_MAX_SPEED))
+            return fail(err, n, "%s: mover speed out of range%s", name, NULL);
+    }
     char ns[48] = "";
     for (uint32_t i = 0; i < d->count; i++) {
         const hta_wdef *e = &d->entity[i];
@@ -405,20 +603,20 @@ bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t n)
         if (e->kind == HTA_WDEF_INTERACTABLE && !(e->reach > 0.0f && e->reach <= HTA_WDEF_MAX_REACH))
             return fail(err, n, "%s: reach out of range%s", e->id, NULL);
         if (e->kind == HTA_WDEF_TELEPORT && !isfinite(e->yaw)) return fail(err, n, "%s: yaw is not finite%s", e->id, NULL);
-        if (e->kind == HTA_WDEF_TRIGGER || e->kind == HTA_WDEF_MOVER) {
+        if (e->kind == HTA_WDEF_TRIGGER) {
             if (!finite3(e->min, HTA_WDEF_WORLD_LIMIT) || !finite3(e->max, HTA_WDEF_WORLD_LIMIT))
                 return fail(err, n, "%s: bounds must be finite%s", e->id, NULL);
             for (int k = 0; k < 3; k++)
-                if (e->max[k] - e->min[k] < (e->kind == HTA_WDEF_TRIGGER ? 0.05f : 0.01f))
+                if (e->max[k] - e->min[k] < 0.05f)
                     return fail(err, n, "%s: bounds are empty%s", e->id, NULL);
         }
         if (e->kind == HTA_WDEF_MOVER) {
-            float m = sqrtf(e->move[0] * e->move[0] + e->move[1] * e->move[1] + e->move[2] * e->move[2]);
-            if (!finite3(e->move, HTA_WDEF_MAX_MOVE) || !(m >= 0.01f && m <= HTA_WDEF_MAX_MOVE))
-                return fail(err, n, "%s: mover move out of range%s", e->id, NULL);
-            if (!(e->speed > 0.0f && e->speed <= HTA_WDEF_MAX_SPEED))
-                return fail(err, n, "%s: mover speed out of range%s", e->id, NULL);
-        }
+            if (e->def >= d->mover_def_count) return fail(err, n, "%s: mover has no definition%s", e->id, NULL);
+            float lo[3], hi[3];
+            hta_wdef_mover_box(d, i, lo, hi);
+            if (!finite3(e->pos, HTA_WDEF_WORLD_LIMIT) || !finite3(lo, HTA_WDEF_WORLD_LIMIT) || !finite3(hi, HTA_WDEF_WORLD_LIMIT))
+                return fail(err, n, "%s: mover must be finite and inside the world%s", e->id, NULL);
+        } else if (e->def != HTA_WDEF_NO_DEF) return fail(err, n, "%s: only a mover takes a definition%s", e->id, NULL);
         for (uint32_t k = 0; k < e->link_count; k++) {
             const hta_wdef_link *l = &d->link[e->first_link + k];
             if (l->target >= d->count) return fail(err, n, "%s: link target out of range%s", e->id, NULL);

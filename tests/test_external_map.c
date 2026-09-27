@@ -9,6 +9,89 @@
 #include <unistd.h>
 static void u32(unsigned char *p,uint32_t x){p[0]=x;p[1]=x>>8;p[2]=x>>16;p[3]=x>>24;}
 static void f32(unsigned char *p,float v){uint32_t x;memcpy(&x,&v,4);u32(p,x);}
+/* ---- the world key: what it covers and what it leaves out ---- */
+
+/* A v3 package: base package `b` (n bytes, ml 0) with manifest `man`. */
+static unsigned char *with_manifest(const unsigned char *b,size_t n,const char *man,size_t *out_n)
+{
+    size_t group=64+120+12, ml=strlen(man), n3=n+4+ml;
+    unsigned char *w=malloc(n3);assert(w);
+    memcpy(w,b,64);memcpy(w+64,man,ml);
+    memcpy(w+64+ml,b+64,group+16-64);u32(w+ml+group+16,UINT32_MAX);
+    memcpy(w+ml+group+20,b+group+16,n-group-16);
+    u32(w+4,3);u32(w+8,(uint32_t)ml);
+    *out_n=n3;return w;
+}
+
+static uint64_t digest_of(const unsigned char *w,size_t n)
+{
+    hta_external_map m;char err[256];
+    if(!hta_external_map_load_memory(w,n,&m,err,sizeof(err))){fprintf(stderr,"%s\n",err);assert(0);}
+    uint64_t d=m.digest;
+    assert(m.key==hta_world_key_fold(d)&&d);
+    hta_external_map_free(&m);return d;
+}
+
+static void world_key_tests(const unsigned char *b,size_t n)
+{
+    static const char base[]="{\"display_name\":\"Lab\",\"importer_version\":\"original_world-0.1.0\","
+        "\"source_provenance\":\"ours\",\"spawn_points\":[{\"position\":[0.2,0.2,0],\"team\":null,\"yaw_degrees\":0}],"
+        "\"warnings\":[\"a\",\"b\"],\"world_entities\":{\"entities\":["
+        "{\"definition\":\"t:mover/slide\",\"id\":\"t:entity/d\",\"kind\":\"mover\",\"links\":[],\"position\":[0.5,0.5,0.5]},"
+        "{\"id\":\"t:entity/r\",\"kind\":\"relay\",\"links\":[{\"event\":\"fired\",\"input\":\"open\",\"target\":\"t:entity/d\"}]},"
+        "{\"bounds\":{\"max\":[3,3,1],\"min\":[2,2,0]},\"id\":\"t:entity/t\",\"kind\":\"trigger\",\"links\":[{\"event\":\"entered\",\"input\":\"teleport\",\"target\":\"t:entity/p\"}]},"
+        "{\"id\":\"t:entity/p\",\"kind\":\"teleport\",\"links\":[],\"position\":[-1,-1,0],\"yaw_degrees\":0}"
+        "],\"mover_definitions\":[{\"id\":\"t:mover/slide\",\"move\":[0,1,0],\"size\":[1,1,1],\"speed\":1}],\"schema\":2}}";
+    size_t n0;unsigned char *w=with_manifest(b,n,base,&n0);
+    uint64_t d0=digest_of(w,n0);
+    /* The same bytes: the same key; loading twice changes nothing. */
+    assert(digest_of(w,n0)==d0);
+    const size_t ml=strlen(base), vtx=64+ml, idx=vtx+120, grp=idx+12, tex=grp+20, spawn=tex+12+16;
+    assert(spawn+16==n0);
+    /* Geometry: one vertex coordinate. */
+    f32(w+vtx+40+4,0.5f);assert(digest_of(w,n0)!=d0);f32(w+vtx+40+4,0);
+    /* Group flags (collision, alpha, owner bits share the field; the only
+     * group cannot turn non-solid here, OAL's tests change a solid box). */
+    u32(w+grp+12,HTA_EXTERNAL_GROUP_ALPHA);assert(digest_of(w,n0)!=d0);u32(w+grp+12,0);
+    /* Index order. */
+    u32(w+idx,1);u32(w+idx+4,0);assert(digest_of(w,n0)!=d0);u32(w+idx,0);u32(w+idx+4,1);
+    /* A spawn record. */
+    f32(w+spawn,.25f);assert(digest_of(w,n0)!=d0);f32(w+spawn,.2f);
+    /* World bounds in the header (nav is built inside them). */
+    f32(w+48,2);assert(digest_of(w,n0)!=d0);f32(w+48,1);
+    /* Texture pixels: appearance only, not in the key. */
+    w[tex+12]=7;assert(digest_of(w,n0)==d0);w[tex+12]=255;
+    assert(digest_of(w,n0)==d0);
+    free(w);
+    /* Manifest edits, each against the base. Played members change the
+     * key; provenance, reports and names do not. */
+    static const struct { const char *from, *to; bool same; } edits[]={
+        {"\"source_provenance\":\"ours\"","\"source_provenance\":\"somewhere else entirely\"",true},
+        {"\"importer_version\":\"original_world-0.1.0\"","\"importer_version\":\"original_world-9.9.9\"",true},
+        {"\"warnings\":[\"a\",\"b\"]","\"warnings\":[\"b\",\"a\"]",true},
+        {"\"display_name\":\"Lab\"","\"display_name\":\"Renamed Lab\",\"source_path\":\"/home/x/y.bsp\"",true},
+        {"\"spawn_points\":[{\"position\":[0.2,0.2,0],\"team\":null","\"spawn_points\":[{\"position\":[0.2,0.2,0],\"team\":1",false},
+        {"\"position\":[0.5,0.5,0.5]","\"position\":[0.5,0.5,0.75]",false},              /* placement */
+        {"\"move\":[0,1,0]","\"move\":[0,1.5,0]",false},                                  /* definition */
+        {"\"size\":[1,1,1]","\"size\":[1,1,1.25]",false},
+        {"\"speed\":1}","\"speed\":2}",false},
+        {"\"input\":\"open\"","\"input\":\"toggle\"",false},                               /* event link */
+        {"\"max\":[3,3,1]","\"max\":[3,3,1.5]",false},                                    /* trigger volume */
+        {"\"position\":[-1,-1,0]","\"position\":[-1,-1.5,0]",false},                      /* teleport destination */
+        {"\"yaw_degrees\":0}]","\"yaw_degrees\":90}]",false},
+    };
+    for(size_t i=0;i<sizeof(edits)/sizeof(edits[0]);i++){
+        static char man[4096];
+        const char *at=strstr(base,edits[i].from);assert(at);
+        snprintf(man,sizeof(man),"%.*s%s%s",(int)(at-base),base,edits[i].to,at+strlen(edits[i].from));
+        size_t n1;unsigned char *v=with_manifest(b,n,man,&n1);
+        uint64_t d1=digest_of(v,n1);
+        if((d1==d0)!=edits[i].same){fprintf(stderr,"world key: edit %zu (%s) %s\n",i,edits[i].to,edits[i].same?"changed the key":"kept the key");assert(0);}
+        free(v);
+    }
+    puts("  world key: covers geometry, groups, spawns, bounds, entities, definitions; not provenance or textures");
+}
+
 int main(void)
 {
     unsigned char b[64+120+12+16+12+16+16]={0};size_t n=sizeof(b);
@@ -101,7 +184,8 @@ int main(void)
         size_t g=64+ml+3*40+3*4;
         w[g+12]|=HTA_EXTERNAL_GROUP_ALPHA;
         assert(hta_external_map_load_memory(w,n+ml,&m,err,sizeof(err)));
-        assert(m.mesh.submeshes[0].draw_mode==HTA_DRAW_ALPHA&&m.solid_index_count==3&&m.key==key0);
+        /* Group records are in the world key whole (flags included). */
+        assert(m.mesh.submeshes[0].draw_mode==HTA_DRAW_ALPHA&&m.solid_index_count==3&&m.key!=key0);
         w[g+12]&=(unsigned char)~HTA_EXTERNAL_GROUP_ALPHA;
         uint32_t key=m.key;hta_external_map_free(&m);
         w[64+ml-40]^=1;assert(hta_external_map_load_memory(w,n+ml,&m,err,sizeof(err))&&m.key!=key);
@@ -129,6 +213,7 @@ int main(void)
         assert(hta_external_map_load_memory(w,n+ml,&m,err,sizeof(err))&&m.submesh_breakable[0]==0);
         hta_external_map_free(&m);free(w);
     }
+    world_key_tests(b,n);
     f=fopen(path,"r+b");assert(f);fseek(f,4,SEEK_SET);unsigned char bad[4]={2,0,0,0};assert(fwrite(bad,1,4,f)==4);fclose(f);
     assert(!hta_external_map_load(path,&m,err,sizeof(err)));
     f=fopen(path,"r+b");assert(f);fseek(f,4,SEEK_SET);unsigned char good_version[4]={1,0,0,0};assert(fwrite(good_version,1,4,f)==4);fseek(f,64+120,SEEK_SET);unsigned char bad_index[4]={99,0,0,0};assert(fwrite(bad_index,1,4,f)==4);fclose(f);

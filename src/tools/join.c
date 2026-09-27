@@ -338,6 +338,19 @@ static bool frame(join *j, hta_gfx *g, double now, float dt)
     return hta_gfx_draw(g, &cam, &sc, j->gpu_world, j->gpu_sky, NULL, dyn, n, NULL, NULL);
 }
 
+/* Every mover's state as this joiner has it, one line each. */
+static void movers(const join *j, const char *when)
+{
+    static const char *phase[] = { "closed", "opening", "open", "closing" };
+    for (uint32_t i = 0; j->went.loaded && i < j->went.defs->count; i++) {
+        if (j->went.defs->entity[i].kind != HTA_WDEF_MOVER) continue;
+        float off[3];
+        hta_went_offset(&j->went, i, off);
+        printf("join: %s mover %s %s (t %.2f, offset %.2f %.2f %.2f), %u world states\n", when, j->went.defs->entity[i].id,
+               phase[j->went.st[i].phase & 3], j->went.st[i].t, off[0], off[1], off[2], j->world_states);
+    }
+}
+
 /* One frame of play: input to prediction and to the host. */
 static void play(join *j, const hta_input *in, double now, float dt)
 {
@@ -350,8 +363,9 @@ static void play(join *j, const hta_input *in, double now, float dt)
         j->moved_by_host++;
         printf("join: the host moved us to (%.2f %.2f %.2f)\n", j->player.pos[0], j->player.pos[1], j->player.pos[2]);
     }
-    /* The host's movers; ours only animate between its words. */
-    if (hta_net_view_world_state(&j->view, &j->net, &j->went)) j->world_states++;
+    /* The host's movers; ours only animate between its words. The first
+     * word is the world as we found it on joining (state, not history). */
+    if (hta_net_view_world_state(&j->view, &j->net, &j->went) && ++j->world_states == 1) movers(j, "on joining");
     hta_went_step(&j->went, dt);
     hta_player_input pi = { in->move_forward, in->move_right, in->look_yaw, in->look_pitch,
                             in->jump, false, in->crouch };
@@ -592,14 +606,7 @@ int main(int argc, char **argv)
            j.net.reject_reason == HTA_NET_REJECT_FULL ? "REFUSED (full)" : "NOT connected", j.net.id, seen,
            j.view.kills, j.view.gibs, j.view.fx, j.view.corrections, j.view.team_score[0], j.view.team_score[1],
            broken, j.wfx_audio.played);
-    for (uint32_t i = 0; j.went.loaded && i < j.went.defs->count; i++) {
-        if (j.went.defs->entity[i].kind != HTA_WDEF_MOVER) continue;
-        static const char *phase[] = { "closed", "opening", "open", "closing" };
-        float off[3];
-        hta_went_offset(&j.went, i, off);
-        printf("join: mover %s %s (t %.2f, offset %.2f %.2f %.2f), %u world states\n", j.went.defs->entity[i].id,
-               phase[j.went.st[i].phase & 3], j.went.st[i].t, off[0], off[1], off[2], j.world_states);
-    }
+    movers(&j, "at the end:");
     if (j.went.loaded || j.moved_by_host)
         printf("join: moved by the host %u time(s); at (%.2f %.2f %.2f)%s\n", j.moved_by_host,
                j.player.pos[0], j.player.pos[1], j.player.pos[2], j.route_failed ? "; ROUTE FAILED" : "");

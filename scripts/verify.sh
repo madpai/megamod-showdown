@@ -63,6 +63,11 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
     if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x1.sh > scratch/test_x1.log 2>&1; then
       ok "X1 world: button->relay->door, trigger->teleport, late join, mismatch refused"
     else bad "X1 world: button->relay->door, trigger->teleport, late join, mismatch refused"; fi
+    # X2: one mover definition, three doors, two joiners; the world key
+    # through the real join check (geometry/definition refused, provenance not).
+    if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x2.sh > scratch/test_x2.log 2>&1; then
+      ok "X2 world: shared mover definition, independent doors, late join, world key refuses geometry/definition changes"
+    else bad "X2 world: shared mover definition, independent doors, late join, world key refuses geometry/definition changes"; fi
   fi
   if ./build-host/test_particle "$HTA_MAP" >/dev/null 2>&1; then ok "effect particles from the effect tags"; else bad "effect particles from the effect tags"; fi
   if ./build-host/test_vitals "$HTA_MAP" >/dev/null 2>&1; then ok "vitality and falling from the Trial tags"; else bad "vitality and falling from the Trial tags"; fi

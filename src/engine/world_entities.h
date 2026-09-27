@@ -3,9 +3,12 @@
  * with collision, triggers and teleports. X1: docs/WORLD_ENTITIES.md.
  *
  * Definition vs instance: `defs` is the package's immutable description
- * (borrowed); `st` is what changes during a match -- a mover's progress, a
- * trigger's occupants, an interactable's cooldown -- and a generation per
- * slot. Links are resolved at load into handles (slot + generation); every
+ * (borrowed, const: nothing here writes it); `st` is what changes during a
+ * match -- a mover's progress, a trigger's occupants, an interactable's
+ * cooldown -- and a generation per slot. A mover definition shared by
+ * several placed movers (X2) is built into ONE collision grid, which each
+ * of those movers places as its own collision instance at its own offset:
+ * opening one moves only its instance. Links are resolved at load into handles (slot + generation); every
  * dispatched event re-checks its handle, so an event queued before a round
  * restart cannot act on the new round's entity.
  *
@@ -73,12 +76,13 @@ typedef struct hta_world_entities {
     const hta_world_defs *defs;          /* borrowed, immutable */
     hta_went_state  st[HTA_WDEF_MAX_ENTITIES];
     hta_went_handle link_target[HTA_WDEF_MAX_LINKS];
-    /* movers: a box grid each, placed as a collision instance */
-    hta_bsp_mesh    mover_mesh[HTA_WDEF_MAX_ENTITIES];
-    hta_collision   mover_coll[HTA_WDEF_MAX_ENTITIES];
+    /* mover definitions: a box grid each (shared, built once at load) */
+    hta_bsp_mesh    mover_mesh[HTA_WDEF_MAX_MOVER_DEFS];
+    hta_collision   mover_coll[HTA_WDEF_MAX_MOVER_DEFS];
+    hta_vertex      mover_verts[HTA_WDEF_MAX_MOVER_DEFS][8];
+    uint32_t        mover_idx[HTA_WDEF_MAX_MOVER_DEFS][36];
+    /* placed movers: their definition's grid placed where they are */
     hta_collision_instance inst[HTA_WDEF_MAX_ENTITIES];
-    hta_vertex      mover_verts[HTA_WDEF_MAX_ENTITIES][8];
-    uint32_t        mover_idx[HTA_WDEF_MAX_ENTITIES][36];
     /* the queue: a ring */
     hta_went_event  queue[HTA_WENT_QUEUE];
     uint32_t        head, count, seq;

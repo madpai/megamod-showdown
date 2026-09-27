@@ -19,6 +19,15 @@
  * are resolved to entity indices here, once, and the runtime turns those
  * into generation-checked handles. Nothing compares IDs during play.
  *
+ * Mover definitions (X2, schema 2): a mover's shared, immutable behaviour
+ * -- the size of its box, how far and which way it slides, how fast -- is
+ * a `hta_wmover_def` with its own ID `namespace:mover/name`, and any
+ * number of placed movers reference one. A placement keeps only where it
+ * stands (`pos`, the closed box's centre) and its links; the reference is
+ * resolved to a definition index here, once. Schema 1 (X1) movers carry
+ * their parameters inline; the parser gives each an unnamed definition of
+ * its own, so the runtime has one path.
+ *
  * Portable C11, no allocation: everything is bounded by the limits below,
  * which Open Asset Lab's validator shares (assetlab/world.py). */
 #ifndef HTA_WORLD_DEF_H
@@ -28,7 +37,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define HTA_WDEF_SCHEMA 1u
+#define HTA_WDEF_SCHEMA 2u            /* newest understood; 1 (X1) still loads */
+#define HTA_WDEF_MAX_MOVER_DEFS 64u   /* one per mover at most (schema 1) */
+#define HTA_WDEF_NO_DEF 0xFFFFu
 #define HTA_WDEF_MAX_ENTITIES 64u
 #define HTA_WDEF_MAX_LINKS_PER 8u
 #define HTA_WDEF_MAX_LINKS 256u
@@ -60,17 +71,25 @@ typedef struct {
     uint16_t target;          /* entity index, resolved from its placed ID at load */
 } hta_wdef_link;
 
+/* A reusable mover: shared by every placement that names it. */
+typedef struct {
+    char     id[HTA_WDEF_ID_MAX + 1];  /* namespace:mover/name; "" for an X1 inline mover */
+    float    size[3];         /* the box's extent (wu); centred on the placement */
+    float    move[3];         /* offset when fully open */
+    float    speed;           /* wu/s */
+} hta_wmover_def;
+
 typedef struct {
     char     id[HTA_WDEF_ID_MAX + 1];
     uint8_t  kind;            /* hta_wdef_kind */
     uint8_t  link_count;
     uint16_t first_link;
-    float    pos[3];          /* interactable: where it is used; teleport: destination */
+    uint16_t def;             /* mover: its definition's index; else HTA_WDEF_NO_DEF */
+    float    pos[3];          /* interactable: where it is used; teleport: destination;
+                                 mover: its box's centre when closed */
     float    reach;           /* interactable: from the user's eye, wu */
     float    yaw;             /* teleport: facing on arrival, radians */
-    float    min[3], max[3];  /* trigger: its volume; mover: its box when closed */
-    float    move[3];         /* mover: offset when fully open */
-    float    speed;           /* mover: wu/s */
+    float    min[3], max[3];  /* trigger: its volume */
 } hta_wdef;
 
 typedef struct {
@@ -78,6 +97,9 @@ typedef struct {
     uint32_t      count;
     hta_wdef_link link[HTA_WDEF_MAX_LINKS];
     uint32_t      link_count;
+    hta_wmover_def mover_def[HTA_WDEF_MAX_MOVER_DEFS];
+    uint32_t      mover_def_count;
+    uint32_t      schema;     /* the section's schema (1 or 2) */
 } hta_world_defs;
 
 /* The "world_entities" section of an OALMAP manifest (canonical JSON). The
@@ -90,11 +112,24 @@ bool hta_world_defs_parse(const uint8_t *manifest, size_t len, hta_world_defs *o
 /* Every rule Open Asset Lab applies, again: IDs well-formed and unique,
  * links resolved, events the source emits, inputs the target accepts, no
  * self-link or cycle, chains within HTA_WDEF_MAX_CHAIN, finite bounded
- * parameters, no destination inside a trigger. */
+ * parameters, no destination inside a trigger; every mover names a valid
+ * definition, every definition is well-formed. */
 bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t errlen);
 
 /* Load-time lookup (never during play): the entity with this ID, or -1. */
 int32_t hta_world_defs_find(const hta_world_defs *d, const char *id);
+/* Load-time lookup: the mover definition with this ID, or -1. */
+int32_t hta_world_defs_find_mover(const hta_world_defs *d, const char *id);
+/* The mover definition a placed mover uses (NULL for any other kind). */
+const hta_wmover_def *hta_wdef_mover(const hta_world_defs *d, uint32_t entity);
+/* A placed mover's box when closed. */
+void hta_wdef_mover_box(const hta_world_defs *d, uint32_t entity, float min[3], float max[3]);
+
+/* Each top-level member of a canonical JSON manifest, in order: its key and
+ * the exact bytes of its value. False when the manifest is malformed. (The
+ * world key, external_map.c, hashes the members the runtime plays by.) */
+typedef void (*hta_manifest_member_fn)(void *ctx, const char *key, const uint8_t *value, size_t len);
+bool hta_manifest_members(const uint8_t *manifest, size_t len, hta_manifest_member_fn fn, void *ctx);
 
 bool hta_wdef_emits(uint8_t kind, uint8_t event);
 bool hta_wdef_accepts(uint8_t kind, uint8_t input);

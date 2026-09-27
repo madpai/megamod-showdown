@@ -78,9 +78,9 @@ int main(int argc, char **argv)
             failed = 1;
             continue;
         }
-        printf("world   %-16s %u triangles, %u textures, %u starts, %u breakables, key %08x\n", worlds[i],
+        printf("world   %-16s %u triangles, %u textures, %u starts, %u breakables, key %08x (digest %016llx)\n", worlds[i],
                s->mesh.index_count / 3, s->mesh.texture_count, s->world_ext.spawn_count,
-               s->world_ext.breakable_count, s->world_ext.key);
+               s->world_ext.breakable_count, s->world_ext.key, (unsigned long long)s->world_ext.digest);
         hta_bsp_free(&s->mesh);
         hta_external_map_free(&s->world_ext);
     }

@@ -193,6 +193,57 @@ static void flag_points(const unsigned char *m, size_t ml, hta_external_map *out
     }
 }
 
+/* ---- the world key (docs/WORLD_ENTITIES.md "World compatibility") ----
+ *
+ * What two peers must agree on to share this world: everything the runtime
+ * PLAYS by, taken from the package's own canonical bytes (Asset Lab writes
+ * them deterministically), never from re-derived values. FNV-1a 64 over
+ * this stream, in this order (schema HTA_WORLD_KEY_SCHEMA):
+ *
+ *   "OALW", u32 schema, u32 package version, u32 vertex/index/group/spawn
+ *   counts; the header's world bounds (24 bytes, nav is built inside them);
+ *   every vertex record, index, material-group record (flags, texture and
+ *   lightmap slots) and spawn record, as stored; then each manifest member
+ *   the runtime reads, in manifest order, as u32 key length, key, u32 value
+ *   length, the value's exact bytes.
+ *
+ * Manifest members read by the runtime -- keep in step with the parsers
+ * above and world_def.c: a key the runtime starts to play by must be added
+ * here. Everything else (source, provenance, importer version, reports,
+ * warnings, display name) is left out, so it cannot split two otherwise
+ * identical worlds. Texture pixels are left out too: they change how the
+ * world looks, not where anything is or what it does. */
+static const char *const PLAYED_KEYS[] = {
+    "breakables", "flag_points", "spawn_points", "weather", "world_entities",
+};
+
+typedef struct { uint64_t h; } key_fnv;
+
+static void kbytes(key_fnv *f, const void *p, size_t n)
+{
+    const uint8_t *b = p;
+    uint64_t h = f->h;
+    for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 1099511628211ull; }
+    f->h = h;
+}
+
+static void ku32(key_fnv *f, uint32_t v)
+{
+    uint8_t b[4] = { (uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24) };
+    kbytes(f, b, 4);
+}
+
+static void key_member(void *ctx, const char *key, const uint8_t *value, size_t len)
+{
+    for (size_t i = 0; i < sizeof(PLAYED_KEYS) / sizeof(PLAYED_KEYS[0]); i++)
+        if (!strcmp(key, PLAYED_KEYS[i])) {
+            key_fnv *f = ctx;
+            ku32(f, (uint32_t)strlen(key)); kbytes(f, key, strlen(key));
+            ku32(f, (uint32_t)len); kbytes(f, value, len);
+            return;
+        }
+}
+
 bool hta_external_map_load(const char *path, hta_external_map *out, char *err, size_t errlen)
 {
     if(!path||!out)return fail(err,errlen,"invalid arguments");
@@ -232,6 +283,7 @@ bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external
         if(!isfinite(out->mesh.bounds_min[k])||!isfinite(out->mesh.bounds_max[k])||out->mesh.bounds_max[k]<out->mesh.bounds_min[k]){fail(err,errlen,"invalid world bounds");goto done;}
     }
     if(!take(&at,ml,size)||vc>(size-at)/40){fail(err,errlen,"truncated vertices");goto done;}
+    size_t vtx_at=at;
     out->mesh.vertices=calloc(vc,sizeof(hta_vertex));
     if(!out->mesh.vertices){fail(err,errlen,"out of memory");goto done;}
     out->mesh.vertex_count=vc;
@@ -286,6 +338,7 @@ bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external
     if(out->solid_index_count<3){fail(err,errlen,"no solid geometry");goto done;}
     if(end!=ic){fail(err,errlen,"material groups do not cover indices");goto done;}
     at+=(size_t)gc*group_size;
+    size_t tex_at=at;
     out->mesh.textures=calloc(tc,sizeof(hta_bsp_texture));
     if(!out->mesh.textures){fail(err,errlen,"out of memory");goto done;}
     out->mesh.texture_count=tc;
@@ -300,6 +353,7 @@ bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external
         memcpy(t->rgba,data+at,n);at+=n;texture_bytes+=n;
     }
     if(sc>(size-at)/16){fail(err,errlen,"truncated spawn points");goto done;}
+    size_t spawn_at=at;
     if(sc){out->spawns=calloc(sc,sizeof(hta_spawn_point));if(!out->spawns){fail(err,errlen,"out of memory");goto done;}}
     out->spawn_count=sc;
     for(uint32_t i=0;i<sc;i++){
@@ -328,9 +382,23 @@ bool hta_external_map_load_memory(const uint8_t *data, size_t size, hta_external
     }
     /* A group naming a breakable the manifest does not list is plain scenery. */
     for(uint32_t i=0;i<gc;i++) if(out->submesh_breakable[i]>out->breakable_count) out->submesh_breakable[i]=0;
-    out->key=2166136261u;
-    for(uint32_t i=0;i<ml;i++) out->key=(out->key^data[64+i])*16777619u;
     if(at!=size){fail(err,errlen,"unexpected trailing package bytes");goto done;}
+    {
+        key_fnv f={14695981039346656037ull};
+        kbytes(&f,"OALW",4); ku32(&f,HTA_WORLD_KEY_SCHEMA); ku32(&f,version);
+        ku32(&f,vc); ku32(&f,ic); ku32(&f,gc); ku32(&f,sc);
+        kbytes(&f,data+36,24);
+        /* vertices, indices and groups are contiguous, before the textures */
+        kbytes(&f,data+vtx_at,tex_at-vtx_at);
+        kbytes(&f,data+spawn_at,(size_t)sc*16);
+        /* A manifest this reader cannot walk (none is written so) counts
+         * whole: a stricter key, never a looser one. */
+        key_fnv probe=f;
+        if(ml && hta_manifest_members(data+64,ml,key_member,&probe)) f=probe;
+        else if(ml){ kbytes(&f,"RAW",3); ku32(&f,ml); kbytes(&f,data+64,ml); }
+        out->digest=f.h?f.h:1u;
+        out->key=hta_world_key_fold(out->digest);
+    }
     out->mesh.ambient[0]=out->mesh.ambient[1]=out->mesh.ambient[2]=0.8f;
     ok=true;
 done:

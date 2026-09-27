@@ -31,41 +31,55 @@ static void resolve_links(hta_world_entities *w)
         w->link_target[i] = hta_went_handle_of(w, w->defs->link[i].target);
 }
 
+/* A placed mover's definition. Resolved (and checked) at load: an index,
+ * never a name. */
+static const hta_wmover_def *mdef(const hta_world_entities *w, uint32_t i)
+{
+    return &w->defs->mover_def[w->defs->entity[i].def];
+}
+
 static void place(hta_world_entities *w, uint32_t i)
 {
     const hta_wdef *d = &w->defs->entity[i];
+    const hta_wmover_def *m = mdef(w, i);
     hta_collision_instance *in = &w->inst[i];
-    for (int k = 0; k < 3; k++) in->pos[k] = (d->min[k] + d->max[k]) * 0.5f + d->move[k] * w->st[i].t;
+    for (int k = 0; k < 3; k++) in->pos[k] = d->pos[k] + m->move[k] * w->st[i].t;
 }
 
-static bool mover_build(hta_world_entities *w, uint32_t i)
+/* Definition `di`'s box grid, in its own space around the centre. */
+static bool def_build(hta_world_entities *w, uint32_t di)
 {
-    const hta_wdef *d = &w->defs->entity[i];
+    const hta_wmover_def *md = &w->defs->mover_def[di];
     float h[3];
-    for (int k = 0; k < 3; k++) h[k] = (d->max[k] - d->min[k]) * 0.5f;
-    hta_vertex *v = w->mover_verts[i];
-    memset(v, 0, sizeof(w->mover_verts[i]));
+    for (int k = 0; k < 3; k++) h[k] = md->size[k] * 0.5f;
+    hta_vertex *v = w->mover_verts[di];
+    memset(v, 0, sizeof(w->mover_verts[di]));
     for (int c = 0; c < 8; c++)
         for (int k = 0; k < 3; k++) v[c].pos[k] = (c >> k) & 1 ? h[k] : -h[k];
     static const uint32_t ix[36] = {
         0,2,3, 0,3,1,  4,5,7, 4,7,6,  0,1,5, 0,5,4,
         2,6,7, 2,7,3,  0,4,6, 0,6,2,  1,3,7, 1,7,5,
     };
-    memcpy(w->mover_idx[i], ix, sizeof(ix));
-    hta_bsp_mesh *m = &w->mover_mesh[i];
+    memcpy(w->mover_idx[di], ix, sizeof(ix));
+    hta_bsp_mesh *m = &w->mover_mesh[di];
     memset(m, 0, sizeof(*m));
     m->vertices = v; m->vertex_count = 8;
-    m->indices = w->mover_idx[i]; m->index_count = 36;
+    m->indices = w->mover_idx[di]; m->index_count = 36;
     for (int k = 0; k < 3; k++) { m->bounds_min[k] = -h[k]; m->bounds_max[k] = h[k]; }
-    if (!hta_collision_build(&w->mover_coll[i], m)) return false;
+    return hta_collision_build(&w->mover_coll[di], m);
+}
+
+/* Placed mover `i`: its own instance of its definition's grid. */
+static void mover_place_init(hta_world_entities *w, uint32_t i)
+{
+    const hta_wmover_def *md = mdef(w, i);
     hta_collision_instance *in = &w->inst[i];
     memset(in, 0, sizeof(*in));
     in->rot[0] = in->rot[4] = in->rot[8] = 1.0f;
-    in->grid = &w->mover_coll[i];
-    in->radius = sqrtf(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]) + 0.05f;
+    in->grid = &w->mover_coll[w->defs->entity[i].def];
+    in->radius = 0.5f * sqrtf(md->size[0] * md->size[0] + md->size[1] * md->size[1] + md->size[2] * md->size[2]) + 0.05f;
     in->active = true;
     place(w, i);
-    return true;
 }
 
 bool hta_went_load(hta_world_entities *w, const hta_world_defs *defs, char *err, size_t errlen)
@@ -76,12 +90,15 @@ bool hta_went_load(hta_world_entities *w, const hta_world_defs *defs, char *err,
     if (!hta_world_defs_check(defs, err, errlen)) return false;
     w->defs = defs;
     for (uint32_t i = 0; i < defs->count; i++) w->st[i].generation = 1;
-    for (uint32_t i = 0; i < defs->count; i++)
-        if (defs->entity[i].kind == HTA_WDEF_MOVER && !mover_build(w, i)) {
-            if (err && errlen) snprintf(err, errlen, "%s: mover collision failed", defs->entity[i].id);
+    for (uint32_t k = 0; k < defs->mover_def_count; k++)
+        if (!def_build(w, k)) {
+            if (err && errlen) snprintf(err, errlen, "%s: mover collision failed",
+                                        defs->mover_def[k].id[0] ? defs->mover_def[k].id : "(inline mover)");
             hta_went_free(w);
             return false;
         }
+    for (uint32_t i = 0; i < defs->count; i++)
+        if (defs->entity[i].kind == HTA_WDEF_MOVER) mover_place_init(w, i);
     resolve_links(w);
     w->loaded = true;
     w->version++;
@@ -92,7 +109,7 @@ void hta_went_free(hta_world_entities *w)
 {
     if (!w) return;
     /* Every slot: `defs` may already be gone (a world unloaded first). */
-    for (uint32_t i = 0; i < HTA_WDEF_MAX_ENTITIES; i++) hta_collision_free(&w->mover_coll[i]);
+    for (uint32_t i = 0; i < HTA_WDEF_MAX_MOVER_DEFS; i++) hta_collision_free(&w->mover_coll[i]);
     uint32_t version = w->version;
     memset(w, 0, sizeof(*w));
     w->version = version + 1;
@@ -279,8 +296,9 @@ void hta_went_step(hta_world_entities *w, float dt)
         if (s->cooldown > 0.0f) s->cooldown -= dt;
         if (d->kind != HTA_WDEF_MOVER) continue;
         if (s->phase == HTA_MOVER_OPENING || s->phase == HTA_MOVER_CLOSING) {
-            float len = sqrtf(d->move[0] * d->move[0] + d->move[1] * d->move[1] + d->move[2] * d->move[2]);
-            float step = d->speed / len * dt;
+            const hta_wmover_def *m = mdef(w, i);
+            float len = sqrtf(m->move[0] * m->move[0] + m->move[1] * m->move[1] + m->move[2] * m->move[2]);
+            float step = m->speed / len * dt;
             if (s->phase == HTA_MOVER_OPENING) {
                 s->t += step;
                 if (s->t >= 1.0f) { s->t = 1.0f; s->phase = HTA_MOVER_OPEN; w->version++; }
@@ -305,7 +323,8 @@ void hta_went_offset(const hta_world_entities *w, uint32_t index, float out[3])
 {
     out[0] = out[1] = out[2] = 0.0f;
     if (!w || !w->loaded || index >= w->defs->count) return;
-    for (int k = 0; k < 3; k++) out[k] = w->defs->entity[index].move[k] * w->st[index].t;
+    if (w->defs->entity[index].kind != HTA_WDEF_MOVER) return;
+    for (int k = 0; k < 3; k++) out[k] = mdef(w, index)->move[k] * w->st[index].t;
 }
 
 uint32_t hta_went_snapshot(const hta_world_entities *w, hta_went_mover_state *out, uint32_t cap)
