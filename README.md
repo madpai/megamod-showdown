@@ -1,5 +1,8 @@
 <div align="center">
 
+<img src="docs/images/megamod-showdown-logo.png" alt="MegaMod Showdown" width="320">
+<img src="docs/images/megamod-engine-logo.png" alt="MegaMod Engine" width="320">
+
 # MEGAMOD SHOWDOWN
 
 *The official reference game, playground and stress test for **MegaMod
