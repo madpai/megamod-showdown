@@ -46,7 +46,18 @@ v3, `world_entities` **schema 3** (OAL `docs/RUNTIME_PACKAGE.md`).
 - **References resolve once, at load:** an interactable's `script` and the
   world's `ability_script` become indices; a script's `world.entity(id)`
   runs only while the script loads and returns a handle. Nothing looks a
-  name up during play. **TESTED.**
+  name up during play. **TESTED.** Since X4 these are typed references in
+  the shared substrate ([RESOURCES.md](RESOURCES.md)): a script field
+  refuses a mover or a placed entity by name and type, and
+  `world.entity` says what an ID is when it is not an entity.
+- **Imported scripts (X4):** a world that declares a package may import
+  scripts from a **library package** it requires (`"ability_script":
+  "x4shared:script/pulse_ability"`, provided by `x4.shared`). The loader
+  copies each imported script into the world's table after its own, in
+  canonical order, marked with its provider; from there it runs exactly as
+  the world's own -- same sandbox, limits (16 scripts, 64 KB in all) and
+  host-only rule. Its bytes are in the world key through the library's
+  digest.
 - **Versioned:** each script declares `"api": "megamod.v1"`; any other
   version is refused ("unsupported script API 'megamod.v2' (this engine
   has megamod.v1)"). Callbacks are declared, and a declared callback the
@@ -200,7 +211,8 @@ effects travel as the state they change: WORLD_STATE for movers, WORLD
 for players, GAME for kills. Late joiners get current state, never script
 history. **TESTED** (`test_x3.sh`: joiner B finds door A open).
 
-Scripts live inside `world_entities`, which the world key already covers
+Scripts live inside `world_entities` (or, imported, inside a required
+library, whose digest the key includes since X4), which the world key covers
 byte for byte (docs/WORLD_ENTITIES.md "World compatibility"). So: same
 scripts, same key; a one-character change, **a comment-only change**, a
 different callback list or a different script on a button: a different

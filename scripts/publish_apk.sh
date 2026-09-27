@@ -75,8 +75,9 @@ if [ "$BUILD" = 1 ]; then
       ln "$f" "$STAGE/maps/" 2>/dev/null || cp "$f" "$STAGE/maps/"
       echo "bundling imported map $base"
     done
-    # Imported characters and weapons (.oalasset), same private source.
-    for kind in characters weapons sounds; do
+    # Imported characters and weapons (.oalasset), same private source, and
+    # the library packages worlds require (X4: packages/<id>.oalasset).
+    for kind in characters weapons sounds packages; do
       for f in "$HTA_IMPORTED/$kind"/*.oalasset; do
         [ -f "$f" ] || continue
         mkdir -p "$STAGE/$kind"
@@ -120,7 +121,7 @@ if [ "$BUILD" = 1 ] && [ "$WITH_ASSETS" = 1 ]; then
   echo "building asset-free guest APK…"
   (cd android && $GRADLE --no-daemon -q :app:clean :app:assembleDebug \
       -PhtaVersionCode="$(git rev-list --count HEAD)" -PhtaVersionName="$SOURCE")
-  if unzip -Z1 "$APK" | grep -qE '^assets/(maps|characters|weapons|sounds)/'; then
+  if unzip -Z1 "$APK" | grep -qE '^assets/(maps|characters|weapons|sounds|packages)/'; then
     echo "guest APK unexpectedly contains Trial maps" >&2; exit 1
   fi
   cp "$APK" "$ROOT/megamod-showdown-guest.apk"

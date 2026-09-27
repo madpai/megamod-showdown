@@ -195,6 +195,22 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-27 X4: resource identity and package dependencies
+(docs/RESOURCES.md).** Infrastructure, not a feature: one ID grammar and
+type registry (`src/asset/resource.c`), typed references resolved once at
+load, `package` declarations with provides/requires, library packages
+(`packages/<id>.oalasset`) and a checked package graph
+(`src/asset/package.c`), the world key over dependencies, and
+`megamod-resources` (contract, conformance corpus, a world validator). OAL's
+`x4_resource_lab` requires library `x4.shared`: the button runs the world's
+own script, the ability runs the library's. X1-X3 packages and every
+imported map keep their bytes and keys. Checked: host tests, ASan/UBSan
+(unit + X1-X4 end to end), ndkcheck, verify.sh, `scripts/test_x4.sh`, the
+emulator hosting X4 (see RESOURCES.md). **Phone check (optional):** the
+personal APK needs `$HTA_IMPORTED/packages/x4.shared.oalasset` beside
+`x4_resource_lab.oalmap` (publish_apk.sh bundles `packages/`); host it, press
+the purple button (door A opens), ABILITY near another player (they die).
+
 **2026-09-27 X3: host-side Lua (docs/SCRIPTING.md).** OAL's
 `x3_script_lab`: the purple button has no links -- the host's Lua
 `on_used` asks the engine to open door A; the ABILITY button (shown for
@@ -1677,6 +1693,7 @@ wrong, this list is the first place to look — they are all one constant.
 | constant | value | what it is |
 |---|---|---|
 | imported-map daylight | dir (0.35,0.4,0.85), ambient 0.7 | packages carry no lightmaps |
+| package limits (X4) | 256 provides, 16 requires, 64 imports, 16 packages, depth 8, 512 resources/set | `asset/package.h`, `resource.h`: bounds on untrusted declarations |
 | bot item give-up | 1.5 s / 25 s, off 30 s | `brain.c`, unreachable items |
 | failed-path retry wait | 1 s per goal node | `brain.c` `plan_wait` |
 | imported spawn lift | 0.1 wu | `HTA_EXTERNAL_SPAWN_LIFT`: packages ground starts |
@@ -1976,6 +1993,7 @@ Put them in the session scratchpad, not the repo. Relink after every rebuild.
 | `docs/ANDROID_PORT_INVESTIGATION.md` | the original feasibility work |
 | `docs/PROGRESS.md` | early milestone log |
 | `docs/ENGINE_ARCHITECTURE.md` | layers, what is reusable, the staged plan to move the game loop out of `platform_android.c` |
+| `docs/RESOURCES.md` | X4: resource IDs, the type registry, typed references, packages, dependencies, the world key over them |
 
 ---
 

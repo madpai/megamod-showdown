@@ -22,6 +22,7 @@ if ./build-host/test_vehicle >/dev/null 2>&1; then ok "vehicle driving and colli
 if ./build-host/test_model >/dev/null 2>&1; then ok "model UV and lighting tests"; else bad "model UV and lighting tests"; fi
 if ./build-host/test_bsp    >/dev/null 2>&1; then ok "bsp extraction tests"; else bad "bsp extraction tests"; fi
 if ./build-host/test_external_map >/dev/null 2>&1; then ok "external map package loader and collision"; else bad "external map package loader and collision"; fi
+if ./build-host/test_resource >/dev/null 2>&1; then ok "resource IDs, typed references, package graph, world key over dependencies"; else bad "resource IDs, typed references, package graph, world key over dependencies"; fi
 if ./build-host/test_oal_asset >/dev/null 2>&1; then ok "imported characters and weapons: load, pose, skin, hold"; else bad "imported characters and weapons: load, pose, skin, hold"; fi
 if ./build-host/test_external_world >/dev/null 2>&1; then ok "imported map: starts, flags and items on the reachable ground"; else bad "imported map: starts, flags and items on the reachable ground"; fi
 if ./build-host/test_camera >/dev/null 2>&1; then ok "camera/projection tests"; else bad "camera/projection tests"; fi
@@ -73,6 +74,12 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
     if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x3.sh > scratch/test_x3.log 2>&1; then
       ok "X3 world: host Lua on_used -> door, on_ability -> native damage, late join, modified script refused"
     else bad "X3 world: host Lua on_used -> door, on_ability -> native damage, late join, modified script refused"; fi
+    # X4: resource identity and a package dependency -- the world's own
+    # script and one imported from a library package, typed references,
+    # every refusal (OAL and engine alike), the library in the world key.
+    if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x4.sh > scratch/test_x4.log 2>&1; then
+      ok "X4 world: typed resources, imported library script, refusals, library in the world key"
+    else bad "X4 world: typed resources, imported library script, refusals, library in the world key"; fi
   fi
   if ./build-host/test_particle "$HTA_MAP" >/dev/null 2>&1; then ok "effect particles from the effect tags"; else bad "effect particles from the effect tags"; fi
   if ./build-host/test_vitals "$HTA_MAP" >/dev/null 2>&1; then ok "vitality and falling from the Trial tags"; else bad "vitality and falling from the Trial tags"; fi

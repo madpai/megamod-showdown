@@ -58,6 +58,14 @@ lowercase `[a-z][a-z0-9_]*` segments, namespace <= 40, name <= 48, whole
 <= 96 bytes; every placed ID is in the world's own namespace
 (`x1:world/event_lab` -> `x1:entity/...`); unique within the world.
 
+Since X4 the grammar, the type registry and every reference's resolution
+are the shared resource substrate ([RESOURCES.md](RESOURCES.md)): a link
+target, a mover's definition and a script reference each go through the
+one typed resolver, which refuses the wrong type ("link target
+x3:script/button_logic is a script, expected a placed entity") and a
+missing one ("references missing placed entity x1:entity/relay_mian" --
+X1-X3 said "missing target"). Nothing else about placed IDs changed.
+
 Placed IDs are **load-time only**. They do not cross the network: the map
 check covers the whole `world_entities` section (the world key, X2), so two admitted peers built the
 same definition table in the same order, and a dense entity index is a safe
@@ -321,6 +329,12 @@ weather, every world entity (placement, kind, links, trigger volume,
 teleport destination and facing, interactable reach) and every mover
 definition. A manifest the reader cannot walk is hashed whole (stricter,
 never looser).
+
+**X4 addition:** the `package` member (a world's declaration: its package
+ID, provides and requires) is played too, and a world that requires library
+packages also hashes each one's digest, in package-ID order
+([RESOURCES.md](RESOURCES.md#compatibility-identity)). No pre-X4 package has
+a `package` member, so every X1-X3 and imported-map key is unchanged.
 
 **Excluded:** every other manifest member -- `source_provenance`,
 `source_reference`, `source_sha256`, `importer_version`, `display_name`,

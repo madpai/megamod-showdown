@@ -19,7 +19,10 @@ same order. So a joiner is admitted only when:
    the package's played content -- every vertex, index, material-group and
    spawn record as stored, the header's world bounds, and the manifest
    members the runtime reads (`spawn_points`, `flag_points`, `breakables`,
-   `weather`, `world_entities`) -- folded to 32 bits. Provenance, reports,
+   `weather`, `world_entities`, and since X4 `package`) plus, for a world
+   that requires library packages, each library's digest in package-ID
+   order ([RESOURCES.md](RESOURCES.md#compatibility-identity)) -- folded to
+   32 bits. Provenance, reports,
    names and texture pixels are left out. Exact coverage:
    [WORLD_ENTITIES.md, "World compatibility"](WORLD_ENTITIES.md#world-compatibility-x2).
    (Before X2 the key was FNV-1a of the whole manifest: it missed binary
@@ -50,6 +53,7 @@ refused ("not the host's map").
 | World entities (X1: WORLD_STATE mover index) | OALMAP v3 manifest `world_entities` | manifest order | map check (the world key covers every entity, link, mover definition and the drawn geometry; [WORLD_ENTITIES.md](WORLD_ENTITIES.md)) |
 | Mover definitions (X2) | `world_entities.mover_definitions` | resolved to an index at load; never on the wire | map check (world key) |
 | Scripts (X3, host only) | `world_entities.scripts` (source bytes), `script`, `ability_script` | resolved at load; never on the wire; joiners never run them | map check (world key hashes the packaged source bytes: a comment-only change refuses too; [SCRIPTING.md](SCRIPTING.md)) |
+| Imported scripts (X4, host only) | a required library's `scripts`, named in the world's `package.requires` | appended after the world's own at load, canonical order (package ID, then resource ID); never on the wire | map check (the world key includes the world's `package` member and every required library's digest) |
 | Units, peers, flag carrier, winner | runtime slots | host-assigned | host-authoritative, not content |
 
 Imported weapons whose `base` is not found are dropped on every peer alike
