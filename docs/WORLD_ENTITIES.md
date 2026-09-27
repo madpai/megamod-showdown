@@ -366,6 +366,7 @@ report any value.
 | `tests/test_compat.c` | exact-float fingerprint: 1.2 vs 1.20001 and one ulp differ, -0 == 0 |
 | `scripts/test_x2.sh` (in `verify.sh`) | OAL builds the X2 world; engine key == OAL key; host + joiner A (both shut on joining; B blocks; opens A; walks through A; teleported once) + late joiner B (finds A open, B shut, C shut; opens B; walks through) -> host, A and B all end A open, B open, C shut; a changed-definition package and a changed-geometry package **with a byte-identical manifest** are refused before spawn; a provenance-only package is admitted |
 | OAL `tests/test_world.py` | X2 fixture (schema 2, determinism, groups), every definition diagnostic, X1 still schema 1; world key: same/rebuild equal, 14 gameplay edits change it, name/colour/provenance do not |
+| Emulator (Android 14 x86_64, build a55dc33) | the APK hosts X2: renders the three doors; its own player opens door A with the action button; desktop joiners through `scripts/emu/udprelay.py` (now one upstream socket per joiner): A opens A, late B finds A open / B shut / C shut and opens B, both end A+B open, C shut; definition and geometry variants refused, provenance variant admitted |
 
 ### X2 limitations
 

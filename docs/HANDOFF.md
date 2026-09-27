@@ -195,6 +195,23 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-26 X2: one mover definition, many doors; the world key
+(docs/WORLD_ENTITIES.md "X2").** OAL's `x2_definition_lab` places
+`x2:mover/basic_slide_door` three times (world_entities schema 2, OALMAP v3
+kept); each door has its own state. The map check's package half is now the
+**world key** (geometry, collision flags, spawns, every played manifest
+member; not provenance or textures). Content fingerprint floats are now
+exact (schema 2). Old and new builds refuse each other. Checked: host tests
+x3, ASan/UBSan (unit and both end-to-end scripts), ndkcheck, verify.sh,
+`scripts/test_x2.sh`, and **the emulator APK hosting X2**: its own player
+pressed button A (door A opened, B shut); then desktop joiner A opened A,
+late joiner B found A open / B shut / C shut and opened B, both ended A+B
+open, C shut; changed-definition and changed-geometry packages refused, a
+provenance-only package admitted; gm_construct singleplayer unchanged.
+**Phone check (not required for X2):** host `x2_definition_lab`, press the
+red button right of the door you face: only that door slides away; a
+second phone joining sees each door as it is.
+
 **2026-09-26 X1: generic world entities (docs/WORLD_ENTITIES.md).** The
 first world whose behaviour is not Halo's or Source's: Open Asset Lab's
 original `x1_event_lab` (OALMAP v3). Button -> relay -> door, trigger ->
