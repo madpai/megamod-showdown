@@ -123,6 +123,10 @@ typedef enum {
     HTA_REF_ABILITY_SCRIPT,   /* world_entities.ability_script */
     HTA_REF_LUA_ENTITY,       /* world.entity(id) while a script loads */
     HTA_REF_REQUIRE,          /* package.requires[].resources[] */
+    HTA_REF_MATERIAL_TEXTURE, /* assets.materials[].texture (X5) */
+    HTA_REF_MODEL_MATERIAL,   /* assets.models[].materials[] (X5) */
+    HTA_REF_PROP_MODEL,       /* world_entities.entities[].model (X5) */
+    HTA_REF_MOVER_SOUND,      /* world_entities.mover_definitions[].sound (X5) */
     HTA_REF_FIELD_COUNT
 } hta_ref_field;
 

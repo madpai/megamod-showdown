@@ -43,6 +43,7 @@
 #include "game/world_fx_audio.h"
 #include "game/world_fx_gpu.h"
 #include "game/world_entities_gpu.h"
+#include "game/world_sounds.h"
 #include "gfx/gfx.h"
 #include "platform/audio_sdl.h"
 #include "platform/desktop_sdl.h"
@@ -99,6 +100,7 @@ typedef struct {
     /* the world's entities: the host runs them, we draw its movers */
     hta_world_entities went;
     hta_went_gpu went_gpu;
+    hta_world_sounds sounds;          /* X5: the world's sound resources */
     uint32_t world_states;
     float    last_vitals;
     bool     vitals_seen, was_alive;
@@ -111,6 +113,8 @@ typedef struct {
     uint32_t moved_by_host, moved_at_step;
     float last_pos[3];
 } join;
+
+static uint32_t props_of(const join *j);
 
 /* The Trial map from --map, else maps/bloodgulch.map through `fs`; the
  * world from --oalmap, else --world's maps/NAME.oalmap through `fs` (the
@@ -195,6 +199,22 @@ static void setup_effects(join *j)
     j->went.remote = true;                          /* the host runs them */
     if (j->went.loaded)
         printf("join: %u world entities, %u links\n", j->went.defs->count, j->went.defs->link_count);
+    if (j->have_ext) {
+        const hta_asset_table *a = &j->ext.assets;
+        uint32_t bound = hta_world_sounds_bind(&j->sounds, &j->audio, a);
+        if (a->texture_count || a->material_count || a->model_count || a->sound_count) {
+            printf("join: assets: %u textures, %u materials, %u models, %u sounds, %u props, %u sounds bound\n",
+                   a->texture_count, a->material_count, a->model_count, a->sound_count, props_of(j), bound);
+            for (uint32_t i = 0; j->went.loaded && i < j->went.defs->count; i++) {
+                const hta_wdef *e = &j->went.defs->entity[i];
+                if (e->kind != HTA_WDEF_PROP) continue;
+                const hta_asset_model *m = &a->model[e->model - 1];
+                printf("join: prop %s: model %s (index %u, from %s), %u triangles, material %s, texture %s\n", e->id, m->id,
+                       e->model - 1u, j->ext.package.dep[m->provider - 1], m->mesh.index_count / 3,
+                       a->material[m->slot[0]].id, a->texture[a->material[m->slot[0]].texture].id);
+            }
+        }
+    }
     if (!hta_wfx_init(&j->wfx, &j->col, &j->video)) return;
     hta_wfx_load_map(&j->wfx, j->have_ext ? &j->ext : NULL, 0.0f);
     j->wfx.props.remote = true;                     /* the host breaks them */
@@ -211,6 +231,13 @@ static void setup_effects(join *j)
     j->box_verts = calloc((size_t)j->box_slots * 24u, sizeof(hta_vertex));
 }
 
+static uint32_t props_of(const join *j)
+{
+    uint32_t n = 0;
+    for (uint32_t i = 0; j->went.loaded && i < j->went.defs->count; i++) n += j->went.defs->entity[i].kind == HTA_WDEF_PROP;
+    return n;
+}
+
 static void upload(join *j, hta_gfx *g)
 {
     char err[256];
@@ -220,7 +247,9 @@ static void upload(join *j, hta_gfx *g)
     if (j->wfx.ready) hta_wfx_gpu_upload(&j->wfx, g);
     if (j->box_verts) j->gpu_boxes = hta_gfx_mesh_upload_dynamic_world(g, &j->boxes, err, sizeof(err));
     if (j->went.loaded && j->gpu_world)
-        hta_went_gpu_upload(&j->went_gpu, g, &j->mesh, j->gpu_world, j->ext.submesh_entity, &j->went);
+        hta_went_gpu_upload(&j->went_gpu, g, &j->mesh, j->gpu_world, j->ext.submesh_entity, &j->went, &j->ext.assets);
+    if (j->went_gpu.models_uploaded)
+        printf("join: %u props drawn with %u models from the package set\n", props_of(j), j->went_gpu.models_uploaded);
 }
 
 /* The host's props that break and return hide and show their faces. */
@@ -376,6 +405,17 @@ static void play(join *j, const hta_input *in, double now, float dt)
      * word is the world as we found it on joining (state, not history). */
     if (hta_net_view_world_state(&j->view, &j->net, &j->went) && ++j->world_states == 1) movers(j, "on joining");
     hta_went_step(&j->went, dt);
+    /* X5: a mover the host started sounds here too, from its state. */
+    if (j->went.cue_count) {
+        float fwd[3];
+        hta_camera_forward(&j->cam, fwd);
+        float right[3] = { fwd[1], -fwd[0], 0.0f }, len = sqrtf(right[0] * right[0] + right[1] * right[1]);
+        if (len > 1e-4f) { right[0] /= len; right[1] /= len; } else right[0] = 1.0f;
+        hta_world_sounds_play(&j->sounds, &j->audio, &j->went, j->cam.pos, right);
+        for (uint32_t k = 0; k < j->went.cue_count; k++)
+            printf("join: sound %s: %s started moving\n", j->ext.assets.sound[j->went.cues[k].sound].id,
+                   j->went.defs->entity[j->went.cues[k].entity].id);
+    }
     hta_player_input pi = { in->move_forward, in->move_right, in->look_yaw, in->look_pitch,
                             in->jump, false, in->crouch };
     if (!j->view.me_alive && j->net.connected && j->view.me >= 0) {
@@ -641,6 +681,7 @@ int main(int argc, char **argv)
     hta_net_client_close(&j.net);
     hta_audio_sdl_stop();
     hta_wfx_audio_free(&j.wfx_audio);
+    hta_world_sounds_free(&j.sounds);       /* after the mixer has stopped */
     for (uint32_t i = 0; i < HTA_NET_MAX_ENTITIES; i++)
         if (j.actor_loaded[i]) { hta_gfx_mesh_free(g, j.actor_gpu[i]); hta_actor_free(&j.actor[i]); }
     if (j.gpu_boxes) hta_gfx_mesh_free(g, j.gpu_boxes);
@@ -650,5 +691,6 @@ int main(int argc, char **argv)
     if (j.gpu_sky) hta_gfx_mesh_free(g, j.gpu_sky);
     if (j.gpu_world) hta_gfx_mesh_free(g, j.gpu_world);
     if (d) hta_desktop_close(d); else hta_gfx_destroy(g);
+    if (j.have_ext) hta_external_map_free(&j.ext);   /* the asset table (its mesh moved out) */
     return ok ? 0 : 1;
 }

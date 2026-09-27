@@ -69,8 +69,10 @@ static void ids(void)
         { "x4:script/d\xc3\xb6r", HTA_RID_MALFORMED, "name has \\xc3" },
         { "x4:widget/door", HTA_RID_UNKNOWN_TYPE, "unknown resource type 'widget'" },
         { "x4:scripts/door", HTA_RID_UNKNOWN_TYPE, "unknown resource type 'scripts'" },
-        { "showdown:model/red_crate", HTA_RID_RESERVED_TYPE, "resource type 'model' is reserved" },
-        { "common:material/industrial_metal", HTA_RID_RESERVED_TYPE, "reserved" },
+        { "showdown:prefab/security_door", HTA_RID_RESERVED_TYPE, "resource type 'prefab' is reserved" },
+        { "common:animation/rifle_run", HTA_RID_RESERVED_TYPE, "reserved" },
+        { "showdown:model/red_crate", HTA_RID_OK, "" },            /* X5: supported */
+        { "common:material/industrial_metal", HTA_RID_OK, "" },
         { "showdown:prefab/security_door", HTA_RID_RESERVED_TYPE, "reserved" },
         { "showdown:ruleset/team_deathmatch", HTA_RID_RESERVED_TYPE, "reserved" },
         { "community:animation/rifle_run", HTA_RID_RESERVED_TYPE, "reserved" },
@@ -95,7 +97,8 @@ static void ids(void)
     CHECK(hta_rid_parse(huge, &r, why, sizeof(why)) == HTA_RID_MALFORMED);
     CHECK(hta_rid_parse(NULL, &r, why, sizeof(why)) == HTA_RID_MALFORMED);
     CHECK(hta_rid_is("x1:entity/a", HTA_RT_ENTITY) && !hta_rid_is("x1:entity/a", HTA_RT_SCRIPT) &&
-          !hta_rid_is("x1:model/a", HTA_RT_MODEL));
+          hta_rid_is("x1:model/a", HTA_RT_MODEL) && !hta_rid_is("x1:model/a", HTA_RT_MATERIAL) &&
+          !hta_rid_is("x1:prefab/a", HTA_RT_PREFAB));
     CHECK(hta_rid_same_namespace("x4:script/a", "x4:entity/b") && !hta_rid_same_namespace("x4:script/a", "x44:script/a"));
 
     /* Package IDs: a grammar of their own, never a resource ID. */
@@ -132,7 +135,11 @@ static void registry(void)
         CHECK(!(i->importable && i->status != HTA_RT_SUPPORTED));
         CHECK(!(i->importable && i->scope == HTA_RS_PLACEMENT));
     }
-    CHECK(supported == 7 && reserved == 7 && importable == 1 && hta_rtype_get(HTA_RT_SCRIPT)->importable);
+    /* X5: model, material, texture and sound are supported and importable;
+     * animation, prefab and ruleset stay reserved. */
+    CHECK(supported == 11 && reserved == 3 && importable == 5 && hta_rtype_get(HTA_RT_SCRIPT)->importable &&
+          hta_rtype_get(HTA_RT_MODEL)->importable && hta_rtype_get(HTA_RT_SOUND)->importable &&
+          !hta_rtype_get(HTA_RT_SOUNDS)->importable && hta_rtype_get(HTA_RT_PREFAB)->status == HTA_RT_RESERVED);
     CHECK(!hta_rtype_get(0) && !hta_rtype_get(HTA_RT_COUNT) && hta_rtype_find("", 0) == HTA_RT_NONE);
     for (uint8_t f = 0; f < HTA_REF_FIELD_COUNT; f++) {
         const hta_ref_info *r = hta_ref_get(f);
@@ -141,7 +148,7 @@ static void registry(void)
     }
     CHECK(hta_rid_reserved_namespace("megamod", 7) && hta_rid_reserved_namespace("halo_trial", 10) &&
           !hta_rid_reserved_namespace("megamod2", 8));
-    puts("  registry: every type round-trips, one importable type, reference fields well formed: ok");
+    puts("  registry: every type round-trips, five importable types (script + X5 assets), reference fields well formed: ok");
 }
 
 /* ---- typed resolution ------------------------------------------------------- */
@@ -192,7 +199,8 @@ static void resolution(void)
     CHECK(resolve_fails(&s, HTA_REF_SCRIPT, "x4:entity/door", "script x4:entity/door is a placed entity, expected a script"));
     CHECK(resolve_fails(&s, HTA_REF_LINK_TARGET, "x4:script/open_door", "link target x4:script/open_door is a script, expected a placed entity"));
     CHECK(resolve_fails(&s, HTA_REF_SCRIPT, "x4:weapon/door", "script 'x4:weapon/door' is not a script ID (namespace:script/name)"));
-    CHECK(resolve_fails(&s, HTA_REF_SCRIPT, "x4:model/door", "resource type 'model' is reserved"));
+    CHECK(resolve_fails(&s, HTA_REF_SCRIPT, "x4:prefab/door", "resource type 'prefab' is reserved"));
+    CHECK(resolve_fails(&s, HTA_REF_SCRIPT, "x4:model/door", "x4:entity/button: script 'x4:model/door' is not a script ID"));
     CHECK(resolve_fails(&s, HTA_REF_SCRIPT, "x4:gizmo/door", "unknown resource type 'gizmo'"));
     CHECK(resolve_fails(&s, HTA_REF_SCRIPT, "X4:script/Open", "is not a resource ID: namespace has capital 'X'"));
     CHECK(resolve_fails(&s, HTA_REF_SCRIPT, "", "is not a resource ID: empty ID"));
@@ -261,7 +269,7 @@ static void declarations(void)
     CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[\"a:script/b\",\"a:script/a\"],\"requires\":[],\"schema\":1"), "not in canonical (byte) order at a:script/a"));
     CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[\"a:script/a\",\"a:script/a\"],\"requires\":[],\"schema\":1"), "lists a:script/a twice"));
     CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[\"a:entity/door\"],\"requires\":[],\"schema\":1"), "placed entity is a placement"));
-    CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[\"a:model/crate\"],\"requires\":[],\"schema\":1"), "resource type 'model' is reserved"));
+    CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[\"a:prefab/crate\"],\"requires\":[],\"schema\":1"), "resource type 'prefab' is reserved"));
     CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[\"megamod:script/x\"],\"requires\":[],\"schema\":1"), "namespace 'megamod' is reserved"));
     CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[\"a:Script/x\"],\"requires\":[],\"schema\":1"), "type has capital 'S'"));
     CHECK(decl_fails(P("\"id\":\"a\",\"provides\":[],\"requires\":[{\"package\":\"b\",\"resources\":[\"b:mover/door\"]}],\"schema\":1"),
@@ -388,17 +396,17 @@ static void libraries_and_graphs(void)
     CHECK(hta_library_load(d.f[0].data, d.f[0].size, &dep, err, sizeof(err)));
     CHECK(dep.decl.declared && dep.decl.kind == HTA_PKG_LIBRARY && dep.scripts->script_count == 2 && dep.digest);
     uint64_t dg = dep.digest;
-    free(dep.scripts);
+    hta_pkg_dep_free(&dep);
     /* Its digest ignores provenance, not scripts. */
     {
         static lib_dir e;
         add_lib(&e, "l.a", "la", two, 2, NULL, "\"source_provenance\":\"elsewhere\",");
         CHECK(hta_library_load(e.f[0].data, e.f[0].size, &dep, err, sizeof(err)) && dep.digest == dg);
-        free(dep.scripts);
+        hta_pkg_dep_free(&dep);
         dir_free(&e);
         add_lib(&e, "l.a", "la", one, 1, NULL, NULL);
         CHECK(hta_library_load(e.f[0].data, e.f[0].size, &dep, err, sizeof(err)) && dep.digest != dg);
-        free(dep.scripts);
+        hta_pkg_dep_free(&dep);
         dir_free(&e);
     }
     /* Library refusals. */
@@ -423,7 +431,7 @@ static void libraries_and_graphs(void)
             size_t n;
             uint8_t *b = oala(bad[i].m, &n);
             bool ok = hta_library_load(b, n, &dep, err, sizeof(err));
-            if (ok) free(dep.scripts);
+            if (ok) hta_pkg_dep_free(&dep);
             if (ok || !strstr(err, bad[i].want)) { fprintf(stderr, "library %zu: %s (wanted '%s')\n", i, ok ? "loaded" : err, bad[i].want); failures++; }
             if (i == 0) {   /* a library with bytes after its manifest */
                 b = realloc(b, n + 1); b[n] = 0;
@@ -797,7 +805,7 @@ static void hostile(void)
         if (rnd() % 4 == 0) n = 32 + rnd() % (n - 32);
         bool ok = hta_library_load(b, n, &dep, err, sizeof(err));
         CHECK(ok || (err[0] && printable(err)));
-        if (ok) { lib_ok++; free(dep.scripts); }
+        if (ok) { lib_ok++; hta_pkg_dep_free(&dep); }
         if (getenv("HTA_FUZZ_TRACE")) fprintf(stderr, "lib %d %zu %d %s\n", it, n, ok, ok ? "" : err);
         free(b);
     }

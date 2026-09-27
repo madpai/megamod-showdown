@@ -96,12 +96,18 @@ typedef struct {
 } hta_pkg_source;
 
 struct hta_world_defs;
+struct hta_asset_table;
 
 typedef struct {
     hta_package decl;
     bool        direct;      /* the root requires it */
     uint64_t    digest;      /* its played bytes (hta_library_digest) */
     struct hta_world_defs *scripts;   /* a library's scripts (heap) */
+    /* X5: its asset resources (asset_res.h), decoded (heap; never NULL
+     * once loaded). References inside them are linked when the set loads:
+     * a material's texture and a model's slots hold indices into the
+     * set's combined table (hta_pkg_set_asset_base). */
+    struct hta_asset_table *assets;
 } hta_pkg_dep;
 
 /* A root package and every package it needs, loaded and checked. */
@@ -113,8 +119,9 @@ typedef struct hta_pkg_set_s {
 
 /* Loads everything `root` requires, transitively, through `src`: each
  * package once, checked (a library with the ID asked for, its provides
- * equal to its scripts, every import provided by the package it is taken
- * from), the graph acyclic and within its limits. False with a message
+ * equal to its scripts and assets, every import provided by the package it
+ * is taken from), the graph acyclic and within its limits, and every
+ * library's asset references resolved through hta_res_resolve (X5). False with a message
  * naming the package, the requirement and why -- a missing package, a
  * cycle (with its path), an import nobody provides. `src` may be NULL
  * when the root requires nothing. Free with hta_pkg_set_free. */
@@ -124,13 +131,31 @@ void hta_pkg_set_free(hta_pkg_set *set);
 
 /* The resources of a loaded set's dependencies (providers 1..dep_count,
  * canonical order) into `rs`, with the root's imports; the caller adds the
- * root's own (provider 0). `imports` holds HTA_PKG_MAX_IMPORTS entries. */
+ * root's own (provider 0). `imports` holds HTA_PKG_MAX_IMPORTS entries.
+ * A script's entry index is its place in its library; an asset's is its
+ * index in the set's combined table (hta_pkg_set_asset_base). */
 bool hta_pkg_set_resources(const hta_pkg_set *set, hta_res_set *rs, hta_res_import *imports,
                            char *err, size_t errlen);
 
-/* A library (OALASSET v1, kind "library") from its bytes: its declaration
- * and scripts, checked; `digest` is what it adds to a world key. */
+/* Where dependency `k`'s assets of `type` start in the set's combined
+ * table: the counts of the dependencies before it (canonical order). */
+uint32_t hta_pkg_set_asset_base(const hta_pkg_set *set, uint32_t k, uint8_t type);
+/* The set's combined asset table, MOVED out of its libraries into `out`
+ * (the libraries keep nothing) and each model bound to its materials'
+ * textures. The indices hta_pkg_set_resources gave are this table's. */
+/* A model in the combined table, by index, before it is taken (NULL out
+ * of range): its bounds place a prop (world_def.c). */
+const struct hta_asset_model_s *hta_pkg_set_model(const hta_pkg_set *set, uint32_t index);
+bool hta_pkg_set_take_assets(hta_pkg_set *set, struct hta_asset_table *out, char *err, size_t errlen);
+
+/* A library (OALASSET v1, kind "library") from its bytes: its declaration,
+ * scripts and (X5) assets -- the "assets" member and the member payload
+ * after the manifest -- checked; `digest` is what it adds to a world key:
+ * its played members and, when it declares assets, every payload byte. */
 bool hta_library_load(const uint8_t *data, size_t size, hta_pkg_dep *out, char *err, size_t errlen);
+
+/* What hta_library_load allocated (its scripts and assets). */
+void hta_pkg_dep_free(hta_pkg_dep *dep);
 
 /* The library manifest members its digest covers, by index (NULL past the end). */
 const char *hta_library_key_played(uint32_t i);

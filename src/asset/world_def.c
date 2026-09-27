@@ -5,6 +5,7 @@
  * never mistaken for the section. */
 #include "world_def.h"
 #include "mjson.h"
+#include "asset_res.h"
 #include "package.h"
 #include "resource.h"
 #include <math.h>
@@ -13,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char *const KIND[HTA_WDEF_KIND_COUNT] = { "", "interactable", "relay", "mover", "trigger", "teleport" };
+static const char *const KIND[HTA_WDEF_KIND_COUNT] = { "", "interactable", "relay", "mover", "trigger", "teleport", "prop" };
 static const char *const EVENT[HTA_WEV_COUNT] = { "", "used", "fired", "entered" };
 static const char *const INPUT[HTA_WIN_COUNT] = { "", "activate", "open", "close", "toggle", "teleport" };
 
@@ -114,6 +115,10 @@ typedef struct {
             has_move[HTA_WDEF_MAX_ENTITIES], has_speed[HTA_WDEF_MAX_ENTITIES],
             has_pos[HTA_WDEF_MAX_ENTITIES], has_script[HTA_WDEF_MAX_ENTITIES];
     char  script[HTA_WDEF_MAX_ENTITIES][HTA_WDEF_ID_MAX + 1];
+    char  model[HTA_WDEF_MAX_ENTITIES][HTA_WDEF_ID_MAX + 1];      /* X5: a prop's model */
+    uint8_t has_model[HTA_WDEF_MAX_ENTITIES];
+    char  sound[HTA_WDEF_MAX_MOVER_DEFS][HTA_WDEF_ID_MAX + 1];    /* X5: a mover definition's sound */
+    uint8_t has_sound[HTA_WDEF_MAX_MOVER_DEFS];
     char  ability[HTA_WDEF_ID_MAX + 1];
     char  api[HTA_WDEF_MAX_SCRIPTS][24];
     bool  has_ability;
@@ -173,6 +178,7 @@ static bool parse_entity(rd *r, hta_world_defs *d, pending *pend, char *err, siz
         else if (!strcmp(key, "speed")) { ok = fnum(r, &pend->speed[me]); pend->has_speed[me] = 1; }
         else if (!strcmp(key, "definition")) { ok = str(r, pend->def[me], sizeof(pend->def[me])); pend->has_def[me] = 1; }
         else if (!strcmp(key, "script")) { ok = str(r, pend->script[me], sizeof(pend->script[me])); pend->has_script[me] = 1; }
+        else if (!strcmp(key, "model")) { ok = str(r, pend->model[me], sizeof(pend->model[me])); pend->has_model[me] = 1; }
         else if (!strcmp(key, "bounds")) {
             char k2[8]; bool mn = false, mx = false;
             ok = eat(r, '{');
@@ -214,7 +220,7 @@ static bool parse_entity(rd *r, hta_world_defs *d, pending *pend, char *err, siz
 }
 
 /* One entry of "mover_definitions" (schema 2). */
-static bool parse_mover_def(rd *r, hta_world_defs *d, char *err, size_t n)
+static bool parse_mover_def(rd *r, hta_world_defs *d, pending *pend, char *err, size_t n)
 {
     if (d->mover_def_count >= HTA_WDEF_MAX_MOVER_DEFS)
         return fail(err, n, "more than 64 mover definitions%s%s", NULL, NULL);
@@ -233,7 +239,10 @@ static bool parse_mover_def(rd *r, hta_world_defs *d, char *err, size_t n)
         } else if (!strcmp(key, "size")) { ok = vec3(r, m->size); have[1] = ok; }
         else if (!strcmp(key, "move")) { ok = vec3(r, m->move); have[2] = ok; }
         else if (!strcmp(key, "speed")) { ok = fnum(r, &m->speed); have[3] = ok; }
-        else return fail(err, n, "%s: unknown field '%s'", where, key);
+        else if (!strcmp(key, "sound")) {
+            uint32_t me = d->mover_def_count;
+            ok = str(r, pend->sound[me], sizeof(pend->sound[me])); pend->has_sound[me] = 1;
+        } else return fail(err, n, "%s: unknown field '%s'", where, key);
         if (!ok) return fail(err, n, "%s: malformed '%s'", where, key);
     } while (eat(r, ','));
     if (!eat(r, '}')) return fail(err, n, "%s: malformed definition", where, NULL);
@@ -474,6 +483,47 @@ static bool check_provides(const hta_world_defs *d, const hta_package *p, char *
     return true;
 }
 
+/* X5: props name a model, mover definitions may name a sound -- typed
+ * references into the libraries the world imports from, resolved once to
+ * asset table indices. A prop stands where it is placed, solid as its
+ * model's bounds. */
+static bool resolve_assets(hta_world_defs *d, pending *pend, const hta_pkg_set *set, char *err, size_t n)
+{
+    bool any = false;
+    for (uint32_t i = 0; i < d->count; i++) any = any || pend->has_model[i] || d->entity[i].kind == HTA_WDEF_PROP;
+    for (uint32_t i = 0; i < d->mover_def_count; i++) any = any || pend->has_sound[i];
+    if (set) {
+        d->asset_models = hta_pkg_set_asset_base(set, set->dep_count, HTA_RT_MODEL);
+        d->asset_sounds = hta_pkg_set_asset_base(set, set->dep_count, HTA_RT_SOUND);
+    }
+    if (!any) return true;
+    if (d->schema < 4) return fail(err, n, "world_entities: props and sounds need schema 4%s%s", NULL, NULL);
+    for (uint32_t i = 0; i < d->mover_def_count; i++) {
+        if (!pend->has_sound[i]) continue;
+        const hta_res_entry *e = hta_res_resolve(&pend->rs, HTA_REF_MOVER_SOUND, d->mover_def[i].id, pend->sound[i], err, n);
+        if (!e) return false;
+        d->mover_def[i].sound = (uint16_t)(e->index + 1u);
+    }
+    for (uint32_t i = 0; i < d->count; i++) {
+        hta_wdef *e = &d->entity[i];
+        if (e->kind != HTA_WDEF_PROP) {
+            if (pend->has_model[i])
+                return failv(err, n, "%s: only a prop takes a model (it is a %s)", e->id, hta_wdef_kind_name(e->kind));
+            continue;
+        }
+        if (!pend->has_model[i]) return failv(err, n, "%s: a prop needs a model", e->id);
+        if (!pend->has_pos[i]) return failv(err, n, "%s: a prop needs a position", e->id);
+        if (e->link_count) return failv(err, n, "%s: a prop emits nothing, so it has no links", e->id);
+        const hta_res_entry *m = hta_res_resolve(&pend->rs, HTA_REF_PROP_MODEL, e->id, pend->model[i], err, n);
+        if (!m) return false;
+        const hta_asset_model *am = hta_pkg_set_model(set, m->index);
+        if (!am) return failv(err, n, "%s: model %s was not loaded", e->id, pend->model[i]);
+        e->model = (uint16_t)(m->index + 1u);
+        for (int k = 0; k < 3; k++) { e->min[k] = e->pos[k] + am->mesh.bounds_min[k]; e->max[k] = e->pos[k] + am->mesh.bounds_max[k]; }
+    }
+    return true;
+}
+
 /* Movers get their definitions: by reference (schema 2) or, for an X1
  * package, an unnamed one each from their inline parameters. */
 static bool resolve_movers(hta_world_defs *d, pending *pend, char *err, size_t n)
@@ -529,7 +579,7 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
         if (!str(r, key, sizeof(key)) || !eat(r, ':')) return fail(err, n, "world_entities: malformed%s%s", NULL, NULL);
         if (!strcmp(key, "schema")) {
             double v;
-            if (!num(r, &v) || (v != 1.0 && v != 2.0 && v != 3.0))
+            if (!num(r, &v) || (v != 1.0 && v != 2.0 && v != 3.0 && v != 4.0))
                 return fail(err, n, "world_entities: unsupported schema%s%s", NULL, NULL);
             d->schema = (uint32_t)v;
             have_schema = true;
@@ -543,7 +593,7 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
         } else if (!strcmp(key, "mover_definitions")) {
             if (!eat(r, '[')) return fail(err, n, "world_entities: mover_definitions is not a list%s%s", NULL, NULL);
             if (!eat(r, ']')) {
-                do { if (!parse_mover_def(r, d, err, n)) return false; } while (eat(r, ','));
+                do { if (!parse_mover_def(r, d, &pend, err, n)) return false; } while (eat(r, ','));
                 if (!eat(r, ']')) return fail(err, n, "world_entities: malformed mover_definitions%s%s", NULL, NULL);
             }
             have_defs = true;
@@ -589,7 +639,7 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
         }
     }
     return resolve_movers(d, &pend, err, n) && resolve_scripts(d, &pend, err, n) &&
-           check_provides(d, set ? &set->root : NULL, err, n);
+           resolve_assets(d, &pend, set, err, n) && check_provides(d, set ? &set->root : NULL, err, n);
 }
 
 bool hta_world_defs_parse_env(const uint8_t *manifest, size_t len, const hta_pkg_set *set, hta_world_defs *out,
@@ -801,6 +851,7 @@ bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t n)
             return fail(err, n, "%s: mover move out of range%s", name, NULL);
         if (!(m->speed > 0.0f && m->speed <= HTA_WDEF_MAX_SPEED))
             return fail(err, n, "%s: mover speed out of range%s", name, NULL);
+        if (m->sound > d->asset_sounds) return fail(err, n, "%s: sound out of range%s", name, NULL);
     }
     if (d->script_count > HTA_WDEF_MAX_SCRIPTS || d->pool_used > HTA_WDEF_SCRIPT_POOL)
         return fail(err, n, "scripts over their limits%s%s", NULL, NULL);
@@ -841,6 +892,13 @@ bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t n)
         if (e->kind == HTA_WDEF_INTERACTABLE && !(e->reach > 0.0f && e->reach <= HTA_WDEF_MAX_REACH))
             return fail(err, n, "%s: reach out of range%s", e->id, NULL);
         if (e->kind == HTA_WDEF_TELEPORT && !isfinite(e->yaw)) return fail(err, n, "%s: yaw is not finite%s", e->id, NULL);
+        if (e->kind == HTA_WDEF_PROP) {
+            if (!e->model || e->model > d->asset_models) return fail(err, n, "%s: prop has no model%s", e->id, NULL);
+            if (!finite3(e->pos, HTA_WDEF_WORLD_LIMIT) || !finite3(e->min, HTA_WDEF_WORLD_LIMIT) || !finite3(e->max, HTA_WDEF_WORLD_LIMIT))
+                return fail(err, n, "%s: prop must be finite and inside the world%s", e->id, NULL);
+            for (int k = 0; k < 3; k++)
+                if (e->max[k] < e->min[k]) return fail(err, n, "%s: prop bounds are inverted%s", e->id, NULL);
+        } else if (e->model) return fail(err, n, "%s: only a prop takes a model%s", e->id, NULL);
         if (e->kind == HTA_WDEF_TRIGGER) {
             if (!finite3(e->min, HTA_WDEF_WORLD_LIMIT) || !finite3(e->max, HTA_WDEF_WORLD_LIMIT))
                 return fail(err, n, "%s: bounds must be finite%s", e->id, NULL);

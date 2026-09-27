@@ -1,6 +1,7 @@
 /* Packages: the "package" declaration, library packages and the package
  * graph (package.h, docs/RESOURCES.md). */
 #include "package.h"
+#include "asset_res.h"
 #include "mjson.h"
 #include "world_def.h"
 #include <stdarg.h>
@@ -220,7 +221,7 @@ static void top_string(const uint8_t *m, size_t len, const char *want, char *out
 /* What a library adds to a world key: FNV-1a 64 over "OALL", the schema,
  * then its played members (package, scripts) as key/value bytes, exactly
  * as stored, in manifest order. */
-static const char *const LIBRARY_PLAYED[] = { "package", "scripts" };
+static const char *const LIBRARY_PLAYED[] = { "assets", "package", "scripts" };
 const char *hta_library_key_played(uint32_t i)
 {
     return i < sizeof(LIBRARY_PLAYED) / sizeof(LIBRARY_PLAYED[0]) ? LIBRARY_PLAYED[i] : NULL;
@@ -246,6 +247,40 @@ static void played(void *ctx, const char *key, const uint8_t *value, size_t len)
         }
 }
 
+static void lib_drop(hta_pkg_dep *out)
+{
+    free(out->scripts); out->scripts = NULL;
+    if (out->assets) { hta_asset_table_free(out->assets); free(out->assets); out->assets = NULL; }
+}
+
+void hta_pkg_dep_free(hta_pkg_dep *dep) { if (dep) lib_drop(dep); }
+
+/* Its provides == its scripts and its assets, exactly. */
+static bool lib_provides(const hta_pkg_dep *d, const char *name, char *err, size_t n)
+{
+    for (uint32_t i = 0; i < d->decl.provide_count; i++) {
+        const hta_pkg_rid *p = &d->decl.provides[i];
+        bool have = p->type == HTA_RT_SCRIPT ? hta_world_defs_find_script(d->scripts, p->id) >= 0 :
+                    hta_asset_type(p->type) ? hta_asset_find(d->assets, p->type, p->id) >= 0 : false;
+        if (!have) {
+            const hta_rtype_info *t = hta_rtype_get(p->type);
+            return failv(err, n, "%s lists %s in provides, but has no such %s", name, p->id, t ? t->noun : "resource");
+        }
+    }
+    for (uint32_t i = 0; i < d->scripts->script_count; i++)
+        if (!hta_package_provides(&d->decl, d->scripts->script[i].id))
+            return failv(err, n, "%s has script %s but does not list it in provides", name, d->scripts->script[i].id);
+    static const uint8_t T[] = { HTA_RT_TEXTURE, HTA_RT_MATERIAL, HTA_RT_MODEL, HTA_RT_SOUND };
+    for (size_t k = 0; k < sizeof(T); k++)
+        for (uint32_t i = 0; i < hta_asset_count(d->assets, T[k]); i++) {
+            const char *id = T[k] == HTA_RT_TEXTURE ? d->assets->texture[i].id : T[k] == HTA_RT_MATERIAL ? d->assets->material[i].id :
+                             T[k] == HTA_RT_MODEL ? d->assets->model[i].id : d->assets->sound[i].id;
+            if (!hta_package_provides(&d->decl, id))
+                return failv(err, n, "%s has %s %s but does not list it in provides", name, hta_rtype_get(T[k])->noun, id);
+        }
+    return true;
+}
+
 bool hta_library_load(const uint8_t *data, size_t size, hta_pkg_dep *out, char *err, size_t n)
 {
     if (!out) return false;
@@ -259,38 +294,39 @@ bool hta_library_load(const uint8_t *data, size_t size, hta_pkg_dep *out, char *
     char kind[24];
     top_string(m, ml, "kind", kind, sizeof(kind));
     if (strcmp(kind, "library")) return failv(err, n, "not a library package (kind '%s')", kind);
-    if (mc || sc || size != 32 + ml) return failv(err, n, "a library carries a manifest only");
+    /* A library is a manifest, then (X5) the payload of the asset members
+     * it declares -- nothing else: no OALASSET models or sound records. */
+    if (mc || sc) return failv(err, n, "a library carries a manifest and its asset members only");
     if (!hta_package_parse(m, ml, HTA_PKG_LIBRARY, &out->decl, err, n)) return false;
     char name[HTA_PKG_ID_MAX + 16];
     if (!out->decl.declared) return failv(err, n, "a library must declare its package");
     hta_package_name(&out->decl, name, sizeof(name));
     out->scripts = calloc(1, sizeof(*out->scripts));
-    if (!out->scripts) return failv(err, n, "out of memory");
-    char why[240];
+    out->assets = calloc(1, sizeof(*out->assets));
+    if (!out->scripts || !out->assets) { lib_drop(out); return failv(err, n, "out of memory"); }
+    char why[400];
     if (!hta_world_defs_parse_library(m, ml, out->scripts, why, sizeof(why))) {
-        free(out->scripts); out->scripts = NULL;
+        lib_drop(out);
         return failv(err, n, "%s: %s", name, why);
     }
-    /* provides == its scripts, exactly. */
-    for (uint32_t i = 0; i < out->decl.provide_count; i++) {
-        const hta_pkg_rid *p = &out->decl.provides[i];
-        if (p->type != HTA_RT_SCRIPT || hta_world_defs_find_script(out->scripts, p->id) < 0) {
-            free(out->scripts); out->scripts = NULL;
-            return failv(err, n, "%s lists %s in provides, but has no such script", name, p->id);
-        }
+    const uint8_t *payload = data + 32 + ml;
+    size_t plen = size - 32 - ml;
+    bool has_assets = false;
+    if (!hta_asset_parse(m, ml, payload, plen, name, out->assets, &has_assets, why, sizeof(why))) {
+        lib_drop(out);
+        return failv(err, n, "%s", why);
     }
-    for (uint32_t i = 0; i < out->scripts->script_count; i++)
-        if (!hta_package_provides(&out->decl, out->scripts->script[i].id)) {
-            failv(err, n, "%s has script %s but does not list it in provides", name, out->scripts->script[i].id);
-            free(out->scripts); out->scripts = NULL;
-            return false;
-        }
+    if (!lib_provides(out, name, why, sizeof(why))) { lib_drop(out); return failv(err, n, "%s", why); }
     fnv f = { 14695981039346656037ull };
     fbytes(&f, "OALL", 4); fu32(&f, HTA_PKG_SCHEMA);
     if (!hta_manifest_members(m, ml, played, &f)) {
-        free(out->scripts); out->scripts = NULL;
+        lib_drop(out);
         return failv(err, n, "%s: malformed manifest", name);
     }
+    /* X5: the payload bytes themselves -- a changed texel, vertex or sample
+     * is a different library. Only a library with assets has any, so an X4
+     * library's digest is unchanged. */
+    if (has_assets) { fbytes(&f, "OALP", 4); fu32(&f, (uint32_t)plen); fbytes(&f, payload, plen); }
     out->digest = f.h ? f.h : 1u;
     return true;
 }
@@ -300,7 +336,7 @@ bool hta_library_load(const uint8_t *data, size_t size, hta_pkg_dep *out, char *
 void hta_pkg_set_free(hta_pkg_set *set)
 {
     if (!set) return;
-    for (uint32_t i = 0; i < set->dep_count; i++) free(set->dep[i].scripts);
+    for (uint32_t i = 0; i < set->dep_count; i++) lib_drop(&set->dep[i]);
     memset(set, 0, sizeof(*set));
 }
 
@@ -331,6 +367,8 @@ static void path(const hta_pkg_set *s, const uint32_t *stack, uint32_t from, uin
     if (at < n) snprintf(out + at, n - at, "%s", last);
 }
 
+static bool link_assets(hta_pkg_set *set, char *err, size_t n);
+
 /* The message is written first: it may point into the set. */
 #define REFUSE(...) do { failv(err, n, __VA_ARGS__); hta_pkg_set_free(set); return false; } while (0)
 
@@ -342,7 +380,7 @@ bool hta_pkg_set_load(hta_pkg_set *set, const hta_package *root, const hta_pkg_s
     if (err && n) err[0] = 0;
     uint32_t stack[HTA_PKG_MAX_DEPTH + 2], next[HTA_PKG_MAX_DEPTH + 2], sp = 0;
     uint8_t gray[HTA_PKG_MAX_SET] = { 0 };
-    char name[HTA_PKG_ID_MAX + 64], trail[HTA_PKG_MAX_SET * (HTA_PKG_ID_MAX + 4) + 8];
+    char name[HTA_RID_MAX + 64], trail[HTA_PKG_MAX_SET * (HTA_PKG_ID_MAX + 4) + 8];
     stack[sp] = 0; next[sp] = 0; sp++; gray[0] = 1;
     while (sp) {
         uint32_t node = stack[sp - 1];
@@ -379,7 +417,7 @@ bool hta_pkg_set_load(hta_pkg_set *set, const hta_package *root, const hta_pkg_s
             REFUSE("%s requires package %s, but it is not present (looked for %s)", name, q->package, where);
         }
         hta_pkg_dep *dep = &set->dep[set->dep_count];
-        char why[300];
+        char why[480];
         bool ok = hta_library_load(data, size, dep, why, sizeof(why));
         if (src->close) src->close(src->ctx, handle);
         if (!ok) {
@@ -388,7 +426,7 @@ bool hta_pkg_set_load(hta_pkg_set *set, const hta_package *root, const hta_pkg_s
         if (strcmp(dep->decl.id, q->package)) {
             char got[HTA_PKG_ID_MAX + 1];
             memcpy(got, dep->decl.id, sizeof(got));
-            free(dep->scripts);
+            lib_drop(dep);
             REFUSE("%s requires package %s, but %s declares package %s", name, q->package, where, got);
         }
         set->dep_count++;
@@ -419,35 +457,142 @@ bool hta_pkg_set_load(hta_pkg_set *set, const hta_package *root, const hta_pkg_s
         for (uint32_t j = i; j > 0 && strcmp(set->dep[j - 1].decl.id, set->dep[j].decl.id) > 0; j--) {
             hta_pkg_dep t = set->dep[j]; set->dep[j] = set->dep[j - 1]; set->dep[j - 1] = t;
         }
+    /* X5: each library's asset references, resolved once, typed. */
+    if (!link_assets(set, err, n)) { hta_pkg_set_free(set); return false; }
     return true;
 }
 
-bool hta_pkg_set_resources(const hta_pkg_set *set, hta_res_set *rs, hta_res_import *imports, char *err, size_t n)
+uint32_t hta_pkg_set_asset_base(const hta_pkg_set *set, uint32_t k, uint8_t type)
 {
+    uint32_t base = 0;
+    for (uint32_t j = 0; set && j < k && j < set->dep_count; j++) base += hta_asset_count(set->dep[j].assets, type);
+    return base;
+}
+
+/* A provided resource's entry index: a script's place in its library, an
+ * asset's place in the set's combined table. -1: not there. */
+static int32_t entry_index(const hta_pkg_set *set, uint32_t k, const hta_pkg_rid *p)
+{
+    const hta_pkg_dep *d = &set->dep[k];
+    if (p->type == HTA_RT_SCRIPT) return hta_world_defs_find_script(d->scripts, p->id);
+    if (!hta_asset_type(p->type)) return -1;
+    int32_t at = hta_asset_find(d->assets, p->type, p->id);
+    return at < 0 ? -1 : (int32_t)(hta_pkg_set_asset_base(set, k, p->type) + (uint32_t)at);
+}
+
+/* The resources package `self` (-1: the root; else a dependency) may
+ * resolve against: every other dependency's (providers k + 1), then, for a
+ * dependency, its own as provider 0, and the imports its requirements
+ * declare. The root's own resources are the caller's to add. */
+static bool set_resources_for(const hta_pkg_set *set, int32_t self, hta_res_set *rs, hta_res_import *imports,
+                              char *err, size_t n)
+{
+    const hta_package *me = self < 0 ? &set->root : &set->dep[self].decl;
     rs->provider_count = set->dep_count + 1;
-    snprintf(rs->provider[0], sizeof(rs->provider[0]), "%s", set->root.declared ? set->root.id : "");
+    snprintf(rs->provider[0], sizeof(rs->provider[0]), "%s", me->declared ? me->id : "");
     for (uint32_t k = 0; k < set->dep_count; k++) {
         const hta_pkg_dep *d = &set->dep[k];
         snprintf(rs->provider[k + 1], sizeof(rs->provider[k + 1]), "%s", d->decl.id);
+        uint8_t provider = (int32_t)k == self ? 0 : (uint8_t)(k + 1);
         for (uint32_t i = 0; i < d->decl.provide_count; i++) {
-            int32_t at = hta_world_defs_find_script(d->scripts, d->decl.provides[i].id);
-            if (at < 0 || !hta_res_add(rs, d->decl.provides[i].id, d->decl.provides[i].type, (uint8_t)(k + 1),
-                                       (uint16_t)at, err, n)) return at < 0 ? failv(err, n, "library inconsistent") : false;
+            int32_t at = entry_index(set, k, &d->decl.provides[i]);
+            if (at < 0 || at > 0xFFFF) return failv(err, n, "library %s inconsistent at %s", d->decl.id, d->decl.provides[i].id);
+            if (!hta_res_add(rs, d->decl.provides[i].id, d->decl.provides[i].type, provider, (uint16_t)at, err, n)) return false;
         }
     }
     rs->import_count = 0;
     rs->required_mask = 0;
-    for (uint32_t i = 0; i < set->root.require_count; i++) {
-        const hta_pkg_require *q = &set->root.requires[i];
+    for (uint32_t i = 0; i < me->require_count; i++) {
+        const hta_pkg_require *q = &me->requires[i];
         int32_t p = node_of(set, q->package);
         if (p <= 0) return failv(err, n, "requirement %s not loaded", q->package);
         rs->required_mask |= 1u << p;
         for (uint32_t j = 0; j < q->count; j++) {
-            imports[rs->import_count].id = set->root.imports[q->first + j].id;
+            imports[rs->import_count].id = me->imports[q->first + j].id;
             imports[rs->import_count].provider = (uint8_t)p;
             rs->import_count++;
         }
     }
     rs->imports = imports;
+    return true;
+}
+
+bool hta_pkg_set_resources(const hta_pkg_set *set, hta_res_set *rs, hta_res_import *imports, char *err, size_t n)
+{
+    return set_resources_for(set, -1, rs, imports, err, n);
+}
+
+/* Every library's materials name a texture, every model its material
+ * slots: resolved through the typed resolver from that library's point of
+ * view (its own resources, or ones it imports), to combined-table indices. */
+static bool link_assets(hta_pkg_set *set, char *err, size_t n)
+{
+    bool any = false;
+    for (uint32_t k = 0; k < set->dep_count; k++)
+        any = any || set->dep[k].assets->material_count || set->dep[k].assets->model_count;
+    if (!any) return true;
+    hta_res_set *rs = malloc(sizeof(*rs));
+    hta_res_import *imports = malloc(HTA_PKG_MAX_IMPORTS * sizeof(*imports));
+    bool ok = rs && imports;
+    if (!ok) failv(err, n, "out of memory");
+    for (uint32_t k = 0; ok && k < set->dep_count; k++) {
+        hta_asset_table *t = set->dep[k].assets;
+        if (!t->material_count && !t->model_count) continue;
+        hta_res_init(rs);
+        if (!set_resources_for(set, (int32_t)k, rs, imports, err, n)) { ok = false; break; }
+        for (uint32_t i = 0; ok && i < t->material_count; i++) {
+            const hta_res_entry *e = hta_res_resolve(rs, HTA_REF_MATERIAL_TEXTURE, t->material[i].id, t->material[i].texture_ref, err, n);
+            if (!e) ok = false; else t->material[i].texture = e->index;
+        }
+        for (uint32_t i = 0; ok && i < t->model_count; i++)
+            for (uint32_t s = 0; ok && s < t->model[i].slot_count; s++) {
+                const hta_res_entry *e = hta_res_resolve(rs, HTA_REF_MODEL_MATERIAL, t->model[i].id, t->model[i].slot_ref[s], err, n);
+                if (!e) ok = false; else t->model[i].slot[s] = e->index;
+            }
+    }
+    free(rs); free(imports);
+    return ok;
+}
+
+const hta_asset_model *hta_pkg_set_model(const hta_pkg_set *set, uint32_t index)
+{
+    for (uint32_t k = 0; set && k < set->dep_count; k++) {
+        uint32_t c = set->dep[k].assets ? set->dep[k].assets->model_count : 0;
+        if (index < c) return &set->dep[k].assets->model[index];
+        index -= c;
+    }
+    return NULL;
+}
+
+bool hta_pkg_set_take_assets(hta_pkg_set *set, hta_asset_table *out, char *err, size_t n)
+{
+    memset(out, 0, sizeof(*out));
+    uint32_t nt = 0, nm = 0, nd = 0, ns = 0;
+    for (uint32_t k = 0; k < set->dep_count; k++) {
+        const hta_asset_table *t = set->dep[k].assets;
+        nt += t->texture_count; nm += t->material_count; nd += t->model_count; ns += t->sound_count;
+    }
+    if ((nt && !(out->texture = calloc(nt, sizeof(*out->texture)))) || (nm && !(out->material = calloc(nm, sizeof(*out->material)))) ||
+        (nd && !(out->model = calloc(nd, sizeof(*out->model)))) || (ns && !(out->sound = calloc(ns, sizeof(*out->sound))))) {
+        hta_asset_table_free(out);
+        return failv(err, n, "out of memory");
+    }
+    /* Move, in canonical order: the combined index is base + local. */
+    for (uint32_t k = 0; k < set->dep_count; k++) {
+        hta_asset_table *t = set->dep[k].assets;
+        uint8_t prov = (uint8_t)(k + 1);
+        for (uint32_t i = 0; i < t->texture_count; i++) { out->texture[out->texture_count] = t->texture[i]; out->texture[out->texture_count++].provider = prov; }
+        for (uint32_t i = 0; i < t->material_count; i++) { out->material[out->material_count] = t->material[i]; out->material[out->material_count++].provider = prov; }
+        for (uint32_t i = 0; i < t->model_count; i++) { out->model[out->model_count] = t->model[i]; out->model[out->model_count++].provider = prov; }
+        for (uint32_t i = 0; i < t->sound_count; i++) { out->sound[out->sound_count] = t->sound[i]; out->sound[out->sound_count++].provider = prov; }
+        out->payload_bytes += t->payload_bytes;
+        free(t->texture); free(t->material); free(t->model); free(t->sound);
+        memset(t, 0, sizeof(*t));        /* the pixels, meshes and samples are the table's now */
+    }
+    for (uint32_t i = 0; i < out->model_count; i++)
+        if (!hta_asset_model_bind(&out->model[i], out->material, out->material_count, out->texture, out->texture_count, err, n)) {
+            hta_asset_table_free(out);
+            return false;
+        }
     return true;
 }

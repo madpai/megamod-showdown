@@ -63,11 +63,22 @@ done:
 
 uint32_t hta_went_gpu_upload(hta_went_gpu *g, hta_gfx *gfx, const hta_bsp_mesh *world,
                              hta_gfx_mesh *world_gpu, const uint16_t *submesh_entity,
-                             const hta_world_entities *w)
+                             const hta_world_entities *w, const hta_asset_table *assets)
 {
     if (!g) return 0;
     memset(g, 0, sizeof(*g));
     if (!gfx || !world || !submesh_entity || !w || !w->loaded) return 0;
+    /* X5: props' models, each once, however many props place it. */
+    if (assets && assets->model_count && (g->model = calloc(assets->model_count, sizeof(*g->model)))) {
+        g->model_count = assets->model_count;
+        for (uint32_t e = 0; e < w->defs->count; e++) {
+            const hta_wdef *d = &w->defs->entity[e];
+            if (d->kind != HTA_WDEF_PROP || !d->model || d->model > g->model_count || g->model[d->model - 1]) continue;
+            char err[128];
+            g->model[d->model - 1] = hta_gfx_mesh_upload(gfx, &assets->model[d->model - 1].mesh, err, sizeof(err));
+            if (g->model[d->model - 1]) g->models_uploaded++;
+        }
+    }
     for (uint32_t e = 0; e < w->defs->count; e++) {
         if (w->defs->entity[e].kind != HTA_WDEF_MOVER) continue;
         g->mesh[e] = upload_one(gfx, world, submesh_entity, (uint16_t)(e + 1));
@@ -96,6 +107,16 @@ uint32_t hta_went_gpu_instances(const hta_went_gpu *g, const hta_world_entities 
         /* Shaded as the world it was cut from (no scene light on top). */
         in->lit = false;
     }
+    for (uint32_t e = 0; g && g->model && w && w->loaded && out && e < w->defs->count && n < cap; e++) {
+        const hta_wdef *d = &w->defs->entity[e];
+        if (d->kind != HTA_WDEF_PROP || !d->model || d->model > g->model_count || !g->model[d->model - 1]) continue;
+        hta_gfx_instance *in = &out[n++];
+        memset(in, 0, sizeof(*in));
+        in->mesh = g->model[d->model - 1];
+        in->model[0] = in->model[5] = in->model[10] = in->model[15] = 1.0f;
+        in->model[12] = d->pos[0]; in->model[13] = d->pos[1]; in->model[14] = d->pos[2];
+        in->lit = true;          /* a model is lit by the scene, like a body */
+    }
     return n;
 }
 
@@ -104,5 +125,8 @@ void hta_went_gpu_free(hta_went_gpu *g, hta_gfx *gfx)
     if (!g) return;
     for (uint32_t e = 0; e < HTA_WDEF_MAX_ENTITIES; e++)
         if (g->mesh[e] && gfx) hta_gfx_mesh_free(gfx, g->mesh[e]);
+    for (uint32_t m = 0; g->model && m < g->model_count; m++)
+        if (g->model[m] && gfx) hta_gfx_mesh_free(gfx, g->model[m]);
+    free(g->model);
     memset(g, 0, sizeof(*g));
 }

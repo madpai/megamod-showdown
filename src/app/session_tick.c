@@ -171,6 +171,21 @@ static void world_entities(hta_session *s, float dt, bool authority)
         else w->call_count = 0;
     }
     hta_went_step(w, dt);
+    /* X5: movers that started to move sound their definition's sound. */
+    if (w->cue_count) {
+        float fwd[3];
+        hta_camera_forward(&s->cam, fwd);
+        float right[3] = { fwd[1], -fwd[0], 0.0f }, len = sqrtf(right[0] * right[0] + right[1] * right[1]);
+        if (len > 1e-4f) { right[0] /= len; right[1] /= len; } else right[0] = 1.0f;
+        hta_world_sounds_play(&s->world_sounds, &s->audio, w, s->cam.pos, right);
+        for (uint32_t k = 0; k < w->cue_count; k++) {
+            const hta_went_cue *c = &w->cues[k];
+            s->world_sounds_heard++;
+            hta_log("[world] sound %s: %s started %s", c->sound < s->world_ext.assets.sound_count ?
+                    s->world_ext.assets.sound[c->sound].id : "?", w->defs->entity[c->entity].id,
+                    w->st[c->entity].phase == HTA_MOVER_OPENING ? "opening" : "closing");
+        }
+    }
     for (uint32_t k = 0; authority && k < w->teleport_count; k++) {
         const hta_went_teleport *t = &w->teleports[k];
         if (t->actor < s->game.unit_count && s->game.units[t->actor].alive)

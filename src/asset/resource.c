@@ -23,19 +23,19 @@ static const hta_rtype_info TYPES[HTA_RT_COUNT] = {
     [HTA_RT_WEAPON] = { "weapon", "weapon", HTA_RT_SUPPORTED, HTA_RS_PACKAGE, false, false, "N2",
         "an imported weapon (.oalasset); still loaded by file name, its ID is audit-only" },
     [HTA_RT_SOUNDS] = { "sounds", "sound pack", HTA_RT_SUPPORTED, HTA_RS_PACKAGE, false, false, "N2",
-        "the UI sound pack (.oalasset); loaded by file name, its ID is audit-only" },
-    [HTA_RT_MODEL] = { "model", "model", HTA_RT_RESERVED, HTA_RS_DEFINITION, false, false, "X4",
-        "reserved: a mesh a package provides for others to place" },
-    [HTA_RT_MATERIAL] = { "material", "material", HTA_RT_RESERVED, HTA_RS_DEFINITION, false, false, "X4",
-        "reserved: a surface (textures, surface kind)" },
-    [HTA_RT_TEXTURE] = { "texture", "texture", HTA_RT_RESERVED, HTA_RS_DEFINITION, false, false, "X4",
-        "reserved: an image" },
-    [HTA_RT_SOUND] = { "sound", "sound", HTA_RT_RESERVED, HTA_RS_DEFINITION, false, false, "X4",
-        "reserved: one sound (not the UI 'sounds' pack)" },
+        "the UI sound pack: a container of role-named clips (.oalasset kind sounds); loaded by file name, its ID is audit-only -- one addressable clip is a 'sound'" },
+    [HTA_RT_MODEL] = { "model", "model", HTA_RT_SUPPORTED, HTA_RS_DEFINITION, true, true, "X5",
+        "a static mesh (mesh1) drawn with its material slots; a library provides it, a world's props place it" },
+    [HTA_RT_MATERIAL] = { "material", "material", HTA_RT_SUPPORTED, HTA_RS_DEFINITION, true, true, "X5",
+        "a surface: one texture and a draw mode (opaque, alpha); a model's slots name it" },
+    [HTA_RT_TEXTURE] = { "texture", "texture", HTA_RT_SUPPORTED, HTA_RS_DEFINITION, true, true, "X5",
+        "an RGBA8 image in a library package; a material names it" },
+    [HTA_RT_SOUND] = { "sound", "sound", HTA_RT_SUPPORTED, HTA_RS_DEFINITION, true, true, "X5",
+        "one clip of 16-bit PCM in a library package; a mover definition may name it (not the UI 'sounds' pack)" },
     [HTA_RT_ANIMATION] = { "animation", "animation", HTA_RT_RESERVED, HTA_RS_DEFINITION, false, false, "X4",
         "reserved: a clip for a skeleton" },
     [HTA_RT_PREFAB] = { "prefab", "prefab", HTA_RT_RESERVED, HTA_RS_DEFINITION, false, false, "X4",
-        "reserved: a composed, reusable entity (a likely X5)" },
+        "reserved: a composed, reusable entity (a likely X6)" },
     [HTA_RT_RULESET] = { "ruleset", "ruleset", HTA_RT_RESERVED, HTA_RS_DEFINITION, false, false, "X4",
         "reserved: game rules (team deathmatch...)" },
 };
@@ -171,6 +171,14 @@ static const hta_ref_info REFS[HTA_REF_FIELD_COUNT] = {
         "a script asks for a placed entity's handle while it loads; in the world being played" },
     [HTA_REF_REQUIRE] = { "package.requires[].resources[]", "import", HTA_RT_NONE, HTA_REF_NAMED, "X4",
         "a resource a package takes from a package it requires; that package must provide it" },
+    [HTA_REF_MATERIAL_TEXTURE] = { "assets.materials[].texture", "texture", HTA_RT_TEXTURE, HTA_REF_IMPORT, "X5",
+        "the texture a material draws with; the library's own or imported" },
+    [HTA_REF_MODEL_MATERIAL] = { "assets.models[].materials[]", "material slot", HTA_RT_MATERIAL, HTA_REF_IMPORT, "X5",
+        "a model's material slots, in slot order; the library's own or imported" },
+    [HTA_REF_PROP_MODEL] = { "world_entities.entities[].model", "model", HTA_RT_MODEL, HTA_REF_IMPORT, "X5",
+        "the model a placed prop draws (and collides as its bounds); imported from a library" },
+    [HTA_REF_MOVER_SOUND] = { "world_entities.mover_definitions[].sound", "sound", HTA_RT_SOUND, HTA_REF_IMPORT, "X5",
+        "the sound a mover makes when it starts to open or close; imported from a library" },
 };
 
 const hta_ref_info *hta_ref_get(uint8_t f) { return f < HTA_REF_FIELD_COUNT ? &REFS[f] : NULL; }
@@ -225,6 +233,14 @@ static const hta_res_entry *same_name(const hta_res_set *s, const hta_rid *r)
     return NULL;
 }
 
+/* Does anything in the set live in the reference's namespace? */
+static bool same_namespace(const hta_res_set *s, const hta_rid *r)
+{
+    for (uint32_t i = 0; i < s->count; i++)
+        if (!strncmp(s->e[i].id, r->text, r->ns_len) && s->e[i].id[r->ns_len] == ':') return true;
+    return false;
+}
+
 const hta_res_entry *hta_res_resolve(const hta_res_set *s, uint8_t field, const char *who, const char *ref,
                                      char *err, size_t n)
 {
@@ -259,6 +275,9 @@ const hta_res_entry *hta_res_resolve(const hta_res_set *s, uint8_t field, const 
         char hint[HTA_RID_MAX + 48] = "";
         if (o) snprintf(hint, sizeof(hint), " (%s is %s %s)", o->id, article(hta_rtype_get(o->type)->noun),
                         hta_rtype_get(o->type)->noun);
+        else if (f->from == HTA_REF_IMPORT && !same_namespace(s, &r))
+            snprintf(hint, sizeof(hint), " (no package in this set provides namespace '%.*s': is a requirement missing?)",
+                     (int)r.ns_len, r.text);
         say(err, n, "%s references missing %s %s%s", who, is->noun, ref, hint);
         return NULL;
     }

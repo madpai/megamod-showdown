@@ -188,8 +188,11 @@ static void test_package(void)
     assert(!h && strstr(err, "world.entity: 'x3:script/button_logic' is a script ID, expected a placed entity"));
     h = load(world_json("local d = world.entity('X3:entity/door_a')\nfunction on_used() end\n", "\"on_used\"", NULL, NULL), err, sizeof(err));
     assert(!h && strstr(err, "world.entity: 'X3:entity/door_a' is not a resource ID: namespace has capital 'X'"));
+    h = load(world_json("local d = world.entity('x3:prefab/door_a')\nfunction on_used() end\n", "\"on_used\"", NULL, NULL), err, sizeof(err));
+    assert(!h && strstr(err, "resource type 'prefab' is reserved"));
+    /* X5: a model is a real type now, still not a placed entity. */
     h = load(world_json("local d = world.entity('x3:model/door_a')\nfunction on_used() end\n", "\"on_used\"", NULL, NULL), err, sizeof(err));
-    assert(!h && strstr(err, "resource type 'model' is reserved"));
+    assert(!h && strstr(err, "world.entity: 'x3:model/door_a' is a model ID, expected a placed entity"));
     /* A world without scripts makes no Lua state at all. */
     static const char *plain = "{\"world_entities\":{\"entities\":[{\"id\":\"x1:entity/r\",\"kind\":\"relay\",\"links\":[]}],\"schema\":1}}";
     assert(parse(plain, &defs, err, sizeof(err)) && hta_went_load(&went, &defs, err, sizeof(err)));

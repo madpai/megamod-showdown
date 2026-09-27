@@ -335,6 +335,16 @@ void hta_match_begin(hta_session *s)
     s->went_synced = false;
     if (s->went.loaded)
         hta_log("[world] %u world entities, %u links", s->went.defs->count, s->went.defs->link_count);
+    /* X5: the world's asset resources (loaded with its package set). */
+    if (s->world_loaded) {
+        const hta_asset_table *a = &s->world_ext.assets;
+        uint32_t bound = hta_world_sounds_bind(&s->world_sounds, &s->audio, a);
+        uint32_t props = 0;
+        for (uint32_t i = 0; s->went.loaded && i < s->went.defs->count; i++) props += s->went.defs->entity[i].kind == HTA_WDEF_PROP;
+        if (a->texture_count || a->material_count || a->model_count || a->sound_count)
+            hta_log("[world] assets: %u textures, %u materials, %u models, %u sounds (%u KB), %u props, %u sounds bound",
+                    a->texture_count, a->material_count, a->model_count, a->sound_count, a->payload_bytes / 1024u, props, bound);
+    }
     /* Its scripts: a host (or offline game) only; a joiner never runs one. */
     size_t left = hta_script_destroy(s->script);
     s->script = NULL;

@@ -23,6 +23,7 @@ if ./build-host/test_model >/dev/null 2>&1; then ok "model UV and lighting tests
 if ./build-host/test_bsp    >/dev/null 2>&1; then ok "bsp extraction tests"; else bad "bsp extraction tests"; fi
 if ./build-host/test_external_map >/dev/null 2>&1; then ok "external map package loader and collision"; else bad "external map package loader and collision"; fi
 if ./build-host/test_resource >/dev/null 2>&1; then ok "resource IDs, typed references, package graph, world key over dependencies"; else bad "resource IDs, typed references, package graph, world key over dependencies"; fi
+if ./build-host/test_asset >/dev/null 2>&1; then ok "asset resources: libraries, typed asset references, props, mover sounds, refusals, fuzz"; else bad "asset resources: libraries, typed asset references, props, mover sounds, refusals, fuzz"; fi
 if ./build-host/test_oal_asset >/dev/null 2>&1; then ok "imported characters and weapons: load, pose, skin, hold"; else bad "imported characters and weapons: load, pose, skin, hold"; fi
 if ./build-host/test_external_world >/dev/null 2>&1; then ok "imported map: starts, flags and items on the reachable ground"; else bad "imported map: starts, flags and items on the reachable ground"; fi
 if ./build-host/test_camera >/dev/null 2>&1; then ok "camera/projection tests"; else bad "camera/projection tests"; fi
@@ -80,6 +81,13 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
     if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x4.sh > scratch/test_x4.log 2>&1; then
       ok "X4 world: typed resources, imported library script, refusals, library in the world key"
     else bad "X4 world: typed resources, imported library script, refusals, library in the world key"; fi
+    # X5 (docs/RESOURCES.md "Asset resources"): package-backed assets -- a
+    # library of texture, material, model and sound that two worlds import;
+    # props drawn and solid, a mover's sound, every refusal (OAL and engine
+    # alike), asset bytes in the world key, provenance not.
+    if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x5.sh > scratch/test_x5.log 2>&1; then
+      ok "X5 world: package-backed assets from a shared library, two consumers, refusals, asset bytes in the world key"
+    else bad "X5 world: package-backed assets from a shared library, two consumers, refusals, asset bytes in the world key"; fi
   fi
   if ./build-host/test_particle "$HTA_MAP" >/dev/null 2>&1; then ok "effect particles from the effect tags"; else bad "effect particles from the effect tags"; fi
   if ./build-host/test_vitals "$HTA_MAP" >/dev/null 2>&1; then ok "vitality and falling from the Trial tags"; else bad "vitality and falling from the Trial tags"; fi

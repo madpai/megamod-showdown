@@ -4,6 +4,7 @@
  * the loader itself uses -- the type registry, the reference fields, the
  * limits in package.h and world_def.h, the world key's member lists -- so
  * the contract cannot say one thing while the loader does another. */
+#include "asset_res.h"
 #include "external_map.h"
 #include "package.h"
 #include "resource.h"
@@ -85,8 +86,9 @@ size_t hta_resource_contract_json(char *buf, size_t cap)
             "\"provides\": \"every resource the package defines except placements; canonical byte order; each once; must equal the content\", "
             "\"requires\": \"[{package, resources}] in canonical package-ID order; resources: the imports, canonical order, each provided by that package\"}, "
             "\"implicit\": \"a manifest with no package member (every pre-X4 package): provides what it defines, requires nothing\", "
-            "\"library\": {\"container\": \"OALASSET v1, kind library, manifest only\", \"location\": \"%s/<package id>.oalasset\", "
-            "\"provides\": \"its scripts, exactly\"}, "
+            "\"library\": {\"container\": \"OALASSET v1, kind library: the manifest, then the payload of its asset members (X5), nothing else\", "
+            "\"location\": \"%s/<package id>.oalasset\", "
+            "\"provides\": \"its scripts and its assets, exactly\"}, "
             "\"graph\": \"package requirements are acyclic (a cycle is refused with its path); each package loads once; "
             "the set is kept sorted by package ID; references may only reach the package itself or its declared imports\", "
             "\"limits\": {\"provides\": %u, \"requires\": %u, \"imports\": %u, \"packages_per_set\": %u, \"depth\": %u, "
@@ -98,7 +100,37 @@ size_t hta_resource_contract_json(char *buf, size_t cap)
     put(&o, "], \"library_members\": [");
     for (uint32_t i = 0; hta_library_key_played(i); i++) put(&o, "%s\"%s\"", i ? ", " : "", hta_library_key_played(i));
     put(&o, "], \"dependencies\": \"after the members: per package of the closure, sorted by package ID: "
-            "OALD, u32 ID length, ID, u64 digest (FNV-1a 64 of OALL, u32 schema, its library members)\"},\n");
+            "OALD, u32 ID length, ID, u64 digest (FNV-1a 64 of OALL, u32 schema, its library members; then, when it "
+            "declares assets, OALP, u32 payload length and every payload byte)\"},\n");
+    /* X5: package-backed asset resources (asset_res.h). */
+    put(&o, "  \"assets\": {\"member\": \"assets\", \"schema\": %u, \"in\": \"library packages\", "
+            "\"fields\": [\"materials\", \"members\", \"models\", \"schema\", \"sounds\", \"textures\"], "
+            "\"members\": {\"entry\": {\"path\": \"member path\", \"size\": \"bytes, at least 1\"}, "
+            "\"order\": \"canonical byte order of path, each once; the payload is the members' bytes in this order, right after the manifest\", "
+            "\"use\": \"every member backs exactly one resource; every resource's member exists\"}, "
+            "\"member_path\": {\"form\": \"segment(/segment)*, the last with one extension: name.ext\", \"segment\": \"[a-z0-9_]+\", "
+            "\"max_bytes\": %u, \"max_segments\": %u, \"identity\": \"none: storage inside the package; never a host path, never a resource ID\"}, "
+            "\"types\": {"
+            "\"texture\": {\"fields\": [\"format\", \"height\", \"id\", \"member\", \"width\"], \"formats\": [\"rgba8\"], \"max_side\": %u, "
+            "\"payload\": \"width x height x 4 bytes, rows top down\"}, "
+            "\"material\": {\"fields\": [\"draw\", \"id\", \"texture\"], \"draw\": [\"opaque\", \"alpha\"], \"references\": [\"assets.materials[].texture\"]}, "
+            "\"model\": {\"fields\": [\"format\", \"id\", \"materials\", \"member\"], \"formats\": [\"mesh1\"], \"max_slots\": %u, "
+            "\"max_vertices\": %u, \"max_indices\": %u, \"max_groups\": %u, \"references\": [\"assets.models[].materials[]\"], "
+            "\"payload\": \"MSH1, u32 vertex, index, group counts; vertices of 10 f32 (position, normal, uv, lightmap uv; |v| <= 4096); "
+            "u32 indices; groups of u32 first, count, material slot, contiguous from 0\"}, "
+            "\"sound\": {\"fields\": [\"channels\", \"format\", \"frames\", \"id\", \"member\", \"rate\"], \"formats\": [\"pcm_s16le\"], "
+            "\"rate\": [4000, 96000], \"channels\": [1, 2], \"max_frames\": %u, \"payload\": \"frames x channels x 2 bytes, interleaved, little endian\"}}, "
+            "\"limits\": {\"per_type\": %u, \"members\": %u, \"payload_bytes\": %u}, "
+            "\"lists\": \"canonical byte order of id, each once; every descriptor field required, nothing else allowed\", "
+            "\"runtime\": \"decoded once when the package set loads into one table (by package ID, then resource ID, per type); "
+            "placements hold indices; a resource imported by several consumers or placed many times exists once\"},\n",
+        HTA_ASSET_SCHEMA, HTA_ASSET_MEMBER_MAX, HTA_ASSET_MEMBER_SEGS, HTA_ASSET_TEX_MAX, HTA_ASSET_MAX_SLOTS,
+        HTA_ASSET_MESH_MAX_VERTS, HTA_ASSET_MESH_MAX_INDICES, HTA_ASSET_MESH_MAX_GROUPS, HTA_ASSET_SOUND_MAX_FRAMES,
+        HTA_ASSET_MAX_PER_TYPE, HTA_ASSET_MAX_MEMBERS, HTA_ASSET_MAX_PAYLOAD);
+    put(&o, "  \"world_entities\": {\"schema\": %u, \"kinds\": [", HTA_WDEF_SCHEMA);
+    for (uint8_t k = 1; k < HTA_WDEF_KIND_COUNT; k++) put(&o, "%s\"%s\"", k > 1 ? ", " : "", hta_wdef_kind_name(k));
+    put(&o, "], \"prop\": \"schema 4: {id, kind prop, links [], model, position}: draws its model where it stands, solid as the "
+            "model's bounds\", \"mover_sound\": \"schema 4: a mover definition's optional sound, played when a mover starts to open or close\"},\n");
     put(&o, "  \"scripts\": {\"api\": \"%s\", \"max_scripts\": %u, \"max_source_bytes\": %u, \"max_pool_bytes\": %u}\n}\n",
         HTA_WDEF_SCRIPT_API, HTA_WDEF_MAX_SCRIPTS, HTA_WDEF_SCRIPT_MAX_BYTES, HTA_WDEF_SCRIPT_POOL);
     return o.len;
@@ -144,12 +176,25 @@ static const char *const RID_CASES[] = {
     "x4:widget/door", "x4:scripts/door", "x4:Entity/a", "showdown:model/red_crate", "common:material/industrial_metal",
     "x:texture/t", "x:sound/s", "community:animation/rifle_run", "showdown:prefab/security_door",
     "showdown:ruleset/team_deathmatch", "megamod:script/x", "x4:script/a%s", "x4:script/a\\b", "x4:script/a\"b",
+    "x5shared:model/test_crate", "x5shared:material/test_crate", "x5shared:texture/test_crate", "x5shared:sound/test_impact",
+    "x5shared:model/models/test_crate", "x5shared:model/test_crate.mesh", "x5shared:Model/test_crate", "x5shared:sounds/impact",
 };
 static const char *const PKG_CASES[] = {
     "x4.resource_lab", "x4.shared", "showdown", "a.b.c.d.e.f.g.h", "common.gameplay_scripts2", "", "x4:resource_lab",
     "x4/lab", "X4.lab", "x4..lab", ".x4", "x4.", "showdown-industrial-pack", "a.b.c.d.e.f.g.h.i", "../etc", "x4.Lab",
     "x4.1lab", "x4.lab ", "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
     "ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+};
+
+/* Member paths (X5, asset_res.h): package-local storage, checked by the
+ * same rules on both sides. */
+static const char *const PATH_CASES[] = {
+    "models/test_crate.mesh", "textures/test_crate.rgba", "sounds/test_impact.pcm", "a.b", "a/b/c/d/e/f.x",
+    "a/b/c/d/e/f/g.x", "", "/models/a.mesh", "../a.mesh", "models/../a.mesh", "models/./a.mesh", "models//a.mesh",
+    "models\\a.mesh", "Models/a.mesh", "models/A.mesh", "models/a", "models/a.", "models/.mesh", "models/a.b.c",
+    "models.x/a.mesh", "models/a-b.mesh", "models/a b.mesh", "models/a.mesh/", "C:/a.mesh", "models/a\xc3\xa9.mesh",
+    "models/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.mesh",
+    "models/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.mesh", "models/a:b.mesh", "%2e%2e/a.mesh",
 };
 
 static void jstr(out *o, const char *s)
@@ -208,6 +253,17 @@ size_t hta_resource_conformance_json(char *buf, size_t cap)
         put(&o, ", \"valid\": %s, \"why\": ", ok ? "true" : "false");
         jstr(&o, why);
         put(&o, "}%s\n", i + 1 < sizeof(PKG_CASES) / sizeof(PKG_CASES[0]) ? "," : "");
+    }
+    put(&o, "  ],\n  \"member_paths\": [\n");
+    for (size_t i = 0; i < sizeof(PATH_CASES) / sizeof(PATH_CASES[0]); i++) {
+        char p[256], why[160];
+        unescape(PATH_CASES[i], p, sizeof(p));
+        bool ok = hta_asset_member_valid(p, why, sizeof(why));
+        put(&o, "    {\"path\": ");
+        jstr(&o, p);
+        put(&o, ", \"valid\": %s, \"why\": ", ok ? "true" : "false");
+        jstr(&o, why);
+        put(&o, "}%s\n", i + 1 < sizeof(PATH_CASES) / sizeof(PATH_CASES[0]) ? "," : "");
     }
     put(&o, "  ]\n}\n");
     return o.len;

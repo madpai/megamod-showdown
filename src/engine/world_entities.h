@@ -39,6 +39,7 @@
 #define HTA_WENT_COOLDOWN 0.5f          /* an interactable, between uses (ours) */
 #define HTA_WENT_NO_ACTOR 0xFFu
 #define HTA_WENT_MAX_CALLS 16u          /* scripted uses waiting for the script phase, per step */
+#define HTA_WENT_MAX_CUES 16u           /* X5: sounds to start, per step */
 
 /* A checked reference: slot in the low 16 bits, generation in the high.
  * Generation 0 never occurs, so 0 is "no handle". */
@@ -55,6 +56,8 @@ typedef struct {
     uint64_t inside;            /* bit per actor */
     /* interactable */
     float    cooldown;
+    /* mover (X5): the phase its sound last answered, so a start sounds once */
+    uint8_t  heard;
 } hta_went_state;
 
 typedef struct {
@@ -73,6 +76,12 @@ typedef struct { uint8_t actor; float pos[3], yaw; } hta_went_teleport;
  * file never runs a script; it only says one is due. */
 typedef struct { uint8_t entity, actor; } hta_went_call;
 
+/* X5: a mover whose definition names a sound started to open or close
+ * this step -- on the host and, from the host's replicated state, on every
+ * joiner alike. The caller plays `sound` (asset table index) at `pos`. A
+ * join's first state (a snap) and a round reset are silent. */
+typedef struct { uint8_t entity; uint16_t sound; float pos[3]; } hta_went_cue;
+
 typedef struct {
     uint64_t dispatched, deferred, dropped_full, dropped_depth, dropped_stale, dropped_input;
     uint32_t max_queue;
@@ -87,8 +96,13 @@ typedef struct hta_world_entities {
     hta_collision   mover_coll[HTA_WDEF_MAX_MOVER_DEFS];
     hta_vertex      mover_verts[HTA_WDEF_MAX_MOVER_DEFS][8];
     uint32_t        mover_idx[HTA_WDEF_MAX_MOVER_DEFS][36];
-    /* placed movers: their definition's grid placed where they are */
+    /* placed movers: their definition's grid placed where they are; props
+     * (X5): their own box grid, standing still */
     hta_collision_instance inst[HTA_WDEF_MAX_ENTITIES];
+    hta_bsp_mesh    prop_mesh[HTA_WDEF_MAX_ENTITIES];
+    hta_collision   prop_coll[HTA_WDEF_MAX_ENTITIES];
+    hta_vertex      prop_verts[HTA_WDEF_MAX_ENTITIES][8];
+    uint32_t        prop_idx[HTA_WDEF_MAX_ENTITIES][36];
     /* the queue: a ring */
     hta_went_event  queue[HTA_WENT_QUEUE];
     uint32_t        head, count, seq;
@@ -97,6 +111,8 @@ typedef struct hta_world_entities {
     uint32_t        teleport_count;
     hta_went_call   calls[HTA_WENT_MAX_CALLS];
     uint32_t        call_count;
+    hta_went_cue    cues[HTA_WENT_MAX_CUES];
+    uint32_t        cue_count;
     bool            remote;              /* a LAN client: the host decides */
     bool            loaded;
     uint32_t        version;             /* bumps when any mover's state changes */
@@ -134,8 +150,8 @@ bool hta_went_send(hta_world_entities *w, uint32_t target, uint8_t input, uint8_
  * `teleports` for the caller to apply to its actors. */
 void hta_went_step(hta_world_entities *w, float dt);
 
-/* Movers' collision instances, appended to `out` (room for `cap`): the
- * count written. */
+/* Movers' and props' collision instances, appended to `out` (room for
+ * `cap`): the count written. */
 uint32_t hta_went_instances(const hta_world_entities *w, hta_collision_instance *out, uint32_t cap);
 /* A mover's current offset from its closed place. */
 void hta_went_offset(const hta_world_entities *w, uint32_t index, float out[3]);

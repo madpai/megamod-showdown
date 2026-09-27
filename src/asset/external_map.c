@@ -9,7 +9,7 @@ static uint32_t u32(const unsigned char *p) { return (uint32_t)p[0]|((uint32_t)p
 static float f32(const unsigned char *p) { uint32_t v=u32(p); float f; memcpy(&f,&v,4); return f; }
 static bool take(size_t *at, size_t n, size_t size) { if (n>size-*at) return false; *at+=n; return true; }
 static bool fail(char *err,size_t n,const char *s) { if(err && n) snprintf(err,n,"%s",s); return false; }
-void hta_external_map_free(hta_external_map *m) { if(!m)return; hta_bsp_free(&m->mesh); free(m->spawns); free(m->solid_indices); free(m->breakables); free(m->submesh_breakable); free(m->submesh_entity); memset(m,0,sizeof(*m)); }
+void hta_external_map_free(hta_external_map *m) { if(!m)return; hta_asset_table_free(&m->assets); hta_bsp_free(&m->mesh); free(m->spawns); free(m->solid_indices); free(m->breakables); free(m->submesh_breakable); free(m->submesh_entity); memset(m,0,sizeof(*m)); }
 
 void hta_external_map_collision_view(const hta_bsp_mesh *render, const hta_external_map *m,
                                      hta_bsp_mesh *view)
@@ -225,7 +225,11 @@ static const char *const PLAYED_KEYS[] = {
  * "OALD", u32 ID length, its ID, and its own 64-bit digest (package.c:
  * its "package" and "scripts" bytes as stored). A dependency's content is
  * therefore part of the world's identity; the order requirements are
- * written or found in is not. */
+ * written or found in is not. X5: a library's digest also covers its
+ * "assets" member and every payload byte (package.c), so a changed
+ * texel, vertex or sample in a required library is a different world --
+ * unlike the world's own baked texture pixels above, which stay out as
+ * they always were (pre-X5 keys unchanged). */
 
 const char *hta_world_key_played(uint32_t i)
 {
@@ -430,6 +434,14 @@ bool hta_external_map_load_with(const uint8_t *data, size_t size, const hta_pkg_
             if(e && (e>out->world_defs.count || out->world_defs.entity[e-1].kind!=HTA_WDEF_MOVER)){
                 fail(err,errlen,"a group names a world entity that is not a mover");goto done;
             }
+        }
+    }
+    /* X5: the set's assets become the world's, indices unchanged. */
+    {
+        char why[240];
+        if(!hta_pkg_set_take_assets(set,&out->assets,why,sizeof(why))){
+            if(err&&errlen) snprintf(err,errlen,"assets: %s",why);
+            goto done;
         }
     }
     /* A group naming a breakable the manifest does not list is plain scenery. */

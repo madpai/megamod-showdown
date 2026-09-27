@@ -14,7 +14,9 @@
  *                                      every package it requires, exactly as
  *                                      a match does; print what it provides,
  *                                      what it needs, what every reference
- *                                      resolved to and its world key (JSON).
+ *                                      resolved to (X5: asset references too,
+ *                                      with their provider and table index),
+ *                                      its asset table and its world key (JSON).
  *                                      Exit 1 with the loader's message when
  *                                      the world is refused.
  *
@@ -116,7 +118,74 @@ static int inspect(const char *bundle, const char *world)
         json_str(d->script[d->ability_script - 1].id);
         printf(", \"index\": %u}", d->ability_script - 1u);
     }
-    printf("]}\n");
+    /* X5: typed asset references, to the table's index and its provider. */
+    const hta_asset_table *a = &m->assets;
+#define FROM(p) ((p) && (p) <= pk->dep_count ? pk->dep[(p) - 1] : "?")
+    for (uint32_t i = 0; i < d->count; i++) {
+        const hta_wdef *e = &d->entity[i];
+        if (e->kind != HTA_WDEF_PROP || !e->model || e->model > a->model_count) continue;
+        printf("%s{\"from\": ", SEP()); json_str(e->id);
+        printf(", \"field\": \"%s\", \"to\": ", hta_ref_get(HTA_REF_PROP_MODEL)->field);
+        json_str(a->model[e->model - 1].id);
+        printf(", \"provider\": "); json_str(FROM(a->model[e->model - 1].provider));
+        printf(", \"index\": %u}", e->model - 1u);
+    }
+    for (uint32_t i = 0; i < d->mover_def_count; i++) {
+        const hta_wmover_def *md = &d->mover_def[i];
+        if (!md->sound || md->sound > a->sound_count) continue;
+        printf("%s{\"from\": ", SEP()); json_str(md->id);
+        printf(", \"field\": \"%s\", \"to\": ", hta_ref_get(HTA_REF_MOVER_SOUND)->field);
+        json_str(a->sound[md->sound - 1].id);
+        printf(", \"provider\": "); json_str(FROM(a->sound[md->sound - 1].provider));
+        printf(", \"index\": %u}", md->sound - 1u);
+    }
+    for (uint32_t i = 0; i < a->material_count; i++) {
+        printf("%s{\"from\": ", SEP()); json_str(a->material[i].id);
+        printf(", \"field\": \"%s\", \"to\": ", hta_ref_get(HTA_REF_MATERIAL_TEXTURE)->field);
+        json_str(a->texture[a->material[i].texture].id);
+        printf(", \"provider\": "); json_str(FROM(a->texture[a->material[i].texture].provider));
+        printf(", \"index\": %u}", a->material[i].texture);
+    }
+    for (uint32_t i = 0; i < a->model_count; i++)
+        for (uint32_t k = 0; k < a->model[i].slot_count; k++) {
+            uint16_t mi = a->model[i].slot[k];
+            printf("%s{\"from\": ", SEP()); json_str(a->model[i].id);
+            printf(", \"field\": \"%s\", \"slot\": %u, \"to\": ", hta_ref_get(HTA_REF_MODEL_MATERIAL)->field, k);
+            json_str(a->material[mi].id);
+            printf(", \"provider\": "); json_str(FROM(a->material[mi].provider));
+            printf(", \"index\": %u}", mi);
+        }
+    printf("],\n \"assets\": {\"payload_bytes\": %u, \"textures\": [", a->payload_bytes);
+    for (uint32_t i = 0; i < a->texture_count; i++) {
+        printf("%s{\"id\": ", i ? ", " : ""); json_str(a->texture[i].id);
+        printf(", \"index\": %u, \"from\": ", i); json_str(FROM(a->texture[i].provider));
+        printf(", \"width\": %u, \"height\": %u}", a->texture[i].width, a->texture[i].height);
+    }
+    printf("], \"materials\": [");
+    for (uint32_t i = 0; i < a->material_count; i++) {
+        printf("%s{\"id\": ", i ? ", " : ""); json_str(a->material[i].id);
+        printf(", \"index\": %u, \"from\": ", i); json_str(FROM(a->material[i].provider));
+        printf(", \"texture\": %u, \"draw\": \"%s\"}", a->material[i].texture,
+               a->material[i].draw == HTA_ASSET_DRAW_ALPHA ? "alpha" : "opaque");
+    }
+    printf("], \"models\": [");
+    for (uint32_t i = 0; i < a->model_count; i++) {
+        const hta_asset_model *md = &a->model[i];
+        printf("%s{\"id\": ", i ? ", " : ""); json_str(md->id);
+        printf(", \"index\": %u, \"from\": ", i); json_str(FROM(md->provider));
+        printf(", \"vertices\": %u, \"triangles\": %u, \"slots\": [", md->mesh.vertex_count, md->mesh.index_count / 3);
+        for (uint32_t k = 0; k < md->slot_count; k++) printf("%s%u", k ? ", " : "", md->slot[k]);
+        printf("], \"bounds\": [[%.3f, %.3f, %.3f], [%.3f, %.3f, %.3f]]}", md->mesh.bounds_min[0], md->mesh.bounds_min[1],
+               md->mesh.bounds_min[2], md->mesh.bounds_max[0], md->mesh.bounds_max[1], md->mesh.bounds_max[2]);
+    }
+    printf("], \"sounds\": [");
+    for (uint32_t i = 0; i < a->sound_count; i++) {
+        printf("%s{\"id\": ", i ? ", " : ""); json_str(a->sound[i].id);
+        printf(", \"index\": %u, \"from\": ", i); json_str(FROM(a->sound[i].provider));
+        printf(", \"rate\": %u, \"channels\": %u, \"frames\": %u}", a->sound[i].rate, a->sound[i].channels, a->sound[i].frames);
+    }
+    printf("]}}\n");
+#undef FROM
     hta_external_map_free(m);
     free(m);
     return 0;

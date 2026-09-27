@@ -5,6 +5,7 @@
  * rather than load a world without its behaviour. */
 #ifndef HTA_EXTERNAL_MAP_H
 #define HTA_EXTERNAL_MAP_H
+#include "asset_res.h"
 #include "bsp.h"
 #include "package.h"
 #include "world_def.h"
@@ -60,6 +61,10 @@ typedef struct {
     uint32_t version;
     hta_world_defs world_defs;
     hta_external_package package;
+    /* X5: every asset resource of the package set (asset_res.h), decoded
+     * once, owned here: freed with the map. Props and mover definitions
+     * hold indices into it. */
+    hta_asset_table assets;
     uint16_t *submesh_entity;
 } hta_external_map;
 

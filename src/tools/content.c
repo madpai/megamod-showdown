@@ -89,6 +89,10 @@ int main(int argc, char **argv)
                 printf("        needs   %s (%s) digest %016llx\n", pk->dep[k], pk->dep_direct[k] ? "required" : "via another",
                        (unsigned long long)pk->dep_digest[k]);
         }
+        const hta_asset_table *a = &s->world_ext.assets;
+        if (a->texture_count || a->material_count || a->model_count || a->sound_count)
+            printf("        assets  %u textures, %u materials, %u models, %u sounds (%u payload bytes)\n",
+                   a->texture_count, a->material_count, a->model_count, a->sound_count, a->payload_bytes);
         hta_bsp_free(&s->mesh);
         hta_external_map_free(&s->world_ext);
     }

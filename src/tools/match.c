@@ -151,6 +151,11 @@ int main(int argc, char **argv)
         for (uint32_t i = 0; i < s->went.defs->count; i++)
             if (s->went.defs->entity[i].kind == HTA_WDEF_MOVER)
                 printf("match: mover %s phase %u t %.2f\n", s->went.defs->entity[i].id, s->went.st[i].phase, s->went.st[i].t);
+        const hta_asset_table *a = &s->world_ext.assets;
+        if (a->model_count || a->sound_count)
+            printf("match: assets: %u textures, %u materials, %u models, %u sounds; %u mover sounds started (%u distinct clips)\n",
+                   a->texture_count, a->material_count, a->model_count, a->sound_count, s->world_sounds_heard,
+                   s->world_sounds.slot_count);
     }
     if (s->script) {
         const hta_script_stats *st = hta_script_get_stats(s->script);
@@ -169,5 +174,11 @@ int main(int argc, char **argv)
     if (host_port)
         printf("match: hosted on UDP %d: %llu joiners refused, %u peers at the end\n", host_port,
                (unsigned long long)s->host_server.stats.refused, hta_net_server_count(&s->host_server));
+    /* The world's own state goes with it (X5: its asset table and the sound
+     * bank's copies), so a leak-checked run sees the teardown. The rest of
+     * the session lives until exit, as it always has. */
+    hta_world_sounds_free(&s->world_sounds);
+    hta_went_free(&s->went);
+    hta_external_map_free(&s->world_ext);
     return 0;
 }

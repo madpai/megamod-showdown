@@ -37,6 +37,7 @@
 #include "../engine/viewmodel.h"
 #include "../engine/audio.h"
 #include "../engine/world_entities.h"
+#include "../game/world_sounds.h"
 #include "../asset/dialogue.h"
 #include "../asset/cache.h"
 #include "../asset/bsp.h"
@@ -487,6 +488,10 @@
     uint32_t      went_teleports;    /* host: players moved by teleports, for tests */          \
     uint32_t      went_state_tick;   /* LAN client: the last WORLD_STATE applied */             \
     hta_went_gpu  went_gpu;          /* the movers' meshes (the platform draws them) */       \
+    /* X5: the world's sound resources as mixer clips (game/world_sounds.h): \
+     * bound at match begin, a bank for the session's life. */               \
+    hta_world_sounds world_sounds;                                           \
+    uint32_t      world_sounds_heard;  /* cues so far, for logs and tests */ \
     const void   *went_gpu_mesh;     /* the world upload they were cut from */                 \
     /* Host-side Lua (X3, docs/SCRIPTING.md): made at match begin by a host \
      * or offline game whose world has scripts; never on a joiner. */        \

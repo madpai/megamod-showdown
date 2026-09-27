@@ -13,6 +13,7 @@
  *   mover         -          open close toggle
  *   trigger       entered    -
  *   teleport      -          teleport (moves the player who began the chain)
+ *   prop          -          -  (X5: a placed model; solid as its bounds)
  *
  * A placement's authored ID is `namespace:entity/name` (the content-ID
  * grammar, Open Asset Lab docs/CONTENT_IDS.md). It is load-time only: links
@@ -45,6 +46,13 @@
  * requires: they are copied into this table at load, marked with their
  * provider, and run exactly as the world's own.
  *
+ * Asset references (X5, schema 4, asset/asset_res.h): a PROP places a
+ * model (`namespace:model/name`) where it stands, drawn with the model's
+ * materials and solid as the model's bounds; a mover definition may name
+ * the sound (`namespace:sound/name`) it makes when it starts to move. Both
+ * are imported from library packages and resolved here, once, to asset
+ * table indices.
+ *
  * Portable C11. The definitions are bounded by the limits below, which
  * Open Asset Lab's validator shares (assetlab/world.py); parsing allocates
  * only transiently (a package set). */
@@ -55,7 +63,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define HTA_WDEF_SCHEMA 3u            /* newest understood; 1 (X1) and 2 (X2) still load */
+#define HTA_WDEF_SCHEMA 4u            /* newest understood; 1 (X1), 2 (X2) and 3 (X3) still load */
 #define HTA_WDEF_MAX_MOVER_DEFS 64u   /* one per mover at most (schema 1) */
 #define HTA_WDEF_NO_DEF 0xFFFFu
 #define HTA_WDEF_MAX_SCRIPTS 16u
@@ -76,7 +84,7 @@ enum { HTA_WCB_ON_USED = 1u, HTA_WCB_ON_ABILITY = 2u };
 
 typedef enum {
     HTA_WDEF_NONE = 0, HTA_WDEF_INTERACTABLE, HTA_WDEF_RELAY, HTA_WDEF_MOVER,
-    HTA_WDEF_TRIGGER, HTA_WDEF_TELEPORT, HTA_WDEF_KIND_COUNT
+    HTA_WDEF_TRIGGER, HTA_WDEF_TELEPORT, HTA_WDEF_PROP, HTA_WDEF_KIND_COUNT
 } hta_wdef_kind;
 
 /* What a source emits (a link's `event`). */
@@ -101,6 +109,7 @@ typedef struct {
     float    size[3];         /* the box's extent (wu); centred on the placement */
     float    move[3];         /* offset when fully open */
     float    speed;           /* wu/s */
+    uint16_t sound;           /* X5: the sound it makes starting to move: asset table index + 1; 0 none */
 } hta_wmover_def;
 
 /* A script: immutable content. Its source is `len` bytes at `at` in the
@@ -123,7 +132,8 @@ typedef struct {
                                  mover: its box's centre when closed */
     float    reach;           /* interactable: from the user's eye, wu */
     float    yaw;             /* teleport: facing on arrival, radians */
-    float    min[3], max[3];  /* trigger: its volume */
+    float    min[3], max[3];  /* trigger: its volume; prop: its model's bounds where it stands */
+    uint16_t model;           /* prop (X5): its model's asset table index + 1 */
 } hta_wdef;
 
 typedef struct hta_world_defs {
@@ -138,6 +148,9 @@ typedef struct hta_world_defs {
     uint32_t      script_count;
     uint16_t      ability_script;   /* the on_ability script's index + 1; 0 none */
     uint32_t      pool_used;
+    /* X5: how many models and sounds the world's asset table holds
+     * (external_map.h), so a reference can be checked without it. */
+    uint32_t      asset_models, asset_sounds;
     char          pool[HTA_WDEF_SCRIPT_POOL];
 } hta_world_defs;
 

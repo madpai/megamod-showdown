@@ -7256,9 +7256,9 @@ void android_main(struct android_app *app)
             if (state.went.loaded && state.gpu_mesh && state.went_gpu_mesh != (const void *)state.gpu_mesh) {
                 hta_went_gpu_free(&state.went_gpu, state.gfx);
                 hta_went_gpu_upload(&state.went_gpu, state.gfx, &state.mesh, state.gpu_mesh,
-                                    state.world_ext.submesh_entity, &state.went);
+                                    state.world_ext.submesh_entity, &state.went, &state.world_ext.assets);
                 state.went_gpu_mesh = state.gpu_mesh;
-                hta_log("[world] %u movers drawn", state.went_gpu.count);
+                hta_log("[world] %u movers drawn, %u prop models", state.went_gpu.count, state.went_gpu.models_uploaded);
             }
             g_inst_count += hta_went_gpu_instances(&state.went_gpu, &state.went, g_inst + g_inst_count,
                                                    HTA_GFX_MAX_INSTANCES - g_inst_count);
@@ -7348,6 +7348,7 @@ done:
     hta_log("[app] shutting down after %llu frames", (unsigned long long)state.frames);
     /* Stop the stream before freeing the PCM its voices point at. */
     hta_audio_android_stop();
+    hta_world_sounds_free(&state.world_sounds);   /* the mixer has stopped: its clips go */
     if (state.net_enabled) hta_net_client_close(&state.net);
     if (state.net_hosting) hta_net_server_close(&state.host_server);
     hta_hud_free(&state.hud);
