@@ -50,11 +50,15 @@
 #define HTA_PREFAB_H
 
 #include "resource.h"
+#include "world_def.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#define HTA_PREFAB_SCHEMA          1u
+#define HTA_PREFAB_SCHEMA          2u       /* newest understood; schema 1 (X6) still loads, byte for byte as before */
+#define HTA_PREFAB_MAX_BINDINGS    32u      /* X7, schema 2: one prefab */
+#define HTA_PREFAB_MAX_BIND_CONDS  64u
+#define HTA_PREFAB_MAX_BIND_ACTIONS 128u
 #define HTA_PREFAB_MAX_PER_LIBRARY 32u
 #define HTA_PREFAB_MAX_CHILDREN    16u
 #define HTA_PREFAB_MAX_LINKS       64u      /* one prefab, all its children */
@@ -93,12 +97,24 @@ typedef struct {
     uint32_t         child_count;
     hta_prefab_link  link[HTA_PREFAB_MAX_LINKS];
     uint32_t         link_count;
+    /* X7 (prefab schema 2): event bindings between its children, in
+     * canonical local-ID order. Entity references are LOCAL child indices;
+     * a play_sound's sound is a typed reference resolved from the provider
+     * (package.c) into `sound` (the set's asset index + 1). */
+    hta_wbinding     binding[HTA_PREFAB_MAX_BINDINGS];
+    uint32_t         binding_count;
+    hta_wcond        cond[HTA_PREFAB_MAX_BIND_CONDS];
+    uint32_t         cond_count;
+    hta_waction      action[HTA_PREFAB_MAX_BIND_ACTIONS];
+    uint32_t         action_count;
+    char             sound_ref[HTA_PREFAB_MAX_BIND_ACTIONS][HTA_RID_MAX + 1];
 } hta_prefab;
 
 /* One library's compiled prefabs (hta_pkg_dep.prefabs). */
 typedef struct hta_prefab_table {
     hta_prefab *prefab;            /* owned */
     uint32_t    count;
+    uint32_t    schema;            /* the member's (1 or 2); 0 when there is none */
 } hta_prefab_table;
 
 /* The "prefabs" member of a library manifest, strictly: schema, prefab IDs

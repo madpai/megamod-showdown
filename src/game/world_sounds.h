@@ -55,6 +55,10 @@ bool hta_world_sounds_place(const float pos[3], const float ear[3], const float 
 /* Plays this step's cues (w->cues). Returns how many started. */
 uint32_t hta_world_sounds_play(hta_world_sounds *ws, hta_audio *a, const hta_world_entities *w,
                                const float ear[3], const float right[3]);
+/* One sound (asset table index) at `pos`: a joiner's copy of a host
+ * binding's play_sound (X7, HTA_NET_FX_WORLD_SOUND). */
+bool hta_world_sounds_play_at(hta_world_sounds *ws, hta_audio *a, uint32_t sound, const float pos[3], const float ear[3],
+                              const float right[3]);
 void hta_world_sounds_free(hta_world_sounds *ws);
 
 #endif

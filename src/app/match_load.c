@@ -335,6 +335,13 @@ void hta_match_begin(hta_session *s)
     s->went_synced = false;
     if (s->went.loaded)
         hta_log("[world] %u world entities, %u links", s->went.defs->count, s->went.defs->link_count);
+    /* X7: the event bindings -- run by the host, never by a joiner. */
+    if (s->went.loaded && s->went.defs->binding_count) {
+        uint32_t own = 0;
+        for (uint32_t i = 0; i < s->went.defs->binding_count; i++) own += !s->went.defs->binding[i].instance;
+        hta_log("[world] %u event bindings (%u the world's own, %u from prefab instances): %s", s->went.defs->binding_count, own,
+                s->went.defs->binding_count - own, s->went.remote ? "the host runs them" : "run here (host)");
+    }
     /* X6: what each prefab instance expanded into (ordinary entities now). */
     for (uint32_t i = 0; s->went.loaded && i < s->went.defs->prefab_instance_count; i++) {
         const hta_wprefab_instance *in = &s->went.defs->prefab_instance[i];

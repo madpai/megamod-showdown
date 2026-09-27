@@ -423,6 +423,19 @@ static void play(join *j, const hta_input *in, double now, float dt)
             printf("join: sound %s: %s started moving\n", j->ext.assets.sound[j->went.cues[k].sound].id,
                    j->went.defs->entity[j->went.cues[k].entity].id);
     }
+    /* X7: a sound the host's event bindings played: the host says which and
+     * where (nothing here evaluates a binding). */
+    for (uint32_t k = 0; k < j->view.world_sound_count; k++) {
+        const uint16_t snd = j->view.world_sound[k].sound;
+        uint8_t ent = j->view.world_sound[k].entity;
+        if (snd >= j->ext.assets.sound_count || !j->went.loaded || ent >= j->went.defs->count) continue;
+        float fwd[3];
+        hta_camera_forward(&j->cam, fwd);
+        float right[3] = { fwd[1], -fwd[0], 0.0f }, len = sqrtf(right[0] * right[0] + right[1] * right[1]);
+        if (len > 1e-4f) { right[0] /= len; right[1] /= len; } else right[0] = 1.0f;
+        hta_world_sounds_play_at(&j->sounds, &j->audio, snd, j->view.world_sound[k].pos, j->cam.pos, right);
+        printf("join: sound %s at %s (the host's binding)\n", j->ext.assets.sound[snd].id, j->went.defs->entity[ent].id);
+    }
     hta_player_input pi = { in->move_forward, in->move_right, in->look_yaw, in->look_pitch,
                             in->jump, false, in->crouch };
     if (!j->view.me_alive && j->net.connected && j->view.me >= 0) {

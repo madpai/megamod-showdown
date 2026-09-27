@@ -217,7 +217,10 @@ static int l_send(lua_State *L)
         luaL_error(L, "%s (%s) does not accept '%s'", e->id, hta_wdef_kind_name(e->kind), name);
     int32_t actor = lua_isnoneornil(L, 3) ? -1 : arg_player(L, 3);
     request(L, "world.send");
-    bool ok = hta_went_send(h->w, i, input, actor >= 0 && actor < (int32_t)HTA_WENT_MAX_ACTORS ? (uint8_t)actor : HTA_WENT_NO_ACTOR);
+    /* X7: the one action seam (its five link inputs are actions of the
+     * same names), exactly as a binding or a future agent requests. */
+    bool ok = hta_went_request(h->w, hta_waction_from_name(name), i,
+                               actor >= 0 && actor < (int32_t)HTA_WENT_MAX_ACTORS ? (uint8_t)actor : HTA_WENT_NO_ACTOR) == HTA_WENT_QUEUED;
     if (!ok) h->st.refused_requests++;
     lua_pushboolean(L, ok);
     return 1;

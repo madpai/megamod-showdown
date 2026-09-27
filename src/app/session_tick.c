@@ -171,6 +171,30 @@ static void world_entities(hta_session *s, float dt, bool authority)
         else w->call_count = 0;
     }
     hta_went_step(w, dt);
+    /* X7: the event bindings' damage, through the game's own pipeline
+     * (hta_game_hurt: shields, health, protection, teams, death, kill feed,
+     * score), exactly as Lua's game.damage; no player is credited. */
+    for (uint32_t k = 0; authority && k < w->hurt_count; k++) {
+        const hta_went_hurt *h = &w->hurts[k];
+        if (h->actor >= s->game.unit_count || !s->game.units[h->actor].alive) continue;
+        hta_game_hurt(&s->game, h->actor, -1, h->amount, NULL);
+        s->went_hurts++;
+        hta_log("[world] unit %u hurt %g by %s (binding %s)", h->actor, (double)h->amount, w->defs->entity[h->source].id,
+                h->binding ? w->defs->binding[h->binding - 1].id : "?");
+    }
+    /* X7: a binding's sound goes to the joiners as a world-sound effect
+     * (they cannot derive it from state, as they do a mover's). */
+    for (uint32_t k = 0; authority && s->net_hosting && k < w->cue_count; k++) {
+        const hta_went_cue *c = &w->cues[k];
+        if (!c->binding) continue;
+        hta_net_fx fx = { .kind = HTA_NET_FX_WORLD_SOUND, .entity = c->entity, .weapon = (uint8_t)(c->sound & 0xFF),
+                          .material = (uint8_t)(c->sound >> 8) };
+        for (int q = 0; q < 3; q++) fx.pos[q] = c->pos[q];
+        hta_net_server_fx(&s->host_server, &fx);
+    }
+    for (uint32_t k = 0; k < w->trace_count; k++) hta_log("[bind] %s", w->trace_line[k]);
+    if (w->trace_dropped) hta_log("[bind] (%u more trace lines this step dropped)", w->trace_dropped);
+    w->trace_count = w->trace_dropped = 0;
     /* X5: movers that started to move sound their definition's sound. */
     if (w->cue_count) {
         float fwd[3];
@@ -181,9 +205,13 @@ static void world_entities(hta_session *s, float dt, bool authority)
         for (uint32_t k = 0; k < w->cue_count; k++) {
             const hta_went_cue *c = &w->cues[k];
             s->world_sounds_heard++;
-            hta_log("[world] sound %s: %s started %s", c->sound < s->world_ext.assets.sound_count ?
-                    s->world_ext.assets.sound[c->sound].id : "?", w->defs->entity[c->entity].id,
-                    w->st[c->entity].phase == HTA_MOVER_OPENING ? "opening" : "closing");
+            const char *sid = c->sound < s->world_ext.assets.sound_count ? s->world_ext.assets.sound[c->sound].id : "?";
+            if (c->binding)
+                hta_log("[world] sound %s at %s (binding %s)", sid, w->defs->entity[c->entity].id,
+                        c->binding <= w->defs->binding_count ? w->defs->binding[c->binding - 1].id : "from the host");
+            else
+                hta_log("[world] sound %s: %s started %s", sid, w->defs->entity[c->entity].id,
+                        w->st[c->entity].phase == HTA_MOVER_OPENING ? "opening" : "closing");
         }
     }
     for (uint32_t k = 0; authority && k < w->teleport_count; k++) {

@@ -6,8 +6,12 @@
  *
  *   megamod-match [--trial DIR] [--bundle DIR] [--world NAME] [--bots N]
  *                 [--mode slayer|team|ctf] [--skill 0-3] [--score N] [--seconds S]
- *                 [--cache DIR] [--host PORT]
+ *                 [--cache DIR] [--host PORT] [--trace-events]
  *   (or HTA_TRIAL_DIR / HTA_BUNDLE_DIR). Exit 0 if the match loaded and ran.
+ *
+ * --trace-events: log every X7 event that has bindings, each binding's
+ * conditions and what it queued ("[bind] ..."; bounded per step). A debug
+ * aid: normal logs carry only drops and diagnostics.
  *
  * --host PORT: the same match is a LAN host (the shared session's host
  * half, app/host_net.h) with no player of its own, run on the wall clock
@@ -41,6 +45,7 @@ int main(int argc, char **argv)
     int bots = 7, mode = HTA_MODE_SLAYER, skill = 1, score = 25;
     double seconds = 60.0;
     int host_port = 0;
+    bool trace_events = false;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
         if (!strcmp(a, "--trial") && v) { trial = v; i++; }
@@ -52,12 +57,13 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--seconds") && v) { seconds = atof(v); i++; }
         else if (!strcmp(a, "--cache") && v) { cache = v; i++; }
         else if (!strcmp(a, "--host") && v) { host_port = atoi(v); i++; }
+        else if (!strcmp(a, "--trace-events")) trace_events = true;
         else if (!strcmp(a, "--mode") && v) {
             mode = !strcmp(v, "ctf") ? HTA_MODE_CTF : !strcmp(v, "team") ? HTA_MODE_TEAM_SLAYER : HTA_MODE_SLAYER;
             i++;
         } else {
             fprintf(stderr, "usage: %s [--trial DIR] [--bundle DIR] [--world NAME] [--bots N] "
-                            "[--mode slayer|team|ctf] [--skill 0-3] [--score N] [--seconds S] [--cache DIR] [--host PORT]\n", argv[0]);
+                            "[--mode slayer|team|ctf] [--skill 0-3] [--score N] [--seconds S] [--cache DIR] [--host PORT] [--trace-events]\n", argv[0]);
             return 2;
         }
     }
@@ -104,6 +110,7 @@ int main(int argc, char **argv)
     if (!hta_match_start(s, cache, false)) { fprintf(stderr, "match: no playable game on this map\n"); return 1; }
     s->map_loaded = true;
     hta_match_begin(s);
+    s->went.trace = trace_events;
     double t2 = hta_time_seconds();
     printf("match: %s, mode %d, %u units, nav %s, items %s; world %.0f ms, start %.0f ms\n",
            world[0] ? world : "bloodgulch", s->game.mode, s->game.unit_count,
@@ -148,9 +155,18 @@ int main(int argc, char **argv)
                (unsigned long long)ws->dropped_full, (unsigned long long)ws->dropped_depth,
                (unsigned long long)ws->dropped_stale, (unsigned long long)ws->dropped_input, ws->max_queue,
                s->went_teleports);
+        if (s->went.defs->binding_count)
+            printf("match: bindings: %u; matched %llu, skipped by a condition %llu, actions queued %llu, dropped by the cascade "
+                   "budget %llu, without an actor %llu; %u damage applied\n", s->went.defs->binding_count,
+                   (unsigned long long)ws->bindings_matched, (unsigned long long)ws->bindings_skipped,
+                   (unsigned long long)ws->actions_queued, (unsigned long long)ws->dropped_budget,
+                   (unsigned long long)ws->no_actor, s->went_hurts);
         for (uint32_t i = 0; i < s->went.defs->count; i++)
             if (s->went.defs->entity[i].kind == HTA_WDEF_MOVER)
                 printf("match: mover %s phase %u t %.2f\n", s->went.defs->entity[i].id, s->went.st[i].phase, s->went.st[i].t);
+            else if (s->went.defs->entity[i].kind == HTA_WDEF_RELAY && s->went.defs->binding_count)
+                printf("match: relay %s %s\n", s->went.defs->entity[i].id,
+                       hta_went_relay_active(&s->went, i) ? "active" : "inactive");
         const hta_asset_table *a = &s->world_ext.assets;
         if (a->model_count || a->sound_count)
             printf("match: assets: %u textures, %u materials, %u models, %u sounds; %u mover sounds started (%u distinct clips)\n",

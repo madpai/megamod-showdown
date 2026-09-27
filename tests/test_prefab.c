@@ -493,8 +493,8 @@ static void refusals(void)
                   "package t.fac: prefab 'tf:prefab/Door' is not a resource ID: name has capital 'D'"));
     CHECK(refused(NULL, edit(FAC, "\"id\":\"tf:prefab/door\"}", "\"id\":\"tf:prefab/door\",\"extends\":\"tf:prefab/base\"}"),
                   "package t.fac: prefab tf:prefab/door: unknown field 'extends' (a prefab has children, id)"));
-    CHECK(refused(NULL, edit(FAC, "\"id\":\"tf:prefab/door\"}],\"schema\":1}", "\"id\":\"tf:prefab/door\"}],\"schema\":2}"),
-                  "package t.fac: unsupported prefab schema 2 (this engine has 1)"));
+    CHECK(refused(NULL, edit(FAC, "\"id\":\"tf:prefab/door\"}],\"schema\":1}", "\"id\":\"tf:prefab/door\"}],\"schema\":3}"),
+                  "package t.fac: unsupported prefab schema 3 (this engine has 2)"));
     CHECK(refused(NULL, edit(FAC, "\"provides\":[\"tf:prefab/door\",", "\"provides\":["),
                   "package t.fac has prefab tf:prefab/door but does not list it in provides"));
     CHECK(refused(NULL, edit(FAC, "\"provides\":[\"tf:prefab/door\",", "\"provides\":[\"tf:prefab/aaa\",\"tf:prefab/door\","),

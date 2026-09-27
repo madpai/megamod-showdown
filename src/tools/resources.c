@@ -110,6 +110,41 @@ static int inspect(const char *bundle, const char *world)
         }
         printf("]}");
     }
+    /* X7: every event binding as compiled -- source, event, conditions and
+     * actions by placed ID and entity index, where it came from. */
+    printf("],\n \"bindings\": [");
+    for (uint32_t i = 0; i < d->binding_count; i++) {
+        const hta_wbinding *b = &d->binding[i];
+        printf("%s\n  {\"index\": %u, \"id\": ", i ? "," : "", i); json_str(b->id);
+        printf(", \"origin\": ");
+        if (b->instance) {
+            const hta_wprefab_instance *in = &d->prefab_instance[b->instance - 1];
+            printf("{\"prefab\": "); json_str(in->prefab); printf(", \"instance\": "); json_str(in->id); printf("}");
+        } else printf("\"world\"");
+        printf(", \"source\": "); json_str(d->entity[b->source].id);
+        printf(", \"source_index\": %u, \"event\": \"%s\", \"conditions\": [", b->source, hta_wevent_get(b->event)->name);
+        for (uint32_t k = 0; k < b->cond_count; k++) {
+            const hta_wcond *c = &d->cond[b->first_cond + k];
+            const hta_wcond_info *ci = hta_wcond_get(c->kind);
+            printf("%s{\"condition\": \"%s\", \"entity\": ", k ? ", " : "", ci->name); json_str(d->entity[c->entity].id);
+            printf(", \"index\": %u, \"is\": \"%s\"}", c->entity, ci->values[c->value]);
+        }
+        printf("], \"actions\": [");
+        for (uint32_t k = 0; k < b->action_count; k++) {
+            const hta_waction *x = &d->action[b->first_action + k];
+            printf("%s{\"action\": \"%s\"", k ? ", " : "", hta_waction_get(x->op)->name);
+            if (x->target != HTA_WDEF_NO_DEF) { printf(", \"target\": "); json_str(d->entity[x->target].id); printf(", \"index\": %u", x->target); }
+            if (x->op == HTA_WACT_DAMAGE) printf(", \"amount\": %g", (double)x->amount);
+            if (x->sound && x->sound <= m->assets.sound_count) {
+                printf(", \"sound\": "); json_str(m->assets.sound[x->sound - 1].id);
+                printf(", \"sound_index\": %u", x->sound - 1u);
+                uint16_t at = x->at != HTA_WDEF_NO_DEF ? x->at : b->source;
+                printf(", \"at\": "); json_str(d->entity[at].id);
+            }
+            printf("}");
+        }
+        printf("]}");
+    }
     printf("],\n \"resolved\": [");
     bool first = true;
 #define SEP() (first ? (first = false, "") : ",\n   ")

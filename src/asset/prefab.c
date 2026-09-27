@@ -134,7 +134,7 @@ static uint8_t kind_of(const char *s)
 
 static uint8_t event_of(const char *s)
 {
-    for (uint8_t e = 1; e < HTA_WEV_COUNT; e++) if (!strcmp(hta_wdef_event_name(e), s)) return e;
+    for (uint8_t e = 1; e < HTA_WEV_LINK_COUNT; e++) if (!strcmp(hta_wdef_event_name(e), s)) return e;
     return 0;
 }
 
@@ -158,6 +158,7 @@ static bool fnum(hta_mj *r, float *out, float lim)
 }
 
 static void peek_string(const hta_mj *r0, const char *want, char *out, size_t cap);
+static uint32_t g_schema = 1;   /* the member being parsed (peeked first: "schema" sorts after "prefabs") */
 
 /* Link targets as written, until every sibling is known. */
 typedef struct { char target[HTA_PREFAB_MAX_LINKS][HTA_PREFAB_LOCAL_MAX + 1]; } link_names;
@@ -272,7 +273,7 @@ static bool parse_child(hta_mj *r, hta_prefab *p, link_names *ln, char *err, siz
     if (!hta_mj_eat(r, '}')) return failv(err, n, "%s: malformed child", who);
     if (nested)
         return failv(err, n, "prefab %s child '%s' contains a nested prefab reference, which is not supported in prefab schema %u",
-                     p->id, have_id ? c->id : "?", HTA_PREFAB_SCHEMA);
+                     p->id, have_id ? c->id : "?", g_schema);
     if (!have_id) return failv(err, n, "%s: has no id", who);
     if (!have_kind) return failv(err, n, "%s: has no kind", who);
     if (!have_links) return failv(err, n, "%s: has no links (write [] for none)", who);
@@ -389,13 +390,104 @@ static void peek_string(const hta_mj *r0, const char *want, char *out, size_t ca
     } while (hta_mj_eat(&r, ','));
 }
 
+/* X7: a prefab's bindings as written, until every child is known. */
+static hta_wbind_text g_btext[HTA_PREFAB_MAX_BINDINGS];
+
+static const char *child_name(const void *ctx, uint16_t i)
+{
+    static char buf[4][HTA_PREFAB_LOCAL_MAX + 3];
+    static int k;
+    const hta_prefab *p = ctx;
+    k = (k + 1) & 3;
+    snprintf(buf[k], sizeof(buf[k]), "'%s'", i < p->child_count ? p->child[i].id : "?");
+    return buf[k];
+}
+static uint8_t child_kind(const void *ctx, uint16_t i)
+{
+    const hta_prefab *p = ctx;
+    return i < p->child_count ? p->child[i].kind : HTA_WDEF_NONE;
+}
+
+/* A binding's local references to child indices, then the binding's rules
+ * against the children's kinds (world_def.c's, the same words). */
+static bool link_bindings(hta_prefab *p, char *err, size_t n)
+{
+    for (uint32_t i = 0; i < p->binding_count; i++) {
+        hta_wbinding *b = &p->binding[i];
+        const hta_wbind_text *t = &g_btext[i];
+        char who[HTA_RID_MAX + 48];
+        snprintf(who, sizeof(who), "prefab %s binding %s", p->id, b->id);
+#define LOCAL_OF(name, out)                                                                              \
+        do {                                                                                             \
+            int32_t at_ = -1;                                                                            \
+            for (uint32_t j = 0; j < p->child_count; j++) if (!strcmp(p->child[j].id, (name))) at_ = (int32_t)j; \
+            if (at_ < 0) return failv(err, n, "%s references missing child '%s'", who, (name));          \
+            (out) = (uint16_t)at_;                                                                       \
+        } while (0)
+        LOCAL_OF(t->source, b->source);
+        for (uint32_t k = 0; k < b->cond_count; k++) LOCAL_OF(t->cond_entity[k], p->cond[b->first_cond + k].entity);
+        for (uint32_t k = 0; k < b->action_count; k++) {
+            hta_waction *x = &p->action[b->first_action + k];
+            if (t->target[k][0]) LOCAL_OF(t->target[k], x->target);
+            if (t->at[k][0]) LOCAL_OF(t->at[k], x->at);
+            /* The sound resolves from the provider when the set loads
+             * (package.c); until then a placeholder passes the check. */
+            if (t->sound[k][0]) {
+                memcpy(p->sound_ref[b->first_action + k], t->sound[k], sizeof(p->sound_ref[0]));
+                x->sound = 1;
+            }
+        }
+#undef LOCAL_OF
+        if (!hta_wbind_check_one(who, b->source, b->event, &p->cond[b->first_cond], b->cond_count, &p->action[b->first_action],
+                                 b->action_count, p->child_count, child_kind, child_name, p, UINT32_MAX, err, n))
+            return false;
+    }
+    return true;
+}
+
+static bool parse_bindings(hta_mj *r, hta_prefab *p, char *err, size_t n)
+{
+    char who[HTA_RID_MAX + 24];
+    snprintf(who, sizeof(who), "prefab %s binding", p->id);
+    if (!hta_mj_eat(r, '[')) return failv(err, n, "prefab %s: bindings is not a list", p->id);
+    if (hta_mj_eat(r, ']')) return true;
+    do {
+        if (p->binding_count >= HTA_PREFAB_MAX_BINDINGS)
+            return failv(err, n, "prefab %s has more than %u bindings", p->id, HTA_PREFAB_MAX_BINDINGS);
+        hta_wbind_text *t = &g_btext[p->binding_count];
+        if (!hta_wbind_parse_text(r, t, who, err, n)) return false;
+        if (p->cond_count + t->cond_count > HTA_PREFAB_MAX_BIND_CONDS || p->action_count + t->action_count > HTA_PREFAB_MAX_BIND_ACTIONS)
+            return failv(err, n, "prefab %s: its bindings exceed %u conditions or %u actions", p->id, HTA_PREFAB_MAX_BIND_CONDS,
+                         HTA_PREFAB_MAX_BIND_ACTIONS);
+        hta_wbinding *b = &p->binding[p->binding_count];
+        memset(b, 0, sizeof(*b));
+        memcpy(b->id, t->id, strlen(t->id) + 1);
+        if (p->binding_count) {
+            int c = strcmp(p->binding[p->binding_count - 1].id, b->id);
+            if (!c) return failv(err, n, "prefab %s contains duplicate binding id '%s'", p->id, b->id);
+            if (c > 0) return failv(err, n, "prefab %s: bindings are not in canonical (byte) order of id at '%s'", p->id, b->id);
+        }
+        b->event = t->event;
+        b->first_cond = (uint16_t)p->cond_count; b->cond_count = (uint8_t)t->cond_count;
+        b->first_action = (uint16_t)p->action_count; b->action_count = (uint8_t)t->action_count;
+        for (uint32_t k = 0; k < t->cond_count; k++) p->cond[p->cond_count++] = t->cond[k];
+        for (uint32_t k = 0; k < t->action_count; k++) {
+            p->sound_ref[p->action_count][0] = 0;
+            p->action[p->action_count++] = t->action[k];
+        }
+        p->binding_count++;
+    } while (hta_mj_eat(r, ','));
+    if (!hta_mj_eat(r, ']')) return failv(err, n, "prefab %s: malformed bindings", p->id);
+    return true;
+}
+
 static bool parse_prefab(hta_mj *r, hta_prefab *p, const char *pkg, char *err, size_t n)
 {
     static link_names ln;       /* 1.5 KB; parsing is single-threaded load-time work */
     memset(p, 0, sizeof(*p));
     memset(&ln, 0, sizeof(ln));
     char key[16], why[128];
-    bool have_id = false, have_children = false;
+    bool have_id = false, have_children = false, have_bindings = false;
     peek_string(r, "id", p->id, sizeof(p->id));
     if (!p->id[0]) snprintf(p->id, sizeof(p->id), "?");
     if (!hta_mj_eat(r, '{')) return failv(err, n, "%s: a prefab is not an object", pkg);
@@ -420,7 +512,13 @@ static bool parse_prefab(hta_mj *r, hta_prefab *p, const char *pkg, char *err, s
                 do { if (!parse_child(r, p, &ln, err, n)) return false; } while (hta_mj_eat(r, ','));
                 if (!hta_mj_eat(r, ']')) return failv(err, n, "prefab %s: malformed children", p->id);
             }
-        } else return failv(err, n, "%s: prefab %s: unknown field '%s' (a prefab has children, id)", pkg, p->id, key);
+        } else if (!strcmp(key, "bindings") && g_schema >= 2 && !have_bindings) {
+            have_bindings = true;
+            if (!parse_bindings(r, p, err, n)) return false;
+        } else if (!strcmp(key, "bindings") && g_schema < 2) {
+            return failv(err, n, "%s: prefab %s: bindings need prefab schema 2 (this member is schema %u)", pkg, p->id, g_schema);
+        } else if (g_schema < 2) return failv(err, n, "%s: prefab %s: unknown field '%s' (a prefab has children, id)", pkg, p->id, key);
+        else return failv(err, n, "%s: prefab %s: unknown field '%s' (a prefab has bindings, children, id)", pkg, p->id, key);
     } while (hta_mj_eat(r, ','));
     if (!hta_mj_eat(r, '}')) return failv(err, n, "%s: malformed prefab", pkg);
     if (!have_id || !have_children) return failv(err, n, "%s: a prefab needs children and id", pkg);
@@ -432,7 +530,26 @@ static bool parse_prefab(hta_mj *r, hta_prefab *p, const char *pkg, char *err, s
         if (!c) return failv(err, n, "prefab %s contains duplicate local child id '%s'", p->id, p->child[i].id);
         if (c > 0) return failv(err, n, "prefab %s: children are not in canonical (byte) order of local id at '%s'", p->id, p->child[i].id);
     }
-    return link_children(p, &ln, err, n);
+    return link_children(p, &ln, err, n) && link_bindings(p, err, n);
+}
+
+/* The member's "schema" number, without consuming anything (0: absent or
+ * not a number): it sorts after "prefabs", and what a prefab may hold
+ * depends on it. */
+static double peek_schema(const hta_mj *r0)
+{
+    hta_mj r = *r0;
+    char key[16];
+    double v = 0.0;
+    if (!hta_mj_eat(&r, '{') || hta_mj_eat(&r, '}')) return 0.0;
+    do {
+        const uint8_t *at = r.p;
+        if (!hta_mj_str(&r, key, sizeof(key))) { r.p = at; if (!hta_mj_str(&r, NULL, 0)) return 0.0; key[0] = 0; }
+        if (!hta_mj_eat(&r, ':')) return 0.0;
+        if (!strcmp(key, "schema")) return hta_mj_num(&r, &v) ? v : 0.0;
+        if (!hta_mj_skip(&r)) return 0.0;
+    } while (hta_mj_eat(&r, ','));
+    return 0.0;
 }
 
 static bool parse_member(hta_mj *r, const char *pkg, hta_prefab_table *out, char *err, size_t n)
@@ -440,13 +557,18 @@ static bool parse_member(hta_mj *r, const char *pkg, hta_prefab_table *out, char
     char key[16];
     bool have_schema = false, have_list = false;
     uint32_t cap = 0;
+    double sv = peek_schema(r);
+    if (sv != 1.0 && sv != 2.0 && sv != 0.0)
+        return failv(err, n, "%s: unsupported prefab schema %g (this engine has %u)", pkg, sv, HTA_PREFAB_SCHEMA);
+    g_schema = sv == 2.0 ? 2u : 1u;
+    out->schema = g_schema;
     if (!hta_mj_eat(r, '{')) return failv(err, n, "%s: prefabs is not an object", pkg);
     if (!hta_mj_eat(r, '}')) do {
         if (!hta_mj_str(r, key, sizeof(key)) || !hta_mj_eat(r, ':')) return failv(err, n, "%s: malformed prefabs", pkg);
         if (!strcmp(key, "schema")) {
             double s;
             if (have_schema || !hta_mj_num(r, &s)) return failv(err, n, "%s: malformed prefab schema", pkg);
-            if (s != (double)HTA_PREFAB_SCHEMA)
+            if (s != 1.0 && s != 2.0)
                 return failv(err, n, "%s: unsupported prefab schema %g (this engine has %u)", pkg, s, HTA_PREFAB_SCHEMA);
             have_schema = true;
         } else if (!strcmp(key, "prefabs")) {
@@ -474,7 +596,7 @@ static bool parse_member(hta_mj *r, const char *pkg, hta_prefab_table *out, char
                 } while (hta_mj_eat(r, ','));
                 if (!hta_mj_eat(r, ']')) return failv(err, n, "%s: malformed prefabs list", pkg);
             }
-        } else return failv(err, n, "%s: prefabs: unknown field '%s' (schema %u has prefabs, schema)", pkg, key, HTA_PREFAB_SCHEMA);
+        } else return failv(err, n, "%s: prefabs: unknown field '%s' (schema %u has prefabs, schema)", pkg, key, g_schema);
     } while (hta_mj_eat(r, ','));
     if (!hta_mj_eat(r, '}')) return failv(err, n, "%s: malformed prefabs", pkg);
     if (!have_schema || !have_list) return failv(err, n, "%s: prefabs needs prefabs and schema", pkg);

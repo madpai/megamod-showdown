@@ -4873,6 +4873,19 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
     hta_net_fx fx;
     while (hta_net_client_pop_fx(&s->net,&fx)) {
         if (s->net_hosting || !s->game_on) continue;
+        /* X7: a sound the host's event bindings played, at the place it says. */
+        if (fx.kind==HTA_NET_FX_WORLD_SOUND) {
+            uint16_t snd=(uint16_t)(fx.weapon|(fx.material<<8));
+            if (snd<s->world_ext.assets.sound_count) {
+                float fwd[3];
+                hta_camera_forward(&s->cam,fwd);
+                float right[3]={fwd[1],-fwd[0],0.0f},len=sqrtf(right[0]*right[0]+right[1]*right[1]);
+                if (len>1e-4f) { right[0]/=len; right[1]/=len; } else right[0]=1.0f;
+                hta_world_sounds_play_at(&s->world_sounds,&s->audio,snd,fx.pos,s->cam.pos,right);
+                hta_log("[world] sound %s (the host's binding)",s->world_ext.assets.sound[snd].id);
+            }
+            continue;
+        }
         /* Our own on-foot shots we heard already; a vehicle gun we did not. */
         if (fx.entity==(uint8_t)s->me &&
             !(fx.kind==HTA_NET_FX_FIRE && fx.weapon<s->game.weapon_count &&

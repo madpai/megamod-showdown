@@ -123,6 +123,38 @@ file differs from it.
 | `prefabs.prefabs[].children[].sound` | sound | the same package or a declared import | X6 |
 | `prefabs.prefabs[].children[].script` | script | the same package or a declared import | X6 |
 | `world_entities.prefab_instances[].prefab` | prefab | the same package or a declared import | X6 |
+| `world_entities.bindings[].source` | placed entity | the same package | X7 |
+| `world_entities.bindings[].conditions[].entity` | placed entity | the same package | X7 |
+| `world_entities.bindings[].actions[].target` | placed entity | the same package | X7 |
+| `world_entities.bindings[].actions[].at` | placed entity | the same package | X7 |
+| `world_entities.bindings[].actions[].sound` | sound | the same package or a declared import | X7 |
+| `prefabs.prefabs[].bindings[].actions[].sound` | sound | the same package or a declared import | X7 |
+
+| Event | Sources | Actor | X1 link name | When |
+|---|---|---|---|---|
+| `used` | interactable | always | used | a player pressed use at it (the host's interaction, before the game update); the actor is that player |
+| `activated` | relay | the chain's | fired | it was told to activate (a link, a binding or Lua's world.send), when the queue dispatches that; the X1 link name is 'fired' |
+| `entered` | trigger | always | entered | a player's body went from outside its box to inside (the host's trigger sensing); the actor is that player |
+| `deactivated` | relay | the chain's | - | it was told to deactivate, when the queue dispatches that |
+| `opened` | mover | - | - | its phase became open (it arrived, or was told to open while already at the end of its travel) |
+| `closed` | mover | - | - | its phase became closed (it arrived, or was told to close while already at the start of its travel) |
+
+| Condition | Reads | Values |
+|---|---|---|
+| `mover_state` | mover | `closed`, `opening`, `open`, `closing` |
+| `relay_state` | relay | `inactive`, `active` |
+
+| Action | Targets | Needs | Takes | Acts on |
+|---|---|---|---|---|
+| `open` | mover | target | target | the target |
+| `close` | mover | target | target | the target |
+| `toggle` | mover | target | target | the target |
+| `activate` | relay | target | target | the target |
+| `deactivate` | relay | target | target | the target |
+| `teleport` | teleport | target | target | the event's actor |
+| `damage` | - | amount | amount | the event's actor |
+| `play_sound` | - | sound | sound, at | a place |
+| `use` | interactable | target | target | the target |
 <!-- megamod-resources --markdown: end -->
 
 - **Scope.** *package*: identifies what a whole package is. *placement*: a
@@ -702,6 +734,20 @@ library's digest covers its `prefabs` member, so a changed child is a new
 world key; a library without one digests as before. Older engines refuse
 prefab packages (`resource type 'prefab' is reserved`). Everything:
 [PREFABS.md](PREFABS.md).
+
+## Event bindings (X7)
+
+Worlds (`world_entities` schema 6) and prefabs (prefab schema 2) may carry
+declarative event bindings. Their entity references are typed references
+of their own (`world_entities.bindings[].source`, `.conditions[].entity`,
+`.actions[].target`, `.actions[].at`: placed entities in the same world, a
+prefab child by its placed ID included) and their sounds are `sound`
+resources (`world_entities.bindings[].actions[].sound`, imported;
+`prefabs.prefabs[].bindings[].actions[].sound`, from the prefab's own
+package). The Events, Conditions and Actions tables above come from the
+same tables the loader uses; `--json` adds limits, each kind's affordances
+and the tick phase. No key schema change: bindings are bytes of members the
+key already covers. Everything: [EVENT_BINDINGS.md](EVENT_BINDINGS.md).
 
 ## Not in X5
 

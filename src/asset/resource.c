@@ -187,6 +187,18 @@ static const hta_ref_info REFS[HTA_REF_FIELD_COUNT] = {
         "a prefab interactable child's script (declares on_used); resolved from the prefab's own package: its own or imported" },
     [HTA_REF_PREFAB_INSTANCE] = { "world_entities.prefab_instances[].prefab", "prefab", HTA_RT_PREFAB, HTA_REF_IMPORT, "X6",
         "the prefab a world's instance places; imported from a library (the world needs nothing else the prefab uses)" },
+    [HTA_REF_BIND_SOURCE] = { "world_entities.bindings[].source", "binding source", HTA_RT_ENTITY, HTA_REF_SELF, "X7",
+        "the placement whose event a binding listens to; in the same world (a prefab child's placed ID too)" },
+    [HTA_REF_BIND_CONDITION] = { "world_entities.bindings[].conditions[].entity", "condition entity", HTA_RT_ENTITY, HTA_REF_SELF, "X7",
+        "the placement a binding's condition reads; in the same world" },
+    [HTA_REF_BIND_TARGET] = { "world_entities.bindings[].actions[].target", "action target", HTA_RT_ENTITY, HTA_REF_SELF, "X7",
+        "the placement a binding's action is requested of; in the same world" },
+    [HTA_REF_BIND_AT] = { "world_entities.bindings[].actions[].at", "sound position", HTA_RT_ENTITY, HTA_REF_SELF, "X7",
+        "the placement a binding's sound plays at; in the same world" },
+    [HTA_REF_BIND_SOUND] = { "world_entities.bindings[].actions[].sound", "sound", HTA_RT_SOUND, HTA_REF_IMPORT, "X7",
+        "the sound a binding's play_sound action plays; imported from a library" },
+    [HTA_REF_PREFAB_BIND_SOUND] = { "prefabs.prefabs[].bindings[].actions[].sound", "sound", HTA_RT_SOUND, HTA_REF_IMPORT, "X7",
+        "the sound a prefab binding's play_sound action plays; resolved from the prefab's own package: its own or imported" },
 };
 
 const hta_ref_info *hta_ref_get(uint8_t f) { return f < HTA_REF_FIELD_COUNT ? &REFS[f] : NULL; }

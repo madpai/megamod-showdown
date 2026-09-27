@@ -617,6 +617,19 @@ static bool link_prefabs(hta_pkg_set *set, char *err, size_t n)
                     ch->script = e->index;
                 }
             }
+            /* X7: a binding's play_sound, from the same point of view. */
+            for (uint32_t b = 0; ok && b < p->binding_count; b++) {
+                const hta_wbinding *bd = &p->binding[b];
+                char who[HTA_RID_MAX + HTA_PREFAB_LOCAL_MAX + 24];
+                snprintf(who, sizeof(who), "prefab %s binding %s", p->id, bd->id);
+                for (uint32_t a = 0; ok && a < bd->action_count; a++) {
+                    uint32_t ai = bd->first_action + a;
+                    if (!p->sound_ref[ai][0]) continue;
+                    const hta_res_entry *e = hta_res_resolve(rs, HTA_REF_PREFAB_BIND_SOUND, who, p->sound_ref[ai], err, n);
+                    if (!e) { ok = false; break; }
+                    p->action[ai].sound = (uint16_t)(e->index + 1u);
+                }
+            }
         }
     }
     free(rs); free(imports);

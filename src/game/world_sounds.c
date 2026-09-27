@@ -56,19 +56,24 @@ bool hta_world_sounds_place(const float pos[3], const float ear[3], const float 
     return true;
 }
 
+bool hta_world_sounds_play_at(hta_world_sounds *ws, hta_audio *a, uint32_t sound, const float pos[3], const float ear[3],
+                              const float right[3])
+{
+    if (!ws) return false;
+    uint32_t clip = sound < sizeof(ws->clip_of) / sizeof(ws->clip_of[0]) ? ws->clip_of[sound] : HTA_AUDIO_NO_CLIP;
+    float gain, pan;
+    if (!a || clip == HTA_AUDIO_NO_CLIP || !hta_world_sounds_place(pos, ear, right, &gain, &pan)) { ws->unheard++; return false; }
+    hta_audio_play_pan(a, clip, gain, pan);
+    ws->played++;
+    return true;
+}
+
 uint32_t hta_world_sounds_play(hta_world_sounds *ws, hta_audio *a, const hta_world_entities *w,
                                const float ear[3], const float right[3])
 {
     uint32_t n = 0;
-    for (uint32_t i = 0; ws && w && w->loaded && i < w->cue_count; i++) {
-        const hta_went_cue *c = &w->cues[i];
-        uint32_t clip = c->sound < sizeof(ws->clip_of) / sizeof(ws->clip_of[0]) ? ws->clip_of[c->sound] : HTA_AUDIO_NO_CLIP;
-        float gain, pan;
-        if (!a || clip == HTA_AUDIO_NO_CLIP || !hta_world_sounds_place(c->pos, ear, right, &gain, &pan)) { ws->unheard++; continue; }
-        hta_audio_play_pan(a, clip, gain, pan);
-        ws->played++;
-        n++;
-    }
+    for (uint32_t i = 0; ws && w && w->loaded && i < w->cue_count; i++)
+        n += hta_world_sounds_play_at(ws, a, w->cues[i].sound, w->cues[i].pos, ear, right);
     return n;
 }
 

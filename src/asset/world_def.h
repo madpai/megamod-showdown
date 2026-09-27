@@ -72,7 +72,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define HTA_WDEF_SCHEMA 5u            /* newest understood; 1 (X1) .. 4 (X5) still load */
+#define HTA_WDEF_SCHEMA 6u            /* newest understood; 1 (X1) .. 5 (X6) still load */
 #define HTA_WDEF_MAX_MOVER_DEFS 64u   /* one per mover at most (schema 1) */
 #define HTA_WDEF_NO_DEF 0xFFFFu
 #define HTA_WDEF_MAX_SCRIPTS 16u
@@ -96,15 +96,34 @@ typedef enum {
     HTA_WDEF_TRIGGER, HTA_WDEF_TELEPORT, HTA_WDEF_PROP, HTA_WDEF_KIND_COUNT
 } hta_wdef_kind;
 
-/* What a source emits (a link's `event`). */
+/* What a source emits. A link (X1) may listen to the first three, by their
+ * X1 names (`used`, `fired`, `entered`); an event binding (X7) to all, by
+ * the binding names (`used`, `activated`, `entered`, `deactivated`,
+ * `opened`, `closed`) -- `fired` and `activated` are ONE engine event, a
+ * relay's answer to `activate`. */
 typedef enum {
-    HTA_WEV_NONE = 0, HTA_WEV_USED, HTA_WEV_FIRED, HTA_WEV_ENTERED, HTA_WEV_COUNT
+    HTA_WEV_NONE = 0, HTA_WEV_USED, HTA_WEV_FIRED, HTA_WEV_ENTERED,
+    HTA_WEV_LINK_COUNT,                       /* links end here */
+    HTA_WEV_DEACTIVATED = HTA_WEV_LINK_COUNT, /* X7: a relay told to deactivate */
+    HTA_WEV_OPENED,                           /* X7: a mover arrived open */
+    HTA_WEV_CLOSED,                           /* X7: a mover arrived closed */
+    HTA_WEV_COUNT
 } hta_wdef_event;
+#define HTA_WEV_ACTIVATED HTA_WEV_FIRED
 
-/* What a target is told to do (a link's `input`). */
+/* What a target is told to do: a link's `input`, and (X7) the queue's
+ * operation for an action. Links, Lua's world.send and prefab links name
+ * only the first five (hta_wdef_input_from_name); `deactivate` is X7's, and
+ * the last two are internal (an action's damage or sound, dispatched
+ * through the same queue). */
 typedef enum {
     HTA_WIN_NONE = 0, HTA_WIN_ACTIVATE, HTA_WIN_OPEN, HTA_WIN_CLOSE, HTA_WIN_TOGGLE,
-    HTA_WIN_TELEPORT, HTA_WIN_COUNT
+    HTA_WIN_TELEPORT,
+    HTA_WIN_LINK_COUNT,                       /* links, Lua end here */
+    HTA_WIN_DEACTIVATE = HTA_WIN_LINK_COUNT,
+    HTA_WIN_DAMAGE, HTA_WIN_SOUND,
+    HTA_WIN_USE,                              /* X7: use an interactable -- a player's press, without the reach test */
+    HTA_WIN_COUNT
 } hta_wdef_input;
 
 typedef struct {
@@ -167,6 +186,55 @@ typedef struct {
 } hta_wprefab_instance;
 #define HTA_WDEF_MAX_INSTANCES 32u
 
+/* ---- X7: declarative event bindings (docs/EVENT_BINDINGS.md) ----------------
+ *
+ * EVENT (a source entity's) -> CONDITIONS (all must hold; read-only engine
+ * predicates) -> ACTIONS (requests of existing engine capabilities, in
+ * order, through the same bounded queue links and Lua use). A world lists
+ * them in world_entities.bindings (schema 6); a prefab in its own
+ * "bindings" (prefab schema 2), naming its children, expanded per instance.
+ * Every reference is resolved to an index here, once. */
+#define HTA_WDEF_MAX_BINDINGS      128u   /* one world, after expansion */
+#define HTA_WDEF_MAX_CONDS_PER     4u     /* one binding */
+#define HTA_WDEF_MAX_ACTIONS_PER   8u     /* one binding */
+#define HTA_WDEF_MAX_CONDS         256u   /* one world */
+#define HTA_WDEF_MAX_ACTIONS       512u   /* one world */
+#define HTA_WDEF_MAX_BINDINGS_PER_EVENT 16u   /* one source's one event */
+#define HTA_WDEF_MAX_DAMAGE        500.0f /* one damage action (Lua's game.damage limit) */
+#define HTA_WDEF_BINDING_ID_MAX    23u    /* a binding's local ID (the prefab local-ID grammar) */
+
+typedef enum { HTA_WCOND_NONE = 0, HTA_WCOND_MOVER_STATE, HTA_WCOND_RELAY_STATE, HTA_WCOND_COUNT } hta_wcond_kind;
+/* relay_state values */
+enum { HTA_WRELAY_INACTIVE = 0, HTA_WRELAY_ACTIVE = 1 };
+
+typedef enum {
+    HTA_WACT_NONE = 0, HTA_WACT_OPEN, HTA_WACT_CLOSE, HTA_WACT_TOGGLE, HTA_WACT_ACTIVATE, HTA_WACT_DEACTIVATE,
+    HTA_WACT_TELEPORT, HTA_WACT_DAMAGE, HTA_WACT_PLAY_SOUND, HTA_WACT_USE, HTA_WACT_COUNT
+} hta_wact_op;
+
+typedef struct {
+    uint8_t  kind;            /* hta_wcond_kind */
+    uint8_t  value;           /* mover_state: HTA_MOVER_* phase (0 closed .. 3 closing); relay_state: HTA_WRELAY_* */
+    uint16_t entity;          /* the entity it reads */
+} hta_wcond;
+
+typedef struct {
+    uint8_t  op;              /* hta_wact_op */
+    uint8_t  input;           /* the queue operation it becomes (hta_wdef_input) */
+    uint16_t target;          /* open .. teleport: the entity told; else HTA_WDEF_NO_DEF */
+    uint16_t sound;           /* play_sound: asset table index + 1 */
+    uint16_t at;              /* play_sound: where it sounds (an entity); else HTA_WDEF_NO_DEF */
+    float    amount;          /* damage */
+} hta_waction;
+
+typedef struct {
+    char     id[HTA_WDEF_BINDING_ID_MAX + 1];  /* local ID: unique in its world, or in its prefab */
+    uint16_t source;          /* entity index */
+    uint8_t  event;           /* hta_wdef_event */
+    uint8_t  cond_count, action_count;
+    uint16_t first_cond, first_action;
+    uint8_t  instance;        /* 0: the world's own; k: prefab instance k - 1's */
+} hta_wbinding;
 typedef struct hta_world_defs {
     hta_wdef      entity[HTA_WDEF_MAX_ENTITIES];
     uint32_t      count;
@@ -184,6 +252,14 @@ typedef struct hta_world_defs {
     uint32_t      asset_models, asset_sounds;
     hta_wprefab_instance prefab_instance[HTA_WDEF_MAX_INSTANCES];
     uint32_t      prefab_instance_count;
+    /* X7: event bindings -- the world's own (canonical ID order), then each
+     * prefab instance's (instances by ID, bindings by local ID). */
+    hta_wbinding  binding[HTA_WDEF_MAX_BINDINGS];
+    uint32_t      binding_count;
+    hta_wcond     cond[HTA_WDEF_MAX_CONDS];
+    uint32_t      cond_count;
+    hta_waction   action[HTA_WDEF_MAX_ACTIONS];
+    uint32_t      action_count;
     char          pool[HTA_WDEF_SCRIPT_POOL];
 } hta_world_defs;
 
@@ -235,12 +311,83 @@ void hta_wdef_mover_box(const hta_world_defs *d, uint32_t entity, float min[3], 
 typedef void (*hta_manifest_member_fn)(void *ctx, const char *key, const uint8_t *value, size_t len);
 bool hta_manifest_members(const uint8_t *manifest, size_t len, hta_manifest_member_fn fn, void *ctx);
 
+/* Links (X1): what a kind emits and accepts, by the X1 vocabulary. */
 bool hta_wdef_emits(uint8_t kind, uint8_t event);
 bool hta_wdef_accepts(uint8_t kind, uint8_t input);
 const char *hta_wdef_kind_name(uint8_t kind);
-const char *hta_wdef_event_name(uint8_t event);
+const char *hta_wdef_event_name(uint8_t event);      /* the link name: used, fired, entered */
 const char *hta_wdef_input_name(uint8_t input);
-/* An input by its name ("open"...), HTA_WIN_NONE when there is none. */
+/* A LINK input by its name ("open"...): the X1 five only (links, prefab
+ * links, Lua's world.send); HTA_WIN_NONE otherwise. */
 uint8_t hta_wdef_input_from_name(const char *name);
+
+/* ---- X7 vocabulary: one table each, read by the parser, the checks, the
+ * runtime and megamod-resources (so the contract cannot drift). ---------- */
+typedef enum { HTA_WACTOR_ALWAYS = 0, HTA_WACTOR_CHAIN, HTA_WACTOR_NEVER } hta_wactor_rule;
+typedef struct {
+    const char *name;         /* binding name */
+    uint8_t     event;        /* hta_wdef_event */
+    uint32_t    sources;      /* bit per hta_wdef_kind that emits it */
+    uint8_t     actor;        /* hta_wactor_rule: does the event carry a player */
+    const char *when;         /* the engine transition, in words */
+} hta_wevent_info;
+typedef struct {
+    const char *name;
+    uint32_t    kinds;        /* bit per hta_wdef_kind it reads */
+    const char *const *values;/* the `is` vocabulary, index = value */
+    uint8_t     value_count;
+    const char *doc;
+} hta_wcond_info;
+enum { HTA_WARG_TARGET = 1u, HTA_WARG_AMOUNT = 2u, HTA_WARG_SOUND = 4u, HTA_WARG_AT = 8u };
+typedef struct {
+    const char *name;
+    uint8_t     input;        /* the queue operation */
+    uint32_t    targets;      /* bit per kind `target` may name; 0: no target */
+    uint32_t    needs, takes; /* HTA_WARG_* */
+    bool        needs_actor;  /* acts on the event's actor */
+    const char *path;         /* the engine path it reuses, in words */
+} hta_waction_info;
+const hta_wevent_info *hta_wevent_get(uint8_t event);          /* by hta_wdef_event */
+const hta_wevent_info *hta_wevent_by_name(const char *name);   /* binding names; NULL unknown */
+const hta_wcond_info *hta_wcond_get(uint8_t kind);
+const hta_waction_info *hta_waction_get(uint8_t op);
+uint8_t hta_waction_from_name(const char *name);
+uint8_t hta_wcond_from_name(const char *name);
+/* A kind's capabilities (its affordances), from the same tables: does it
+ * afford action `op` as a target. What a future agent may discover. */
+bool hta_wdef_affords(uint8_t kind, uint8_t op);
+/* Does a kind emit this event to a binding / sit where a sound can play. */
+bool hta_wbind_emits(uint8_t kind, uint8_t event);
+bool hta_wdef_positioned(uint8_t kind);
+/* One binding's rules against kinds (the world's or a prefab's): the source
+ * emits the event, each condition reads a kind it applies to, each action's
+ * target is a kind that affords it, a sound's `at` has a position, an actor
+ * action is not bound to an event that never carries one. `name(ctx, i)`
+ * names entity i in the message ("x7:entity/north_crate", "child 'door'"). */
+typedef const char *(*hta_wbind_name_fn)(const void *ctx, uint16_t entity);
+typedef uint8_t (*hta_wbind_kind_fn)(const void *ctx, uint16_t entity);
+/* One binding object as written (a world's or a prefab's): names checked
+ * against the vocabulary, the fields each action takes and needs, counts;
+ * references kept as text for the caller to resolve (entity IDs in a world,
+ * local child IDs in a prefab). `who` prefixes messages ("binding" or
+ * "prefab x7:prefab/door binding"). */
+typedef struct {
+    char        id[64];
+    uint8_t     event;
+    char        source[HTA_WDEF_ID_MAX + 1];
+    uint32_t    cond_count, action_count;
+    hta_wcond   cond[HTA_WDEF_MAX_CONDS_PER];
+    char        cond_entity[HTA_WDEF_MAX_CONDS_PER][HTA_WDEF_ID_MAX + 1];
+    hta_waction action[HTA_WDEF_MAX_ACTIONS_PER];
+    char        target[HTA_WDEF_MAX_ACTIONS_PER][HTA_WDEF_ID_MAX + 1];
+    char        at[HTA_WDEF_MAX_ACTIONS_PER][HTA_WDEF_ID_MAX + 1];
+    char        sound[HTA_WDEF_MAX_ACTIONS_PER][HTA_WDEF_ID_MAX + 1];
+} hta_wbind_text;
+struct hta_mj_s;
+bool hta_wbind_parse_text(struct hta_mj_s *r, hta_wbind_text *t, const char *who, char *err, size_t errlen);
+
+bool hta_wbind_check_one(const char *who, uint16_t source, uint8_t event, const hta_wcond *cond, uint32_t cond_count,
+                         const hta_waction *act, uint32_t act_count, uint32_t entity_count, hta_wbind_kind_fn kind,
+                         hta_wbind_name_fn name, const void *ctx, uint32_t sounds, char *err, size_t errlen);
 
 #endif

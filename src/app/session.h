@@ -492,6 +492,7 @@
      * bound at match begin, a bank for the session's life. */               \
     hta_world_sounds world_sounds;                                           \
     uint32_t      world_sounds_heard;  /* cues so far, for logs and tests */ \
+    uint32_t      went_hurts;        /* X7 host: damage actions applied, for tests */          \
     const void   *went_gpu_mesh;     /* the world upload they were cut from */                 \
     /* Host-side Lua (X3, docs/SCRIPTING.md): made at match begin by a host \
      * or offline game whose world has scripts; never on a joiner. */        \

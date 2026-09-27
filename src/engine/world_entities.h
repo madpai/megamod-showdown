@@ -39,7 +39,12 @@
 #define HTA_WENT_COOLDOWN 0.5f          /* an interactable, between uses (ours) */
 #define HTA_WENT_NO_ACTOR 0xFFu
 #define HTA_WENT_MAX_CALLS 16u          /* scripted uses waiting for the script phase, per step */
-#define HTA_WENT_MAX_CUES 16u           /* X5: sounds to start, per step */
+#define HTA_WENT_MAX_CUES 16u           /* X5: sounds to start, per step (movers' and, X7, bindings') */
+#define HTA_WENT_MAX_HURTS 16u          /* X7: damage actions, per step */
+#define HTA_WENT_CASCADES 1024u         /* X7: roots tracked at once (> queue + 1, so never full) */
+#define HTA_WENT_CASCADE_BUDGET 128u    /* X7: binding actions one root event's cascade may queue */
+#define HTA_WENT_NO_CASCADE 0xFFFFu
+#define HTA_WENT_TRACE 64u              /* X7: trace lines kept per step (when tracing) */
 
 /* A checked reference: slot in the low 16 bits, generation in the high.
  * Generation 0 never occurs, so 0 is "no handle". */
@@ -58,6 +63,8 @@ typedef struct {
     float    cooldown;
     /* mover (X5): the phase its sound last answered, so a start sounds once */
     uint8_t  heard;
+    /* relay (X7): active after activate, inactive after deactivate (host only) */
+    uint8_t  active;
 } hta_went_state;
 
 typedef struct {
@@ -67,7 +74,18 @@ typedef struct {
     uint8_t  actor;             /* who began the chain, HTA_WENT_NO_ACTOR none */
     uint8_t  depth;             /* links from the root */
     uint32_t seq;
+    /* X7: the binding action that queued it (binding index + 1, action
+     * index), 0 for a link or a direct send; and its root's cascade. */
+    uint16_t binding, action;
+    uint16_t cascade;
 } hta_went_event;
+
+/* X7: one root event's cascade: how many of its events are still queued,
+ * and how many binding actions it has queued in all (bounded). */
+typedef struct { uint16_t live, ops, source; uint8_t event, over; } hta_went_cascade;
+
+/* X7: a damage action to apply through the game's damage pipeline. */
+typedef struct { uint8_t actor; float amount; uint16_t source, binding; } hta_went_hurt;
 
 typedef struct { uint8_t actor; float pos[3], yaw; } hta_went_teleport;
 
@@ -80,11 +98,16 @@ typedef struct { uint8_t entity, actor; } hta_went_call;
  * this step -- on the host and, from the host's replicated state, on every
  * joiner alike. The caller plays `sound` (asset table index) at `pos`. A
  * join's first state (a snap) and a round reset are silent. */
-typedef struct { uint8_t entity; uint16_t sound; float pos[3]; } hta_went_cue;
+typedef struct { uint8_t entity; uint16_t sound; float pos[3]; uint16_t binding; } hta_went_cue;
+/* `binding`: 0 for a mover starting to move (every peer derives these from
+ * mover state); binding index + 1 for an X7 play_sound action (host only:
+ * the host sends it to joiners as a world-sound effect). */
 
 typedef struct {
     uint64_t dispatched, deferred, dropped_full, dropped_depth, dropped_stale, dropped_input;
     uint32_t max_queue;
+    /* X7 */
+    uint64_t bindings_matched, bindings_skipped, actions_queued, dropped_budget, no_actor, dropped_hurts;
 } hta_went_stats;
 
 typedef struct hta_world_entities {
@@ -113,6 +136,23 @@ typedef struct hta_world_entities {
     uint32_t        call_count;
     hta_went_cue    cues[HTA_WENT_MAX_CUES];
     uint32_t        cue_count;
+    /* X7: bindings compiled for dispatch -- per (source, event) a run of
+     * binding indices in canonical order; each action's target as a
+     * handle -- and the damage this step asked for, and cascades. */
+    uint16_t        bind_first[HTA_WDEF_MAX_ENTITIES][HTA_WEV_COUNT];
+    uint8_t         bind_n[HTA_WDEF_MAX_ENTITIES][HTA_WEV_COUNT];
+    uint16_t        bind_list[HTA_WDEF_MAX_BINDINGS];
+    hta_went_handle act_target[HTA_WDEF_MAX_ACTIONS];
+    hta_went_hurt   hurts[HTA_WENT_MAX_HURTS];
+    uint32_t        hurt_count;
+    hta_went_cascade cascade[HTA_WENT_CASCADES];
+    uint16_t        casc_cur, casc_next;
+    uint32_t        step_count;
+    /* X7: an optional bounded trace of events, bindings, conditions and
+     * actions (tools: megamod-match --trace-events). Off by default. */
+    bool            trace;
+    char            trace_line[HTA_WENT_TRACE][160];
+    uint32_t        trace_count, trace_dropped;
     bool            remote;              /* a LAN client: the host decides */
     bool            loaded;
     uint32_t        version;             /* bumps when any mover's state changes */
@@ -143,8 +183,29 @@ int32_t hta_went_can_interact(const hta_world_entities *w, const float eye[3], c
  * it is there at all. Entering a trigger emits `entered` once; staying in
  * it does not; leaving (or dying) re-arms it. */
 void hta_went_sense(hta_world_entities *w, uint8_t actor, const float feet[3], bool present);
-/* Queue the input on the entity directly (tests; a future scripting API). */
+/* Queue the input on the entity directly (tests; X1-era callers). */
 bool hta_went_send(hta_world_entities *w, uint32_t target, uint8_t input, uint8_t actor);
+
+/* X7: THE action seam. Every requester -- a player's press (after its
+ * reach test), Lua's world.send, an event binding and, later, an agent --
+ * asks for an engine action (hta_wact_op) on a target on behalf of an
+ * actor, and the engine validates it (the target's kind must afford it:
+ * hta_wdef_affords) and queues it; the bounded queue dispatches it into the
+ * same mover, relay, teleport, use, damage and sound paths. Nothing else
+ * changes world-entity state. Host only. */
+typedef enum { HTA_WENT_QUEUED = 0, HTA_WENT_REJECTED, HTA_WENT_REFUSED_HERE, HTA_WENT_QUEUE_FULL } hta_went_result;
+hta_went_result hta_went_request(hta_world_entities *w, uint8_t op, uint32_t target, uint8_t actor);
+/* X7: use interactable `i` for `actor` now: its cooldown, its `used` event
+ * (links, then bindings) and its scripted call. What a press does once its
+ * reach test passed, and what a `use` action does when dispatched. False
+ * during the cooldown (the use is spent, nothing happens). */
+bool hta_went_use(hta_world_entities *w, uint32_t i, uint8_t actor, uint8_t depth);
+/* X7: a relay's state (HTA_WRELAY_*), for conditions, tests and tools. */
+uint8_t hta_went_relay_active(const hta_world_entities *w, uint32_t index);
+/* X7: where an entity is (its position, a mover's current centre, a
+ * trigger's box centre); false for a relay. */
+bool hta_went_position(const hta_world_entities *w, uint32_t index, float out[3]);
+
 
 /* One step: the queue (host only), then every mover and cooldown. Fills
  * `teleports` for the caller to apply to its actors. */

@@ -131,6 +131,12 @@ typedef enum {
     HTA_REF_PREFAB_SOUND,     /* prefabs.prefabs[].children[].sound (X6) */
     HTA_REF_PREFAB_SCRIPT,    /* prefabs.prefabs[].children[].script (X6) */
     HTA_REF_PREFAB_INSTANCE,  /* world_entities.prefab_instances[].prefab (X6) */
+    HTA_REF_BIND_SOURCE,      /* world_entities.bindings[].source (X7) */
+    HTA_REF_BIND_CONDITION,   /* world_entities.bindings[].conditions[].entity (X7) */
+    HTA_REF_BIND_TARGET,      /* world_entities.bindings[].actions[].target (X7) */
+    HTA_REF_BIND_AT,          /* world_entities.bindings[].actions[].at (X7) */
+    HTA_REF_BIND_SOUND,       /* world_entities.bindings[].actions[].sound (X7) */
+    HTA_REF_PREFAB_BIND_SOUND,/* prefabs.prefabs[].bindings[].actions[].sound (X7) */
     HTA_REF_FIELD_COUNT
 } hta_ref_field;
 

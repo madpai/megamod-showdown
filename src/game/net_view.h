@@ -77,6 +77,10 @@ typedef struct {
     bool     props_synced;
     uint32_t world_state_tick;    /* the last WORLD_STATE applied */
     bool     world_state_synced;
+    /* X7: world sounds the host's event bindings played since the last
+     * update (HTA_NET_FX_WORLD_SOUND), for the caller to play and forget */
+    struct { uint8_t entity; uint16_t sound; float pos[3]; } world_sound[16];
+    uint32_t world_sound_count;
     /* diagnostics */
     uint32_t kills, gibs, fx, corrections;
 } hta_net_view;

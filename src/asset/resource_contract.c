@@ -10,6 +10,7 @@
 #include "prefab.h"
 #include "resource.h"
 #include "world_def.h"
+#include "../engine/world_entities.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -43,6 +44,112 @@ static void referenced_by(out *o, uint8_t type)
         put(o, "%s\"%s\"", first ? "" : ", ", r->field);
         first = false;
     }
+}
+
+static void kinds_json(out *o, uint32_t bits)
+{
+    bool first = true;
+    put(o, "[");
+    for (uint8_t k = 1; k < HTA_WDEF_KIND_COUNT; k++)
+        if (bits & (1u << k)) { put(o, "%s\"%s\"", first ? "" : ", ", hta_wdef_kind_name(k)); first = false; }
+    put(o, "]");
+}
+
+static const char *ARG_NAME[] = { "target", "amount", "sound", "at" };
+static void args_json(out *o, uint32_t bits)
+{
+    bool first = true;
+    put(o, "[");
+    for (uint32_t k = 0; k < 4; k++)
+        if (bits & (1u << k)) { put(o, "%s\"%s\"", first ? "" : ", ", ARG_NAME[k]); first = false; }
+    put(o, "]");
+}
+
+/* X7: the binding vocabulary, from the tables the parser, the checks and
+ * the runtime use (world_def.c). */
+static void bindings_json(out *o)
+{
+    put(o, "  \"bindings\": {\"member\": \"world_entities.bindings\", \"schema\": 6, "
+           "\"fields\": [\"actions\", \"conditions\", \"event\", \"id\", \"source\"], "
+           "\"id\": \"a local id (prefabs.local_id), unique in its world or prefab\", "
+           "\"order\": \"canonical byte order of id, each once\", \"events\": [");
+    for (uint8_t e = 1; e < HTA_WEV_COUNT; e++) {
+        const hta_wevent_info *i = hta_wevent_get(e);
+        put(o, "%s\n    {\"name\": \"%s\", \"sources\": ", e > 1 ? "," : "", i->name);
+        kinds_json(o, i->sources);
+        put(o, ", \"actor\": \"%s\", \"link_name\": ", i->actor == HTA_WACTOR_ALWAYS ? "always" :
+            i->actor == HTA_WACTOR_CHAIN ? "the chain's, if any" : "never");
+        if (e < HTA_WEV_LINK_COUNT) put(o, "\"%s\"", hta_wdef_event_name(e)); else put(o, "null");
+        put(o, ", \"when\": \"%s\"}", i->when);
+    }
+    put(o, "],\n   \"conditions\": [");
+    for (uint8_t c = 1; c < HTA_WCOND_COUNT; c++) {
+        const hta_wcond_info *i = hta_wcond_get(c);
+        put(o, "%s\n    {\"name\": \"%s\", \"fields\": [\"condition\", \"entity\", \"is\"], \"entity\": ", c > 1 ? "," : "", i->name);
+        kinds_json(o, i->kinds);
+        put(o, ", \"values\": [");
+        for (uint8_t v = 0; v < i->value_count; v++) put(o, "%s\"%s\"", v ? ", " : "", i->values[v]);
+        put(o, "], \"doc\": \"%s\"}", i->doc);
+    }
+    put(o, "],\n   \"actions\": [");
+    for (uint8_t a = 1; a < HTA_WACT_COUNT; a++) {
+        const hta_waction_info *i = hta_waction_get(a);
+        put(o, "%s\n    {\"name\": \"%s\", \"targets\": ", a > 1 ? "," : "", i->name);
+        kinds_json(o, i->targets);
+        put(o, ", \"needs\": ");
+        args_json(o, i->needs);
+        put(o, ", \"takes\": ");
+        args_json(o, i->takes);
+        put(o, ", \"subject\": \"%s\", \"path\": \"%s\"}", i->needs_actor ? "the event's actor" : i->targets ? "the target" : "the place",
+            i->path);
+    }
+    put(o, "],\n   \"arguments\": {\"target\": \"a placed entity (world) or local child id (prefab); its kind must afford the action\", "
+           "\"amount\": \"damage, (0, %g]\", \"sound\": \"a sound resource (X5), imported\", "
+           "\"at\": \"a placed entity (or child) with a position; default the source\"}, ", (double)HTA_WDEF_MAX_DAMAGE);
+    put(o, "\"limits\": {\"bindings\": %u, \"conditions_per_binding\": %u, \"actions_per_binding\": %u, \"conditions\": %u, "
+           "\"actions\": %u, \"bindings_per_source_event\": %u, \"chain_depth\": %u, \"cascade_actions\": %u, \"queue\": %u, "
+           "\"dispatches_per_step\": %u, \"damage_per_step\": %u, \"sounds_per_step\": %u, \"entities\": %u, \"damage_max\": %g}, ",
+        HTA_WDEF_MAX_BINDINGS, HTA_WDEF_MAX_CONDS_PER, HTA_WDEF_MAX_ACTIONS_PER, HTA_WDEF_MAX_CONDS, HTA_WDEF_MAX_ACTIONS,
+        HTA_WDEF_MAX_BINDINGS_PER_EVENT, HTA_WDEF_MAX_CHAIN, HTA_WENT_CASCADE_BUDGET, HTA_WENT_QUEUE, HTA_WENT_BUDGET,
+        HTA_WENT_MAX_HURTS, HTA_WENT_MAX_CUES, HTA_WDEF_MAX_ENTITIES, (double)HTA_WDEF_MAX_DAMAGE);
+    /* Each kind's capabilities, derived from the tables above: what a
+     * requester -- a player, Lua, a binding, later an agent -- may ask of it,
+     * what it reports, what can be read of it. */
+    put(o, "\"affordances\": {");
+    for (uint8_t k = 1; k < HTA_WDEF_KIND_COUNT; k++) {
+        bool f = true;
+        put(o, "%s\"%s\": {\"actions\": [", k > 1 ? ", " : "", hta_wdef_kind_name(k));
+        for (uint8_t a = 1; a < HTA_WACT_COUNT; a++)
+            if (hta_wdef_affords(k, a)) { put(o, "%s\"%s\"", f ? "" : ", ", hta_waction_get(a)->name); f = false; }
+        put(o, "], \"events\": [");
+        f = true;
+        for (uint8_t e = 1; e < HTA_WEV_COUNT; e++)
+            if (hta_wbind_emits(k, e)) { put(o, "%s\"%s\"", f ? "" : ", ", hta_wevent_get(e)->name); f = false; }
+        put(o, "], \"state\": [");
+        f = true;
+        for (uint8_t c = 1; c < HTA_WCOND_COUNT; c++)
+            if (hta_wcond_get(c)->kinds & (1u << k)) { put(o, "%s\"%s\"", f ? "" : ", ", hta_wcond_get(c)->name); f = false; }
+        put(o, "], \"positioned\": %s}", hta_wdef_positioned(k) ? "true" : "false");
+    }
+    put(o, "}, \"seam\": \"every requester (a player's press after its reach test, Lua's world.send, a binding, a future "
+           "agent) asks hta_went_request for an action on a target for an actor; the target's kind must afford it; the bounded "
+           "queue dispatches it into the one engine path; the result is queued, rejected, refused here (a joiner) or queue full\", ");
+    put(o, "\"semantics\": {\"conditions\": \"all must hold; read when the event is delivered, the same state for every binding "
+           "of that event; read-only\", \"ordering\": \"per event: its links in authored order, then its bindings in canonical order "
+           "(the world's own by id, then each prefab instance's by instance id and binding id); a binding's actions in authored order; "
+           "all queued, dispatched first in first out\", \"cycles\": \"allowed (conditions may break them); every cascade is bounded by "
+           "chain_depth and cascade_actions, then dropped with a diagnostic naming the binding\", \"authority\": \"host (or offline) "
+           "only; a joiner never evaluates a binding: it receives the resulting state (WORLD_STATE, WORLD, kills) and a binding's sound "
+           "as a world-sound effect\", \"late_join\": \"state, never event history\", "
+           "\"lua\": \"a scripted interactable's on_used runs in the script phase, after its links' and bindings' actions were "
+           "queued and before they dispatch; its requests queue after them\"}, ");
+    put(o, "\"phase\": [\"host.interact: use presses -> used (links, bindings queued; scripted uses recorded)\", "
+           "\"game.update\", \"round restart (relays inactive, movers closed, the queue and cascades emptied)\", "
+           "\"host.world.sense: trigger entries -> entered\", \"host.world.script: Lua on_used, on_ability (requests queued)\", "
+           "\"host.world.dispatch: the queue, first in first out, %u per step; a relay's activated/deactivated and a mover told to "
+           "open at the end of its travel emit here and queue behind\", \"world.movers: movers move; arriving -> opened/closed, "
+           "queued for the next step's dispatch\", \"host.apply: teleports, damage (hta_game_hurt), sounds (and the world-sound "
+           "effect to joiners)\", \"network: snapshots and WORLD_STATE out\"]},\n", HTA_WENT_BUDGET);
 }
 
 size_t hta_resource_contract_json(char *buf, size_t cap)
@@ -129,8 +236,15 @@ size_t hta_resource_contract_json(char *buf, size_t cap)
         HTA_ASSET_MESH_MAX_VERTS, HTA_ASSET_MESH_MAX_INDICES, HTA_ASSET_MESH_MAX_GROUPS, HTA_ASSET_SOUND_MAX_FRAMES,
         HTA_ASSET_MAX_PER_TYPE, HTA_ASSET_MAX_MEMBERS, HTA_ASSET_MAX_PAYLOAD);
     /* X6: prefabs (prefab.h), and how a world places them. */
-    put(&o, "  \"prefabs\": {\"member\": \"prefabs\", \"schema\": %u, \"in\": \"library packages\", \"fields\": [\"prefabs\", \"schema\"], "
-            "\"prefab_fields\": [\"children\", \"id\"], ", HTA_PREFAB_SCHEMA);
+    put(&o, "  \"prefabs\": {\"member\": \"prefabs\", \"schema\": %u, \"schemas\": {\"1\": \"X6: children\", "
+            "\"2\": \"X7: adds a prefab's bindings; a schema 1 member is read exactly as before and may not hold them\"}, "
+            "\"in\": \"library packages\", \"fields\": [\"prefabs\", \"schema\"], "
+            "\"prefab_fields\": [\"bindings\", \"children\", \"id\"], \"bindings\": {\"schema\": 2, \"form\": \"as "
+            "world_entities.bindings, but source, conditions[].entity, actions[].target and actions[].at name the prefab's children by "
+            "local id; a play_sound's sound resolves from the prefab's own package\", \"order\": \"canonical byte order of id, each once "
+            "in the prefab\", \"expansion\": \"per instance, after its children: each local child becomes that instance's own entity\", "
+            "\"limits\": {\"bindings\": %u, \"conditions\": %u, \"actions\": %u}}, ",
+        HTA_PREFAB_SCHEMA, HTA_PREFAB_MAX_BINDINGS, HTA_PREFAB_MAX_BIND_CONDS, HTA_PREFAB_MAX_BIND_ACTIONS);
     put(&o, "\"children\": {\"kinds\": [");
     for (uint8_t k = 1; k < HTA_WDEF_KIND_COUNT; k++) put(&o, "%s\"%s\"", k > 1 ? ", " : "", hta_wdef_kind_name(k));
     put(&o, "], \"common\": [\"id\", \"kind\", \"links\"], \"fields\": {"
@@ -178,7 +292,9 @@ size_t hta_resource_contract_json(char *buf, size_t cap)
             "\"prop_transform\": \"schema 5: a prop's optional yaw_degrees and scale (see prefabs.transform)\", "
             "\"prefab_instances\": {\"schema\": 5, \"fields\": [\"id\", \"position\", \"prefab\", \"scale\", \"yaw_degrees\"], "
             "\"needs\": [\"id\", \"position\", \"prefab\"], \"defaults\": {\"scale\": 1, \"yaw_degrees\": 0}, "
-            "\"order\": \"canonical byte order of id, each once\", \"reserved\": \"a schema 5 world's own placed IDs may not hold __\"}},\n");
+            "\"order\": \"canonical byte order of id, each once\", \"reserved\": \"a schema 5 world's own placed IDs may not hold __\"}, "
+            "\"bindings\": {\"schema\": 6, \"see\": \"bindings\"}},\n");
+    bindings_json(&o);
     put(&o, "  \"scripts\": {\"api\": \"%s\", \"max_scripts\": %u, \"max_source_bytes\": %u, \"max_pool_bytes\": %u}\n}\n",
         HTA_WDEF_SCRIPT_API, HTA_WDEF_MAX_SCRIPTS, HTA_WDEF_SCRIPT_MAX_BYTES, HTA_WDEF_SCRIPT_POOL);
     return o.len;
@@ -202,6 +318,39 @@ size_t hta_resource_types_markdown(char *buf, size_t cap)
         put(&o, "| `%s` | %s | %s | %s |\n", r->field, r->expects ? hta_rtype_get(r->expects)->noun : "any importable type",
             r->from == HTA_REF_SELF ? "the same package" : r->from == HTA_REF_NAMED ? "the required package it is listed under" :
             "the same package or a declared import", r->since);
+    }
+    /* X7: the binding vocabulary. */
+    put(&o, "\n| Event | Sources | Actor | X1 link name | When |\n|---|---|---|---|---|\n");
+    for (uint8_t e = 1; e < HTA_WEV_COUNT; e++) {
+        const hta_wevent_info *i = hta_wevent_get(e);
+        char kl[80] = "";
+        size_t at = 0;
+        for (uint8_t k = 1; k < HTA_WDEF_KIND_COUNT; k++)
+            if (i->sources & (1u << k)) at += (size_t)snprintf(kl + at, sizeof(kl) - at, "%s%s", at ? ", " : "", hta_wdef_kind_name(k));
+        put(&o, "| `%s` | %s | %s | %s | %s |\n", i->name, kl, i->actor == HTA_WACTOR_ALWAYS ? "always" :
+            i->actor == HTA_WACTOR_CHAIN ? "the chain's" : "-", e < HTA_WEV_LINK_COUNT ? hta_wdef_event_name(e) : "-", i->when);
+    }
+    put(&o, "\n| Condition | Reads | Values |\n|---|---|---|\n");
+    for (uint8_t c = 1; c < HTA_WCOND_COUNT; c++) {
+        const hta_wcond_info *i = hta_wcond_get(c);
+        char vl[80] = "";
+        size_t at = 0;
+        for (uint8_t v = 0; v < i->value_count; v++) at += (size_t)snprintf(vl + at, sizeof(vl) - at, "%s`%s`", v ? ", " : "", i->values[v]);
+        put(&o, "| `%s` | %s | %s |\n", i->name, (i->kinds & (1u << HTA_WDEF_MOVER)) ? "mover" : "relay", vl);
+    }
+    put(&o, "\n| Action | Targets | Needs | Takes | Acts on |\n|---|---|---|---|---|\n");
+    for (uint8_t a = 1; a < HTA_WACT_COUNT; a++) {
+        const hta_waction_info *i = hta_waction_get(a);
+        char tl[80] = "", nl[48] = "", al[48] = "";
+        size_t at = 0;
+        for (uint8_t k = 1; k < HTA_WDEF_KIND_COUNT; k++)
+            if (i->targets & (1u << k)) at += (size_t)snprintf(tl + at, sizeof(tl) - at, "%s%s", at ? ", " : "", hta_wdef_kind_name(k));
+        at = 0;
+        for (uint32_t k = 0; k < 4; k++) if (i->needs & (1u << k)) at += (size_t)snprintf(nl + at, sizeof(nl) - at, "%s%s", at ? ", " : "", ARG_NAME[k]);
+        at = 0;
+        for (uint32_t k = 0; k < 4; k++) if (i->takes & (1u << k)) at += (size_t)snprintf(al + at, sizeof(al) - at, "%s%s", at ? ", " : "", ARG_NAME[k]);
+        put(&o, "| `%s` | %s | %s | %s | %s |\n", i->name, tl[0] ? tl : "-", nl, al,
+            i->needs_actor ? "the event's actor" : i->targets ? "the target" : "a place");
     }
     return o.len;
 }

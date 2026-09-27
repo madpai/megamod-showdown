@@ -129,8 +129,18 @@ void hta_net_view_update(hta_net_view *v, hta_net_client *net, double now,
         }
     }
     hta_net_fx fx;
+    v->world_sound_count = 0;
     while (hta_net_client_pop_fx(net, &fx)) {
         v->fx++;
+        if (fx.kind == HTA_NET_FX_WORLD_SOUND) {
+            if (v->world_sound_count < sizeof(v->world_sound) / sizeof(v->world_sound[0])) {
+                v->world_sound[v->world_sound_count].entity = fx.entity;
+                v->world_sound[v->world_sound_count].sound = (uint16_t)(fx.weapon | (fx.material << 8));
+                memcpy(v->world_sound[v->world_sound_count].pos, fx.pos, sizeof(fx.pos));
+                v->world_sound_count++;
+            }
+            continue;
+        }
         if (!wfx || !wfx->ready) continue;
         if (fx.kind == HTA_NET_FX_DETONATE)
             hta_wfx_net_fx(wfx, HTA_WFX_NET_DETONATE, fx.pos, fx.dir, VIEW_BLAST_RADIUS);

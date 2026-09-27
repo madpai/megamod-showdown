@@ -16,16 +16,174 @@
 #include <string.h>
 
 static const char *const KIND[HTA_WDEF_KIND_COUNT] = { "", "interactable", "relay", "mover", "trigger", "teleport", "prop" };
-static const char *const EVENT[HTA_WEV_COUNT] = { "", "used", "fired", "entered" };
-static const char *const INPUT[HTA_WIN_COUNT] = { "", "activate", "open", "close", "toggle", "teleport" };
+/* The X1 link names; an X7 binding names events by hta_wevent_info. */
+static const char *const EVENT[HTA_WEV_COUNT] = { "", "used", "fired", "entered", "deactivated", "opened", "closed" };
+static const char *const INPUT[HTA_WIN_COUNT] = { "", "activate", "open", "close", "toggle", "teleport", "deactivate",
+                                                  "damage", "play_sound", "use" };
+
+static bool failv(char *err, size_t n, const char *fmt, ...);
 
 const char *hta_wdef_kind_name(uint8_t k) { return k < HTA_WDEF_KIND_COUNT ? KIND[k] : "?"; }
 const char *hta_wdef_event_name(uint8_t e) { return e < HTA_WEV_COUNT ? EVENT[e] : "?"; }
 const char *hta_wdef_input_name(uint8_t i) { return i < HTA_WIN_COUNT ? INPUT[i] : "?"; }
 uint8_t hta_wdef_input_from_name(const char *name)
 {
-    for (int i = 1; name && i < HTA_WIN_COUNT; i++) if (!strcmp(INPUT[i], name)) return (uint8_t)i;
+    for (int i = 1; name && i < HTA_WIN_LINK_COUNT; i++) if (!strcmp(INPUT[i], name)) return (uint8_t)i;
     return HTA_WIN_NONE;
+}
+
+/* ---- X7: the binding vocabulary ------------------------------------------------ */
+
+#define K(k) (1u << (k))
+static const hta_wevent_info WEVENTS[] = {
+    { "used", HTA_WEV_USED, K(HTA_WDEF_INTERACTABLE), HTA_WACTOR_ALWAYS,
+      "a player pressed use at it (the host's interaction, before the game update); the actor is that player" },
+    { "activated", HTA_WEV_ACTIVATED, K(HTA_WDEF_RELAY), HTA_WACTOR_CHAIN,
+      "it was told to activate (a link, a binding or Lua's world.send), when the queue dispatches that; the X1 link name is 'fired'" },
+    { "entered", HTA_WEV_ENTERED, K(HTA_WDEF_TRIGGER), HTA_WACTOR_ALWAYS,
+      "a player's body went from outside its box to inside (the host's trigger sensing); the actor is that player" },
+    { "deactivated", HTA_WEV_DEACTIVATED, K(HTA_WDEF_RELAY), HTA_WACTOR_CHAIN,
+      "it was told to deactivate, when the queue dispatches that" },
+    { "opened", HTA_WEV_OPENED, K(HTA_WDEF_MOVER), HTA_WACTOR_NEVER,
+      "its phase became open (it arrived, or was told to open while already at the end of its travel)" },
+    { "closed", HTA_WEV_CLOSED, K(HTA_WDEF_MOVER), HTA_WACTOR_NEVER,
+      "its phase became closed (it arrived, or was told to close while already at the start of its travel)" },
+};
+static const char *const MOVER_VALUES[] = { "closed", "opening", "open", "closing" };
+static const char *const RELAY_VALUES[] = { "inactive", "active" };
+static const hta_wcond_info WCONDS[HTA_WCOND_COUNT] = {
+    [HTA_WCOND_MOVER_STATE] = { "mover_state", K(HTA_WDEF_MOVER), MOVER_VALUES, 4,
+                                "the mover's phase now (Lua's world.state reads the same)" },
+    [HTA_WCOND_RELAY_STATE] = { "relay_state", K(HTA_WDEF_RELAY), RELAY_VALUES, 2,
+                                "active after activate, inactive after deactivate; every relay starts a round inactive" },
+};
+static const hta_waction_info WACTIONS[HTA_WACT_COUNT] = {
+    [HTA_WACT_OPEN] = { "open", HTA_WIN_OPEN, K(HTA_WDEF_MOVER), HTA_WARG_TARGET, HTA_WARG_TARGET, false,
+                        "the world-event queue, as a link's open" },
+    [HTA_WACT_CLOSE] = { "close", HTA_WIN_CLOSE, K(HTA_WDEF_MOVER), HTA_WARG_TARGET, HTA_WARG_TARGET, false,
+                         "the world-event queue, as a link's close" },
+    [HTA_WACT_TOGGLE] = { "toggle", HTA_WIN_TOGGLE, K(HTA_WDEF_MOVER), HTA_WARG_TARGET, HTA_WARG_TARGET, false,
+                          "the world-event queue, as a link's toggle" },
+    [HTA_WACT_ACTIVATE] = { "activate", HTA_WIN_ACTIVATE, K(HTA_WDEF_RELAY), HTA_WARG_TARGET, HTA_WARG_TARGET, false,
+                            "the world-event queue, as a link's activate" },
+    [HTA_WACT_DEACTIVATE] = { "deactivate", HTA_WIN_DEACTIVATE, K(HTA_WDEF_RELAY), HTA_WARG_TARGET, HTA_WARG_TARGET, false,
+                              "the world-event queue (X7's one new input: the relay goes inactive)" },
+    [HTA_WACT_TELEPORT] = { "teleport", HTA_WIN_TELEPORT, K(HTA_WDEF_TELEPORT), HTA_WARG_TARGET, HTA_WARG_TARGET, true,
+                            "the world-event queue, as a link's teleport: the event's actor to the target's destination, once per step" },
+    [HTA_WACT_DAMAGE] = { "damage", HTA_WIN_DAMAGE, 0, HTA_WARG_AMOUNT, HTA_WARG_AMOUNT, true,
+                          "hta_game_hurt, the native damage pipeline (as Lua's game.damage), on the event's actor, attributed to no player" },
+    [HTA_WACT_PLAY_SOUND] = { "play_sound", HTA_WIN_SOUND, 0, HTA_WARG_SOUND, HTA_WARG_SOUND | HTA_WARG_AT, false,
+                              "a world sound cue (X5, as a mover's), at `at` or the source; sent to joiners as a world-sound effect" },
+    [HTA_WACT_USE] = { "use", HTA_WIN_USE, K(HTA_WDEF_INTERACTABLE), HTA_WARG_TARGET, HTA_WARG_TARGET, false,
+                       "hta_went_use, the one use path a player's press takes after its reach test: the target's cooldown, its "
+                       "`used` event (links, bindings) and its script's on_used; the event's actor, if any, is the user" },
+};
+#undef K
+
+const hta_wevent_info *hta_wevent_get(uint8_t event)
+{
+    for (size_t i = 0; i < sizeof(WEVENTS) / sizeof(WEVENTS[0]); i++) if (WEVENTS[i].event == event) return &WEVENTS[i];
+    return NULL;
+}
+const hta_wevent_info *hta_wevent_by_name(const char *name)
+{
+    for (size_t i = 0; name && i < sizeof(WEVENTS) / sizeof(WEVENTS[0]); i++) if (!strcmp(WEVENTS[i].name, name)) return &WEVENTS[i];
+    return NULL;
+}
+const hta_wcond_info *hta_wcond_get(uint8_t kind) { return kind && kind < HTA_WCOND_COUNT ? &WCONDS[kind] : NULL; }
+const hta_waction_info *hta_waction_get(uint8_t op) { return op && op < HTA_WACT_COUNT ? &WACTIONS[op] : NULL; }
+uint8_t hta_waction_from_name(const char *name)
+{
+    for (uint8_t i = 1; name && i < HTA_WACT_COUNT; i++) if (!strcmp(WACTIONS[i].name, name)) return i;
+    return HTA_WACT_NONE;
+}
+uint8_t hta_wcond_from_name(const char *name)
+{
+    for (uint8_t i = 1; name && i < HTA_WCOND_COUNT; i++) if (!strcmp(WCONDS[i].name, name)) return i;
+    return HTA_WCOND_NONE;
+}
+bool hta_wbind_emits(uint8_t kind, uint8_t event)
+{
+    const hta_wevent_info *e = hta_wevent_get(event);
+    return e && kind < 32 && (e->sources & (1u << kind));
+}
+bool hta_wdef_affords(uint8_t kind, uint8_t op)
+{
+    const hta_waction_info *a = hta_waction_get(op);
+    return a && kind < 32 && (a->targets & (1u << kind));
+}
+
+bool hta_wdef_positioned(uint8_t kind)
+{
+    return kind == HTA_WDEF_INTERACTABLE || kind == HTA_WDEF_MOVER || kind == HTA_WDEF_TRIGGER || kind == HTA_WDEF_TELEPORT ||
+           kind == HTA_WDEF_PROP;
+}
+
+static const char *kinds_list(uint32_t bits, char *buf, size_t n)
+{
+    size_t at = 0;
+    buf[0] = 0;
+    for (uint8_t k = 1; k < HTA_WDEF_KIND_COUNT && at < n; k++)
+        if (bits & (1u << k)) at += (size_t)snprintf(buf + at, n - at, "%s%s", at ? " or " : "", KIND[k]);
+    return buf;
+}
+
+static const char *an(const char *noun) { return noun && strchr("aeiou", noun[0]) ? "an" : "a"; }
+
+bool hta_wbind_check_one(const char *who, uint16_t source, uint8_t event, const hta_wcond *cond, uint32_t cond_count,
+                         const hta_waction *act, uint32_t act_count, uint32_t entity_count, hta_wbind_kind_fn kind,
+                         hta_wbind_name_fn name, const void *ctx, uint32_t sounds, char *err, size_t n)
+{
+    char kl[64];
+    const hta_wevent_info *ev = hta_wevent_get(event);
+    if (!ev) return failv(err, n, "%s: unknown event", who);
+    if (source >= entity_count) return failv(err, n, "%s: source out of range", who);
+    uint8_t sk = kind(ctx, source);
+    if (!(ev->sources & (1u << sk)))
+        return failv(err, n, "%s: event '%s' is not supported by %s entity %s (%s emits it)", who, ev->name,
+                     hta_wdef_kind_name(sk), name(ctx, source), kinds_list(ev->sources, kl, sizeof(kl)));
+    if (cond_count > HTA_WDEF_MAX_CONDS_PER) return failv(err, n, "%s: more than %u conditions", who, HTA_WDEF_MAX_CONDS_PER);
+    if (!act_count) return failv(err, n, "%s: has no actions", who);
+    if (act_count > HTA_WDEF_MAX_ACTIONS_PER) return failv(err, n, "%s: more than %u actions", who, HTA_WDEF_MAX_ACTIONS_PER);
+    for (uint32_t c = 0; c < cond_count; c++) {
+        const hta_wcond_info *ci = hta_wcond_get(cond[c].kind);
+        if (!ci) return failv(err, n, "%s: condition %u: unknown condition", who, c);
+        if (cond[c].entity >= entity_count) return failv(err, n, "%s: condition %s: entity out of range", who, ci->name);
+        if (cond[c].value >= ci->value_count) return failv(err, n, "%s: condition %s: value out of range", who, ci->name);
+        uint8_t k = kind(ctx, cond[c].entity);
+        if (!(ci->kinds & (1u << k)))
+            return failv(err, n, "%s: condition %s reads %s, %s %s (%s applies to %s %s)", who, ci->name, name(ctx, cond[c].entity),
+                         an(hta_wdef_kind_name(k)), hta_wdef_kind_name(k), ci->name, an(kinds_list(ci->kinds, kl, sizeof(kl))), kl);
+    }
+    for (uint32_t a = 0; a < act_count; a++) {
+        const hta_waction *x = &act[a];
+        const hta_waction_info *ai = hta_waction_get(x->op);
+        if (!ai || x->input != ai->input) return failv(err, n, "%s: action %u: unknown action", who, a);
+        if (ai->targets) {
+            if (x->target >= entity_count) return failv(err, n, "%s: action %s: target out of range", who, ai->name);
+            uint8_t k = kind(ctx, x->target);
+            if (!(ai->targets & (1u << k)))
+                return failv(err, n, "%s: action %s targets %s, %s %s, which does not afford %s (%s needs %s %s)", who, ai->name,
+                             name(ctx, x->target), an(hta_wdef_kind_name(k)), hta_wdef_kind_name(k), ai->name, ai->name,
+                             an(kinds_list(ai->targets, kl, sizeof(kl))), kl);
+        } else if (x->target != HTA_WDEF_NO_DEF) return failv(err, n, "%s: action %s takes no target", who, ai->name);
+        if (x->op == HTA_WACT_DAMAGE) {
+            if (!(isfinite(x->amount) && x->amount > 0.0f && x->amount <= HTA_WDEF_MAX_DAMAGE))
+                return failv(err, n, "%s: action damage: amount must be in (0, %g]", who, (double)HTA_WDEF_MAX_DAMAGE);
+        } else if (x->amount != 0.0f) return failv(err, n, "%s: action %s takes no amount", who, ai->name);
+        if (x->op == HTA_WACT_PLAY_SOUND) {
+            if (!x->sound || x->sound > sounds) return failv(err, n, "%s: action play_sound: sound out of range", who);
+            uint16_t at = x->at == HTA_WDEF_NO_DEF ? source : x->at;
+            if (at >= entity_count) return failv(err, n, "%s: action play_sound: at out of range", who);
+            uint8_t k = kind(ctx, at);
+            if (!hta_wdef_positioned(k))
+                return failv(err, n, "%s: action play_sound at %s: %s %s has no position (name one with 'at')", who, name(ctx, at),
+                             an(hta_wdef_kind_name(k)), hta_wdef_kind_name(k));
+        } else if (x->sound || x->at != HTA_WDEF_NO_DEF) return failv(err, n, "%s: action %s takes no sound", who, ai->name);
+        if (ai->needs_actor && ev->actor == HTA_WACTOR_NEVER)
+            return failv(err, n, "%s: action %s acts on the event's actor, and '%s' never carries one", who, ai->name, ev->name);
+    }
+    return true;
 }
 
 bool hta_wdef_emits(uint8_t kind, uint8_t event)
@@ -37,7 +195,8 @@ bool hta_wdef_emits(uint8_t kind, uint8_t event)
 
 bool hta_wdef_accepts(uint8_t kind, uint8_t input)
 {
-    return (kind == HTA_WDEF_RELAY && input == HTA_WIN_ACTIVATE) ||
+    return (kind == HTA_WDEF_RELAY && (input == HTA_WIN_ACTIVATE || input == HTA_WIN_DEACTIVATE)) ||
+           (kind == HTA_WDEF_INTERACTABLE && input == HTA_WIN_USE) ||
            (kind == HTA_WDEF_MOVER && (input == HTA_WIN_OPEN || input == HTA_WIN_CLOSE || input == HTA_WIN_TOGGLE)) ||
            (kind == HTA_WDEF_TELEPORT && input == HTA_WIN_TELEPORT);
 }
@@ -144,10 +303,10 @@ static bool parse_link(rd *r, hta_wdef_link *l, char *target, const char *owner,
         if (!str(r, key, sizeof(key)) || !eat(r, ':') || !str(r, val, sizeof(val)))
             return fail(err, n, "%s: malformed link", owner, NULL);
         if (!strcmp(key, "event")) {
-            l->event = (uint8_t)lookup(EVENT, HTA_WEV_COUNT, val); have[0] = true;
+            l->event = (uint8_t)lookup(EVENT, HTA_WEV_LINK_COUNT, val); have[0] = true;
             if (!l->event) return fail(err, n, "%s: unknown event '%s'", owner, val);
         } else if (!strcmp(key, "input")) {
-            l->input = (uint8_t)lookup(INPUT, HTA_WIN_COUNT, val); have[1] = true;
+            l->input = (uint8_t)lookup(INPUT, HTA_WIN_LINK_COUNT, val); have[1] = true;
             if (!l->input) return fail(err, n, "%s: unknown input '%s'", owner, val);
         } else if (!strcmp(key, "target")) {
             memcpy(target, val, sizeof(val)); have[2] = true;
@@ -615,6 +774,288 @@ static bool resolve_movers(hta_world_defs *d, pending *pend, char *err, size_t n
 }
 
 
+/* ---- X7: event bindings ---------------------------------------------------------- */
+
+/* The string value of `want` in the object at r->p, without consuming it
+ * ("" when absent): canonical key order puts "id" after "actions", and
+ * every message should name the binding. */
+static void peek_str(const rd *r0, const char *want, char *out, size_t cap)
+{
+    rd r = *r0;
+    r.lenient = true;
+    char key[24];
+    out[0] = 0;
+    if (!eat(&r, '{') || eat(&r, '}')) return;
+    do {
+        if (!str(&r, key, sizeof(key)) || !eat(&r, ':')) return;
+        const uint8_t *v = r.p;
+        if (!strcmp(key, want) && str(&r, out, cap)) return;
+        out[0] = 0;
+        r.p = v;
+        if (!skip(&r)) return;
+    } while (eat(&r, ','));
+}
+
+static void names_of(char *buf, size_t n, int count, const char *(*name)(int))
+{
+    size_t at = 0;
+    buf[0] = 0;
+    for (int i = 0; i < count && at < n; i++) {
+        const char *s = name(i);
+        if (s) at += (size_t)snprintf(buf + at, n - at, "%s%s", at ? ", " : "", s);
+    }
+}
+static const char *ev_name_i(int i) { return i < (int)(sizeof(WEVENTS) / sizeof(WEVENTS[0])) ? WEVENTS[i].name : NULL; }
+static const char *cond_name_i(int i) { return i > 0 && i < HTA_WCOND_COUNT ? WCONDS[i].name : NULL; }
+static const char *act_name_i(int i) { return i > 0 && i < HTA_WACT_COUNT ? WACTIONS[i].name : NULL; }
+
+static bool parse_condition(rd *r, hta_wbind_text *t, const char *who, char *err, size_t n)
+{
+    if (t->cond_count >= HTA_WDEF_MAX_CONDS_PER) return failv(err, n, "%s: more than %u conditions", who, HTA_WDEF_MAX_CONDS_PER);
+    uint32_t me = t->cond_count;
+    hta_wcond *c = &t->cond[me];
+    memset(c, 0, sizeof(*c));
+    char key[16], val[HTA_WDEF_ID_MAX + 1], is[HTA_WDEF_ID_MAX + 1] = "", list[160];
+    bool have[3] = { 0 };
+    if (!eat(r, '{')) return failv(err, n, "%s: condition %u is not an object", who, me);
+    if (!eat(r, '}')) do {
+        if (!str(r, key, sizeof(key)) || !eat(r, ':') || !str(r, val, sizeof(val)))
+            return failv(err, n, "%s: condition %u: malformed field", who, me);
+        if (!strcmp(key, "condition") && !have[0]) {
+            c->kind = hta_wcond_from_name(val); have[0] = true;
+            if (!c->kind) {
+                names_of(list, sizeof(list), HTA_WCOND_COUNT, cond_name_i);
+                return failv(err, n, "%s: unknown condition '%s' (%s)", who, val, list);
+            }
+        } else if (!strcmp(key, "entity") && !have[1]) { memcpy(t->cond_entity[me], val, sizeof(val)); have[1] = true; }
+        else if (!strcmp(key, "is") && !have[2]) { snprintf(is, sizeof(is), "%s", val); have[2] = true; }
+        else return failv(err, n, "%s: condition %u: unknown field '%s' (a condition has condition, entity, is)", who, me, key);
+    } while (eat(r, ','));
+    if (!eat(r, '}') || !have[0] || !have[1] || !have[2])
+        return failv(err, n, "%s: condition %u: a condition needs condition, entity and is", who, me);
+    const hta_wcond_info *ci = hta_wcond_get(c->kind);
+    int v = -1;
+    size_t at = 0;
+    for (uint8_t k = 0; k < ci->value_count; k++) {
+        if (!strcmp(ci->values[k], is)) v = k;
+        at += (size_t)snprintf(list + at, at < sizeof(list) ? sizeof(list) - at : 0, "%s%s", k ? ", " : "", ci->values[k]);
+    }
+    if (v < 0) return failv(err, n, "%s: condition %s: unknown value '%s' (%s)", who, ci->name, is, list);
+    c->value = (uint8_t)v;
+    t->cond_count++;
+    return true;
+}
+
+static bool parse_action(rd *r, hta_wbind_text *t, const char *who, char *err, size_t n)
+{
+    if (t->action_count >= HTA_WDEF_MAX_ACTIONS_PER) return failv(err, n, "%s: more than %u actions", who, HTA_WDEF_MAX_ACTIONS_PER);
+    uint32_t me = t->action_count;
+    hta_waction *a = &t->action[me];
+    memset(a, 0, sizeof(*a));
+    a->target = a->at = HTA_WDEF_NO_DEF;
+    t->target[me][0] = t->at[me][0] = t->sound[me][0] = 0;
+    char key[16], val[HTA_WDEF_ID_MAX + 1], list[160];
+    uint32_t got = 0;
+    double amount = 0.0;
+    bool have_op = false;
+    if (!eat(r, '{')) return failv(err, n, "%s: action %u is not an object", who, me);
+    if (!eat(r, '}')) do {
+        if (!str(r, key, sizeof(key)) || !eat(r, ':')) return failv(err, n, "%s: action %u: malformed field", who, me);
+        uint32_t bit = !strcmp(key, "target") ? HTA_WARG_TARGET : !strcmp(key, "amount") ? HTA_WARG_AMOUNT :
+                       !strcmp(key, "sound") ? HTA_WARG_SOUND : !strcmp(key, "at") ? HTA_WARG_AT : 0;
+        if ((bit && (got & bit)) || (!bit && !strcmp(key, "action") && have_op))
+            return failv(err, n, "%s: action %u: '%s' appears twice", who, me, key);
+        got |= bit;
+        bool ok = true;
+        if (!strcmp(key, "action")) {
+            ok = str(r, val, sizeof(val));
+            if (ok) {
+                a->op = hta_waction_from_name(val); have_op = true;
+                if (!a->op) {
+                    names_of(list, sizeof(list), HTA_WACT_COUNT, act_name_i);
+                    return failv(err, n, "%s: unknown action '%s' (%s)", who, val, list);
+                }
+            }
+        } else if (bit == HTA_WARG_AMOUNT) ok = num(r, &amount) && fabs(amount) <= 1e6;
+        else if (bit == HTA_WARG_TARGET) ok = str(r, t->target[me], sizeof(t->target[me]));
+        else if (bit == HTA_WARG_AT) ok = str(r, t->at[me], sizeof(t->at[me]));
+        else if (bit == HTA_WARG_SOUND) ok = str(r, t->sound[me], sizeof(t->sound[me]));
+        else return failv(err, n, "%s: action %u: unknown field '%s' (an action has action, amount, at, sound, target)", who, me, key);
+        if (!ok) return failv(err, n, "%s: action %u: malformed '%s'", who, me, key);
+    } while (eat(r, ','));
+    if (!eat(r, '}')) return failv(err, n, "%s: action %u: malformed action", who, me);
+    if (!have_op) return failv(err, n, "%s: action %u has no action", who, me);
+    const hta_waction_info *ai = hta_waction_get(a->op);
+    static const char *const ARG[] = { "target", "amount", "sound", "at" };
+    for (uint32_t k = 0; k < 4; k++) {
+        uint32_t bit = 1u << k;
+        if ((got & bit) && !(ai->takes & bit)) return failv(err, n, "%s: action %s does not take '%s'", who, ai->name, ARG[k]);
+        if (!(got & bit) && (ai->needs & bit)) return failv(err, n, "%s: action %s needs '%s'", who, ai->name, ARG[k]);
+    }
+    a->input = ai->input;
+    a->amount = (float)amount;
+    if (a->op == HTA_WACT_DAMAGE && !(amount > 0.0 && amount <= HTA_WDEF_MAX_DAMAGE))
+        return failv(err, n, "%s: action damage: amount must be in (0, %g]", who, (double)HTA_WDEF_MAX_DAMAGE);
+    t->action_count++;
+    return true;
+}
+
+bool hta_wbind_parse_text(struct hta_mj_s *r, hta_wbind_text *t, const char *pre, char *err, size_t n)
+{
+    memset(t, 0, sizeof(*t));
+    char who[HTA_WDEF_ID_MAX + 96], key[16], list[160], why[128], val[64];
+    char idv[64];
+    peek_str(r, "id", idv, sizeof(idv));
+    if (idv[0] && strlen(idv) <= HTA_WDEF_BINDING_ID_MAX) snprintf(who, sizeof(who), "%s %s", pre, idv);
+    else snprintf(who, sizeof(who), "%s ?", pre);
+    bool have[5] = { 0 };    /* actions conditions event id source */
+    if (!eat(r, '{')) return failv(err, n, "%s: not an object", who);
+    if (!eat(r, '}')) do {
+        if (!str(r, key, sizeof(key)) || !eat(r, ':')) return failv(err, n, "%s: malformed field", who);
+        if (!strcmp(key, "actions") && !have[0]) {
+            have[0] = true;
+            if (!eat(r, '[')) return failv(err, n, "%s: actions is not a list", who);
+            if (!eat(r, ']')) {
+                do { if (!parse_action(r, t, who, err, n)) return false; } while (eat(r, ','));
+                if (!eat(r, ']')) return failv(err, n, "%s: malformed actions", who);
+            }
+        } else if (!strcmp(key, "conditions") && !have[1]) {
+            have[1] = true;
+            if (!eat(r, '[')) return failv(err, n, "%s: conditions is not a list", who);
+            if (!eat(r, ']')) {
+                do { if (!parse_condition(r, t, who, err, n)) return false; } while (eat(r, ','));
+                if (!eat(r, ']')) return failv(err, n, "%s: malformed conditions", who);
+            }
+        } else if (!strcmp(key, "event") && !have[2]) {
+            have[2] = true;
+            if (!str(r, val, sizeof(val))) return failv(err, n, "%s: malformed event", who);
+            const hta_wevent_info *e = hta_wevent_by_name(val);
+            if (!e) {
+                names_of(list, sizeof(list), (int)(sizeof(WEVENTS) / sizeof(WEVENTS[0])), ev_name_i);
+                return failv(err, n, "%s: unknown event '%s' (a binding listens to %s)", who, val, list);
+            }
+            t->event = e->event;
+        } else if (!strcmp(key, "id") && !have[3]) {
+            have[3] = true;
+            if (!str(r, t->id, sizeof(t->id))) return failv(err, n, "%s: malformed id", who);
+            if (!hta_prefab_local_valid(t->id, "binding id", why, sizeof(why)))
+                return failv(err, n, "%s '%s': %s", pre, t->id, why);
+        } else if (!strcmp(key, "source") && !have[4]) {
+            have[4] = true;
+            if (!str(r, t->source, sizeof(t->source))) return failv(err, n, "%s: malformed source", who);
+        } else return failv(err, n, "%s: unknown field '%s' (a binding has actions, conditions, event, id, source)", who, key);
+    } while (eat(r, ','));
+    if (!eat(r, '}')) return failv(err, n, "%s: malformed binding", who);
+    for (int k = 0; k < 5; k++)
+        if (!have[k]) return failv(err, n, "%s: a binding needs actions, conditions, event, id and source", who);
+    if (!t->action_count) return failv(err, n, "%s: has no actions", who);
+    return true;
+}
+
+/* The world's bindings' references as written, until every entity -- the
+ * prefab instances' children too -- is known. */
+typedef struct {
+    char source[HTA_WDEF_MAX_BINDINGS][HTA_WDEF_ID_MAX + 1];
+    char cond[HTA_WDEF_MAX_CONDS][HTA_WDEF_ID_MAX + 1];
+    char target[HTA_WDEF_MAX_ACTIONS][HTA_WDEF_ID_MAX + 1];
+    char at[HTA_WDEF_MAX_ACTIONS][HTA_WDEF_ID_MAX + 1];
+    char sound[HTA_WDEF_MAX_ACTIONS][HTA_WDEF_ID_MAX + 1];
+} bind_names;
+static bind_names bnames;       /* 187 KB: load-time, single-threaded (as `pending`) */
+
+/* One entry of "bindings" (schema 6): parsed, counted, its text kept. */
+static bool parse_binding(rd *r, hta_world_defs *d, char *err, size_t n)
+{
+    static hta_wbind_text t;
+    if (d->binding_count >= HTA_WDEF_MAX_BINDINGS)
+        return failv(err, n, "world_entities: more than %u bindings", HTA_WDEF_MAX_BINDINGS);
+    if (!hta_wbind_parse_text(r, &t, "binding", err, n)) return false;
+    if (d->cond_count + t.cond_count > HTA_WDEF_MAX_CONDS || d->action_count + t.action_count > HTA_WDEF_MAX_ACTIONS)
+        return failv(err, n, "binding %s: the world's bindings exceed %u conditions or %u actions", t.id, HTA_WDEF_MAX_CONDS,
+                     HTA_WDEF_MAX_ACTIONS);
+    uint32_t me = d->binding_count;
+    hta_wbinding *b = &d->binding[me];
+    memset(b, 0, sizeof(*b));
+    memcpy(b->id, t.id, strlen(t.id) + 1);
+    if (me) {
+        int c = strcmp(d->binding[me - 1].id, b->id);
+        if (!c) return failv(err, n, "binding %s appears twice", b->id);
+        if (c > 0) return failv(err, n, "world_entities: bindings are not in canonical (byte) order of id at %s", b->id);
+    }
+    b->event = t.event;
+    b->first_cond = (uint16_t)d->cond_count;
+    b->cond_count = (uint8_t)t.cond_count;
+    b->first_action = (uint16_t)d->action_count;
+    b->action_count = (uint8_t)t.action_count;
+    memcpy(bnames.source[me], t.source, sizeof(t.source));
+    for (uint32_t k = 0; k < t.cond_count; k++) {
+        d->cond[d->cond_count] = t.cond[k];
+        memcpy(bnames.cond[d->cond_count++], t.cond_entity[k], sizeof(t.cond_entity[k]));
+    }
+    for (uint32_t k = 0; k < t.action_count; k++) {
+        uint32_t a = d->action_count++;
+        d->action[a] = t.action[k];
+        memcpy(bnames.target[a], t.target[k], sizeof(t.target[k]));
+        memcpy(bnames.at[a], t.at[k], sizeof(t.at[k]));
+        memcpy(bnames.sound[a], t.sound[k], sizeof(t.sound[k]));
+    }
+    d->binding_count++;
+    return true;
+}
+
+static const char *wd_name(const void *ctx, uint16_t i)
+{
+    const hta_world_defs *d = ctx;
+    return i < d->count ? d->entity[i].id : "?";
+}
+static uint8_t wd_kind(const void *ctx, uint16_t i)
+{
+    const hta_world_defs *d = ctx;
+    return i < d->count ? d->entity[i].kind : HTA_WDEF_NONE;
+}
+
+/* The world's own bindings (the first `own`): every reference resolved
+ * through the typed resolver, once -- a prefab child by its placed ID like
+ * any entity -- then the binding's rules. */
+static bool resolve_bindings(hta_world_defs *d, pending *pend, uint32_t own, char *err, size_t n)
+{
+    if (!own) return true;
+    if (d->schema < 6) return failv(err, n, "world_entities: bindings need schema 6");
+    for (uint32_t i = 0; i < own; i++) {
+        hta_wbinding *b = &d->binding[i];
+        char who[64];
+        snprintf(who, sizeof(who), "binding %s", b->id);
+        const hta_res_entry *e = hta_res_resolve(&pend->rs, HTA_REF_BIND_SOURCE, who, bnames.source[i], err, n);
+        if (!e) return false;
+        b->source = e->index;
+        for (uint32_t k = 0; k < b->cond_count; k++) {
+            uint32_t c = b->first_cond + k;
+            if (!(e = hta_res_resolve(&pend->rs, HTA_REF_BIND_CONDITION, who, bnames.cond[c], err, n))) return false;
+            d->cond[c].entity = e->index;
+        }
+        for (uint32_t k = 0; k < b->action_count; k++) {
+            uint32_t a = b->first_action + k;
+            hta_waction *x = &d->action[a];
+            if (bnames.target[a][0]) {
+                if (!(e = hta_res_resolve(&pend->rs, HTA_REF_BIND_TARGET, who, bnames.target[a], err, n))) return false;
+                x->target = e->index;
+            }
+            if (bnames.at[a][0]) {
+                if (!(e = hta_res_resolve(&pend->rs, HTA_REF_BIND_AT, who, bnames.at[a], err, n))) return false;
+                x->at = e->index;
+            }
+            if (bnames.sound[a][0]) {
+                if (!(e = hta_res_resolve(&pend->rs, HTA_REF_BIND_SOUND, who, bnames.sound[a], err, n))) return false;
+                x->sound = (uint16_t)(e->index + 1u);
+            }
+        }
+        if (!hta_wbind_check_one(who, b->source, b->event, &d->cond[b->first_cond], b->cond_count, &d->action[b->first_action],
+                                 b->action_count, d->count, wd_kind, wd_name, d, d->asset_sounds, err, n))
+            return false;
+    }
+    return true;
+}
+
 /* ---- X6: prefab instances ------------------------------------------------- */
 
 /* One entry of "prefab_instances" (schema 5): {id, position, prefab[,
@@ -736,6 +1177,12 @@ static bool expand_prefabs(hta_world_defs *d, pending *pend, const hta_pkg_set *
         if (d->mover_def_count + movers > HTA_WDEF_MAX_MOVER_DEFS)
             return failv(err, n, "prefab instance %s expands the world to %u mover definitions, exceeding limit %u", in->id,
                          d->mover_def_count + movers, HTA_WDEF_MAX_MOVER_DEFS);
+        if (d->binding_count + p->binding_count > HTA_WDEF_MAX_BINDINGS)
+            return failv(err, n, "prefab instance %s expands the world to %u bindings, exceeding limit %u", in->id,
+                         d->binding_count + p->binding_count, HTA_WDEF_MAX_BINDINGS);
+        if (d->cond_count + p->cond_count > HTA_WDEF_MAX_CONDS || d->action_count + p->action_count > HTA_WDEF_MAX_ACTIONS)
+            return failv(err, n, "prefab instance %s expands the world's bindings past %u conditions or %u actions", in->id,
+                         HTA_WDEF_MAX_CONDS, HTA_WDEF_MAX_ACTIONS);
         in->first = (uint16_t)d->count;
         in->count = (uint16_t)p->child_count;
         float ic, is;
@@ -818,6 +1265,29 @@ static bool expand_prefabs(hta_world_defs *d, pending *pend, const hta_pkg_set *
             pend->gen[at] = 1;
             d->count++;
         }
+        /* X7: its bindings, in canonical local-ID order, each naming THIS
+         * instance's children: local index -> first + index. The sound is
+         * the one the provider resolved. */
+        for (uint32_t k = 0; k < p->binding_count; k++) {
+            const hta_wbinding *pb = &p->binding[k];
+            hta_wbinding *b = &d->binding[d->binding_count++];
+            *b = *pb;
+            b->instance = (uint8_t)(i + 1);
+            b->source = (uint16_t)(in->first + pb->source);
+            b->first_cond = (uint16_t)d->cond_count;
+            b->first_action = (uint16_t)d->action_count;
+            for (uint32_t c = 0; c < pb->cond_count; c++) {
+                hta_wcond *wc = &d->cond[d->cond_count++];
+                *wc = p->cond[pb->first_cond + c];
+                wc->entity = (uint16_t)(in->first + wc->entity);
+            }
+            for (uint32_t a = 0; a < pb->action_count; a++) {
+                hta_waction *wa = &d->action[d->action_count++];
+                *wa = p->action[pb->first_action + a];
+                if (wa->target != HTA_WDEF_NO_DEF) wa->target = (uint16_t)(in->first + wa->target);
+                if (wa->at != HTA_WDEF_NO_DEF) wa->at = (uint16_t)(in->first + wa->at);
+            }
+        }
     }
     return true;
 }
@@ -833,7 +1303,7 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
         if (!str(r, key, sizeof(key)) || !eat(r, ':')) return fail(err, n, "world_entities: malformed%s%s", NULL, NULL);
         if (!strcmp(key, "schema")) {
             double v;
-            if (!num(r, &v) || (v != 1.0 && v != 2.0 && v != 3.0 && v != 4.0 && v != 5.0))
+            if (!num(r, &v) || (v != 1.0 && v != 2.0 && v != 3.0 && v != 4.0 && v != 5.0 && v != 6.0))
                 return fail(err, n, "world_entities: unsupported schema%s%s", NULL, NULL);
             d->schema = (uint32_t)v;
             have_schema = true;
@@ -862,6 +1332,12 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
             if (!eat(r, ']')) {
                 do { if (!parse_instance(r, d, &pend, err, n)) return false; } while (eat(r, ','));
                 if (!eat(r, ']')) return fail(err, n, "world_entities: malformed prefab_instances%s%s", NULL, NULL);
+            }
+        } else if (!strcmp(key, "bindings")) {
+            if (!eat(r, '[')) return fail(err, n, "world_entities: bindings is not a list%s%s", NULL, NULL);
+            if (!eat(r, ']')) {
+                do { if (!parse_binding(r, d, err, n)) return false; } while (eat(r, ','));
+                if (!eat(r, ']')) return fail(err, n, "world_entities: malformed bindings%s%s", NULL, NULL);
             }
         } else if (!strcmp(key, "ability_script")) {
             if (!str(r, pend.ability, sizeof(pend.ability))) return fail(err, n, "world_entities: malformed ability_script%s%s", NULL, NULL);
@@ -892,6 +1368,8 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
             return failv(err, n, "%s: '__' is reserved for prefab children (<instance>__<child>)", d->entity[i].id);
     }
     pend.authored = d->count;
+    uint32_t own_bindings = d->binding_count;
+    if (own_bindings && d->schema < 6) return failv(err, n, "world_entities: bindings need schema 6");
     if (!check_scripts(d, &pend, err, n) || !build_resources(d, &pend, set, err, n)) return false;
     /* X6: instances expand into ordinary entities before any link is
      * resolved, so a world link (or world.entity) may name a child. */
@@ -907,7 +1385,8 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
         }
     }
     return resolve_movers(d, &pend, err, n) && resolve_scripts(d, &pend, err, n) &&
-           resolve_assets(d, &pend, set, err, n) && check_provides(d, set ? &set->root : NULL, err, n);
+           resolve_assets(d, &pend, set, err, n) && resolve_bindings(d, &pend, own_bindings, err, n) &&
+           check_provides(d, set ? &set->root : NULL, err, n);
 }
 
 bool hta_world_defs_parse_env(const uint8_t *manifest, size_t len, const hta_pkg_set *set, hta_world_defs *out,
@@ -1220,6 +1699,35 @@ bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t n)
                 e->pos[1] >= t->min[1] && e->pos[1] <= t->max[1] && e->pos[2] >= t->min[2] && e->pos[2] <= t->max[2])
                 return fail(err, n, "%s: destination is inside trigger %s", e->id, t->id);
         }
+    }
+    /* X7: bindings -- ranges, then every binding's rules against the
+     * world's kinds, ids, and how many listen to one source's one event. */
+    if (d->binding_count > HTA_WDEF_MAX_BINDINGS || d->cond_count > HTA_WDEF_MAX_CONDS || d->action_count > HTA_WDEF_MAX_ACTIONS)
+        return fail(err, n, "bindings over their limits%s%s", NULL, NULL);
+    if (d->binding_count && d->schema < 6 && !d->prefab_instance_count)
+        return fail(err, n, "world_entities: bindings need schema 6%s%s", NULL, NULL);
+    uint8_t per[HTA_WDEF_MAX_ENTITIES][HTA_WEV_COUNT];
+    memset(per, 0, sizeof(per));
+    for (uint32_t i = 0; i < d->binding_count; i++) {
+        const hta_wbinding *b = &d->binding[i];
+        char who[2 * HTA_WDEF_ID_MAX + 96], why[128];
+        if (!memchr(b->id, 0, sizeof(b->id)) || !hta_prefab_local_valid(b->id, "binding id", why, sizeof(why)))
+            return fail(err, n, "binding: malformed id%s%s", NULL, NULL);
+        if (b->instance > d->prefab_instance_count) return fail(err, n, "binding %s: bad prefab instance%s", b->id, NULL);
+        if (b->instance) snprintf(who, sizeof(who), "prefab %s binding %s (instance %s)", d->prefab_instance[b->instance - 1].prefab,
+                                  b->id, d->prefab_instance[b->instance - 1].id);
+        else snprintf(who, sizeof(who), "binding %s", b->id);
+        if ((uint32_t)b->first_cond + b->cond_count > d->cond_count || (uint32_t)b->first_action + b->action_count > d->action_count)
+            return failv(err, n, "%s: out of range", who);
+        if (!hta_wbind_check_one(who, b->source, b->event, &d->cond[b->first_cond], b->cond_count, &d->action[b->first_action],
+                                 b->action_count, d->count, wd_kind, wd_name, d, d->asset_sounds, err, n))
+            return false;
+        if (++per[b->source][b->event] > HTA_WDEF_MAX_BINDINGS_PER_EVENT)
+            return failv(err, n, "%s: more than %u bindings listen to %s '%s'", who, HTA_WDEF_MAX_BINDINGS_PER_EVENT,
+                         d->entity[b->source].id, hta_wevent_get(b->event)->name);
+        for (uint32_t j = 0; j < i; j++)
+            if (d->binding[j].instance == b->instance && !strcmp(d->binding[j].id, b->id))
+                return failv(err, n, "%s: duplicate binding id", who);
     }
     uint8_t mark[HTA_WDEF_MAX_ENTITIES] = { 0 };
     int8_t memo[HTA_WDEF_MAX_ENTITIES] = { 0 };

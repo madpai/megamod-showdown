@@ -168,8 +168,19 @@ typedef struct {
     float pos[3], from[3];  /* where it died; the blast's centre */
 } hta_net_kill;
 
-/* HTA_NET_FX_WRECK: a vehicle blew up; `weapon` is the car. */
-enum { HTA_NET_FX_FIRE=1, HTA_NET_FX_IMPACT, HTA_NET_FX_DETONATE, HTA_NET_FX_WRECK };
+/* HTA_NET_FX_WRECK: a vehicle blew up; `weapon` is the car.
+ * HTA_NET_FX_WORLD_SOUND (X7): an event binding's play_sound on the host --
+ * `entity` the world entity it sounds at, the world's sound asset index in
+ * `weapon` (low byte) and `material` (high byte), `pos` where. Presentation
+ * only: a joiner plays it from its own copy of the world (the same bytes:
+ * the world key). The FX packet and its codec are unchanged; the host sends
+ * this kind only in worlds with bindings, which only an X7 engine loads, and
+ * an older decoder would refuse this kind as malformed -- but no older build
+can load such a world, so none is ever in that match (the X1 WORLD_STATE
+rule, docs/WORLD_ENTITIES.md "Why not v11"). */
+enum { HTA_NET_FX_FIRE=1, HTA_NET_FX_IMPACT, HTA_NET_FX_DETONATE, HTA_NET_FX_WRECK, HTA_NET_FX_WORLD_SOUND };
+#define HTA_NET_FX_MAX_WORLD_ENTITIES 64u   /* HTA_WDEF_MAX_ENTITIES */
+#define HTA_NET_FX_MAX_WORLD_SOUNDS 512u    /* HTA_RES_MAX */
 typedef struct {
     uint8_t kind, entity, weapon, material; /* weapon: roster or pool index */
     float pos[3], dir[3];

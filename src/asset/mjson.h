@@ -13,7 +13,7 @@
 
 #define HTA_MJ_MAX_DEPTH 64
 
-typedef struct {
+typedef struct hta_mj_s {
     const uint8_t *p, *end;
     bool bad;
     /* hta_mj_skip passes a number that is valid JSON but not finite

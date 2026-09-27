@@ -44,6 +44,17 @@ static void world_codec(void)
     uint8_t fx_wire[HTA_NET_FX_BYTES];
     assert(hta_net_fx_pack(fx_wire,sizeof(fx_wire),&fx));
     assert(hta_net_fx_unpack(fx_wire,sizeof(fx_wire),&fx2));
+    /* X7: a binding's world sound -- a world entity and a sound index
+     * (low byte in `weapon`, high in `material`), bounded both ways. */
+    {
+        hta_net_fx ws={.kind=HTA_NET_FX_WORLD_SOUND,.entity=63,.weapon=0xFF,.material=1,.pos={-3,2.5f,0.9f}}, ws2;
+        uint8_t w[HTA_NET_FX_BYTES];
+        assert(hta_net_fx_pack(w,sizeof(w),&ws) && hta_net_fx_unpack(w,sizeof(w),&ws2));
+        assert(ws2.kind==HTA_NET_FX_WORLD_SOUND && ws2.entity==63 && (ws2.weapon|(ws2.material<<8))==511 && ws2.pos[1]==2.5f);
+        ws.entity=64; assert(!hta_net_fx_pack(w,sizeof(w),&ws));
+        ws.entity=0; ws.material=2; assert(!hta_net_fx_pack(w,sizeof(w),&ws));
+        w[0]=6; assert(!hta_net_fx_unpack(w,sizeof(w),&ws2));
+    }
     assert(fx2.entity==255 && fx2.pos[2]==3);
     hta_net_projectiles projs={0},projs2;
     projs.count=1; projs.live[0].pool=2; projs.live[0].slot=7;

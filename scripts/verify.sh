@@ -25,6 +25,7 @@ if ./build-host/test_external_map >/dev/null 2>&1; then ok "external map package
 if ./build-host/test_resource >/dev/null 2>&1; then ok "resource IDs, typed references, package graph, world key over dependencies"; else bad "resource IDs, typed references, package graph, world key over dependencies"; fi
 if ./build-host/test_asset >/dev/null 2>&1; then ok "asset resources: libraries, typed asset references, props, mover sounds, refusals, fuzz"; else bad "asset resources: libraries, typed asset references, props, mover sounds, refusals, fuzz"; fi
 if ./build-host/test_prefab >/dev/null 2>&1; then ok "prefabs: expansion, instance isolation, turned collision, refusals, world key, limits, fuzz"; else bad "prefabs: expansion, instance isolation, turned collision, refusals, world key, limits, fuzz"; fi
+if ./build-host/test_bindings >/dev/null 2>&1; then ok "event bindings: conditions, chains, instance isolation, loop and storm budgets, refusals, world key, fuzz"; else bad "event bindings: conditions, chains, instance isolation, loop and storm budgets, refusals, world key, fuzz"; fi
 if ./build-host/test_oal_asset >/dev/null 2>&1; then ok "imported characters and weapons: load, pose, skin, hold"; else bad "imported characters and weapons: load, pose, skin, hold"; fi
 if ./build-host/test_external_world >/dev/null 2>&1; then ok "imported map: starts, flags and items on the reachable ground"; else bad "imported map: starts, flags and items on the reachable ground"; fi
 if ./build-host/test_camera >/dev/null 2>&1; then ok "camera/projection tests"; else bad "camera/projection tests"; fi
@@ -96,6 +97,13 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
     if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x6.sh > scratch/test_x6.log 2>&1; then
       ok "X6 prefabs: two instances isolated, turned/scaled collision, late join, two consumers, refusals, prefab bytes in the world key"
     else bad "X6 prefabs: two instances isolated, turned/scaled collision, late join, two consumers, refusals, prefab bytes in the world key"; fi
+    # X7 (docs/EVENT_BINDINGS.md): declarative event bindings -- a powered
+    # prefab door (no Lua), a shock pad, Lua beside bindings in a fixed
+    # order, a bounded loop, two consumers, every refusal (OAL and engine
+    # alike), binding bytes in the world key.
+    if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x7.sh > scratch/test_x7.log 2>&1; then
+      ok "X7 bindings: conditions, a chain, instance isolation, damage/teleport/sound, Lua order, loop bounded, refusals, key"
+    else bad "X7 bindings: conditions, a chain, instance isolation, damage/teleport/sound, Lua order, loop bounded, refusals, key"; fi
   fi
   if ./build-host/test_particle "$HTA_MAP" >/dev/null 2>&1; then ok "effect particles from the effect tags"; else bad "effect particles from the effect tags"; fi
   if ./build-host/test_vitals "$HTA_MAP" >/dev/null 2>&1; then ok "vitality and falling from the Trial tags"; else bad "vitality and falling from the Trial tags"; fi
