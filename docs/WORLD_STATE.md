@@ -129,4 +129,13 @@ outbound traffic including player and game messages was 497,643 bytes
   refused the v10 host, and the v11 host recorded a protocol-version refusal
   when a v10 joiner attempted to connect. No cross-version play occurred.
 
+On 2026-09-28 the owner's Galaxy S24+ ran the X8 personal APK in solo
+`night_shift_x8`. Six device reports confirm the package loaded; the phone's
+own player reached `d1__button` and received its expected locked sound
+before auxiliary power. The last report recorded 121.7 fps mean, 9.5 ms
+p95, 10.5 ms p99, audio running with zero dropped voices and no thermal
+warning. Every report had networking disabled, so the physical phone-host
+and late-join check remains open. The phone HUD calls contextual Use
+**SWAP**; see `night_shift/PLAYTEST_NOTES.md` for the interaction finding.
+
 No AI, new rules, lighting or inventory changes are part of X8.

@@ -195,7 +195,8 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-**2026-09-27 X8 World State vNext (docs/WORLD_STATE.md).** The separate
+**2026-09-28 X8 phone follow-up (docs/WORLD_STATE.md and
+night_shift/PLAYTEST_NOTES.md).** The separate
 Night Shift X8 world restores D2 and D5 and reaches 74 runtime objects,
 while using 23 spatial mover states, 11 logical relay flags and 40 host-only
 objects. OAL and the engine agree on key `cc52fc69`; the original Night
@@ -203,15 +204,30 @@ Shift remains key `356266bd`, byte for byte. The automated desktop proof
 (`scripts/test_x8.sh`) checks a real v11 host and joiner with a 39-byte
 at-rest snapshot. An Android 14 emulator also hosted it and accepted a
 desktop joiner, which synced all 23 movers and 11 relays in one 39-byte
-state with zero refusals (software graphics: 3–7 fps). On a device, host
-`night_shift_x8`, press the console and coolant valve, and confirm D2 and
-D5 power and open for joiners, including one joining after they change.
-Check that the valve,
-vents and movers above runtime index 63 still respond and that joining
-does not replay the sounds or Lua events. Protocol v10 peers should show
-the version mismatch message. Record device frame time and outbound
-bytes from the host log. This is the X8 device objective; leave scenario
-rules, lighting, AI and inventory for later milestones.
+state with zero refusals (software graphics: 3–7 fps). The owner's
+Galaxy S24+ ran personal build `0.2-5ca7dbc` in solo `night_shift_x8`:
+the last report had 121.7 fps mean, 9.5 ms p95, 10.5 ms p99, audio
+running with zero dropped voices and no thermal warning. The phone's own
+player used `d1__button`; it buzzed locked as intended before auxiliary
+power. The owner found interaction confusing: the lower middle-right
+**SWAP** HUD button is also Use. Stand close and face the button or lever;
+follow the open maintenance passage to the aux breaker behind the generator,
+use SWAP there, then return to D1 when its strip turns green. Tapping the
+button artwork itself does not use it. All received phone reports had
+networking disabled; no physical phone-host/late-join result has been
+measured yet.
+
+**Next device check:** host `night_shift_x8` with zero bots and have a
+protocol-v11 desktop peer join. Use the phone's own player to power the
+aux breaker, open D1, press the security console and coolant valve, and
+confirm D2 and D5 power and open for joiners, including a joiner arriving
+after those changes. Check that the valve, vents and movers above runtime
+index 63 respond without replaying sounds or Lua events on late join.
+Listen for the buzz, generator, pump, alarm and steam; note touch usability,
+lighting, frame pacing and device warmth. Send a report during the hosted
+match so outbound bytes and thermal/frame data can be read. Protocol v10
+peers should show a version mismatch. Leave scenario rules, lighting, AI
+and inventory for later milestones.
 
 ---
 

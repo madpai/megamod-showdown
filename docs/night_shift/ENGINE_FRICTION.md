@@ -9,6 +9,8 @@ ship the slice), HIGH (changed the design or the experience materially),
 MEDIUM (worked around, with a real cost), LOW (annoyance).
 
 Nothing was BLOCKING. **No engine code was changed** in this milestone.
+X8 later resolved E1 and replicated relay state for E2. E23 was found in
+the owner's first physical-phone X8 playtest on 2026-09-28.
 
 ## Summary
 
@@ -36,6 +38,7 @@ Nothing was BLOCKING. **No engine code was changed** in this milestone.
 | E20 | spawns cannot change with world state | rules | LOW | checkpoints | the dock stays connected (tunnel shutter) |
 | E21 | `megamod-match` exits without freeing its session | tooling | LOW | - | LSan exit reports on every world (pre-existing) |
 | E22 | `megamod-join --route` is 512 bytes | test tooling | LOW | - | the crew split across joiners |
+| E23 | phone HUD says SWAP for contextual Use | touch UI | MEDIUM | first button unclear to the player | explain SWAP; the label should reflect Use in reach |
 
 ## Entries
 
@@ -148,3 +151,9 @@ Nothing was BLOCKING. **No engine code was changed** in this milestone.
 
 ### E22 -- route length (LOW, test tooling)
 - `megamod-join --route` holds 512 bytes; a whole play-through does not fit one joiner, so the test uses a crew (which is the point anyway).
+
+### E23 -- SWAP hides Use (MEDIUM, physical phone)
+- **Observed:** the owner could not tell how to interact with buttons in the X8 phone build. The HUD's lower middle-right button says SWAP even when it will use a nearby lever or door button. Tapping the object itself does nothing.
+- **Evidence:** the phone report later logged `unit 0 used nightshift:entity/d1__button`, followed by the expected locked sound. The interaction path works; the label did not teach it.
+- **Current guidance:** stand within reach, face the object, and press SWAP. Follow the maintenance passage to the aux breaker behind the generator before trying D1 again.
+- **Possible later UI fix:** show Use when a world interactable is in reach, with a clear prompt for the target. This playtest made no game-code change.

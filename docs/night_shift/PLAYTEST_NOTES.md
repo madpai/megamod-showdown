@@ -6,10 +6,41 @@ built it, through the real game: a headless host (`megamod-match --host
 waiting and taking screenshots (`megamod-join --route --shot`), over a
 dozen host sessions; then the Android emulator hosting with its own player in the
 dock and a desktop crew joining. The agent sees frames and reads the
-host's event trace; it cannot hear, and it does not hold a joystick. **A
-hands-on session by a person -- ideally two phones -- is the open check**
-(CURRENT TESTING OBJECTIVE in HANDOFF.md). Everything below is what the
-screenshots and traces showed.
+host's event trace; it cannot hear, and it does not hold a joystick. On
+2026-09-28 the owner also played the X8 build on a Galaxy S24+ and sent
+device reports. The hosted multiplayer part of the physical-device check
+remains open (CURRENT TESTING OBJECTIVE in HANDOFF.md). The notes below
+separate report evidence from the earlier screenshots and traces.
+
+## Physical phone: first X8 session (2026-09-28)
+
+Six SEND REPORT files from personal build `0.2-5ca7dbc` show
+`night_shift_x8` loading and running on a Samsung SM-S926U (Android 16,
+Adreno 750). The last solo report covers 8,299 frames: 121.7 fps mean,
+8.5 ms median, 9.5 ms p95, 10.5 ms p99, and two frames over 50 ms
+(139 ms at match start, 74 ms at 28 s). It used High, composed rendering,
+scale 1 and 2x MSAA. The device reported no thermal throttling. Audio was
+running with zero dropped or stolen voices in that solo report. A separate
+three-bot report recorded 2,151 stolen voices but zero dropped; the owner
+has not yet reported how either run sounded or looked to them.
+
+The owner said it was confusing how to interact with buttons. The phone
+HUD labels the contextual Use action **SWAP** (lower middle-right), even
+when it will use a world button or lever. A player must stand within the
+object's reach (1.2 world units for the breaker and door buttons), face
+it, and tap SWAP; tapping the button drawn in the world does not use it.
+The last report logs `unit 0 used nightshift:entity/d1__button` followed
+by the `locked` sound. Input reached the button; D1 correctly remained
+locked because the aux breaker had not powered it. The breaker is behind
+the generator, down the open maintenance passage. After using it, D1's
+strip should turn green and its button should open the door. This is a
+real discoverability problem in the phone HUD, not evidence of a failed
+world interaction.
+
+All six reports have networking disabled. They prove physical-device load,
+rendering, solo play, audio output and one own-player interaction. They do
+not yet prove phone hosting, a desktop joiner, late-join state, D2/D5,
+the coolant valve, or perceived sound and touch usability.
 
 ## What worked
 
@@ -62,7 +93,8 @@ screenshots and traces showed.
 - **The main corridor** (20 wu, one event -- the knock) and the
   **tunnel's south leg** (26 wu) are long, empty walks.
 - **Backtracking** from the aux room to D1 (~20 wu, nothing new).
-- All three are where more content would go; the entity budget has 2 left.
+- All three are where more content would go; the original 62-object build
+  had two slots left under the old limit. X8 removes that constraint.
 
 ## Bugs found and fixed (content)
 
@@ -95,6 +127,7 @@ screenshots and traces showed.
 
 ## Engine / tooling confusion (not the player's fault)
 
-- None observed for a player that the content could not route around. For
-  the author: see OAL_FRICTION (placement mistakes were only visible by
-  walking into them).
+- The physical-phone player could not tell how to use world buttons:
+  the HUD says **SWAP** when that same button means Use. The D1 log proves
+  the input works, but the label hides the action. For the author, see
+  OAL_FRICTION (placement mistakes were only visible by walking into them).
