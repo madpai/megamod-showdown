@@ -1,8 +1,33 @@
 # MegaMod and Open Asset Lab recommendations
 
-**Status:** research roadmap reconciled with landed N1/N3/read-only N2 on 2026-09-26. X1 onward remain proposals. Follow [MegaMod's staged refactor rule](../MEGAMOD_VISION.md#21-do-not-over-refactor): a real limitation, minimal slice, tests, Android/Trial/imported-content regression. See [synthesis](CROSS_ENGINE_SYNTHESIS.md), [current v10 contract](../CONTENT_COMPATIBILITY.md) and [Asset Lab consequences](https://github.com/madpai/open-asset-lab/blob/main/docs/RESEARCH_CONNECTIONS.md).
+**Status:** this is the 2026-09-26 research roadmap, annotated after X1–X9
+landed. Its original proposal text is retained as research history, not a
+fresh implementation order. Follow [MegaMod's staged refactor rule](../MEGAMOD_VISION.md#21-do-not-over-refactor)
+and the [current handoff](../HANDOFF.md#current-testing-objective): a real
+limitation, minimal slice, tests and Android/Trial/imported-content
+regression. See [synthesis](CROSS_ENGINE_SYNTHESIS.md),
+[content compatibility](../CONTENT_COMPATIBILITY.md),
+[Night Shift evidence](../night_shift/README.md) and
+[Asset Lab consequences](https://github.com/madpai/open-asset-lab/blob/main/docs/RESEARCH_CONNECTIONS.md).
 
-## NOW
+## Landed after this research pass
+
+| Milestone | Current evidence |
+| --- | --- |
+| X1 | Generic world interactions and late-join state ([WORLD_ENTITIES](../WORLD_ENTITIES.md)) |
+| X2 | Shared mover definition and world key ([WORLD_ENTITIES](../WORLD_ENTITIES.md)); not a complete registry for every content kind |
+| X3 | Bounded host Lua ([SCRIPTING](../SCRIPTING.md)); not complete Lua/data game modes |
+| X4 | Typed resource IDs, package requirements and world-key closure ([RESOURCES](../RESOURCES.md)); the older lockfile proposal is broader |
+| X5–X7 | Package-backed assets, prefabs and declarative bindings ([RESOURCES](../RESOURCES.md), [PREFABS](../PREFABS.md), [EVENT_BINDINGS](../EVENT_BINDINGS.md)) |
+| X8 | Compact replicated world state and the X8 S24+ solo test ([WORLD_STATE](../WORLD_STATE.md), [playtest](../night_shift/PLAYTEST_NOTES.md)) |
+| X9 | Authored lighting and presentation ([visual pass](../night_shift/X9_VISUAL_PASS.md)); physical X9 visuals/FPS still pending |
+
+The original Night Shift slice exercised X3–X7, and its X8/X9 variants
+build on it. It exposed real scenario-rules and authoring needs without
+requiring a creature. Current measured needs choose the next milestone;
+Skate, Racing and Party remain future validation targets.
+
+## N1–N3 (the original NOW research phase)
 
 ### N1. Runtime/content boundary inventory — done
 
@@ -37,7 +62,7 @@ OAL's `assetlab ids` command now audits the [single proposed grammar](CONTENT_ID
 
 ## Post-N3 dependency decision
 
-The [order memo](POST_N3_ORDER_DECISION.md) now recommends X1 with the existing emulator/desktop joiner/headless paths, adding only an interact input as needed; full Step 5 follows X1. The [X1 authoring comparison](X1_ORIGINAL_AUTHORING_PATH.md) recommends a programmatic normalized-world integration fixture through OAL's normal validator/compiler, plus a C runtime unit fixture. N2's grammar is [audited](CONTENT_ID_GRAMMAR_RECOMMENDATION.md), not a runtime migration.
+The 2026-09-26 [order memo](POST_N3_ORDER_DECISION.md) recommended X1 with the then-existing emulator/desktop joiner/headless paths; X1 has since landed. The [X1 authoring comparison](X1_ORIGINAL_AUTHORING_PATH.md) recommended a programmatic normalized-world integration fixture through OAL's normal validator/compiler, plus a C runtime unit fixture. N2's grammar was [audited](CONTENT_ID_GRAMMAR_RECOMMENDATION.md), not a runtime migration.
 
 | Phase | Prerequisite | Concrete problem solved | Acceptance condition | Why no earlier |
 | --- | --- | --- | --- | --- |
@@ -46,13 +71,13 @@ The [order memo](POST_N3_ORDER_DECISION.md) now recommends X1 with the existing 
 | N2 read-only audit — done | N1 names and OAL manifests | Exposes collisions and legacy mapping cost for `namespace:type/name` | OAL audit and synthetic tests; no runtime format change | Migration before v10 would enlarge the bug fix |
 | X1 world-event slice — **implemented 2026-09-26** ([WORLD_ENTITIES](../WORLD_ENTITIES.md)) | V10 gate, original OAL fixture, current emulator/joiner paths | Generic Button → Relay → Door and Trigger → Teleport destination with host state/collision | Real compiled package loads; two clients and late join agree; invalid-link, reorder and stale-handle tests pass | Needs real fixture and a bounded interact input, not full desktop gameplay |
 | Full Step 5 desktop | X1 behavior and shared player/action contract | Desktop parity and visual debugging | Desktop hosts/joins same match and action behavior as Android | X1 can reveal needed state/action UI without blocking engine proof |
-| X2 small immutable registry | X1 fields plus N2 evidence | Shared definition identity beyond ad hoc lists | Two definitions and cross-reference load without positional save identity | Avoid speculative general registry before X1 |
-| X3 host Lua | X1/X2 verbs and authority | Creator behavior beyond fixed C links | One bounded host ability/rule, deterministic state/late join | Scripting API needs proven handles/events |
-| X4 closure/lockfile | X2/X3 package dependency needs | Reproducible package-set resolution and compatibility | Missing/conflicting dependency rejects; closure digest reproducible | Existing v10 per-match gate solves today's LAN bug without container rewrite |
+| X2 mover definition — landed in a bounded form | X1 fields plus N2 evidence | Shared mover identity beyond ad hoc lists | One definition reused by multiple doors; see WORLD_ENTITIES | Broader registry remains a separate need |
+| X3 host Lua — landed in a bounded form | X1/X2 verbs and authority | Creator behavior beyond fixed C links | Host script and late join proven; see SCRIPTING | General game modes remain future work |
+| X4 package/resource graph — landed in a bounded form | X2/X3 package dependency needs | Typed references, requirements and compatible world identity | Missing/unsupported requirements reject; see RESOURCES | A general lockfile remains broader than X4 |
 
-## NEXT
+## Landed slices (the original NEXT proposals)
 
-### X1. Build one generic world-event slice
+### X1. Build one generic world-event slice — landed
 
 The [X1 evidence note](WORLD_EVENT_SLICE_RECOMMENDATION.md) narrows this to typed verbs, placed IDs, bounded queued dispatch, moving collision, host authority and late-join state. Implemented 2026-09-26 ([WORLD_ENTITIES](../WORLD_ENTITIES.md)): the acceptance checks pass on host tests, `scripts/test_x1.sh` and the emulator; the note records what was confirmed and refined.
 
@@ -63,7 +88,7 @@ The [X1 evidence note](WORLD_EVENT_SLICE_RECOMMENDATION.md) narrows this to type
 - **Dependencies:** OAL world-entity normalization/target-link validation. **Prototype needed?** Yes: button → relay → door and teleport, two-client run.
 - **Open Asset Lab impact:** compile generic graph and diagnostics. **Networking impact:** host owns transitions and replicates state/events. **Android impact:** bounded active set, no global per-frame scan.
 
-### X2. Compile immutable definitions into a small registry
+### X2. Compile immutable definitions into a small registry — mover slice landed
 
 - **Problem:** characters, weapons, hero abilities, and world entities need consistent content identity without C special cases.
 - **Observed solution:** Factorio prototypes, tModLoader owned registration, Space Engineers definitions/builders, Arma configs.
@@ -72,7 +97,7 @@ The [X1 evidence note](WORLD_EVENT_SLICE_RECOMMENDATION.md) narrows this to type
 - **Dependencies:** N1/N2 and an original-content fixture. **Prototype needed?** Yes, two package definitions and one reference.
 - **Open Asset Lab impact:** owns schema normalization/flattening and provenance. **Networking impact:** definition hash and declared replicated fields. **Android impact:** compact tables and no runtime inheritance parsing.
 
-### X3. Prototype host Lua for one ability and one trigger
+### X3. Prototype host Lua for one ability and one trigger — bounded host Lua landed
 
 - **Problem:** special-cased hero behavior in C makes new gameplay require an engine build.
 - **Observed solution:** Factorio control events, NS2 Lua game layer, PZ Events, Reconstructor's small-API lesson.
@@ -81,7 +106,7 @@ The [X1 evidence note](WORLD_EVENT_SLICE_RECOMMENDATION.md) narrows this to type
 - **Dependencies:** X1/X2 subset and authority contract. **Prototype needed?** Yes, one current ability migrated as proof, compared against current behavior.
 - **Open Asset Lab impact:** static script/API/reference checks and package capability manifest. **Networking impact:** host sends declared state/effects only. **Android impact:** budget and memory profile required on device.
 
-### X4. Add match-boundary package closure and compatibility checks
+### X4. Add match-boundary package closure and compatibility checks — package graph landed in part
 
 - **Problem:** separately supplied packages can refer to missing or incompatible definitions.
 - **Observed solution:** Factorio mod dependencies, Arma CfgPatches, Bethesda masters, NS2 consistency.
@@ -121,6 +146,12 @@ The [X1 evidence note](WORLD_EVENT_SLICE_RECOMMENDATION.md) narrows this to type
 
 ## EXPERIMENTAL
 
+These are future research/proof targets, not the next implementation
+milestones. Before any donor-inspired prototype, read the
+[research index](README.md), relevant reports and
+[capability direction](../GAMEPLAY_CAPABILITY_MODULES.md); preserve
+**Fact / Inference / Unknown** and check code/asset rights.
+
 ### E1. Precomputed structural destruction
 
 - **Problem:** dynamic destruction is expensive for an Android host and network.
@@ -138,6 +169,28 @@ The [X1 evidence note](WORLD_EVENT_SLICE_RECOMMENDATION.md) narrows this to type
 - **Benefits:** mature connection services if needed. **Costs:** dependency, Android binary size, license audit. **Risks:** transport migration bugs and operational relay needs.
 - **Dependencies:** N3 metrics, X4 content match, Internet test target. **Prototype needed?** Yes, adapter A/B under loss and mobile build measurement.
 - **Open Asset Lab impact:** only package lockfile/hash distribution. **Networking impact:** major transport layer evaluation. **Android impact:** size, CPU, battery measurement required.
+
+### E3. One radically different gameplay capability [Someday]
+
+A bounded alternate locomotion experiment, such as skating, could test
+the shared roster and a clean native/Lua boundary after a real product
+need exists. Possible acceptance: normal FPS play remains intact; one
+alternate locomotion works for more than one normalized character;
+generic APIs contain no donor names; host and client agree and late join
+reconstructs state; Android CPU/frame cost is measured; original or
+synthetic content proves the capability is not tied to a donor game.
+Skate physics, tricks and character retargeting have not been researched
+or implemented by this recommendation.
+
+### E4. Party Playlist validation [Someday]
+
+When enough capabilities and Lua/data mode rules exist, a tiny 2–3-round
+playlist could test recombination. Possible acceptance: the same roster
+and session score persist without an Engine restart; previous-round state
+is cleared; at least two rounds use different capability combinations;
+rules live primarily in Lua/data; peers agree on round, score and state;
+and generic APIs carry no donor terms. This is an architectural stress
+test, not a backlog of microgames or a scheduled milestone.
 
 ## AVOID
 

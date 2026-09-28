@@ -195,6 +195,11 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**Documentation-only capability vision update (2026-09-28):** no runtime,
+package, APK or device-test state changed. The X9 physical S24+ visual
+and frame-pacing review below remains the next testing objective.
+Repository verification passed 96/96; no APK was published for this edit.
+
 **2026-09-28 X9 visual phone review (docs/night_shift/X9_VISUAL_PASS.md).**
 The new `night_shift_x9` package is a separate visual version of Night Shift
 (key `cd8e683f`); the X8 package and key `cc52fc69` remain historical. X9

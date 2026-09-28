@@ -12,6 +12,20 @@ runtime, game framework, content runtime and compatibility layers -- is
 [MEGAMOD_VISION.md](MEGAMOD_VISION.md). This file stays a description of
 the code as it is; update it as the code moves, not ahead of it.
 
+The [Gameplay Capability Modules direction](GAMEPLAY_CAPABILITY_MODULES.md)
+adds a future mechanical layer above core services and below Lua/data game
+modes. Current FPS movement, flight, vehicles, weapons and world events
+are useful seeds, **not** already clean modules. Extract a reusable boundary
+only when a concrete second consumer and measured costs justify it. This
+direction does not prescribe plugins, dynamic libraries or an ECS.
+
+**Current-status note (2026-09-28):** the desktop extraction sequence below
+is a historical staged plan; use [HANDOFF](HANDOFF.md#current-testing-objective)
+for the current X1–X9 state. Night Shift now exercises original packages,
+world interactions, host Lua, authority and late join, and X9 lighting.
+Its dedicated scenario mode remains future work; physical X9 phone
+validation is pending.
+
 **Current coupling:** Engine and Showdown share this repository and much
 of `src/app`/`src/game`; the Trial tag loader and historical `hta_` names
 remain in the runtime, and Showdown still uses Trial gameplay data in

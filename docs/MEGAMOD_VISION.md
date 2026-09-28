@@ -8,6 +8,11 @@ what both projects are becoming. It was set by the owner on 2026-09-26.
 The [comparative research corpus](research/README.md) studies the external
 architectures behind possible next steps. Its recommendations are proposals;
 the current implementation and staged priorities remain defined here.
+The [Gameplay Capability Modules direction](GAMEPLAY_CAPABILITY_MODULES.md)
+extends this north star across genres. Current X1–X9 status and open X9
+phone validation are recorded in the [handoff](HANDOFF.md#current-testing-objective)
+and [Night Shift visual pass](night_shift/X9_VISUAL_PASS.md). Older dated
+snapshots below describe their date, not a rollback of landed work.
 
 Every section separates three things, and so must every contributor:
 
@@ -26,13 +31,15 @@ Nothing here is permission to rewrite working systems. See
 
 **MegaMod Engine** is becoming a **native, lightweight, reusable,
 content-driven game runtime** where worlds, characters, weapons, vehicles,
-abilities, scripts and rules are composed from normalized building blocks
+abilities, scripts, rules and reusable gameplay capabilities are composed
+from normalized building blocks
 and played natively and in multiplayer on modest hardware. **Open Asset Lab**
 is becoming the system that **understands, prepares, validates and packages
 those building blocks** from any origin. **Halo is one compatibility layer.
 Source is one importer family. Steam Workshop is one provider.** The
 long-term platform belongs to MegaMod Engine. **MegaMod Showdown** is its
 official reference game, not another name for the engine.
+**One roster. One engine. Many games.**
 
 ```
  EXTERNAL OR ORIGINAL CONTENT
@@ -83,6 +90,12 @@ asks whether the same capability supports a cohesive, excellent experience.
 Showdown asks, "Can the engine survive this?" An original game asks, "Can
 we make something cohesive and excellent with it?"
 
+**MegaMod does not merge games. MegaMod learns reusable capabilities.**
+**Native capabilities simulate. Lua composes.** Gameplay Capability Modules
+are future reusable mechanical domains; Lua/data game modes combine them.
+See the [focused direction](GAMEPLAY_CAPABILITY_MODULES.md) for boundaries,
+examples and research requirements.
+
 ---
 
 ## 1. What MegaMod Engine is becoming
@@ -93,12 +106,17 @@ abilities, scripts, rules and other content from many origins, and it stops
 caring where they came from. Once content reaches the runtime, its origin
 matters only as provenance or compatibility metadata.
 
-The defining experience **[Someday]**: *pick a world, characters, weapons,
-vehicles, abilities, rules, mutators — play.* For example gm_construct;
+The defining experience **[Someday]**: *compose a world, roster, equipment,
+rules and gameplay capabilities — play.* For example gm_construct;
 Master Chief, Goku, Chell, an original robot; a gravity gun, a sword, a
 custom energy weapon; King of the Hill; low gravity, explosive deaths,
 destructible props. All of it launched without modifying or rebuilding
 the C engine.
+
+The same normalized roster should eventually fight, skate, race, fly,
+survive party hazards and enter a dedicated horror scenario within the
+same Engine ecosystem. Showdown tests such combinations; it does not
+define the generic Engine API. **One roster. One engine. Many games.**
 
 Crossover content is Showdown's demonstration, not the engine's identity.
 The deeper goal:
@@ -111,13 +129,14 @@ The reusable Engine owns platform/runtime services, Vulkan rendering,
 input, audio, timing, resource management, networking, host-authoritative
 simulation, physics/collision, entity storage, animation, world loading
 and interactions, characters, weapons, projectiles, abilities, vehicles,
-materials, generic events and game-rule framework. Future scripting APIs
-and a content/package registry belong at this level when real consumers
-need them. Showdown should push these systems with mixed character types,
+materials, generic events and game-rule framework. Bounded host Lua and
+typed resource/package identity have now landed; broader script APIs and
+definitions across content kinds should grow here when real consumers need
+them. Showdown should push these systems with mixed character types,
 imported and original worlds, unusual movement, flight, vehicles,
 breakables, bots, mutators, multiplayer and Android/desktop/headless runs.
 
-### Conceptual engine structure [Next, as a direction]
+### Conceptual engine structure [Next / Someday direction]
 
 ```
 MegaMod Engine
@@ -125,6 +144,8 @@ MegaMod Engine
 │                      memory · entity lifetime · resource management
 ├── Game Framework     characters · weapons · abilities · inventory · health/damage
 │                      teams/factions · vehicles · objectives · scoring · game rules
+├── Gameplay Capability Modules [Someday direction]
+│                      reusable locomotion · combat · vehicles · AI · racing · hazards
 ├── Content Runtime    worlds · meshes · materials · animations · audio assets
 │                      scripts · gameplay metadata
 └── Compatibility      Halo Trial · future foreign-runtime adapters
@@ -134,7 +155,16 @@ This is a map to refactor *toward* when concrete work justifies it, not a
 directory layout to impose. How the code is laid out today is in
 [ENGINE_ARCHITECTURE.md](ENGINE_ARCHITECTURE.md).
 
-### Where it stands [Now] (2026-09-26)
+The module line names a future responsibility boundary, not dynamic
+libraries, plugins, ECS components, an ABI or currently isolated code.
+Modes answer which capabilities are active and what rules apply. Native
+capabilities own frequent simulation; host Lua and data compose rules and
+react to events. See the [detailed direction](GAMEPLAY_CAPABILITY_MODULES.md).
+
+### Where it stood [Now at 2026-09-26]
+
+This table is a dated baseline retained for architectural context. The
+current X1–X9 implementation is summarized immediately below it.
 
 | Area | Today |
 |---|---|
@@ -150,6 +180,21 @@ directory layout to impose. How the code is laid out today is in
 | Entities | Fixed kinds: units (local/remote/bot), vehicles, projectiles, props, pickups, drops. **No component model, no world logic** (doors, buttons, triggers): imported maps are static geometry plus breakables. |
 | Scripting | None. |
 | Tooling for agents | Host tests (45), sanitizer CI, NDK check, `verify.sh` with Trial data, SEND REPORT from the phone, and an agent harness (control channel, event log, playtests) in `megamod-sandbox`. |
+
+### Current foundations [Now at 2026-09-28]
+
+X1 added generic world interactions; X2 reusable mover definitions and a
+world key; X3 bounded host Lua; X4 typed resource identity and package
+dependencies; X5 package-backed art and sound resources; X6 prefabs; X7
+declarative event bindings; X8 compact replicated world state; and X9
+authored local lighting, environment/material response and player
+presentation. These are landed work, not future milestones. Night Shift:
+Harrow Annex is the original-content production slice exercising their
+composition; see [its evidence](night_shift/README.md) and
+[X9 checkpoint](night_shift/X9_VISUAL_PASS.md). The X8 solo S24+ report
+measured about 120 FPS. X9 physical-device visuals and FPS remain pending.
+The dedicated Night Shift game mode, PvE creature AI, Skate, Racing and
+Party capability systems remain future directions.
 
 ---
 
@@ -239,7 +284,7 @@ MegaMod should not notice beyond the content it can no longer import.
 
 ---
 
-## 6. Entity / component direction [Next]
+## 6. Entity / component direction [Now → Next]
 
 Move gradually toward **composition**: entities described by capabilities,
 not an ever-growing list of hardcoded kinds (player, bot, crate, barrel,
@@ -259,16 +304,16 @@ character       = Transform + Renderable + Collider + Health + Inventory + Facti
 
 The exact list doesn't matter. Avoiding endless hardcoded combinations
 does. **This is not a textbook ECS rewrite.** `hta_unit`, `hta_prop`,
-`hta_vehicle` work. The first components should appear where a real feature
-needs them (world entities in §8 are the natural first user), and existing
-kinds migrate only when touching them anyway pays for itself.
+`hta_vehicle` work. X1–X9 have added bounded world entity and resource
+systems without turning the existing runtime into a general ECS. Further
+composition belongs where a real second consumer justifies it.
 
-## 7. Scripting direction [Next → major milestone]
+## 7. Scripting direction [Now → Next]
 
-An embedded scripting runtime, so a new ability, weapon behaviour, trigger,
-mutator or game mode does not require recompiling the engine. **Lua is the
-leading candidate** (small, embeddable, proven on mobile). Evaluate
-alternatives only if one is clearly better for size, safety or determinism.
+Bounded host Lua landed in X3. Night Shift used one short script as an
+escape hatch where declarative bindings could not read nearby players or
+keep a counter. Broader scriptable abilities, mutators and dedicated game
+modes remain future work. Keep native simulation behind bounded verbs.
 
 **Principle: the engine exposes verbs; scripts compose them.** C provides
 efficient, safe primitives (spawn, damage, beam, ray, play animation, apply
@@ -294,14 +339,18 @@ directly; and every verb must be replicable (§11). Candidate uses:
 abilities, weapons, triggers, doors, world events, modes, scoring, win
 conditions, mutators, sequences, AI hooks, procedural events.
 
-Today's `hero_roster.json` stats plus special-cased C abilities are the
-thing this replaces. Heroes are the obvious first scripted content.
+The `hero_roster.json` stats plus special-cased C abilities remain a
+separate migration question; the existence of X3 host Lua does not mean
+they have been ported to it.
 
-## 8. Generic world events and interactive entities [Next]
+## 8. Generic world events and interactive entities [Now → Next]
 
-Imported maps must become more than static geometry, **without
-reproducing Source's entity system**. MegaMod gets a small generic
-event/signal model:
+X1–X8 landed a small generic event/signal model for authored worlds,
+without reproducing Source's entity system. Night Shift proves doors,
+buttons, relays, triggers, hazards, prefabs and authored progression.
+Further kinds and stronger authoring workflows remain future work. The
+following is illustrative vocabulary, not a claim that every event or
+object in the list has landed:
 
 - **Events:** `OnSpawn`, `OnUse`, `OnEnter`, `OnExit`, `OnDamage`,
   `OnDeath`, `OnBreak`, `OnTimer`, `OnRoundStart`, `OnRoundEnd`
@@ -331,15 +380,21 @@ gravity, double speed, explosive deaths, random weapons) are small rule
 modifiers layered on any mode.
 
 **[Now]** Slayer, Team Slayer and CTF are C in `game.c`, with the mode
-enum replicated in GAME. Port them to the rule model only once it exists
-and is tested. They are its regression suite.
+enum replicated in GAME. Night Shift's authored progression still runs
+under Slayer's scenario HUD, equipment and match rules. Port existing
+modes to a data/Lua rule model only once that model exists and is tested;
+they are its regression suite.
 
 ## 10. Packages [Now → Next]
 
-**[Now]** OALMAP v1/v2 (a fixed-section binary + canonical JSON manifest;
-[Asset Lab's RUNTIME_PACKAGE.md](https://github.com/madpai/open-asset-lab/blob/main/docs/RUNTIME_PACKAGE.md))
-and OALASSET v1 (characters, weapons, sound banks). Both are valuable
-working prototypes. **Don't discard them.**
+**[Now]** The original OALMAP v1/v2 and OALASSET v1 remain valuable
+compatibility baselines ([Asset Lab's RUNTIME_PACKAGE.md](https://github.com/madpai/open-asset-lab/blob/main/docs/RUNTIME_PACKAGE.md)).
+X1–X9 extended authored world and asset schemas in bounded stages; X4
+added typed resources and package requirements, X5 resource payloads,
+X6 prefabs and X7 bindings. See [RESOURCES](RESOURCES.md),
+[PREFABS](PREFABS.md), [EVENT_BINDINGS](EVENT_BINDINGS.md) and
+[X9 evidence](night_shift/X9_VISUAL_PASS.md). **Don't discard compatible
+packages or rewrite the format for this vision.**
 
 **[Next, when requirements force it]** an extensible **chunk-based**
 container so new data doesn't mean another monolithic version branch.
@@ -351,9 +406,8 @@ OALP  META MESH MATL TEXR COLL NAVM ENTS ANIM AUDO PHYS SCRP …
 
 Each chunk is tagged, sized and versioned. **Unknown optional chunks are
 skippable** where safe, and required chunks are declared in META. Migrate
-when a concrete need (world entities, scripts, materials) would otherwise
-fork OALMAP again, not for elegance. The loader keeps the existing
-bounds-checking discipline.
+when a further concrete need makes existing bounded extensions inadequate,
+not for elegance. The loader keeps the existing bounds-checking discipline.
 
 ### Experience packages [Someday → Next]
 A distributable **experience** (working names `.oalmod`, `.megapack`,
@@ -369,10 +423,13 @@ my_experience/
 
 A completely original game should eventually ship this way.
 
-## 11. Networking direction [Next]
+## 11. Networking direction [Now → Next]
 
-**Keep the host-authoritative model.** It is the right foundation. But
-as entities become composable, replication should become **explicit per
+**Keep the host-authoritative model.** X8 world state and Night Shift late
+join already demonstrate compact authoritative reconstruction. Protocol
+v11 is current for that world-state work; the v10 compatibility review is
+historical evidence. As future capability domains become composable,
+replication should become **explicit per
 component** rather than a growing list of feature packets:
 
 | Component | Policy |
@@ -385,9 +442,8 @@ component** rather than a growing list of feature packets:
 
 Policies: `server-authoritative`, `replicated`, `predicted`, `interpolated`,
 `local-only`. Keep strict protocol versioning, fuzzing and validation, and
-the per-source rate limit. Before any internet play: authentication (v10)
-and host validation of client-reported state (today the host trusts a
-joiner's position).
+the per-source rate limit. Before internet play, authentication and host
+validation of client-reported state still need their own measured design.
 
 ## 12. Physics direction
 
@@ -412,6 +468,11 @@ prepare nav offline (§3). Replace the grid only when the new system shows
 a tested advantage on real maps.
 
 ## 14. Material abstraction [Next]
+
+X9 already added bounded authored environment/local lighting and emissive
+strength/roughness for its asset materials. It did not add a universal
+material model, shadows, normal maps or new bloom. The broader material
+direction below remains future work.
 
 One MegaMod material model instead of rendering bound to Halo or Source
 assumptions. Shared fields: base colour, normal, roughness, metallic,
@@ -488,6 +549,15 @@ star, not a UI to build now.
 
 ## 18. Development priorities (directional, not a sprint list)
 
+The list below was drafted before X1–X9 and remains directional, not a
+sequence to restart. Generic interactions, definitions, host Lua, resource
+and package identity, prefabs, bindings, world state and X9 visual work
+have landed to the scopes described above. Use current measured needs and
+the [handoff](HANDOFF.md#current-testing-objective) to select the next
+milestone. Physical S24+ validation of X9 is open. Skate Showdown, MegaMod
+Racing and MegaMod Party are future consumers and stress tests, not the
+next scheduled implementation steps.
+
 Imported content is now primarily a **stress test**. Don't spend the next
 phase importing hundreds more characters. Choose milestones by dependency
 order and current stability:
@@ -519,6 +589,19 @@ agent harness ([DESKTOP_AGENT.md](DESKTOP_AGENT.md)). Pulling the match
 loop out of `platform_android.c` is a precondition for most of the list,
 and it lets agents test on the desktop.
 
+### Cross-genre validation [Someday]
+
+The [capability direction](GAMEPLAY_CAPABILITY_MODULES.md) gives four
+complementary tests of eventual generality: a dedicated Night Shift mode
+could extend its **already real** original horror slice into scenario
+rules and PvE; Skate Showdown could prove alternate locomotion on the
+shared roster; MegaMod Racing could prove race participants with different
+movement systems; MegaMod Party could prove short Lua/data rounds that
+change capability combinations while roster and session score persist.
+None is a replacement for current foundations or a commitment to build
+next. Night Shift's present slice created horror without a creature, and
+X9 physical performance is not yet measured.
+
 ## 19. The design question for every feature
 
 **Is this a capability MegaMod Engine can offer to Showdown and another
@@ -545,6 +628,11 @@ exposes them.
 - Does it preserve **provenance**?
 - Does it keep **acquisition separate from conversion**?
 - Does it move MegaMod toward a **platform** rather than one hardcoded game?
+- Have we read the [existing research](research/README.md) and relevant
+  production evidence before proposing a new capability?
+- Would scoring, round lifecycle, movement or objectives unnecessarily
+  assume an FPS when a real future consumer may be a race, skate round,
+  party microgame or focused PvE mode?
 
 If a proposal fails several of these, reconsider its architecture.
 

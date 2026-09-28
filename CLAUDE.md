@@ -40,6 +40,14 @@ refactor the minimum a real feature needs, verify Android, Blood Gulch and
 the imported bundle (vision §21). The briefing below still describes the
 engine as it is, Halo ancestry included.
 
+For a major donor-inspired gameplay mechanic, first read
+`docs/GAMEPLAY_CAPABILITY_MODULES.md`, `docs/research/README.md` and
+relevant existing reports alongside the vision. Showdown may eventually
+combine wildly different genres with one roster; donor-specific mechanics
+must become generic Engine capabilities that original content can use.
+Record Fact / Inference / Unknown and license limits in new research.
+This is future direction, not permission for speculative rewrites.
+
 The rest of this file is the shared engine's briefing, written when the
 engine was the Halo Trial port; its hard rules all still apply.
 

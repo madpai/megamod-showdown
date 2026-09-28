@@ -31,7 +31,23 @@ Research date: **2026-09-26**. This corpus informs the [MegaMod Engine and Showd
 | [Post-N3 order](POST_N3_ORDER_DECISION.md) | DECISION MEMO | X1 using current tools, then full Step 5 |
 | [Halo reconstruction comparison](halo-reconstruction/README.md) | RESEARCH ONLY; Xbox 2342 versus Trial needs validation | Halo behavior evidence, ancestry audit, universal-port lessons and independent tests |
 
-`COMPLETE` means the documented comparison and recommendation are present, **not** that every upstream implementation is exhaustively audited. Follow-ups mark evidence that cannot yet support a stronger claim. No importer, Lua runtime, registry, network transport, or package format was implemented as part of this research.
+`COMPLETE` means the documented comparison and recommendation are present, **not** that every upstream implementation is exhaustively audited. Follow-ups mark evidence that cannot yet support a stronger claim. This research pass itself implemented no importer, Lua runtime, registry, network transport, or package format; later X1–X9 work landed separately (see [HANDOFF](../HANDOFF.md#current-testing-objective)).
+
+## Mechanic and capability research [Someday direction]
+
+Comparative research may study a narrow mechanic as well as a complete
+engine. Skate locomotion and trick recognition, arcade or high-speed hover
+handling, parkour, boost/drift systems, rapid party-round reset, physics
+hazards and survival directors are **possible future subjects**, not
+completed studies. Before proposing a major [Gameplay Capability Module](../GAMEPLAY_CAPABILITY_MODULES.md),
+search and read the relevant reports above and current production evidence
+such as [Night Shift](../night_shift/README.md). Write a focused new note
+only for the unresolved question, retaining **Fact / Inference / Unknown**.
+A donor project is research evidence, not a runtime dependency; observing
+its architecture gives no permission to copy its code or assets. Check the
+specific license and GPLv3 compatibility before reuse. Generic MegaMod
+Engine names and contracts should lose donor-game terminology, and the
+result should support original content too.
 
 ## Method and evidence key
 
@@ -55,6 +71,6 @@ Research date: **2026-09-26**. This corpus informs the [MegaMod Engine and Showd
 | Red Faction: Guerrilla | [Nanoforge](https://github.com/rfg-modding/Nanoforge) and [zone model](https://github.com/rfg-modding/Nanoforge/blob/master/Nanoforge/Rfg/Zone.cs), [Reconstructor, MPL-2.0](https://github.com/rfg-modding/Reconstructor), [community file index](https://www.redfactionwiki.com/wiki/RF:G_Editing_Main_Page), [map organization](https://www.redfactionwiki.com/wiki/RF:G_Map_organization); accessed 2026-09-26 | Tool licenses vary; proprietary game data and Geo-Mod internals are excluded |
 | Networking | [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets), [public message types](https://github.com/ValveSoftware/GameNetworkingSockets/blob/master/include/steam/steamnetworkingtypes.h); accessed 2026-09-26 | Check repository and third-party licenses before any adoption; this report proposes none |
 
-## Local baseline used for recommendations
+## 2026-09-26 local baseline used for recommendations
 
-The [MegaMod vision](../MEGAMOD_VISION.md) and [content contract](../CONTENT_COMPATIBILITY.md) describe **protocol v10**, host-authoritative LAN UDP, map and imported-roster compatibility checks, rate limiting and feature-specific packets; the older [network progress](../NETWORK_PROGRESS.md) has archived v7/v2 snapshots. `hta_unit`, `hta_prop`, and `hta_vehicle` work; the match loop runs through shared `hta_session_tick`. Open Asset Lab emits bounded [OALMAP v1/v2 and OALASSET v1](https://github.com/madpai/open-asset-lab/blob/main/docs/RUNTIME_PACKAGE.md) and now has a read-only [ID audit](https://github.com/madpai/open-asset-lab/blob/main/docs/CONTENT_IDS.md). The [N1 source review](CURRENT_RUNTIME_CONTENT_BOUNDARY_REVIEW.md) remains historical evidence for why the v10 boundary matters. This corpus recommends later experiments under the existing [minimal-refactor rule](../MEGAMOD_VISION.md#21-do-not-over-refactor).
+At the time of this research pass, the [MegaMod vision](../MEGAMOD_VISION.md) and [content contract](../CONTENT_COMPATIBILITY.md) described **protocol v10**, host-authoritative LAN UDP, map and imported-roster compatibility checks, rate limiting and feature-specific packets; the older [network progress](../NETWORK_PROGRESS.md) has archived v7/v2 snapshots. `hta_unit`, `hta_prop`, and `hta_vehicle` worked; the match loop ran through shared `hta_session_tick`. Open Asset Lab emitted bounded [OALMAP v1/v2 and OALASSET v1](https://github.com/madpai/open-asset-lab/blob/main/docs/RUNTIME_PACKAGE.md) and had a read-only [ID audit](https://github.com/madpai/open-asset-lab/blob/main/docs/CONTENT_IDS.md). The [N1 source review](CURRENT_RUNTIME_CONTENT_BOUNDARY_REVIEW.md) remains historical evidence for why the v10 boundary matters. X1–X9 and protocol v11 landed afterward; consult the [current handoff](../HANDOFF.md#current-testing-objective) and milestone documents before applying these recommendations under the existing [minimal-refactor rule](../MEGAMOD_VISION.md#21-do-not-over-refactor).

@@ -34,6 +34,17 @@ down the coupling that remains. Seek a second use before generalizing.
 The vision separates **[Now]**, **[Next]**
 and **[Someday]**: never document or claim a [Next] capability as done.
 
+Before proposing or implementing a major mechanic inspired by another
+game or engine, also read `docs/GAMEPLAY_CAPABILITY_MODULES.md`,
+`docs/research/README.md`, the relevant existing research reports, and
+current production evidence such as `docs/night_shift/`. Search the
+research corpus before starting new architectural research; build on what
+it already established, recording **Fact / Inference / Unknown** and
+license boundaries for new comparisons. **Learn the mechanic; do not
+blindly copy the donor architecture.** Turn useful behavior into a generic
+Engine capability that works with original content. This direction does
+not authorize speculative rewrites or reorder the current roadmap.
+
 The step-by-step procedures live as skills in `.claude/skills/` and apply
 to any agent -- read the one that matches the task:
 

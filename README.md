@@ -39,9 +39,10 @@ match still loads the owner's Trial data for its core gameplay tags; the
 desktop sandbox is the only part that runs with no game data at all.
 
 **The direction** is an engine of its own. Worlds, characters, weapons,
-vehicles, abilities, scripts and rules become normalized building blocks,
-and an experience is a combination of them, launched without rebuilding
-the engine:
+vehicles, abilities, scripts, rules and eventually reusable gameplay systems
+become composable building blocks. A future Showdown experience might
+combine a world, roster, equipment and rules with locomotion, vehicle
+handling, AI, hazards and scoring, launched without rebuilding the engine:
 
 ```
 content (imported or original) → Open Asset Lab → engine-ready packages
@@ -52,6 +53,10 @@ content (imported or original) → Open Asset Lab → engine-ready packages
 Workshop is one provider.** The crossover roster is a stress test for that
 generality, not the identity. The north star, with what exists now versus
 what is planned, is [`docs/MEGAMOD_VISION.md`](docs/MEGAMOD_VISION.md).
+The same roster might eventually fight, race, skate, survive party-game
+hazards and play a horror scenario in this Engine ecosystem: **One roster.
+One engine. Many games.** The [Gameplay Capability Modules direction](docs/GAMEPLAY_CAPABILITY_MODULES.md)
+explains that future architecture; it does not change the current roadmap.
 The [comparative engine and mod research](docs/research/README.md) records the
 published sources, architectural comparisons, license boundaries, and proposed
 MegaMod/Open Asset Lab experiments behind future decisions.
@@ -245,6 +250,7 @@ or special cases for one source game. Agents: see
 |---|---|
 | [HANDOFF.md](docs/HANDOFF.md) | **Start here.** Current state, the loop, tag discipline, traps, invented constants |
 | [MEGAMOD_VISION.md](docs/MEGAMOD_VISION.md) | **The north star.** What MegaMod and Open Asset Lab are becoming; now vs next vs someday; the agent checklist |
+| [GAMEPLAY_CAPABILITY_MODULES.md](docs/GAMEPLAY_CAPABILITY_MODULES.md) | Future reusable gameplay systems, mode composition, and cross-genre validation targets |
 | [ENGINE_ARCHITECTURE.md](docs/ENGINE_ARCHITECTURE.md) | How the engine is laid out today and the loop-extraction plan |
 | [DESKTOP_AGENT.md](docs/DESKTOP_AGENT.md) | Desktop parity and the agent harness (headless runs, control channel, playtests) |
 | [DEDICATED_SERVER.md](docs/DEDICATED_SERVER.md) | `megamod-server`: config, binding, the path to a real headless match |
