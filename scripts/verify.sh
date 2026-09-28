@@ -104,6 +104,12 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
     if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x7.sh > scratch/test_x7.log 2>&1; then
       ok "X7 bindings: conditions, a chain, instance isolation, damage/teleport/sound, Lua order, loop bounded, refusals, key"
     else bad "X7 bindings: conditions, a chain, instance isolation, damage/teleport/sound, Lua order, loop bounded, refusals, key"; fi
+    # Night Shift (docs/night_shift/): the first production vertical slice --
+    # OAL's project build, a crew of desktop joiners through the whole
+    # scenario, late join, package mutations.
+    if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_night_shift.sh > scratch/test_night_shift.log 2>&1; then
+      ok "Night Shift: power, AND gate, hazard on the right player, Lua company/alone, lockdown, escape, late join, compatibility"
+    else bad "Night Shift: power, AND gate, hazard on the right player, Lua company/alone, lockdown, escape, late join, compatibility"; fi
   fi
   if ./build-host/test_particle "$HTA_MAP" >/dev/null 2>&1; then ok "effect particles from the effect tags"; else bad "effect particles from the effect tags"; fi
   if ./build-host/test_vitals "$HTA_MAP" >/dev/null 2>&1; then ok "vitality and falling from the Trial tags"; else bad "vitality and falling from the Trial tags"; fi
