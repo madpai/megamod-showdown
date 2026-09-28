@@ -265,7 +265,9 @@ size_t hta_resource_contract_json(char *buf, size_t cap)
             "\"types\": {"
             "\"texture\": {\"fields\": [\"format\", \"height\", \"id\", \"member\", \"width\"], \"formats\": [\"rgba8\"], \"max_side\": %u, "
             "\"payload\": \"width x height x 4 bytes, rows top down\"}, "
-            "\"material\": {\"fields\": [\"draw\", \"id\", \"texture\"], \"draw\": [\"opaque\", \"alpha\"], \"references\": [\"assets.materials[].texture\"]}, "
+            "\"material\": {\"fields\": [\"draw\", \"id\", \"texture\"], \"optional_fields\": [\"emissive\", \"roughness\"], "
+            "\"schema_2\": \"emissive 0..4 times base RGB; roughness 0..1 controls local specular width; schema 1 defaults unchanged\", "
+            "\"draw\": [\"opaque\", \"alpha\"], \"references\": [\"assets.materials[].texture\"]}, "
             "\"model\": {\"fields\": [\"format\", \"id\", \"materials\", \"member\"], \"formats\": [\"mesh1\"], \"max_slots\": %u, "
             "\"max_vertices\": %u, \"max_indices\": %u, \"max_groups\": %u, \"references\": [\"assets.models[].materials[]\"], "
             "\"payload\": \"MSH1, u32 vertex, index, group counts; vertices of 10 f32 (position, normal, uv, lightmap uv; |v| <= 4096); "
@@ -337,7 +339,11 @@ size_t hta_resource_contract_json(char *buf, size_t cap)
             "\"prefab_instances\": {\"schema\": 5, \"fields\": [\"id\", \"position\", \"prefab\", \"scale\", \"yaw_degrees\"], "
             "\"needs\": [\"id\", \"position\", \"prefab\"], \"defaults\": {\"scale\": 1, \"yaw_degrees\": 0}, "
             "\"order\": \"canonical byte order of id, each once\", \"reserved\": \"a schema 5 world's own placed IDs may not hold __\"}, "
-            "\"bindings\": {\"schema\": 6, \"see\": \"bindings\"}},\n");
+            "\"bindings\": {\"schema\": 6, \"see\": \"bindings\"}, "
+            "\"visual\": {\"schema\": 7, \"lights_max\": %u, \"active_max\": 8, "
+            "\"light_types\": [\"point\", \"spot\"], \"dynamic_state\": \"optional relay ID reads X8 replicated logical state\", "
+            "\"environment\": [\"ambient\", \"clear\", \"fog_color\", \"fog_density\", \"fog_start\"]}},\n",
+            HTA_WDEF_MAX_LIGHTS);
     bindings_json(&o);
     world_state_json(&o);
     put(&o, "  \"scripts\": {\"api\": \"%s\", \"max_scripts\": %u, \"max_source_bytes\": %u, \"max_pool_bytes\": %u}\n}\n",

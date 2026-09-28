@@ -102,6 +102,8 @@ typedef struct {
     uint8_t  change_color;
     uint8_t  draw_mode;       /* HTA_DRAW_* */
     bool     scene_lit;       /* placed model: scene light, not a BSP lightmap */
+    bool     visual_material; /* X9 material carries roughness / emissive */
+    float    emissive, roughness;
     /* HUD overlays only: the tag's own colour for this element. Halo's HUD
      * art is white with an alpha mask, so the colour lives here rather than
      * in the texture. {0,0,0,0} means untinted. */

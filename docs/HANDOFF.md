@@ -195,6 +195,32 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-28 X9 visual phone review (docs/night_shift/X9_VISUAL_PASS.md).**
+The new `night_shift_x9` package is a separate visual version of Night Shift
+(key `cd8e683f`); the X8 package and key `cc52fc69` remain historical. X9
+adds authored ambient darkness, 26 placed point/spot lights, relay-powered
+fixtures, emissive/roughness material response, fog, industrial surfaces and
+architectural trim. Player presentation hides telemetry by default; pause
+offers **SHOW DIAGNOSTICS**. The private personal APK and X9 packages should
+be installed together using the normal sideload bundle. Select **Night Shift:
+Harrow Annex** (`night_shift_x9`, without the X8 suffix), zero bots, and begin
+at the dock.
+
+**Next device check:** compare the dock, AUX POWER corridor, security door
+and narrow hall against the pre-X9 phone screenshots. Activate the AUX
+breaker using SWAP/Use and watch fixtures and the door control change; later
+open D3 and D5, pull the core to trigger lockdown and watch red emergency
+lighting come on. Toggle diagnostics
+to record average and worst frame pacing, check touch-control readability,
+sounds and device warmth. If possible, host on the S24+ with a desktop peer,
+change power/lockdown on the host, then join a fresh peer and confirm its
+lighting matches without event replay. Report any surface that remains too
+flat or any room that still reads as a test map. The phone result is the
+release-quality decision point; desktop and software-emulator images alone
+cannot establish the physical-device result.
+
+**Previous X8 phone follow-up:**
+
 **2026-09-28 X8 phone follow-up (docs/WORLD_STATE.md and
 night_shift/PLAYTEST_NOTES.md).** The separate
 Night Shift X8 world restores D2 and D5 and reaches 74 runtime objects,
@@ -217,7 +243,7 @@ button artwork itself does not use it. All received phone reports had
 networking disabled; no physical phone-host/late-join result has been
 measured yet.
 
-**Next device check:** host `night_shift_x8` with zero bots and have a
+**Historical X8 device check (superseded by X9 above):** host `night_shift_x8` with zero bots and have a
 protocol-v11 desktop peer join. Use the phone's own player to power the
 aux breaker, open D1, press the security console and coolant valve, and
 confirm D2 and D5 power and open for joiners, including a joiner arriving
@@ -226,8 +252,7 @@ index 63 respond without replaying sounds or Lua events on late join.
 Listen for the buzz, generator, pump, alarm and steam; note touch usability,
 lighting, frame pacing and device warmth. Send a report during the hosted
 match so outbound bytes and thermal/frame data can be read. Protocol v10
-peers should show a version mismatch. Leave scenario rules, lighting, AI
-and inventory for later milestones.
+peers should show a version mismatch.
 
 ---
 
@@ -1836,6 +1861,9 @@ wrong, this list is the first place to look — they are all one constant.
 | constant | value | what it is |
 |---|---|---|
 | imported-map daylight | dir (0.35,0.4,0.85), ambient 0.7 | packages carry no lightmaps |
+| X9 local-light limits | 32 authored per world, nearest 8 active per frame | bounded forward lighting for mobile; `world_def.h` and `scene_visual.h` |
+| Night Shift X9 environment | ambient RGB (0.015,0.022,0.034), fog RGB (0.045,0.055,0.075), density 0.08, clear-air start 2.5 wu | authored dark industrial palette in OAL `world_x9.py` |
+| X9 player HUD | imported HUD scale 0.75, viewmodel down 0.06 wu, crosshair alpha 0.55 | visual hierarchy in authored-environment worlds |
 | package limits (X4) | 256 provides, 16 requires, 64 imports, 16 packages, depth 8, 512 resources/set | `asset/package.h`, `resource.h`: bounds on untrusted declarations |
 | asset limits (X5) | 64 per type per library, 256 members, 96 MB payload, member path 96 bytes / 6 segments, texture side 2048, mesh 262144 vertices / 786432 indices / 64 groups / 16 slots, sound 60 s at 48 kHz | `asset/asset_res.h`: bounds on untrusted asset libraries |
 | world sound hearing (X5) | full within 2 wu, silent beyond 40 wu, squared falloff | `game/world_sounds.h`; ours |

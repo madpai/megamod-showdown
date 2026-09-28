@@ -300,6 +300,28 @@ static void good_set(void)
     puts("  good set: library decoded, prop -> model -> material -> texture resolved once, props solid, mover sound heard once: ok");
 }
 
+static void visual_materials(void)
+{
+    char visual[16384], err[800];
+    static hta_external_map m;
+    snprintf(visual, sizeof(visual), "%s", edit(ART, "\"draw\":\"opaque\"",
+                 "\"draw\":\"opaque\",\"emissive\":1.5,\"roughness\":0.3"));
+    snprintf(visual, sizeof(visual), "%s", edit(visual, "\"schema\":1,\"sounds\"",
+                 "\"schema\":2,\"sounds\""));
+    put_art(&DIR_, visual, PAYLOAD, sizeof(PAYLOAD));
+    CHECK(world_loads(&DIR_, WORLD, &m, err, sizeof(err)));
+    if (m.assets.material_count) {
+        CHECK(fabsf(m.assets.material[0].emissive - 1.5f) < 1e-6f);
+        CHECK(fabsf(m.assets.material[0].roughness - 0.3f) < 1e-6f);
+        hta_external_map_free(&m);
+    }
+    CHECK(art_fails("\"draw\":\"opaque\"", "\"draw\":\"opaque\",\"emissive\":1.5",
+                    PAYLOAD, sizeof(PAYLOAD), "need assets schema 2"));
+    CHECK(art_fails("\"draw\":\"opaque\"", "\"draw\":\"opaque\",\"emissive\":-1",
+                    PAYLOAD, sizeof(PAYLOAD), "emissive must be 0..4"));
+    put_art(&DIR_, ART, PAYLOAD, sizeof(PAYLOAD));
+}
+
 /* ---- two consumers, and a library that imports another --------------------------- */
 
 static const char SKIN[] =
@@ -416,7 +438,7 @@ static void refusals(void)
     CHECK(art_fails("\"format\":\"rgba8\"", "\"format\":\"dxt1\"", P, PL, "unsupported texture format 'dxt1'"));
     CHECK(art_fails("\"format\":\"mesh1\"", "\"format\":\"mdl\"", P, PL, "unsupported model format 'mdl'"));
     CHECK(art_fails("\"width\":4}", "\"width\":4,\"source\":\"x.vtf\"}", P, PL, "unknown or repeated field 'source' in assets.textures"));
-    CHECK(art_fails("\"schema\":1,\"sounds\"", "\"schema\":2,\"sounds\"", P, PL, "unsupported assets schema 2"));
+    CHECK(art_fails("\"schema\":1,\"sounds\"", "\"schema\":3,\"sounds\"", P, PL, "unsupported assets schema 3"));
     CHECK(art_fails("\"width\":4}", "\"width\":5}", P, PL,
                     "xs:texture/crate: 5x4 rgba8 is 80 bytes, but member textures/crate.rgba holds 64"));
     CHECK(art_fails("\"frames\":100", "\"frames\":101", P, PL,
@@ -748,6 +770,7 @@ int main(void)
 {
     payload_init();
     good_set();
+    visual_materials();
     consumers();
     refusals();
     world_key();

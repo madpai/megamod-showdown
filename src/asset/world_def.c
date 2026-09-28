@@ -293,7 +293,77 @@ typedef struct {
     uint32_t authored;
     hta_res_set    rs;        /* what this world's references resolve against (X4) */
     hta_res_import imports[HTA_PKG_MAX_IMPORTS];
+    char light_relay[HTA_WDEF_MAX_LIGHTS][HTA_WDEF_ID_MAX + 1];
 } pending;
+
+static bool parse_environment(rd *r, hta_world_defs *d, char *err, size_t n)
+{
+    char key[24]; unsigned seen = 0;
+    if (!eat(r, '{')) return failv(err, n, "environment: expected object");
+    if (!eat(r, '}')) do {
+        if (!str(r, key, sizeof(key)) || !eat(r, ':')) return failv(err, n, "environment: malformed field");
+        int k = !strcmp(key, "ambient") ? 0 : !strcmp(key, "clear") ? 1 :
+                !strcmp(key, "fog_color") ? 2 : !strcmp(key, "fog_density") ? 3 :
+                !strcmp(key, "fog_start") ? 4 : -1;
+        if (k < 0 || (seen & (1u << k))) return failv(err, n, "environment: unknown or repeated field '%s'", key);
+        seen |= 1u << k;
+        bool ok = k == 0 ? vec3(r, d->environment.ambient) : k == 1 ? vec3(r, d->environment.clear) :
+                  k == 2 ? vec3(r, d->environment.fog_color) :
+                  k == 3 ? fnum(r, &d->environment.fog_density) : fnum(r, &d->environment.fog_start);
+        if (!ok) return failv(err, n, "environment: invalid %s", key);
+    } while (eat(r, ','));
+    if (!eat(r, '}') || seen != 31u) return failv(err, n, "environment: needs ambient, clear, fog_color, fog_density, fog_start");
+    for (int i = 0; i < 3; i++) if (d->environment.ambient[i] < 0 || d->environment.ambient[i] > 2 ||
+        d->environment.clear[i] < 0 || d->environment.clear[i] > 1 ||
+        d->environment.fog_color[i] < 0 || d->environment.fog_color[i] > 1)
+        return failv(err, n, "environment: colors or ambient out of range");
+    if (d->environment.fog_density < 0 || d->environment.fog_density > 2 ||
+        d->environment.fog_start < 0 || d->environment.fog_start > 4096)
+        return failv(err, n, "environment: fog out of range");
+    d->has_environment = true;
+    return true;
+}
+
+static bool parse_light(rd *r, hta_world_defs *d, pending *p, char *err, size_t n)
+{
+    if (d->light_count >= HTA_WDEF_MAX_LIGHTS) return failv(err, n, "lights: more than %u authored lights", HTA_WDEF_MAX_LIGHTS);
+    uint32_t at = d->light_count;
+    hta_wlight_def *l = &d->light[at];
+    char key[24], type[8] = ""; unsigned seen = 0;
+    if (!eat(r, '{')) return failv(err, n, "light %u: expected object", at);
+    if (!eat(r, '}')) do {
+        if (!str(r, key, sizeof(key)) || !eat(r, ':')) return failv(err, n, "light %u: malformed", at);
+        static const char *const keys[] = { "id", "type", "position", "color", "intensity", "range", "direction", "inner", "outer", "relay" };
+        int k = 0; while (k < 10 && strcmp(key, keys[k])) k++;
+        if (k == 10 || (seen & (1u << k))) return failv(err, n, "light %u: unknown or repeated field '%s'", at, key);
+        seen |= 1u << k;
+        bool ok = k == 0 ? str(r, l->id, sizeof(l->id)) : k == 1 ? str(r, type, sizeof(type)) :
+                  k == 2 ? vec3(r, l->position) : k == 3 ? vec3(r, l->color) :
+                  k == 4 ? fnum(r, &l->intensity) : k == 5 ? fnum(r, &l->range) :
+                  k == 6 ? vec3(r, l->direction) : k == 7 ? fnum(r, &l->inner_cos) :
+                  k == 8 ? fnum(r, &l->outer_cos) : str(r, p->light_relay[at], sizeof(p->light_relay[at]));
+        if (!ok) return failv(err, n, "light %u: invalid %s", at, key);
+    } while (eat(r, ','));
+    if (!eat(r, '}') || (seen & 63u) != 63u) return failv(err, n, "light %u: needs id, type, position, color, intensity, range", at);
+    char why[128];
+    if (!hta_prefab_local_valid(l->id, "light id", why, sizeof(why))) return failv(err, n, "light %u: %s", at, why);
+    if (at && strcmp(d->light[at-1].id, l->id) >= 0) return failv(err, n, "lights: IDs must be unique and canonical at %s", l->id);
+    l->spot = !strcmp(type, "spot");
+    if (!l->spot && strcmp(type, "point")) return failv(err, n, "%s: light type must be point or spot", l->id);
+    if (l->spot && (seen & (7u << 6)) != (7u << 6)) return failv(err, n, "%s: spot needs direction, inner, outer", l->id);
+    if (!l->spot && (seen & (7u << 6))) return failv(err, n, "%s: point has no cone", l->id);
+    if (!(l->intensity > 0 && l->intensity <= 16 && l->range > 0.05f && l->range <= 64))
+        return failv(err, n, "%s: intensity or range out of bounds", l->id);
+    for (int i = 0; i < 3; i++) if (l->color[i] < 0 || l->color[i] > 1) return failv(err, n, "%s: color out of range", l->id);
+    if (l->spot) {
+        float len = sqrtf(l->direction[0]*l->direction[0]+l->direction[1]*l->direction[1]+l->direction[2]*l->direction[2]);
+        if (len < 0.01f || l->outer_cos < -1 || l->outer_cos > 1 || l->inner_cos < l->outer_cos || l->inner_cos > 1)
+            return failv(err, n, "%s: invalid spot cone", l->id);
+        for (int i = 0; i < 3; i++) l->direction[i] /= len;
+    }
+    d->light_count++;
+    return true;
+}
 
 static bool parse_link(rd *r, hta_wdef_link *l, char *target, const char *owner, char *err, size_t n)
 {
@@ -1300,13 +1370,13 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
     static pending pend;        /* X8: large tables, not on a phone's stack */
     memset(&pend, 0, sizeof(pend));
     char key[24];
-    bool have_schema = false, have_entities = false, have_defs = false;
+    bool have_schema = false, have_entities = false, have_defs = false, have_environment = false, have_lights = false;
     if (!eat(r, '{')) return fail(err, n, "world_entities: not an object%s%s", NULL, NULL);
     if (!eat(r, '}')) do {
         if (!str(r, key, sizeof(key)) || !eat(r, ':')) return fail(err, n, "world_entities: malformed%s%s", NULL, NULL);
         if (!strcmp(key, "schema")) {
             double v;
-            if (!num(r, &v) || (v != 1.0 && v != 2.0 && v != 3.0 && v != 4.0 && v != 5.0 && v != 6.0))
+            if (!num(r, &v) || (v < 1.0 || v > 7.0 || floor(v) != v))
                 return fail(err, n, "world_entities: unsupported schema%s%s", NULL, NULL);
             d->schema = (uint32_t)v;
             have_schema = true;
@@ -1342,6 +1412,16 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
                 do { if (!parse_binding(r, d, err, n)) return false; } while (eat(r, ','));
                 if (!eat(r, ']')) return fail(err, n, "world_entities: malformed bindings%s%s", NULL, NULL);
             }
+        } else if (!strcmp(key, "environment")) {
+            if (have_environment || !parse_environment(r, d, err, n)) return false;
+            have_environment = true;
+        } else if (!strcmp(key, "lights")) {
+            if (have_lights || !eat(r, '[')) return failv(err, n, "world_entities: malformed lights");
+            if (!eat(r, ']')) {
+                do { if (!parse_light(r, d, &pend, err, n)) return false; } while (eat(r, ','));
+                if (!eat(r, ']')) return failv(err, n, "world_entities: malformed lights");
+            }
+            have_lights = true;
         } else if (!strcmp(key, "ability_script")) {
             if (!str(r, pend.ability, sizeof(pend.ability))) return fail(err, n, "world_entities: malformed ability_script%s%s", NULL, NULL);
             pend.has_ability = true;
@@ -1351,6 +1431,8 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
         return fail(err, n, "world_entities: needs schema and entities%s%s", NULL, NULL);
     if (have_defs && d->schema < 2)
         return fail(err, n, "world_entities: mover_definitions need schema 2%s%s", NULL, NULL);
+    if ((have_environment || have_lights) && d->schema < 7)
+        return failv(err, n, "world_entities: environment and lights need schema 7");
     /* IDs first, so a duplicate is reported as one, not as a link to it. */
     for (uint32_t i = 0; i < d->mover_def_count; i++) {
         if (!mover_id(d->mover_def[i].id))
@@ -1386,6 +1468,12 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
             if (!t) return false;
             d->link[li].target = t->index;
         }
+    }
+    for (uint32_t i = 0; i < d->light_count; i++) if (pend.light_relay[i][0]) {
+        int32_t target = hta_world_defs_find(d, pend.light_relay[i]);
+        if (target < 0 || d->entity[target].kind != HTA_WDEF_RELAY)
+            return failv(err, n, "light %s: relay '%s' is missing or not a relay", d->light[i].id, pend.light_relay[i]);
+        d->light[i].relay = (uint16_t)(target + 1);
     }
     return resolve_movers(d, &pend, err, n) && resolve_scripts(d, &pend, err, n) &&
            resolve_assets(d, &pend, set, err, n) && resolve_bindings(d, &pend, own_bindings, err, n) &&
@@ -1582,6 +1670,15 @@ bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t n)
         return fail(err, n, "world entities over their limits%s%s", NULL, NULL);
     if (d->mover_def_count > HTA_WDEF_MAX_MOVER_DEFS)
         return fail(err, n, "mover definitions over their limit%s%s", NULL, NULL);
+    if (d->light_count > HTA_WDEF_MAX_LIGHTS || ((d->has_environment || d->light_count) && d->schema < 7))
+        return failv(err, n, "world visual data exceeds the light limit or needs schema 7");
+    for (uint32_t i = 0; i < d->light_count; i++) {
+        const hta_wlight_def *l = &d->light[i];
+        if (!finite3(l->position, HTA_WDEF_WORLD_LIMIT) || !finite3(l->color, 1.0f) ||
+            !(l->range > 0.05f && l->range <= 64.0f) || !(l->intensity > 0.0f && l->intensity <= 16.0f) ||
+            (l->relay && (l->relay > d->count || d->entity[l->relay-1].kind != HTA_WDEF_RELAY)))
+            return failv(err, n, "light %s: invalid position, color, range, intensity or relay", l->id);
+    }
     /* X8: what the wire can carry -- every mover's state and every relay's
      * bit in one WORLD_STATE (asset/world_repl.h). */
     uint32_t spatial, flags;

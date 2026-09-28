@@ -51,7 +51,7 @@ _Static_assert(sizeof(kPostFrag) > 256, "post fragment SPIR-V looks truncated");
 #define PUSH_SIZE  128u   /* mat4(64) + 4 * vec4(64); 128 is the guaranteed minimum */
 #define POST_PUSH_SIZE 80u  /* five vec4s: see post.frag */
 #define POST_SETS 4         /* final, bright, blur H, blur V */
-#define FRAME_UBO_SIZE 48u  /* three vec4s: see mesh.frag's Frame block */
+#define FRAME_UBO_SIZE (48u + 64u + 32u + HTA_SCENE_MAX_LIGHTS * 64u)
 
 typedef struct {
     VkImage        image;
@@ -67,6 +67,8 @@ typedef struct {
     VkDescriptorSet set;
     uint8_t  draw_mode;
     bool     scene_lit;
+    bool     visual_material;
+    float    emissive, roughness;
     float    detail_scale;   /* 0 = this surface has no detail map */
     float    detail2_scale;
     float    detail_mask;    /* ShaderModelDetailMask; 0 = no mask */
@@ -107,6 +109,7 @@ struct hta_gfx {
     VkPhysicalDeviceMemoryProperties memprops;
     char             device_name[256];
     uint64_t         mem_used;
+    uint32_t         draw_calls;
 
     /* swapchain path */
     VkSurfaceKHR   surface;
@@ -1360,6 +1363,7 @@ hta_gfx *hta_gfx_create_desktop(const char *const *instance_exts, uint32_t ext_c
 
 const char *hta_gfx_device_name(const hta_gfx *g) { return g ? g->device_name : "(none)"; }
 uint64_t hta_gfx_device_memory_used(const hta_gfx *g) { return g ? g->mem_used : 0; }
+uint32_t hta_gfx_last_draw_calls(const hta_gfx *g) { return g ? g->draw_calls : 0; }
 
 void hta_gfx_extent(const hta_gfx *g, uint32_t *w, uint32_t *h)
 {
@@ -1728,6 +1732,11 @@ static hta_gfx_mesh *upload_mesh(hta_gfx *g, const hta_bsp_mesh *mesh,
             dmask = mesh->submeshes[i].detail_mask;
         }
         m->submeshes[i].scene_lit = mesh->submesh_count && mesh->submeshes[i].scene_lit;
+        if (mesh->submesh_count) {
+            m->submeshes[i].visual_material = mesh->submeshes[i].visual_material;
+            m->submeshes[i].emissive = mesh->submeshes[i].emissive;
+            m->submeshes[i].roughness = mesh->submeshes[i].roughness;
+        }
         m->submeshes[i].chicago = mesh->submesh_count ? mesh->submeshes[i].chicago : 0;
         if (m->submeshes[i].chicago) {
             const hta_submesh *sc = &mesh->submeshes[i];
@@ -1839,6 +1848,13 @@ static void set_fog(uint8_t *push, float mode) { memcpy(push + 76, &mode, sizeof
 /* Everything in the world: sky, level, viewmodel, impact marks,
  * projectiles and particles, and rigid instances. Recorded into whichever
  * pass the world draws into -- the screen, or the scene target. */
+static void draw_indexed(hta_gfx *g, VkCommandBuffer cb, uint32_t count,
+                         uint32_t instances, uint32_t first, int32_t offset, uint32_t first_instance)
+{
+    vkCmdDrawIndexed(cb, count, instances, first, offset, first_instance);
+    g->draw_calls++;
+}
+
 static void record_world(hta_gfx *g, VkCommandBuffer cb, const hta_camera *cam,
                          const hta_scene *scene, hta_gfx_mesh *mesh, hta_gfx_mesh *sky,
                          hta_gfx_mesh *fx, const hta_gfx_dynamic *dyn, uint32_t dyn_count,
@@ -1903,7 +1919,7 @@ static void record_world(hta_gfx *g, VkCommandBuffer cb, const hta_camera *cam,
                                    0, PUSH_SIZE, lp);
                 vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
                                         0, 1, &sky->submeshes[i].set, 0, NULL);
-                vkCmdDrawIndexed(cb, sky->submeshes[i].index_count, 1,
+                draw_indexed(g, cb, sky->submeshes[i].index_count, 1,
                                  sky->submeshes[i].first_index, 0, 0);
             }
         }
@@ -1939,14 +1955,14 @@ static void record_world(hta_gfx *g, VkCommandBuffer cb, const hta_camera *cam,
                                            0, PUSH_SIZE, push);
                         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
                                                 0, 1, &mesh->submeshes[i].set, 0, NULL);
-                        vkCmdDrawIndexed(cb, mesh->submeshes[i].index_count, 1,
+                        draw_indexed(g, cb, mesh->submeshes[i].index_count, 1,
                                          mesh->submeshes[i].first_index, 0, 0);
                     }
                 } else if (p == 0) {
                     vkCmdPushConstants(cb, g->layout,
                                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                        0, PUSH_SIZE, push);
-                    vkCmdDrawIndexed(cb, mesh->index_count, 1, 0, 0, 0);
+                    draw_indexed(g, cb, mesh->index_count, 1, 0, 0, 0);
                 }
             }
         }
@@ -2025,7 +2041,7 @@ static void record_world(hta_gfx *g, VkCommandBuffer cb, const hta_camera *cam,
                     }
                     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
                                             0, 1, &viewmodel->submeshes[i].set, 0, NULL);
-                    vkCmdDrawIndexed(cb, viewmodel->submeshes[i].index_count, 1,
+                    draw_indexed(g, cb, viewmodel->submeshes[i].index_count, 1,
                                      viewmodel->submeshes[i].first_index, 0, 0);
                 }
             }
@@ -2070,7 +2086,7 @@ static void record_world(hta_gfx *g, VkCommandBuffer cb, const hta_camera *cam,
                     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                             g->layout, 0, 1,
                                             &fx->submeshes[i].set, 0, NULL);
-                    vkCmdDrawIndexed(cb, fx->submeshes[i].index_count, 1,
+                    draw_indexed(g, cb, fx->submeshes[i].index_count, 1,
                                      fx->submeshes[i].first_index, 0, 0);
                 }
             }
@@ -2129,7 +2145,7 @@ static void record_world(hta_gfx *g, VkCommandBuffer cb, const hta_camera *cam,
                         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                                 g->layout, 0, 1,
                                                 &dm->submeshes[i].set, 0, NULL);
-                        vkCmdDrawIndexed(cb, dm->submeshes[i].index_count, 1,
+                        draw_indexed(g, cb, dm->submeshes[i].index_count, 1,
                                          dm->submeshes[i].first_index, 0, 0);
                     }
                 }
@@ -2189,7 +2205,9 @@ static void record_world(hta_gfx *g, VkCommandBuffer cb, const hta_camera *cam,
                         float lw = (ipasses[pz] != HTA_DRAW_ADD &&
                                     (in->lit || im->submeshes[i].scene_lit)) ? 1.0f : 0.0f;
                         float det[4] = { im->submeshes[i].detail_scale,
-                            im->submeshes[i].detail2_scale, im->submeshes[i].detail_mask, 0.0f };
+                            im->submeshes[i].detail2_scale,
+                            im->submeshes[i].visual_material ? im->submeshes[i].roughness : im->submeshes[i].detail_mask,
+                            im->submeshes[i].visual_material ? 4.0f + im->submeshes[i].emissive : 0.0f };
                         memcpy(push + 80 + 12, &lw, sizeof(lw));
                         memcpy(push + 112, det, sizeof(det));
                         set_fog(push, ipasses[pz] == HTA_DRAW_ADD ? FOG_FADE : FOG_BLEND);
@@ -2202,7 +2220,7 @@ static void record_world(hta_gfx *g, VkCommandBuffer cb, const hta_camera *cam,
                         }
                         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                                 g->layout, 0, 1, &im->submeshes[i].set, 0, NULL);
-                        vkCmdDrawIndexed(cb, im->submeshes[i].index_count, 1,
+                        draw_indexed(g, cb, im->submeshes[i].index_count, 1,
                                          im->submeshes[i].first_index, 0, 0);
                     }
                 }
@@ -2254,7 +2272,7 @@ static void record_hud(hta_gfx *g, VkCommandBuffer cb, const hta_gfx_overlay *hu
                                    0, PUSH_SIZE, push);
                 vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout,
                                         0, 1, &hudmesh->submeshes[i].set, 0, NULL);
-                vkCmdDrawIndexed(cb, hudmesh->submeshes[i].index_count, 1,
+                draw_indexed(g, cb, hudmesh->submeshes[i].index_count, 1,
                                  hudmesh->submeshes[i].first_index, 0, 0);
             }
         }
@@ -2269,22 +2287,64 @@ static void viewport(VkCommandBuffer cb, uint32_t w, uint32_t h)
 }
 
 /* The frame's atmosphere, into this slot's uniform buffer. */
+/* Invert the camera VP once per frame. It lets the shared vertex program
+ * recover world coordinates even for rigid instances whose model matrix is
+ * already folded into their push constant (128 bytes is Vulkan's minimum). */
+static bool inverse4(const float src[16], float out[16])
+{
+    double a[4][8] = {{0}};
+    for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) {
+        a[r][c] = src[c * 4 + r]; a[r][c + 4] = r == c ? 1.0 : 0.0;
+    }
+    for (int c = 0; c < 4; c++) {
+        int pivot = c;
+        for (int r = c + 1; r < 4; r++) if (fabs(a[r][c]) > fabs(a[pivot][c])) pivot = r;
+        if (fabs(a[pivot][c]) < 1e-12) return false;
+        if (pivot != c) for (int k = 0; k < 8; k++) { double t = a[c][k]; a[c][k] = a[pivot][k]; a[pivot][k] = t; }
+        double d = a[c][c];
+        for (int k = 0; k < 8; k++) a[c][k] /= d;
+        for (int r = 0; r < 4; r++) if (r != c) {
+            d = a[r][c]; for (int k = 0; k < 8; k++) a[r][k] -= d * a[c][k];
+        }
+    }
+    for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) out[c * 4 + r] = (float)a[r][c + 4];
+    return true;
+}
+
 static void write_frame(hta_gfx *g, uint32_t slot, const hta_camera *cam, const hta_scene *scene)
 {
-    float f[12];
+    float f[FRAME_UBO_SIZE / sizeof(float)];
     memset(f, 0, sizeof(f));
     const hta_gfx_settings *s = &g->settings;
-    const float *fc = s->fog_from_scene ? scene->clear : s->fog_color;
+    const float *fc = scene->authored ? scene->fog_color : s->fog_from_scene ? scene->clear : s->fog_color;
     f[0] = fc[0]; f[1] = fc[1]; f[2] = fc[2];
-    f[3] = (s->fog && s->fog_density > 0.0f) ? 1.0f : 0.0f;
+    float density = scene->authored ? scene->fog_density : s->fog_density;
+    float start = scene->authored ? scene->fog_start : s->fog_start;
+    f[3] = (scene->authored ? density > 0.0f : s->fog && density > 0.0f) ? 1.0f : 0.0f;
     /* Draw distance shortened below 1 pulls the fog in with it, so the
      * far plane never cuts the world off in the open. */
     float dd = s->draw_distance < 1.0f ? s->draw_distance : 1.0f;
-    f[4] = s->fog_density / dd;
-    f[5] = s->fog_start * dd;
+    f[4] = density / dd;
+    f[5] = start * dd;
     f[6] = cam->znear;
     f[7] = cam->zfar;
     f[8] = (float)g->frame * (1.0f / 60.0f);
+    hta_mat4 vp = hta_camera_view_proj(cam);
+    if (!inverse4(vp.m, f + 12)) {
+        hta_mat4 id = hta_mat4_identity(); memcpy(f + 12, id.m, sizeof(id.m));
+    }
+    f[28] = scene->authored ? 1.0f : 0.0f;
+    uint32_t nlights = scene->light_count < HTA_SCENE_MAX_LIGHTS ? scene->light_count : HTA_SCENE_MAX_LIGHTS;
+    f[29] = (float)nlights;
+    f[32] = cam->pos[0]; f[33] = cam->pos[1]; f[34] = cam->pos[2];
+    for (uint32_t i = 0; i < nlights; i++) {
+        const hta_scene_light *l = &scene->lights[i];
+        float *v = f + 36 + i * 16;
+        memcpy(v, l->position, 3 * sizeof(float)); v[3] = l->range;
+        memcpy(v + 4, l->color, 3 * sizeof(float)); v[7] = l->intensity;
+        memcpy(v + 8, l->direction, 3 * sizeof(float)); v[11] = l->inner_cos;
+        v[12] = l->outer_cos;
+    }
     memcpy((uint8_t *)g->frame_mapped + g->frame_stride * slot, f, sizeof(f));
 }
 
@@ -2294,6 +2354,7 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam_in, const hta_scene *scene,
                   const hta_gfx_viewmodel *vm, const hta_gfx_overlay *hud)
 {
     if (!g || !g->ready || !cam_in || !scene) return false;
+    g->draw_calls = 0;
     /* Draw distance scales the far plane; fog hides where it now ends. */
     hta_camera cam_local = *cam_in;
     cam_local.zfar *= g->settings.draw_distance;
@@ -2449,7 +2510,7 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam_in, const hta_scene *scene,
                                         0, 1, &g->post_set[set[k]], 0, NULL);
                 vkCmdPushConstants(cb, g->post_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                    POST_PUSH_SIZE, bp);
-                vkCmdDraw(cb, 3, 1, 0, 0);
+                vkCmdDraw(cb, 3, 1, 0, 0); g->draw_calls++;
                 vkCmdEndRenderPass(cb);
             }
         }
@@ -2465,7 +2526,7 @@ bool hta_gfx_draw(hta_gfx *g, const hta_camera *cam_in, const hta_scene *scene,
         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g->post_layout,
                                 0, 1, &g->post_set[0], 0, NULL);
         vkCmdPushConstants(cb, g->post_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, POST_PUSH_SIZE, pp);
-        vkCmdDraw(cb, 3, 1, 0, 0);
+        vkCmdDraw(cb, 3, 1, 0, 0); g->draw_calls++;
         if (hudmesh && hudmesh->index_count && g->pipeline_hud)
             record_hud(g, cb, hud, hudmesh, hud_voffset);
         vkCmdEndRenderPass(cb);

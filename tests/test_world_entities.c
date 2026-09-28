@@ -5,6 +5,7 @@
 #include "asset/world_def.h"
 #include "engine/world_entities.h"
 #include "engine/player.h"
+#include "gfx/scene_visual.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -142,7 +143,7 @@ static void test_parse(void)
     expect_fail(patch("\"input\":\"open\"", "\"input\":\"teleport\""), "target does not accept x1:entity/door_main.teleport");
     expect_fail(patch("\"event\":\"fired\"", "\"event\":\"used\""), "does not emit 'used'");
     expect_fail(patch("\"kind\":\"relay\"", "\"kind\":\"logic_relay\""), "unknown kind 'logic_relay'");
-    expect_fail(patch("\"schema\":1", "\"schema\":7"), "unsupported schema");
+    expect_fail(patch("\"schema\":1", "\"schema\":8"), "unsupported schema");
     expect_fail(patch("\"links\":[],\"move\"", "\"definition\":\"x1:mover/door\",\"links\":[],\"move\""),
                 "x1:entity/door_main: mover definitions need world_entities schema 2");
     expect_fail(patch("\"schema\":1}", "\"mover_definitions\":[],\"schema\":1}"), "mover_definitions need schema 2");
@@ -644,8 +645,82 @@ static void test_x2_late_join(void)
     printf("  x2 late join sees each door as it is: ok\n");
 }
 
+static void test_visual_state(void)
+{
+    static const char *json =
+        "{\"world_entities\":{\"schema\":7,\"entities\":["
+        "{\"id\":\"x1:entity/relay_main\",\"kind\":\"relay\",\"links\":[]}],"
+        "\"environment\":{\"ambient\":[0.2,0.3,0.4],\"clear\":[0,0,0],"
+        "\"fog_color\":[0.1,0.2,0.3],\"fog_density\":0.05,\"fog_start\":2},"
+        "\"lights\":[{\"id\":\"lamp\",\"type\":\"point\",\"position\":[0,0,1],"
+        "\"color\":[1,0.5,0.2],\"intensity\":3,\"range\":4,"
+        "\"relay\":\"x1:entity/relay_main\"}]}}";
+    static hta_world_defs d;
+    static hta_world_entities host, late;
+    char err[256];
+    assert(hta_world_defs_parse((const uint8_t *)json, strlen(json), &d, err, sizeof(err)) ||
+           (fprintf(stderr, "%s\n", err), 0));
+    assert(d.has_environment && d.light_count == 1 && d.light[0].relay == 1);
+    /* The engine also rejects hand-edited packages, independently of OAL. */
+    {
+        char bad[2048], why[256];
+        const char *from[] = {"\"range\":4", "\"fog_density\":0.05", "\"relay\":\"x1:entity/relay_main\""};
+        const char *to[] = {"\"range\":-1", "\"fog_density\":1e999", "\"relay\":\"x1:entity/missing\""};
+        for (uint32_t i = 0; i < 3; i++) {
+            const char *at = strstr(json, from[i]);
+            assert(at);
+            snprintf(bad, sizeof(bad), "%.*s%s%s", (int)(at - json), json, to[i], at + strlen(from[i]));
+            assert(!hta_world_defs_parse((const uint8_t *)bad, strlen(bad), &d, why, sizeof(why)));
+        }
+        assert(hta_world_defs_parse((const uint8_t *)json, strlen(json), &d, why, sizeof(why)));
+        /* Mutate schema-7 light/environment bytes. A refusal or a valid
+         * parse is fine; identical input must give the same verdict. */
+        uint32_t seed = 0x9137u;
+        for (uint32_t i = 0; i < 1000; i++) {
+            snprintf(bad, sizeof(bad), "%s", json);
+            seed = seed * 1664525u + 1013904223u;
+            size_t at = (size_t)(seed % strlen(bad));
+            bad[at] = (char)(32 + (seed >> 16) % 95);
+            bool a = hta_world_defs_parse((const uint8_t *)bad, strlen(bad), &d, why, sizeof(why));
+            char why2[256];
+            bool b = hta_world_defs_parse((const uint8_t *)bad, strlen(bad), &d, why2, sizeof(why2));
+            assert(a == b && (a || !strcmp(why, why2)));
+        }
+        assert(hta_world_defs_parse((const uint8_t *)json, strlen(json), &d, why, sizeof(why)));
+    }
+    assert(hta_went_load(&host, &d, NULL, 0) && hta_went_load(&late, &d, NULL, 0));
+    hta_scene scene = {0};
+    const float eye[3] = {0, 0, 0};
+    hta_scene_apply_visual(&scene, &d, &host, eye);
+    assert(scene.light_count == 0 && scene.fog_density == 0.05f);
+    assert(hta_went_request(&host, HTA_WACT_ACTIVATE, 0, HTA_WENT_NO_ACTOR) == HTA_WENT_QUEUED);
+    hta_went_step(&host, 1.0f / 60.0f);
+    hta_scene_apply_visual(&scene, &d, &host, eye);
+    assert(scene.light_count == 1);
+    uint8_t bits[1] = {0};
+    assert(hta_went_flags(&host, bits, 1) == 1);
+    assert(hta_went_apply_flag(&late, 0, (bits[0] & 1u) != 0));
+    hta_scene_apply_visual(&scene, &d, &late, eye);
+    assert(scene.light_count == 1);
+    hta_went_free(&host); hta_went_free(&late);
+    static hta_world_defs many;
+    memset(&many, 0, sizeof(many));
+    many.has_environment = true;
+    many.light_count = HTA_WDEF_MAX_LIGHTS;
+    for (uint32_t i = 0; i < many.light_count; i++) {
+        many.light[i].position[0] = (float)i;
+        many.light[i].range = 64;
+        many.light[i].intensity = 1;
+    }
+    hta_scene_apply_visual(&scene, &many, NULL, eye);
+    assert(scene.light_count == HTA_SCENE_MAX_LIGHTS);
+    for (uint32_t i = 0; i < scene.light_count; i++)
+        assert(scene.lights[i].position[0] == (float)i);
+}
+
 int main(void)
 {
+    test_visual_state();
     test_parse();
     test_button_relay_door();
     test_trigger_teleport();

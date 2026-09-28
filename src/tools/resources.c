@@ -260,6 +260,28 @@ static int inspect(const char *bundle, const char *world)
         }
         printf("]}");
     }
+    if (d->has_environment) {
+        const hta_wenvironment *e = &d->environment;
+        printf(",\n \"visual\": {\"ambient\": [%g, %g, %g], \"clear\": [%g, %g, %g], "
+               "\"fog_color\": [%g, %g, %g], \"fog_density\": %g, \"fog_start\": %g, "
+               "\"lights_authored\": %u, \"lights_active_max\": %u, \"lights\": [",
+               (double)e->ambient[0], (double)e->ambient[1], (double)e->ambient[2],
+               (double)e->clear[0], (double)e->clear[1], (double)e->clear[2],
+               (double)e->fog_color[0], (double)e->fog_color[1], (double)e->fog_color[2],
+               (double)e->fog_density, (double)e->fog_start, d->light_count, HTA_SCENE_MAX_LIGHTS);
+        for (uint32_t i = 0; i < d->light_count; i++) {
+            const hta_wlight_def *l = &d->light[i];
+            printf("%s{\"id\": ", i ? ", " : ""); json_str(l->id);
+            printf(", \"type\": \"%s\", \"position\": [%g, %g, %g], \"color\": [%g, %g, %g], "
+                   "\"intensity\": %g, \"range\": %g",
+                   l->spot ? "spot" : "point", (double)l->position[0], (double)l->position[1], (double)l->position[2],
+                   (double)l->color[0], (double)l->color[1], (double)l->color[2],
+                   (double)l->intensity, (double)l->range);
+            if (l->relay) { printf(", \"relay\": "); json_str(d->entity[l->relay - 1].id); }
+            printf("}");
+        }
+        printf("]}");
+    }
     printf(",\n \"assets\": {\"payload_bytes\": %u, \"textures\": [", a->payload_bytes);
     for (uint32_t i = 0; i < a->texture_count; i++) {
         printf("%s{\"id\": ", i ? ", " : ""); json_str(a->texture[i].id);
@@ -270,8 +292,12 @@ static int inspect(const char *bundle, const char *world)
     for (uint32_t i = 0; i < a->material_count; i++) {
         printf("%s{\"id\": ", i ? ", " : ""); json_str(a->material[i].id);
         printf(", \"index\": %u, \"from\": ", i); json_str(FROM(a->material[i].provider));
-        printf(", \"texture\": %u, \"draw\": \"%s\"}", a->material[i].texture,
+        printf(", \"texture\": %u, \"draw\": \"%s\"", a->material[i].texture,
                a->material[i].draw == HTA_ASSET_DRAW_ALPHA ? "alpha" : "opaque");
+        if (a->material[i].extended)
+            printf(", \"emissive\": %g, \"roughness\": %g",
+                   (double)a->material[i].emissive, (double)a->material[i].roughness);
+        printf("}");
     }
     printf("], \"models\": [");
     for (uint32_t i = 0; i < a->model_count; i++) {

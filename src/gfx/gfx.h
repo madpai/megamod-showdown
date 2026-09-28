@@ -18,11 +18,25 @@
 typedef struct hta_gfx      hta_gfx;
 typedef struct hta_gfx_mesh hta_gfx_mesh;
 
+#define HTA_SCENE_MAX_LIGHTS 8u
+typedef struct {
+    float position[3], range;
+    float color[3], intensity;
+    float direction[3], inner_cos;
+    float outer_cos; /* -1: point; otherwise a spot cone */
+} hta_scene_light;
+
 typedef struct {
     float light_dir[3];
     float light_color[3];
     float ambient[3];
     float clear[3];
+    /* Authored environment. Zero keeps every historical world on its
+     * original BSP / scene light path. */
+    bool  authored;
+    float fog_color[3], fog_density, fog_start;
+    uint32_t light_count;
+    hta_scene_light lights[HTA_SCENE_MAX_LIGHTS];
 } hta_scene;
 
 /* native_window is an ANativeWindow* */
@@ -172,5 +186,7 @@ bool hta_gfx_readback(hta_gfx *g, uint8_t *dst, size_t dst_size);
 
 /* Total bytes of device memory this context has allocated (diagnostics). */
 uint64_t hta_gfx_device_memory_used(const hta_gfx *g);
+/* Indexed world/instance and fullscreen post draws recorded last frame. */
+uint32_t hta_gfx_last_draw_calls(const hta_gfx *g);
 
 #endif

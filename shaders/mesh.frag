@@ -18,10 +18,15 @@ layout(set = 0, binding = 4) uniform sampler2D u_multi;
 
 /* Per-frame values that do not fit the (full) push constants: the
  * atmosphere. Bound once per frame as set 1. */
+struct LocalLight { vec4 position_range; vec4 color_intensity; vec4 direction_inner; vec4 outer; };
 layout(set = 1, binding = 0) uniform Frame {
     vec4 fog_color;   /* rgb; a > 0.5: fog on */
     vec4 fog;         /* x density, y start distance, z znear, w zfar */
     vec4 misc;        /* x seconds; yzw reserved */
+    mat4 inv_view_proj;
+    vec4 visual;      /* x authored environment, y active light count */
+    vec4 eye;
+    LocalLight lights[8];
 } frame;
 
 layout(location = 0) in vec3 v_normal;
@@ -90,7 +95,7 @@ void main() {
      * point changes colour and fades as it ages, and a texture per step
      * would be a texture per frame. Additive draws ignore alpha, so it is
      * folded into the colour as well. */
-    if (push.detail.w > 2.5 && push.light_color.w < 1.5) {
+    if (push.detail.w > 2.5 && push.detail.w < 3.5 && push.light_color.w < 1.5) {
         float a = clamp(v_lm_uv.x, 0.0, 1.0);
         out_color = vec4(apply_fog(base.rgb * v_normal * a), base.a * a);
         return;
@@ -126,7 +131,7 @@ void main() {
      * panels. Masked out means neutral grey, which the double-biased
      * multiply below turns into "leave the base alone". */
     int dm = int(push.detail.z + 0.5);
-    if (dm > 0) {
+    if (dm > 0 && push.detail.w < 4.0) {
         vec4 mp = texture(u_multi, v_uv);
         float m = (dm <= 2) ? mp.a : (dm <= 4) ? mp.g : (dm <= 6) ? mp.b : mp.r;
         if ((dm & 1) == 1) m = 1.0 - m;        /* the odd codes are inverses */
@@ -159,7 +164,40 @@ void main() {
      * rotated into the viewmodel's own space, because its normals are
      * never transformed out of it. */
     vec3 col;
-    if (push.light_color.w > 0.5) {
+    if (frame.visual.x > 0.5 && push.light_color.w < 1.5) {
+        vec3 N = normalize(v_normal);
+        /* An instance's normals remain in model space, while v_world is
+         * true world space. Face derivatives recover its rotated surface. */
+        vec3 geom = normalize(cross(dFdx(v_world), dFdy(v_world)));
+        if (dot(geom, frame.eye.xyz - v_world) < 0.0) geom = -geom;
+        if (push.light_color.w > 0.5) N = geom;
+        vec3 V = normalize(frame.eye.xyz - v_world);
+        vec3 illumination = push.ambient.rgb;
+        vec3 shine = vec3(0.0);
+        float rough = push.detail.w >= 4.0 ? clamp(push.detail.z, 0.08, 1.0) : 0.75;
+        float gloss = mix(96.0, 8.0, rough);
+        for (int i = 0; i < int(frame.visual.y + 0.5) && i < 8; ++i) {
+            vec3 to_light = frame.lights[i].position_range.xyz - v_world;
+            float distance = length(to_light);
+            float range = frame.lights[i].position_range.w;
+            if (distance >= range || distance < 0.0001) continue;
+            vec3 L = to_light / distance;
+            float falloff = 1.0 - distance / range;
+            falloff *= falloff;
+            float outer = frame.lights[i].outer.x;
+            if (outer > -0.5) {
+                float cone = dot(-L, normalize(frame.lights[i].direction_inner.xyz));
+                falloff *= smoothstep(outer, frame.lights[i].direction_inner.w, cone);
+            }
+            vec3 radiance = frame.lights[i].color_intensity.rgb *
+                            (frame.lights[i].color_intensity.w * falloff);
+            illumination += radiance * max(dot(N, L), 0.0);
+            vec3 H = normalize(L + V);
+            shine += radiance * pow(max(dot(N, H), 0.0), gloss) * (1.0 - rough) * 0.25;
+        }
+        col = albedo * illumination + shine;
+        if (push.detail.w >= 4.0) col += albedo * (push.detail.w - 4.0);
+    } else if (push.light_color.w > 0.5) {
         /* WRAPPED, not clamped. A hard N.L splits the weapon into a blown
          * highlight and a black underside, which is not how Halo's gun
          * reads: it is evenly lit with soft modelling. Wrapping keeps the
@@ -171,6 +209,7 @@ void main() {
         col = albedo * (push.ambient.rgb + push.light_color.rgb * ndl) * 2.0;
     } else {
         col = albedo * lm * 2.0;
+        if (push.detail.w >= 4.0) col += albedo * (push.detail.w - 4.0);
     }
     /* The alpha pipeline blends with SRC_ALPHA, so the texture's own alpha
      * has to reach it. Hardcoding 1.0 here meant every alpha-blended

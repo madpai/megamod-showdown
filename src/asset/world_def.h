@@ -72,7 +72,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define HTA_WDEF_SCHEMA 6u            /* newest understood; 1 (X1) .. 5 (X6) still load */
+#define HTA_WDEF_SCHEMA 7u            /* X9 adds authored atmosphere and lights */
+#define HTA_WDEF_MAX_LIGHTS 32u
+typedef struct {
+    char id[24];                 /* local ID, canonical order */
+    float position[3], color[3], direction[3];
+    float intensity, range, inner_cos, outer_cos;
+    uint16_t relay;             /* entity index + 1; 0: always enabled */
+    bool spot;
+} hta_wlight_def;
+typedef struct {
+    float ambient[3], clear[3], fog_color[3];
+    float fog_density, fog_start;
+} hta_wenvironment;
 #define HTA_WDEF_MAX_MOVER_DEFS 256u  /* one per mover at most (schema 1, prefab movers): the movers' limit (X8) */
 #define HTA_WDEF_NO_DEF 0xFFFFu
 #define HTA_WDEF_MAX_SCRIPTS 16u
@@ -264,6 +276,10 @@ typedef struct hta_world_defs {
     uint32_t      cond_count;
     hta_waction   action[HTA_WDEF_MAX_ACTIONS];
     uint32_t      action_count;
+    bool          has_environment;
+    hta_wenvironment environment;
+    hta_wlight_def light[HTA_WDEF_MAX_LIGHTS];
+    uint32_t      light_count;
     char          pool[HTA_WDEF_SCRIPT_POOL];
 } hta_world_defs;
 

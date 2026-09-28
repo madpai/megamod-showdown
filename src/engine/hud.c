@@ -1007,7 +1007,8 @@ void hta_hud_layout(hta_hud *h, uint32_t screen_w, uint32_t screen_h)
 
     /* Halo scales its HUD by height, so everything keeps its size relative
      * to the vertical field of view whatever the aspect ratio. */
-    float scale = (float)screen_h / HTA_HUD_CANVAS_H * HTA_HUD_PHONE_SCALE;
+    float scale = (float)screen_h / HTA_HUD_CANVAS_H * HTA_HUD_PHONE_SCALE *
+                  (h->presentation_scale > 0.0f ? h->presentation_scale : 1.0f);
     float fw = (float)screen_w, fh = (float)screen_h;
     float sx = 2.0f / fw, sy = 2.0f / fh;
 
@@ -1081,6 +1082,17 @@ void hta_hud_layout(hta_hud *h, uint32_t screen_w, uint32_t screen_h)
             v->uv[1] = qv[k];
             v->lm_uv[0] = 0.0f;
             v->lm_uv[1] = 0.0f;
+        }
+    }
+    if (h->have_cross && h->cross_elem < h->elem_count) {
+        hta_hud_set_on_target(h, h->cross_on_target);
+        hta_submesh *sm = &h->mesh.submeshes[h->elem[h->cross_elem].submesh];
+        /* A horror world needs an aiming mark, but the saturated Halo tag
+         * reticle should not become the brightest object in the room. */
+        if (h->presentation_scale > 0.0f && h->presentation_scale < 1.0f) {
+            if (!h->cross_on_target)
+                for (int k = 0; k < 3; k++) sm->tint[k] = h->cross_tint[k] * 0.35f + 0.55f;
+            sm->tint[3] = (h->cross_tint[3] > 0.0f ? h->cross_tint[3] : 1.0f) * 0.55f;
         }
     }
 }

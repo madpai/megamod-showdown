@@ -43,6 +43,7 @@
 #include "game/world_fx_audio.h"
 #include "game/world_fx_gpu.h"
 #include "game/world_entities_gpu.h"
+#include "gfx/scene_visual.h"
 #include "game/world_sounds.h"
 #include "gfx/gfx.h"
 #include "platform/audio_sdl.h"
@@ -107,10 +108,13 @@ typedef struct {
     uint32_t deaths;
     /* --route */
     char route[512];
+    bool shot_view;
+    float shot_pos[3], shot_yaw, shot_pitch;
     const char *step;
     double step_at;
     bool route_done, route_failed;
     uint32_t moved_by_host, moved_at_step;
+    uint32_t active_lights;
     float last_pos[3];
 } join;
 
@@ -357,8 +361,15 @@ static bool frame(join *j, hta_gfx *g, double now, float dt)
     hta_wfx_update(&j->wfx, dt, &j->cam);
     hta_wfx_audio_update(&j->wfx_audio, &j->wfx, &j->cam, dt, false);
     hta_gfx_settings look;
+    hta_camera cam = j->cam;
+    if (j->shot_view) {
+        memcpy(cam.pos, j->shot_pos, sizeof(cam.pos));
+        cam.yaw = j->shot_yaw; cam.pitch = j->shot_pitch;
+    }
     hta_scene sc = j->scene;
     hta_wfx_frame_look(&j->wfx, &j->video, &look, sc.ambient, sc.light_color);
+    if (j->have_ext) hta_scene_apply_visual(&sc, &j->ext.world_defs, &j->went, cam.pos);
+    j->active_lights = sc.light_count;
     hta_gfx_apply_settings(g, &look, NULL, 0);
     hta_wfx_gpu_frame(&j->wfx, g, &j->video, dt);
     hta_gfx_dynamic dyn[HTA_NET_MAX_ENTITIES + 8];
@@ -366,7 +377,6 @@ static bool frame(join *j, hta_gfx *g, double now, float dt)
     n = hta_wfx_gpu_draw(&j->wfx, &j->cam, dyn, n, HTA_NET_MAX_ENTITIES + 8);
     hta_gfx_instance inst[HTA_WDEF_MAX_ENTITIES];
     hta_gfx_set_instances(g, inst, hta_went_gpu_instances(&j->went_gpu, &j->went, inst, HTA_WDEF_MAX_ENTITIES));
-    hta_camera cam = j->cam;
     uint32_t w, h;
     hta_gfx_extent(g, &w, &h);
     cam.aspect = h ? (float)w / (float)h : 1.0f;
@@ -556,7 +566,7 @@ int main(int argc, char **argv)
     if (argc < 2) {
         fprintf(stderr, "usage: %s <host> [port] [--world NAME] [--trial DIR] [--bundle DIR]\n"
                         "       [--map bloodgulch.map] [--oalmap m.oalmap] [--preset P] "
-                        "[--weather W] [--auto S] [--shot out.ppm] [--route R] [--world-state]\n"
+                        "[--weather W] [--auto S] [--shot out.ppm] [--shot-view x,y,z,yaw,pitch] [--route R] [--world-state]\n"
                         "  --world picks the host's map by name (bloodgulch, ctf_2fort, ...) from the\n"
                         "  Trial folder and the Asset Lab bundle (or HTA_TRIAL_DIR / HTA_BUNDLE_DIR)\n", argv[0]);
         return 2;
@@ -581,6 +591,11 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--weather") && i + 1 < argc && hta_weather_from_name(argv[i + 1], &wk)) { j.weather = (int)wk; i++; }
         else if (!strcmp(argv[i], "--auto") && i + 1 < argc) autos = atof(argv[++i]);
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
+        else if (!strcmp(argv[i], "--shot-view") && i + 1 < argc) {
+            if (sscanf(argv[++i], "%f,%f,%f,%f,%f", &j.shot_pos[0], &j.shot_pos[1], &j.shot_pos[2],
+                       &j.shot_yaw, &j.shot_pitch) != 5) return 2;
+            j.shot_view = true;
+        }
         else if (!strcmp(argv[i], "--route") && i + 1 < argc) snprintf(j.route, sizeof(j.route), "%s", argv[++i]);
         else if (!strcmp(argv[i], "--world-state")) world_state = true;
         else if (argv[i][0] != '-') port = (unsigned)atoi(argv[i]);
@@ -611,7 +626,9 @@ int main(int argc, char **argv)
 
     hta_desktop *d = NULL;
     hta_gfx *g = NULL;
-    if (shot) {
+    /* Automated join probes need no window on a headless CI machine. */
+    bool offscreen = shot || (autos > 0 && !getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY"));
+    if (offscreen) {
         g = hta_gfx_create_offscreen_ex(j.video.window_width, j.video.window_height, &j.video, err, sizeof(err));
     } else {
         d = hta_desktop_open("Megamod LAN", &j.video, err, sizeof(err));
@@ -621,15 +638,19 @@ int main(int argc, char **argv)
     }
     if (!g) { fprintf(stderr, "renderer: %s\n", err); return 1; }
     upload(&j, g);
+    printf("join: GPU allocated %.2f MiB after upload\n",
+           (double)hta_gfx_device_memory_used(g) / (1024.0 * 1024.0));
     bool captured = false;
     double t0 = SDL_GetTicks64() / 1000.0, logged = t0;
     unsigned frames = 0;
+    double render_ms_sum = 0.0, render_ms_max = 0.0;
+    unsigned render_samples = 0;
     hta_input in;
     memset(&in, 0, sizeof(in));
     for (;;) {
         double now;
         float dt;
-        if (shot) {
+        if (offscreen) {
             now = t0 + frames / 60.0; dt = 1.0f / 60.0f;
             /* Real time for the network: the host runs on the clock. */
             while (SDL_GetTicks64() / 1000.0 < now) SDL_Delay(1);
@@ -658,7 +679,16 @@ int main(int argc, char **argv)
         if (j.route[0]) route(&j, now, &in);
         else if (autos || shot) scripted(now - t0, &in);
         play(&j, &in, now, dt);
-        if (!frame(&j, g, now, dt) && d) {
+        uint64_t render_begin = SDL_GetPerformanceCounter();
+        bool rendered = frame(&j, g, now, dt);
+        double render_ms = 1000.0 * (double)(SDL_GetPerformanceCounter() - render_begin) /
+                           (double)SDL_GetPerformanceFrequency();
+        if (frames >= 30) {
+            render_ms_sum += render_ms;
+            if (render_ms > render_ms_max) render_ms_max = render_ms;
+            render_samples++;
+        }
+        if (!rendered && d) {
             uint32_t w, h;
             hta_desktop_size(d, &w, &h);
             hta_gfx_resize(g, w, h, err, sizeof(err));
@@ -694,6 +724,12 @@ int main(int argc, char **argv)
            j.net.reject_reason == HTA_NET_REJECT_VERSION ? refusal : "NOT connected", j.net.id, seen,
            j.view.kills, j.view.gibs, j.view.fx, j.view.corrections, j.view.team_score[0], j.view.team_score[1],
            broken, j.wfx_audio.played);
+    if (render_samples)
+        printf("join: renderer submit/fence %.3f ms average, %.3f ms max (%u frames after warmup)\n",
+               render_ms_sum / render_samples, render_ms_max, render_samples);
+    printf("join: %u draw calls, %u active lights last frame, %.2f MiB GPU allocated\n",
+           hta_gfx_last_draw_calls(g), j.active_lights,
+           (double)hta_gfx_device_memory_used(g) / (1024.0 * 1024.0));
     movers(&j, "at the end:");
     if (j.went.loaded) {
         printf("join: world state: %u applied (%llu payload bytes, largest %u), %s, %u refused%s%s%s\n", j.view.ws.applied,

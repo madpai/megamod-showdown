@@ -114,6 +114,9 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
     if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x8.sh > scratch/test_x8.log 2>&1; then
       ok "X8 Night Shift: 74 objects, two restored doors, OAL/engine counts, compact late join"
     else bad "X8 Night Shift: 74 objects, two restored doors, OAL/engine counts, compact late join"; fi
+    if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x9.sh > scratch/test_x9.log 2>&1; then
+      ok "X9 Night Shift: authored visuals and X8 gameplay, host actions, late join"
+    else bad "X9 Night Shift: authored visuals and X8 gameplay, host actions, late join"; fi
   fi
   if ./build-host/test_particle "$HTA_MAP" >/dev/null 2>&1; then ok "effect particles from the effect tags"; else bad "effect particles from the effect tags"; fi
   if ./build-host/test_vitals "$HTA_MAP" >/dev/null 2>&1; then ok "vitality and falling from the Trial tags"; else bad "vitality and falling from the Trial tags"; fi

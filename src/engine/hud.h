@@ -77,6 +77,7 @@ typedef struct {
 typedef struct {
     hta_bsp_mesh mesh;          /* clip-space quads; owns its textures */
     bool         loaded;
+    float        presentation_scale; /* 0 means the historical phone scale */
 
     hta_hud_elem elem[HTA_HUD_MAX_ELEMENTS];
     uint32_t     elem_count;

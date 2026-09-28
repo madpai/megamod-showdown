@@ -131,6 +131,7 @@ typedef struct {
     uint8_t  want_type[4 * HTA_ASSET_MAX_PER_TYPE];
     uint16_t want_index[4 * HTA_ASSET_MAX_PER_TYPE];
     uint32_t want_count;
+    bool extended_material;
 } pending;
 
 #define KEY_MAX 16
@@ -215,13 +216,13 @@ static bool parse_descriptor(hta_mj *r, const char *pkg, uint8_t type, hta_asset
                              char *err, size_t n)
 {
     char key[KEY_MAX], id[STR_MAX] = "", mem[STR_MAX] = "", fmt[STR_MAX] = "", tex[STR_MAX] = "", draw[STR_MAX] = "";
-    double w = -1, h = -1, rate = -1, ch = -1, frames = -1;
+    double w = -1, h = -1, rate = -1, ch = -1, frames = -1, emissive = 0, roughness = 0.75;
     char slots[HTA_ASSET_MAX_SLOTS][HTA_RID_MAX + 1];
     uint32_t slot_count = 0;
     bool have_slots = false;
     uint32_t seen = 0;
     static const char *const KEYS[] = { "id", "member", "format", "width", "height", "texture", "draw", "materials",
-                                        "rate", "channels", "frames" };
+                                        "rate", "channels", "frames", "emissive", "roughness" };
     if (!hta_mj_eat(r, '{')) return failv(err, n, "%s: an entry of assets.%s is not an object", pkg, list_name(type));
     if (!hta_mj_eat(r, '}')) do {
         if (!hta_mj_str(r, key, sizeof(key)) || !hta_mj_eat(r, ':'))
@@ -257,7 +258,9 @@ static bool parse_descriptor(hta_mj *r, const char *pkg, uint8_t type, hta_asset
             break;
         case 8: ok = hta_mj_num(r, &rate); break;
         case 9: ok = hta_mj_num(r, &ch); break;
-        default: ok = hta_mj_num(r, &frames); break;
+        case 10: ok = hta_mj_num(r, &frames); break;
+        case 11: ok = hta_mj_num(r, &emissive); break;
+        default: ok = hta_mj_num(r, &roughness); break;
         }
         if (!ok) return failv(err, n, "%s: %s%smalformed '%s' in assets.%s", pkg, id, id[0] ? ": " : "", key, list_name(type));
     } while (hta_mj_eat(r, ','));
@@ -271,9 +274,10 @@ static bool parse_descriptor(hta_mj *r, const char *pkg, uint8_t type, hta_asset
     /* Which fields each type has: exactly these. */
     uint32_t need = type == HTA_RT_TEXTURE ? 0x1Fu : type == HTA_RT_MATERIAL ? 0x61u :
                     type == HTA_RT_MODEL ? 0x87u : 0x707u;
-    if (seen != need) {
+    uint32_t allowed = need | (type == HTA_RT_MATERIAL ? (3u << 11) : 0u);
+    if ((seen & need) != need || (seen & ~allowed)) {
         for (uint32_t k = 0; k < sizeof(KEYS) / sizeof(KEYS[0]); k++) {
-            if (((seen >> k) & 1u) && !((need >> k) & 1u))
+            if (((seen >> k) & 1u) && !((allowed >> k) & 1u))
                 return failv(err, n, "%s: %s: a %s has no field '%s'", pkg, id, hta_rtype_get(type)->noun, KEYS[k]);
             if (!((seen >> k) & 1u) && ((need >> k) & 1u))
                 return failv(err, n, "%s: %s: a %s needs '%s'", pkg, id, hta_rtype_get(type)->noun, KEYS[k]);
@@ -294,6 +298,8 @@ static bool parse_descriptor(hta_mj *r, const char *pkg, uint8_t type, hta_asset
         x[count].width = (uint32_t)w; x[count].height = (uint32_t)h;
         t->texture_count++;
     } else if (type == HTA_RT_MATERIAL) {
+        if (!isfinite(emissive) || emissive < 0 || emissive > 4 || !isfinite(roughness) || roughness < 0 || roughness > 1)
+            return failv(err, n, "%s: %s: emissive must be 0..4 and roughness 0..1", pkg, id);
         uint8_t d = !strcmp(draw, "opaque") ? HTA_ASSET_DRAW_OPAQUE : !strcmp(draw, "alpha") ? HTA_ASSET_DRAW_ALPHA : 0xFF;
         if (d == 0xFF) return failv(err, n, "%s: %s: unknown draw '%s' (opaque or alpha)", pkg, id, draw);
         if (strlen(tex) > HTA_RID_MAX) return failv(err, n, "%s: %s: texture reference longer than %u bytes", pkg, id, HTA_RID_MAX);
@@ -305,6 +311,10 @@ static bool parse_descriptor(hta_mj *r, const char *pkg, uint8_t type, hta_asset
         memcpy(x[count].texture_ref, tex, strlen(tex) + 1);
         x[count].draw = d;
         x[count].texture = HTA_ASSET_NONE;
+        x[count].emissive = (float)emissive;
+        x[count].roughness = (float)roughness;
+        x[count].extended = (seen & (3u << 11)) != 0;
+        pe->extended_material |= x[count].extended;
         t->material_count++;
     } else if (type == HTA_RT_MODEL) {
         if (strcmp(fmt, "mesh1")) return failv(err, n, "%s: %s: unsupported model format '%s' (this engine reads mesh1)", pkg, id, fmt);
@@ -475,6 +485,7 @@ static bool parse_assets(hta_mj *r, const char *pkg, hta_asset_table *t, pending
 {
     static const char *const KEYS[] = { "materials", "members", "models", "schema", "sounds", "textures" };
     uint32_t seen = 0;
+    uint32_t schema = 0;
     char key[KEY_MAX];
     if (!hta_mj_eat(r, '{')) return failv(err, n, "%s: assets is not an object", pkg);
     if (!hta_mj_eat(r, '}')) do {
@@ -489,8 +500,9 @@ static bool parse_assets(hta_mj *r, const char *pkg, hta_asset_table *t, pending
         if (k == 3) {
             double s;
             if (!hta_mj_num(r, &s)) return failv(err, n, "%s: malformed assets schema", pkg);
-            if (s != (double)HTA_ASSET_SCHEMA)
+            if (s != 1.0 && s != 2.0)
                 return failv(err, n, "%s: unsupported assets schema %g (this engine has %u)", pkg, s, HTA_ASSET_SCHEMA);
+            schema = (uint32_t)s;
             ok = true;
         } else if (k == 1) ok = parse_members(r, pkg, pe, err, n);
         else ok = parse_list(r, pkg, k == 0 ? HTA_RT_MATERIAL : k == 2 ? HTA_RT_MODEL : k == 4 ? HTA_RT_SOUND : HTA_RT_TEXTURE,
@@ -499,6 +511,7 @@ static bool parse_assets(hta_mj *r, const char *pkg, hta_asset_table *t, pending
     } while (hta_mj_eat(r, ','));
     if (!hta_mj_eat(r, '}')) return failv(err, n, "%s: malformed assets", pkg);
     if (seen != 0x3Fu) return failv(err, n, "%s: assets needs materials, members, models, schema, sounds and textures", pkg);
+    if (pe->extended_material && schema < 2) return failv(err, n, "%s: emissive and roughness need assets schema 2", pkg);
     return true;
 }
 
@@ -565,6 +578,10 @@ bool hta_asset_model_bind(hta_asset_model *m, const hta_asset_material *material
     for (uint32_t i = 0; i < m->mesh.submesh_count; i++) {
         hta_submesh *sm = &m->mesh.submeshes[i];
         sm->draw_mode = materials[m->slot[sm->albedo_tex]].draw == HTA_ASSET_DRAW_ALPHA ? HTA_DRAW_ALPHA : HTA_DRAW_OPAQUE;
+        const hta_asset_material *mat = &materials[m->slot[sm->albedo_tex]];
+        sm->visual_material = mat->extended;
+        sm->emissive = mat->emissive;
+        sm->roughness = mat->roughness;
     }
     return true;
 }

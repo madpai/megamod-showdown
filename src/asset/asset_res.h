@@ -57,7 +57,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define HTA_ASSET_SCHEMA          1u
+#define HTA_ASSET_SCHEMA          2u
 #define HTA_ASSET_MAX_PER_TYPE    64u                 /* one library, one type */
 #define HTA_ASSET_MAX_MEMBERS     256u
 #define HTA_ASSET_MEMBER_MAX      96u                 /* bytes in a member path */
@@ -87,6 +87,9 @@ typedef struct {
     uint8_t  draw;            /* HTA_ASSET_DRAW_* */
     uint16_t texture;         /* the table's texture index, once linked */
     char     texture_ref[HTA_RID_MAX + 1];
+    float    emissive;        /* schema 2: base texture RGB emits independently of lights, 0..4 */
+    float    roughness;       /* schema 2: 0 sharp metal .. 1 matte; old default 0.75 */
+    bool     extended;
 } hta_asset_material;
 
 typedef struct hta_asset_model_s {

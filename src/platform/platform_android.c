@@ -51,6 +51,7 @@
 #include "../asset/effect.h"
 #include "../asset/model.h"
 #include "../gfx/gfx.h"
+#include "../gfx/scene_visual.h"
 #include "../engine/scene_light.h"
 #include "audio_android.h"
 #include "../net/session.h"
@@ -5212,6 +5213,14 @@ static void on_cmd(struct android_app *app, int32_t cmd)
  * out of a 126 x 145 world unit map the reporter was standing in. */
 static char g_debug_text[128];
 static char g_ammo_text[32];
+static _Atomic int g_player_presentation;
+
+JNIEXPORT jint JNICALL
+Java_net_hta_halotrial_GameActivity_nativePlayerPresentation(JNIEnv *env, jclass cls)
+{
+    (void)env; (void)cls;
+    return atomic_load(&g_player_presentation);
+}
 
 JNIEXPORT jstring JNICALL
 Java_net_hta_halotrial_GameActivity_nativeDebugText(JNIEnv *env, jclass cls)
@@ -7122,6 +7131,8 @@ void android_main(struct android_app *app)
             if (state.gpu_hud) {
                 uint32_t ew = 0, eh = 0;
                 hta_gfx_extent(state.gfx, &ew, &eh);
+                state.hud.presentation_scale = state.world_loaded &&
+                    state.world_ext.world_defs.has_environment ? 0.75f : 1.0f;
                 /* An imported weapon's own crosshair opens with the spread. */
                 if (held_imported(&state)) hta_hud_set_cross_bloom(&state.hud, state.gun.error);
                 hta_hud_layout(&state.hud, ew, eh);
@@ -7149,6 +7160,8 @@ void android_main(struct android_app *app)
                 vmdraw.vertex_count = state.vm.mesh.vertex_count;
                 for (int k = 0; k < 3; k++) vmdraw.offset[k] = state.weap.fp_offset[k];
             }
+            if (vmdraw.mesh && state.world_loaded && state.world_ext.world_defs.has_environment)
+                vmdraw.offset[2] -= 0.06f;
             hta_gfx_dynamic dynlist[HTA_GFX_MAX_DYNAMIC];
             memset(dynlist, 0, sizeof(dynlist));   /* `lit` defaults off */
             uint32_t dyncount = 0;
@@ -7247,6 +7260,10 @@ void android_main(struct android_app *app)
                     if (hta_weather_thunder(&state.wfx.weather, &tg)) shake_thunder(&state, tg);
                 }
             }
+            if (state.world_loaded)
+                hta_scene_apply_visual(&drawscene, &state.world_ext.world_defs, &state.went, state.cam.pos);
+            atomic_store(&g_player_presentation,
+                         state.world_loaded && state.world_ext.world_defs.has_environment);
 
             if (!state.gpu_gibs && hta_game_view_gib_mesh(&state.gview)) {
                 char err[HTA_ERRLEN];
@@ -7322,11 +7339,13 @@ void android_main(struct android_app *app)
                      state.net_enabled ? state.net.stats.ping_ms : 0.0);
             if (state.fps_accum >= 2.0) {
                 hta_log("[perf] %.1f fps | pos (%.2f %.2f %.2f) %s | tris %u"
-                        " | audio %s %u voices %u started %u dropped",
+                        " | draws %u lights %u gpu %.1f MiB | audio %s %u voices %u started %u dropped",
                         state.fps_frames / state.fps_accum,
                         state.player.pos[0], state.player.pos[1], state.player.pos[2],
                         state.player.on_ground ? "grounded" : "airborne",
                         state.have_mesh ? state.mesh.index_count / 3 : 0,
+                        hta_gfx_last_draw_calls(state.gfx), drawscene.light_count,
+                        (double)hta_gfx_device_memory_used(state.gfx) / 1048576.0,
                         hta_audio_android_running() ? "on" : "off",
                         hta_audio_active_voices(&state.audio),
                         state.audio.started,

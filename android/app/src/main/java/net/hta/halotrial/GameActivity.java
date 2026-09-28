@@ -190,6 +190,7 @@ public class GameActivity extends NativeActivity {
      *   0  hand over the next weapon in the cache's roster
      */
     static native String nativeDebugText();
+    static native int nativePlayerPresentation();
     static native String nativeAmmoText();
     static native int nativeVehicleMode();
     static native String nativeVehicleText();
@@ -970,6 +971,8 @@ public class GameActivity extends NativeActivity {
         private int reloadPtr = -1, meleePtr = -1, swapPtr = -1, zoomPtr = -1;
         private int nadePtr = -1;
         private int caps;   /* nativeHudCaps at the last touch */
+        private boolean telemetryVisible;
+        private boolean playerPresentation;
         private final float[] lastX = new float[16];
         private final float[] lastY = new float[16];
 
@@ -1009,10 +1012,11 @@ public class GameActivity extends NativeActivity {
         /* `charge` 0..1 draws a cooldown sweep; 1 or more is ready. */
         private void button(Canvas c, float cx, float cy, float r, int ic, String cap, int accent,
                             boolean held, float charge) {
-            glass.setColor(held ? 0xA0303844 : 0x7010141A);
+            boolean quiet = playerPresentation && ic != IC_FIRE && ic != IC_ABILITY;
+            glass.setColor(held ? 0xA0303844 : quiet ? 0x4010141A : 0x7010141A);
             c.drawCircle(cx, cy, r, glass);
-            rim.setStrokeWidth(Math.max(2f, r * 0.06f));
-            rim.setColor(accent);
+            rim.setStrokeWidth(Math.max(1.5f, r * (quiet ? 0.04f : 0.06f)));
+            rim.setColor(quiet ? 0x55CED8DD : accent);
             c.drawCircle(cx, cy, r - rim.getStrokeWidth() * 0.5f, rim);
             if (charge < 1f) {
                 /* Cooling down: the ring fills clockwise, the icon greyed. */
@@ -1020,7 +1024,7 @@ public class GameActivity extends NativeActivity {
                 arc.set(cx - r + 3, cy - r + 3, cx + r - 3, cy + r - 3);
                 c.drawArc(arc, -90f, 360f * Math.max(0f, charge), false, rim);
             }
-            icon.setAlpha(charge < 1f ? 110 : 240);
+            icon.setAlpha(charge < 1f ? 110 : quiet ? 166 : 240);
             icon.setStrokeWidth(Math.max(2.5f, r * 0.09f));
             float s = r * 0.42f, iy = cap == null ? cy : cy - r * 0.12f;
             ip.reset();
@@ -1083,7 +1087,7 @@ public class GameActivity extends NativeActivity {
             }
             if (cap != null) {
                 caption.setTextSize(r * (ic == IC_TEXT ? 0.36f : 0.27f));
-                caption.setAlpha(charge < 1f ? 140 : 216);
+                caption.setAlpha(charge < 1f ? 140 : quiet ? 150 : 216);
                 c.drawText(cap, cx, ic == IC_TEXT ? cy + caption.getTextSize() * 0.35f : cy + r * 0.62f, caption);
             }
         }
@@ -1247,6 +1251,8 @@ public class GameActivity extends NativeActivity {
                     /* SEND REPORT, top right: what this phone measured, for an agent. */
                     if (x > w * 0.72f && x < w * 0.97f && y > h * 0.04f && y < h * 0.14f)
                         Report.send(owner, "button", false);
+                    if (x > w * 0.72f && x < w * 0.97f && y > h * 0.16f && y < h * 0.26f)
+                        telemetryVisible = !telemetryVisible;
                 }
                 invalidate();
                 return true;
@@ -1541,6 +1547,9 @@ public class GameActivity extends NativeActivity {
                 c.drawText("QUIT TO MAIN MENU", w * 0.5f, h * 0.675f, label);
                 c.drawRect(w * 0.72f, h * 0.04f, w * 0.97f, h * 0.14f, pauseBtn);
                 c.drawText("SEND REPORT", w * 0.845f, h * 0.105f, label);
+                c.drawRect(w * 0.72f, h * 0.16f, w * 0.97f, h * 0.26f, pauseBtn);
+                c.drawText(telemetryVisible ? "HIDE DIAGNOSTICS" : "SHOW DIAGNOSTICS",
+                           w * 0.845f, h * 0.225f, label);
                 if (!Report.lastStatus.isEmpty())
                     c.drawText(Report.lastStatus, w * 0.5f, h * 0.95f, label);
                 if ((classState & 2) != 0) {
@@ -1552,6 +1561,7 @@ public class GameActivity extends NativeActivity {
                 return;
             }
             int vehicleMode = GameActivity.nativeVehicleMode();
+            playerPresentation = GameActivity.nativePlayerPresentation() != 0;
             int netStatus = GameActivity.nativeNetStatus();
             if (netStatus != 0) {
                 String connection = netStatus == 1 ? "CONNECTING TO GAME..." :
@@ -1657,7 +1667,12 @@ public class GameActivity extends NativeActivity {
                 String a = null;
                 try { a = nativeAmmoText(); } catch (Throwable ignored) { }
                 if (a != null && a.length() > 0)
-                    c.drawText(a, getWidth() - 28f, getHeight() * 0.30f, ammo);
+                {
+                    ammo.setTextSize(Math.min(getWidth(), getHeight()) * (playerPresentation ? 0.052f : 0.085f));
+                    ammo.setColor(playerPresentation ? 0xBBDDE5E7 : 0xF2FFFFFF);
+                    c.drawText(a, getWidth() - 28f,
+                               getHeight() * (playerPresentation ? 0.22f : 0.30f), ammo);
+                }
 
                 drawGame(c);
             }
@@ -1667,7 +1682,7 @@ public class GameActivity extends NativeActivity {
              * covers these digits, but the punch-hole still would, and an
              * unreadable X is an unmeasurable bug report. */
             String t = null;
-            try { t = nativeDebugText(); } catch (Throwable ignored) { }
+            if (telemetryVisible) try { t = nativeDebugText(); } catch (Throwable ignored) { }
             if (t != null && t.length() > 0) {
                 debug.setTextSize(label.getTextSize() * 0.8f);
                 float left = 24f, top = 0f;
