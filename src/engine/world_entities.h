@@ -30,6 +30,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "../asset/world_def.h"
+#include "../asset/world_repl.h"
 #include "player.h"
 
 #define HTA_WENT_QUEUE 512u
@@ -63,7 +64,8 @@ typedef struct {
     float    cooldown;
     /* mover (X5): the phase its sound last answered, so a start sounds once */
     uint8_t  heard;
-    /* relay (X7): active after activate, inactive after deactivate (host only) */
+    /* relay (X7): active after activate, inactive after deactivate; X8: replicated
+     * to clients as a logical flag (the host decides, clients only hold it) */
     uint8_t  active;
 } hta_went_state;
 
@@ -92,13 +94,13 @@ typedef struct { uint8_t actor; float pos[3], yaw; } hta_went_teleport;
 /* A scripted interactable was used (X3): the host's script phase
  * (script/script.h) calls its script's on_used, then forgets it. This
  * file never runs a script; it only says one is due. */
-typedef struct { uint8_t entity, actor; } hta_went_call;
+typedef struct { uint16_t entity; uint8_t actor; } hta_went_call;   /* X8: a runtime index, 16 bits */
 
 /* X5: a mover whose definition names a sound started to open or close
  * this step -- on the host and, from the host's replicated state, on every
  * joiner alike. The caller plays `sound` (asset table index) at `pos`. A
  * join's first state (a snap) and a round reset are silent. */
-typedef struct { uint8_t entity; uint16_t sound; float pos[3]; uint16_t binding; } hta_went_cue;
+typedef struct { uint16_t entity; uint16_t sound; float pos[3]; uint16_t binding; } hta_went_cue;
 /* `binding`: 0 for a mover starting to move (every peer derives these from
  * mover state); binding index + 1 for an X7 play_sound action (host only:
  * the host sends it to joiners as a world-sound effect). */
@@ -112,6 +114,7 @@ typedef struct {
 
 typedef struct hta_world_entities {
     const hta_world_defs *defs;          /* borrowed, immutable */
+    hta_wrep_map    rep;                 /* X8: runtime index <-> replicated state (built at load) */
     hta_went_state  st[HTA_WDEF_MAX_ENTITIES];
     hta_went_handle link_target[HTA_WDEF_MAX_LINKS];
     /* mover definitions: a box grid each (shared, built once at load) */
@@ -217,12 +220,24 @@ uint32_t hta_went_instances(const hta_world_entities *w, hta_collision_instance 
 /* A mover's current offset from its closed place. */
 void hta_went_offset(const hta_world_entities *w, uint32_t index, float out[3]);
 
-/* Replication, host -> clients: each mover's phase and progress. `t_q`
- * is t in 1/65535ths. */
-typedef struct { uint8_t index, phase; uint16_t t_q; } hta_went_mover_state;
+/* Replication, host -> clients (X8, docs/WORLD_STATE.md): each mover's
+ * phase and progress in SPATIAL order (w->rep: out[k] is spatial index k),
+ * `index` its runtime object index; `t_q` is t in 1/65535ths. */
+typedef struct { uint16_t index; uint8_t phase; uint16_t t_q; } hta_went_mover_state;
 uint32_t hta_went_snapshot(const hta_world_entities *w, hta_went_mover_state *out, uint32_t cap);
 /* Client: the host's word for one mover. Ignored unless `index` is a mover
  * here. `snap` jumps to it (a join); else it is eased toward. */
 bool hta_went_apply(hta_world_entities *w, const hta_went_mover_state *s, bool snap);
+/* X8: every relay's state as a bitset in FLAG order (bit k: flag index k),
+ * room for `cap_bits`; the number of flags written. */
+uint32_t hta_went_flags(const hta_world_entities *w, uint8_t *bits, uint32_t cap_bits);
+/* X8, client: the host's word for flag `flag` (a relay). No event: a
+ * client never runs bindings; it only holds the state. */
+bool hta_went_apply_flag(hta_world_entities *w, uint32_t flag, bool active);
+/* X8, diagnostics: one object as this peer has it -- authored ID, kind,
+ * runtime index, replication channel and index, current state -- e.g.
+ * "nightshift:entity/aux_power relay runtime 3 logical 0 active". Never a
+ * pointer. False past the end. */
+bool hta_went_describe(const hta_world_entities *w, uint32_t index, char *out, size_t n);
 
 #endif

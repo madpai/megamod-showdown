@@ -8,7 +8,9 @@ typedef struct {
     uint64_t invalid, dropped, snapshots_in, snapshots_out, events_in, events_out;
     uint64_t worlds_in, worlds_out;
     uint64_t limited;           /* server: dropped unread, over a source's rate */
-    uint64_t refused;           /* server: HELLOs turned away (map, content) */
+    uint64_t refused;           /* server: HELLOs turned away (map, content, v11: version) */
+    uint64_t world_states, world_state_bytes;   /* X8: WORLD_STATE sent (server) or applied (client), payload bytes */
+    uint32_t world_state_max;                   /* X8: the largest WORLD_STATE payload */
     double ping_ms;
 } hta_net_stats;
 
@@ -57,9 +59,19 @@ typedef struct {
     uint32_t last_drop_tick;
     uint32_t last_game_tick;
     uint32_t last_world_state_tick;
+    /* X8: WORLD_STATE goes out when what it says changes -- a mover's phase,
+     * a relay's flag: at once, then HTA_NET_WSTATE_REPEATS more times against
+     * loss -- while anything moves every HTA_NET_WSTATE_MOVING_TICKS (clients
+     * move movers themselves between), when a peer has just joined, and at
+     * least every HTA_NET_WSTATE_KEYFRAME_TICKS. Each is complete. */
+    hta_net_world_state ws_sent;
+    bool     ws_have, ws_force;
+    uint8_t  ws_repeat;
+    uint32_t ws_last_tick;
     uint32_t map_crc;
     uint64_t content;          /* v10: the imported rosters' fingerprint; 0 none */
     uint8_t  last_refusal;     /* the last HELLO turned away: HTA_NET_REJECT_* */
+    uint16_t last_refused_version;  /* v11: ... and, for VERSION, the joiner's protocol */
     /* What DISCOVER is told. max_players also caps who HELLO lets in;
      * hta_net_server_open sets it to HTA_NET_MAX_PLAYERS. */
     hta_net_info info;
@@ -83,6 +95,8 @@ typedef struct {
     uint8_t id;
     bool connected;
     uint8_t reject_reason;
+    uint16_t peer_version;     /* v11: with REJECT_VERSION, the host's protocol (0 unknown) */
+    double last_probe;         /* v11: when older-protocol probes went out */
     uint32_t map_crc;
     uint64_t content;          /* v10: sent in HELLO (app/compat.h) */
     double last_hello, last_ping, ping_sent, last_receive;
@@ -116,7 +130,9 @@ typedef struct {
     hta_net_world_state world_state;
     bool have_world_state;
     uint32_t last_world_state_tick;
+    char world_state_error[160];   /* X8: why the last WORLD_STATE was refused ("" none) */
 } hta_net_client;
+
 
 bool hta_net_server_open(hta_net_server *s, uint16_t port);
 /* Listening on one address only (NULL: all), e.g. the Tailscale address. */
@@ -133,6 +149,8 @@ bool hta_net_server_projectiles(hta_net_server *s, const hta_net_projectiles *pr
 bool hta_net_server_vehicles(hta_net_server *s, const hta_net_vehicles *vehicles);
 bool hta_net_server_drops(hta_net_server *s, const hta_net_drops *drops);
 bool hta_net_server_game(hta_net_server *s, const hta_net_game *game);
+/* X8: the world's complete replicated state now (every entry carried); the
+ * server decides whether it goes out this tick (see ws_* above). True when sent. */
 bool hta_net_server_world_state(hta_net_server *s, const hta_net_world_state *ws);
 
 bool hta_net_scan_open(hta_net_scan *s);

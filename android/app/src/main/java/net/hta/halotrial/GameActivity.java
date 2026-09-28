@@ -1561,7 +1561,8 @@ public class GameActivity extends NativeActivity {
                         netStatus == 6 ? "WAITING FOR MATCH STATE" :
                         netStatus == 7 ? "MAPS DO NOT MATCH" :
                         netStatus == 8 ? "GAME IS FULL" :
-                        netStatus == 9 ? "CHARACTERS/WEAPONS DO NOT MATCH" : "NETWORK UNAVAILABLE";
+                        netStatus == 9 ? "CHARACTERS/WEAPONS DO NOT MATCH" :
+                        netStatus == 10 ? "HOST RUNS ANOTHER VERSION (UPDATE BOTH)" : "NETWORK UNAVAILABLE";
                 c.drawText(connection, getWidth() * 0.5f, getHeight() * 0.135f, label);
             }
             float[] dmg = GameActivity.nativeDamageNumbers();

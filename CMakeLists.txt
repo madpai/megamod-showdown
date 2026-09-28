@@ -46,7 +46,7 @@ if(ANDROID)
         src/engine/gore.c
         src/engine/props.c
         src/engine/world_entities.c
-        src/asset/world_def.c src/asset/mjson.c src/asset/resource.c src/asset/package.c src/asset/asset_res.c src/asset/prefab.c
+        src/asset/world_def.c src/asset/world_repl.c src/asset/mjson.c src/asset/resource.c src/asset/package.c src/asset/asset_res.c src/asset/prefab.c
         src/script/script.c
         src/engine/weather.c
         src/engine/sfx.c
@@ -64,6 +64,7 @@ if(ANDROID)
         src/game/world_fx.c
         src/game/world_fx_audio.c
         src/game/world_sounds.c
+        src/game/net_world_state.c
         src/game/world_fx_gpu.c
         src/game/world_entities_gpu.c
         src/game/game.c
@@ -118,12 +119,12 @@ else()
         src/game/nav.c
         src/game/external_world.c
         src/game/imported.c
-        src/game/world_fx.c src/game/world_fx_audio.c src/game/world_sounds.c
+        src/game/world_fx.c src/game/world_fx_audio.c src/game/world_sounds.c src/game/net_world_state.c
         src/game/game.c
         src/game/brain.c
         src/game/view.c
         src/game/menu.c
-        src/engine/world_entities.c src/asset/world_def.c src/asset/mjson.c src/asset/resource.c src/asset/package.c src/asset/asset_res.c src/asset/prefab.c src/asset/resource_contract.c src/script/script.c
+        src/engine/world_entities.c src/asset/world_def.c src/asset/world_repl.c src/asset/mjson.c src/asset/resource.c src/asset/package.c src/asset/asset_res.c src/asset/prefab.c src/asset/resource_contract.c src/script/script.c
         src/asset/cache.c src/asset/bsp.c src/asset/external_map.c src/asset/oal_asset.c src/asset/bitmap.c src/asset/sound.c src/asset/ogg.c src/asset/effect.c src/asset/dialogue.c src/asset/strings.c src/asset/items.c src/asset/biped.c src/asset/weapon.c
         src/asset/anim.c src/asset/model.c src/asset/font.c
         src/gfx/gfx_settings.c)
@@ -138,6 +139,9 @@ else()
     add_executable(test_world_entities tests/test_world_entities.c)
     target_link_libraries(test_world_entities PRIVATE hta_engine m)
     add_test(NAME world_entities COMMAND test_world_entities)
+    add_executable(test_world_state tests/test_world_state.c)
+    target_link_libraries(test_world_state PRIVATE hta_engine hta_net m)
+    add_test(NAME world_state COMMAND test_world_state)
     add_executable(test_script tests/test_script.c)
     target_link_libraries(test_script PRIVATE hta_engine m)
     add_test(NAME script COMMAND test_script)

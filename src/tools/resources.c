@@ -16,7 +16,11 @@
  *                                      what it needs, what every reference
  *                                      resolved to (X5: asset references too,
  *                                      with their provider and table index),
- *                                      its asset table and its world key (JSON).
+ *                                      its asset table and its world key (JSON);
+ *                                      X8: its world state -- runtime, spatial,
+ *                                      logical and host-only counts, snapshot
+ *                                      bytes, and every object's runtime index
+ *                                      and replication channel and index.
  *                                      Exit 1 with the loader's message when
  *                                      the world is refused.
  *
@@ -25,6 +29,9 @@
 #include "app/fs.h"
 #include "asset/external_map.h"
 #include "asset/resource.h"
+#include "asset/world_repl.h"
+#include "gfx/gfx.h"
+#include "net/protocol.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -224,7 +231,36 @@ static int inspect(const char *bundle, const char *world)
             printf(", \"provider\": "); json_str(FROM(a->material[mi].provider));
             printf(", \"index\": %u}", mi);
         }
-    printf("],\n \"assets\": {\"payload_bytes\": %u, \"textures\": [", a->payload_bytes);
+    /* X8: what this world costs on the wire, and every object's identities. */
+    {
+        static hta_wrep_map rep;
+        char rerr[160] = "";
+        bool ok = hta_wrep_build(&rep, d, rerr, sizeof(rerr));
+        uint32_t drawn = 0;
+        for (uint32_t i = 0; i < d->count; i++)
+            drawn += d->entity[i].kind == HTA_WDEF_MOVER || (d->entity[i].kind == HTA_WDEF_PROP && d->entity[i].model);
+        uint32_t rest = hta_net_world_state_bytes(rep.spatial_count, 0, rep.flag_count);
+        uint32_t busy = hta_net_world_state_bytes(rep.spatial_count, rep.spatial_count, rep.flag_count);
+        printf("],\n \"world_state\": {\"protocol\": %u, \"format\": %u, \"ok\": %s, \"runtime_objects\": %u, \"spatial\": %u, "
+               "\"logical\": %u, \"host_only\": %u, \"snapshot_bytes\": {\"at_rest\": %u, \"all_moving\": %u, \"packet_at_rest\": %u}, "
+               "\"gpu_instances\": %u, \"limits\": {\"runtime_objects\": %u, \"spatial\": %u, \"logical\": %u, \"gpu_instances\": %u}",
+               HTA_NET_VERSION, HTA_NET_WSTATE_FORMAT, ok ? "true" : "false", d->count, rep.spatial_count, rep.flag_count,
+               d->count - rep.spatial_count - rep.flag_count, rest, busy, rest + HTA_NET_HEADER, drawn, HTA_WDEF_MAX_ENTITIES,
+               HTA_WREP_MAX_SPATIAL, HTA_WREP_MAX_FLAGS, HTA_GFX_MAX_INSTANCES);
+        if (!ok) { printf(", \"error\": "); json_str(rerr); }
+        printf(",\n  \"objects\": [");
+        for (uint32_t i = 0; i < d->count; i++) {
+            const hta_wrep_kind_info *k = hta_wrep_kind(d->entity[i].kind);
+            uint8_t ch = k ? k->channel : HTA_WREP_HOST_ONLY;
+            printf("%s\n   {\"id\": ", i ? "," : ""); json_str(d->entity[i].id);
+            printf(", \"kind\": \"%s\", \"runtime\": %u, \"channel\": \"%s\"", hta_wdef_kind_name(d->entity[i].kind), i,
+                   hta_wrep_channel_name(ch));
+            if (ch != HTA_WREP_HOST_ONLY && ok) printf(", \"index\": %u", rep.index[i]);
+            printf("}");
+        }
+        printf("]}");
+    }
+    printf(",\n \"assets\": {\"payload_bytes\": %u, \"textures\": [", a->payload_bytes);
     for (uint32_t i = 0; i < a->texture_count; i++) {
         printf("%s{\"id\": ", i ? ", " : ""); json_str(a->texture[i].id);
         printf(", \"index\": %u, \"from\": ", i); json_str(FROM(a->texture[i].provider));

@@ -4964,7 +4964,7 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
     if (!s->net.connected) {
         s->net_spawned=false; s->remote_visible=false;
         s->props_synced=false;
-        s->went_synced=false; s->went_state_tick=0;
+        hta_net_wstate_reset(&s->went_sync);
         if (!s->net_hosting) {
             s->world_applied_tick=0;
             s->projectile_applied_tick=0;
@@ -4979,7 +4979,8 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
     atomic_store(&g_net_status, !s->net.connected ?
                  s->net.reject_reason==HTA_NET_REJECT_MAP ? 7 :
                  s->net.reject_reason==HTA_NET_REJECT_FULL ? 8 :
-                 s->net.reject_reason==HTA_NET_REJECT_CONTENT ? 9 : 1 :
+                 s->net.reject_reason==HTA_NET_REJECT_CONTENT ? 9 :
+                 s->net.reject_reason==HTA_NET_REJECT_VERSION ? 10 : 1 :
                  !s->net_hosting ? (s->net.have_world ? 2 : 6) :
                  hta_net_server_count(&s->host_server)>1 ? 4 : 3);
     if (s->net.connected && !s->net_spawned && s->spawn_count) {
@@ -5025,17 +5026,16 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
                                  first ? NULL : &s->wfx.rigid,first ? NULL : &s->wfx.fx);
             s->props_synced=true;
         }
-        /* The host's movers: state, not events -- the first one snaps (we
-         * were not there to see it move). */
-        if (s->went.loaded && s->net.have_world_state && s->net.last_world_state_tick!=s->went_state_tick) {
-            s->went_state_tick=s->net.last_world_state_tick;
-            for (unsigned i=0;i<s->net.world_state.count;i++) {
-                hta_went_mover_state m={s->net.world_state.mover[i].entity,s->net.world_state.mover[i].phase,
-                                        s->net.world_state.mover[i].t};
-                hta_went_apply(&s->went,&m,!s->went_synced);
-            }
-            if (!s->went_synced) hta_log("[world] the host's movers applied (%u)",s->net.world_state.count);
-            s->went_synced=true;
+        /* The host's world state (X8): movers and relays, state not events --
+         * each entry's first value snaps (we were not there to see it). */
+        if (s->went.loaded) {
+            bool was=s->went_sync.synced;
+            uint32_t refused=s->went_sync.refused;
+            hta_net_wstate_apply(&s->went_sync,&s->net,&s->went);
+            if (!was && s->went_sync.synced)
+                hta_log("[world] the host's world state applied (%u movers, %u relays)",
+                        s->went.rep.spatial_count,s->went.rep.flag_count);
+            if (s->went_sync.refused!=refused) hta_log("[world] %s",s->went_sync.error);
         }
         s->game.allow_duplicate_heroes = (gm->options & HTA_NET_GAME_DUPLICATES) != 0;
         s->allow_duplicate_heroes = s->game.allow_duplicate_heroes;

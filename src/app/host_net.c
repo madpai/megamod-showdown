@@ -309,20 +309,26 @@ void hta_host_world(hta_session *s)
     if (s->wfx.ready)
         gm.prop_count=(uint16_t)hta_props_broken_mask(&s->wfx.props,gm.prop_broken,HTA_NET_MAX_PROPS);
     hta_net_server_game(&s->host_server,&gm);
-    /* The world's movers, as they are now: a joiner, late or not, takes
-     * the state and never replays how it came about. */
+    /* The world's replicated state as it is now (X8): every mover's phase
+     * and progress and every relay's flag, by replication index. A joiner,
+     * late or not, takes the state and never replays how it came about; the
+     * server decides when it goes out (net/session.h). */
+    /* A host-only world still sends the five-byte empty state. A newcomer
+     * can then mark it synced, and its wire cost matches the contract. */
     if (s->went.loaded) {
-        hta_went_mover_state ms[HTA_NET_MAX_WORLD_STATE];
-        uint32_t n=hta_went_snapshot(&s->went,ms,HTA_NET_MAX_WORLD_STATE);
-        if (n) {
-            static hta_net_world_state ws;
-            memset(&ws,0,sizeof(ws));
-            for (uint32_t i=0;i<n;i++) {
-                ws.mover[i].entity=ms[i].index; ws.mover[i].phase=ms[i].phase; ws.mover[i].t=ms[i].t_q;
-            }
-            ws.count=(uint8_t)n;
-            hta_net_server_world_state(&s->host_server,&ws);
+        static hta_went_mover_state ms[HTA_WREP_MAX_SPATIAL];
+        static hta_net_world_state ws;
+        memset(&ws,0,sizeof(ws));
+        uint32_t n=hta_went_snapshot(&s->went,ms,HTA_NET_WSTATE_MAX_SPATIAL);
+        ws.spatial_total=(uint16_t)n;
+        for (uint32_t i=0;i<n;i++) {
+            ws.phase[i]=ms[i].phase; ws.t[i]=ms[i].t_q;
+            hta_net_bit_set(ws.spatial_has,i,true);
         }
+        uint32_t f=hta_went_flags(&s->went,ws.flag,HTA_NET_WSTATE_MAX_FLAGS);
+        ws.flag_total=(uint16_t)f;
+        for (uint32_t i=0;i<f;i++) hta_net_bit_set(ws.flag_has,i,true);
+        hta_net_server_world_state(&s->host_server,&ws);
     }
 }
 

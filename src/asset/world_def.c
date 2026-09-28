@@ -4,6 +4,7 @@
  * nesting respected, so a key that merely appears inside another value is
  * never mistaken for the section. */
 #include "world_def.h"
+#include "world_repl.h"
 #include "mjson.h"
 #include "asset_res.h"
 #include "package.h"
@@ -318,7 +319,9 @@ static bool parse_link(rd *r, hta_wdef_link *l, char *target, const char *owner,
 
 static bool parse_entity(rd *r, hta_world_defs *d, pending *pend, char *err, size_t n)
 {
-    if (d->count >= HTA_WDEF_MAX_ENTITIES) return fail(err, n, "more than 64 world entities%s%s", NULL, NULL);
+    if (d->count >= HTA_WDEF_MAX_ENTITIES)
+        return failv(err, n, "world has more than %u runtime objects (world entities), exceeding limit %u",
+                     HTA_WDEF_MAX_ENTITIES, HTA_WDEF_MAX_ENTITIES);
     hta_wdef *e = &d->entity[d->count];
     memset(e, 0, sizeof(*e));
     e->first_link = (uint16_t)d->link_count;
@@ -394,7 +397,7 @@ static bool parse_entity(rd *r, hta_world_defs *d, pending *pend, char *err, siz
 static bool parse_mover_def(rd *r, hta_world_defs *d, pending *pend, char *err, size_t n)
 {
     if (d->mover_def_count >= HTA_WDEF_MAX_MOVER_DEFS)
-        return fail(err, n, "more than 64 mover definitions%s%s", NULL, NULL);
+        return failv(err, n, "more than %u mover definitions", HTA_WDEF_MAX_MOVER_DEFS);
     hta_wmover_def *m = &d->mover_def[d->mover_def_count];
     memset(m, 0, sizeof(*m));
     char key[16], where[HTA_WDEF_ID_MAX + 32];
@@ -1294,7 +1297,7 @@ static bool expand_prefabs(hta_world_defs *d, pending *pend, const hta_pkg_set *
 
 static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char *err, size_t n)
 {
-    static pending pend;        /* 33 KB: not on a phone's stack */
+    static pending pend;        /* X8: large tables, not on a phone's stack */
     memset(&pend, 0, sizeof(pend));
     char key[24];
     bool have_schema = false, have_entities = false, have_defs = false;
@@ -1579,6 +1582,14 @@ bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t n)
         return fail(err, n, "world entities over their limits%s%s", NULL, NULL);
     if (d->mover_def_count > HTA_WDEF_MAX_MOVER_DEFS)
         return fail(err, n, "mover definitions over their limit%s%s", NULL, NULL);
+    /* X8: what the wire can carry -- every mover's state and every relay's
+     * bit in one WORLD_STATE (asset/world_repl.h). */
+    uint32_t spatial, flags;
+    hta_wrep_count(d, &spatial, &flags, NULL);
+    if (spatial > HTA_WREP_MAX_SPATIAL)
+        return failv(err, n, "world has %u movers, exceeds the spatial replication limit %u", spatial, HTA_WREP_MAX_SPATIAL);
+    if (flags > HTA_WREP_MAX_FLAGS)
+        return failv(err, n, "world has %u relays, exceeds the logical state limit %u", flags, HTA_WREP_MAX_FLAGS);
     for (uint32_t i = 0; i < d->mover_def_count; i++) {
         const hta_wmover_def *m = &d->mover_def[i];
         /* Unnamed: an X1 inline mover's own. Named: namespace:mover/name,

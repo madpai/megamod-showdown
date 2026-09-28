@@ -1,5 +1,10 @@
 # Night Shift -- findings and the next milestone
 
+> Historical 2026-09-27 findings. X8 has since implemented the recommended
+> world-state milestone; see [WORLD_STATE.md](../WORLD_STATE.md) and the
+> separate 74-object `project_x8.py` build. The original 62-object package
+> and the measurements below remain fixed.
+
 What building MegaMod's first production vertical slice showed. Evidence
 is in the sibling docs; this page ranks it. Only what was hit while
 building and testing Night Shift is ranked -- not speculative features.

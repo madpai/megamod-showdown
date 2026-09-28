@@ -153,7 +153,7 @@ const hta_ref_info *hta_ref_get(uint8_t field);
 
 /* ---- a set of provided resources, and typed resolution ------------------- */
 
-#define HTA_RES_MAX 512u              /* resources in one loaded package set */
+#define HTA_RES_MAX 2048u             /* resources in one loaded package set (X8: 512 before; every placed entity is one) */
 #define HTA_RES_MAX_PROVIDERS 16u     /* packages in it (package.h) */
 
 typedef struct {

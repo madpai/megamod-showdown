@@ -17,6 +17,7 @@ cmake -B build-host -S . -G Ninja >/dev/null 2>&1 || true
 if cmake --build build-host >/dev/null 2>&1; then ok "host build"; else bad "host build"; fi
 if ./build-host/test_engine >/dev/null 2>&1; then ok "engine unit tests"; else bad "engine unit tests"; fi
 if ./build-host/test_net >/dev/null 2>&1; then ok "UDP protocol and two-client session tests"; else bad "UDP protocol and two-client session tests"; fi
+if ./build-host/test_world_state >/dev/null 2>&1; then ok "X8 large world: runtime identity, relays, late join, codec and limits"; else bad "X8 large world: runtime identity, relays, late join, codec and limits"; fi
 if ./build-host/test_cache  >/dev/null 2>&1; then ok "cache parser tests";  else bad "cache parser tests"; fi
 if ./build-host/test_vehicle >/dev/null 2>&1; then ok "vehicle driving and collision tests"; else bad "vehicle driving and collision tests"; fi
 if ./build-host/test_model >/dev/null 2>&1; then ok "model UV and lighting tests"; else bad "model UV and lighting tests"; fi
@@ -110,6 +111,9 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
     if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_night_shift.sh > scratch/test_night_shift.log 2>&1; then
       ok "Night Shift: power, AND gate, hazard on the right player, Lua company/alone, lockdown, escape, late join, compatibility"
     else bad "Night Shift: power, AND gate, hazard on the right player, Lua company/alone, lockdown, escape, late join, compatibility"; fi
+    if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x8.sh > scratch/test_x8.log 2>&1; then
+      ok "X8 Night Shift: 74 objects, two restored doors, OAL/engine counts, compact late join"
+    else bad "X8 Night Shift: 74 objects, two restored doors, OAL/engine counts, compact late join"; fi
   fi
   if ./build-host/test_particle "$HTA_MAP" >/dev/null 2>&1; then ok "effect particles from the effect tags"; else bad "effect particles from the effect tags"; fi
   if ./build-host/test_vitals "$HTA_MAP" >/dev/null 2>&1; then ok "vitality and falling from the Trial tags"; else bad "vitality and falling from the Trial tags"; fi

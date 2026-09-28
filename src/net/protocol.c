@@ -1,6 +1,8 @@
 #include "protocol.h"
 
 #include <math.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 
 static void u16w(uint8_t *p, uint16_t v) { p[0]=(uint8_t)v; p[1]=(uint8_t)(v>>8); }
@@ -297,18 +299,19 @@ bool hta_net_fx_pack(uint8_t *dst, size_t cap, const hta_net_fx *fx)
 {
     if (!dst || !fx || cap<HTA_NET_FX_BYTES) return false;
     if (fx->kind==HTA_NET_FX_WORLD_SOUND) {
-        /* X7: a world entity (not a unit) and a sound asset index. */
+        /* X7: a world object (not a unit) and a sound asset index; v11: the
+         * object is a 16-bit runtime index. */
         if (fx->entity>=HTA_NET_FX_MAX_WORLD_ENTITIES ||
             (uint32_t)(fx->weapon|(fx->material<<8))>=HTA_NET_FX_MAX_WORLD_SOUNDS) return false;
     } else if (fx->kind<HTA_NET_FX_FIRE || fx->kind>HTA_NET_FX_WRECK ||
         (fx->entity!=255 && fx->entity>=HTA_NET_MAX_ENTITIES) ||
         fx->weapon>=HTA_NET_MAX_WEAPONS) return false;
-    dst[0]=fx->kind; dst[1]=fx->entity;
-    dst[2]=fx->weapon; dst[3]=fx->material;
+    dst[0]=fx->kind; u16w(dst+1,fx->entity);
+    dst[3]=fx->weapon; dst[4]=fx->material;
     for (unsigned i=0;i<3;i++) {
         if (!isfinite(fx->pos[i]) || fabsf(fx->pos[i])>100000.0f ||
             !isfinite(fx->dir[i]) || fabsf(fx->dir[i])>100000.0f) return false;
-        fw(dst+4+i*4,fx->pos[i]); fw(dst+16+i*4,fx->dir[i]);
+        fw(dst+5+i*4,fx->pos[i]); fw(dst+17+i*4,fx->dir[i]);
     }
     return true;
 }
@@ -316,9 +319,9 @@ bool hta_net_fx_unpack(const uint8_t *src, size_t len, hta_net_fx *fx)
 {
     if (!src || !fx || len!=HTA_NET_FX_BYTES) return false;
     hta_net_fx tmp={0};
-    tmp.kind=src[0]; tmp.entity=src[1]; tmp.weapon=src[2]; tmp.material=src[3];
+    tmp.kind=src[0]; tmp.entity=u16r(src+1); tmp.weapon=src[3]; tmp.material=src[4];
     for (unsigned i=0;i<3;i++) {
-        tmp.pos[i]=fr(src+4+i*4); tmp.dir[i]=fr(src+16+i*4);
+        tmp.pos[i]=fr(src+5+i*4); tmp.dir[i]=fr(src+17+i*4);
     }
     uint8_t check[HTA_NET_FX_BYTES];
     if (!hta_net_fx_pack(check,sizeof(check),&tmp)) return false;
@@ -574,33 +577,155 @@ bool hta_net_game_unpack(const uint8_t *src, size_t len, hta_net_game *g)
     *g=tmp; return true;
 }
 
+/* ---- v11 WORLD_STATE (protocol.h, docs/WORLD_STATE.md) ------------------ */
+
+#if defined(__GNUC__)
+static bool ws_fail(char *err, size_t n, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
+#endif
+static bool ws_fail(char *err, size_t n, const char *fmt, ...)
+{
+    if (err && n) { va_list a; va_start(a, fmt); vsnprintf(err, n, fmt, a); va_end(a); }
+    return false;
+}
+
 bool hta_net_world_state_pack(uint8_t *dst, size_t cap, const hta_net_world_state *w, size_t *written)
 {
-    if (!dst || !w || w->count > HTA_NET_MAX_WORLD_STATE ||
-        cap < 1u + (size_t)w->count * HTA_NET_WORLD_STATE_BYTES) return false;
-    dst[0] = w->count;
-    for (unsigned i = 0; i < w->count; i++) {
-        if (w->mover[i].phase > 3 || w->mover[i].entity >= HTA_NET_MAX_WORLD_STATE ||
-            (i && w->mover[i].entity <= w->mover[i - 1].entity)) return false;
-        uint8_t *o = dst + 1 + i * HTA_NET_WORLD_STATE_BYTES;
-        o[0] = w->mover[i].entity; o[1] = w->mover[i].phase; u16w(o + 2, w->mover[i].t);
+    if (!dst || !w || w->spatial_total > HTA_NET_WSTATE_MAX_SPATIAL || w->flag_total > HTA_NET_WSTATE_MAX_FLAGS ||
+        cap < HTA_NET_WSTATE_HEADER) return false;
+    size_t o = 0;
+    dst[o++] = HTA_NET_WSTATE_FORMAT;
+    u16w(dst + o, w->spatial_total); o += 2;
+    u16w(dst + o, w->flag_total); o += 2;
+    /* Movers: each run of carried entries, in pieces of at most 255. */
+    for (uint32_t k = 0; k < w->spatial_total;) {
+        if (!hta_net_bit(w->spatial_has, k)) { k++; continue; }
+        uint32_t n = 0;
+        while (k + n < w->spatial_total && n < HTA_NET_WSTATE_MAX_RUN && hta_net_bit(w->spatial_has, k + n)) n++;
+        if (cap - o < HTA_NET_WSTATE_SPATIAL_RUN) return false;
+        dst[o] = HTA_NET_WSTATE_SPATIAL; u16w(dst + o + 1, (uint16_t)k); dst[o + 3] = (uint8_t)n;
+        o += HTA_NET_WSTATE_SPATIAL_RUN;
+        for (uint32_t i = k; i < k + n; i++) {
+            uint8_t ph = w->phase[i];
+            if (ph > 3) return false;
+            bool moving = ph == 1 || ph == 3;
+            if (cap - o < (moving ? 3u : 1u)) return false;
+            dst[o++] = ph;
+            if (moving) { u16w(dst + o, w->t[i]); o += 2; }
+        }
+        k += n;
     }
-    if (written) *written = 1u + (size_t)w->count * HTA_NET_WORLD_STATE_BYTES;
+    /* Flags: each run of carried flags as a bitset. */
+    for (uint32_t k = 0; k < w->flag_total;) {
+        if (!hta_net_bit(w->flag_has, k)) { k++; continue; }
+        uint32_t n = 0;
+        while (k + n < w->flag_total && hta_net_bit(w->flag_has, k + n)) n++;
+        uint32_t bytes = (n + 7u) / 8u;
+        if (cap - o < HTA_NET_WSTATE_FLAG_RUN + bytes) return false;
+        dst[o] = HTA_NET_WSTATE_FLAGS; u16w(dst + o + 1, (uint16_t)k); u16w(dst + o + 3, (uint16_t)n);
+        o += HTA_NET_WSTATE_FLAG_RUN;
+        memset(dst + o, 0, bytes);
+        for (uint32_t i = 0; i < n; i++)
+            if (hta_net_bit(w->flag, k + i)) dst[o + (i >> 3)] |= (uint8_t)(1u << (i & 7u));
+        o += bytes;
+        k += n;
+    }
+    if (o + HTA_NET_HEADER > HTA_NET_MAX_PACKET) return false;
+    if (written) *written = o;
     return true;
 }
 
-bool hta_net_world_state_unpack(const uint8_t *src, size_t len, hta_net_world_state *w)
+bool hta_net_world_state_unpack(const uint8_t *src, size_t len, hta_net_world_state *w, char *err, size_t n)
 {
-    if (!src || !w || len < 1 || src[0] > HTA_NET_MAX_WORLD_STATE ||
-        len != 1u + (size_t)src[0] * HTA_NET_WORLD_STATE_BYTES) return false;
-    hta_net_world_state tmp;
-    memset(&tmp, 0, sizeof(tmp));
-    tmp.count = src[0];
-    for (unsigned i = 0; i < tmp.count; i++) {
-        const uint8_t *in = src + 1 + i * HTA_NET_WORLD_STATE_BYTES;
-        tmp.mover[i].entity = in[0]; tmp.mover[i].phase = in[1]; tmp.mover[i].t = u16r(in + 2);
+    if (!src || !w) return ws_fail(err, n, "WORLD_STATE: nothing to read");
+    if (len < HTA_NET_WSTATE_HEADER) return ws_fail(err, n, "WORLD_STATE truncated: %u bytes, the header needs %u", (unsigned)len, HTA_NET_WSTATE_HEADER);
+    if (len + HTA_NET_HEADER > HTA_NET_MAX_PACKET) return ws_fail(err, n, "WORLD_STATE of %u bytes exceeds the packet limit %u", (unsigned)len, HTA_NET_MAX_PACKET - HTA_NET_HEADER);
+    if (src[0] != HTA_NET_WSTATE_FORMAT)
+        return ws_fail(err, n, "WORLD_STATE format %u unsupported (this build reads format %u)", src[0], HTA_NET_WSTATE_FORMAT);
+    hta_net_world_state tmp_s;          /* ~1 KB */
+    hta_net_world_state *tmp = &tmp_s;
+    memset(tmp, 0, sizeof(*tmp));
+    tmp->spatial_total = u16r(src + 1);
+    tmp->flag_total = u16r(src + 3);
+    if (tmp->spatial_total > HTA_NET_WSTATE_MAX_SPATIAL)
+        return ws_fail(err, n, "WORLD_STATE describes %u movers, exceeding the spatial limit %u", tmp->spatial_total, HTA_NET_WSTATE_MAX_SPATIAL);
+    if (tmp->flag_total > HTA_NET_WSTATE_MAX_FLAGS)
+        return ws_fail(err, n, "WORLD_STATE describes %u logical flags, exceeding the limit %u", tmp->flag_total, HTA_NET_WSTATE_MAX_FLAGS);
+    size_t o = HTA_NET_WSTATE_HEADER;
+    /* One wire form per state: runs ascend, a run is as long as it can be
+     * (a spatial run shorter than 255 is not followed by an adjacent one; a
+     * flag run never is), and movers come before flags. */
+    uint32_t spatial_end = 0, flag_end = 0, spatial_prev = 0;
+    bool any_flags = false;
+    while (o < len) {
+        uint8_t kind = src[o];
+        if (kind == HTA_NET_WSTATE_SPATIAL) {
+            if (len - o < HTA_NET_WSTATE_SPATIAL_RUN) return ws_fail(err, n, "WORLD_STATE truncated in a spatial run header at byte %u", (unsigned)o);
+            uint32_t first = u16r(src + o + 1), cnt = src[o + 3];
+            o += HTA_NET_WSTATE_SPATIAL_RUN;
+            if (!cnt) return ws_fail(err, n, "WORLD_STATE spatial run at %u is empty", first);
+            if (first + cnt > tmp->spatial_total)
+                return ws_fail(err, n, "WORLD_STATE record references spatial object %u, but the snapshot defines %u", first + cnt - 1u, tmp->spatial_total);
+            if (first < spatial_end)
+                return ws_fail(err, n, "WORLD_STATE spatial run at %u repeats or precedes entries up to %u (runs must ascend)", first, spatial_end - 1u);
+            if (spatial_prev && first == spatial_end && spatial_prev < HTA_NET_WSTATE_MAX_RUN)
+                return ws_fail(err, n, "WORLD_STATE spatial run at %u continues the previous one (runs are maximal)", first);
+            if (any_flags) return ws_fail(err, n, "WORLD_STATE spatial run at %u follows the flags (movers come first)", first);
+            for (uint32_t i = first; i < first + cnt; i++) {
+                if (o >= len) return ws_fail(err, n, "WORLD_STATE truncated in spatial record %u", i);
+                uint8_t ph = src[o++];
+                if (ph > 3) return ws_fail(err, n, "WORLD_STATE spatial record %u has unknown mover phase %u", i, ph);
+                tmp->phase[i] = ph;
+                if (ph == 1 || ph == 3) {
+                    if (len - o < 2) return ws_fail(err, n, "WORLD_STATE truncated in spatial record %u", i);
+                    tmp->t[i] = u16r(src + o); o += 2;
+                } else tmp->t[i] = ph == 2 ? 65535u : 0u;
+                hta_net_bit_set(tmp->spatial_has, i, true);
+            }
+            spatial_end = first + cnt; spatial_prev = cnt;
+        } else if (kind == HTA_NET_WSTATE_FLAGS) {
+            if (len - o < HTA_NET_WSTATE_FLAG_RUN) return ws_fail(err, n, "WORLD_STATE truncated in a flag run header at byte %u", (unsigned)o);
+            uint32_t first = u16r(src + o + 1), cnt = u16r(src + o + 3);
+            o += HTA_NET_WSTATE_FLAG_RUN;
+            if (!cnt) return ws_fail(err, n, "WORLD_STATE flag run at %u is empty", first);
+            if (first + cnt > tmp->flag_total)
+                return ws_fail(err, n, "WORLD_STATE record references logical flag %u, but the snapshot defines %u", first + cnt - 1u, tmp->flag_total);
+            if (first < flag_end)
+                return ws_fail(err, n, "WORLD_STATE flag run at %u repeats or precedes flags up to %u (runs must ascend)", first, flag_end - 1u);
+            if (any_flags && first == flag_end)
+                return ws_fail(err, n, "WORLD_STATE flag run at %u continues the previous one (runs are maximal)", first);
+            uint32_t bytes = (cnt + 7u) / 8u;
+            if (len - o < bytes) return ws_fail(err, n, "WORLD_STATE truncated in the flag run at %u (%u bytes needed)", first, bytes);
+            if ((cnt & 7u) && (src[o + bytes - 1] >> (cnt & 7u)))
+                return ws_fail(err, n, "WORLD_STATE flag run at %u sets bits past its %u flags", first, cnt);
+            for (uint32_t i = 0; i < cnt; i++) {
+                hta_net_bit_set(tmp->flag, first + i, (src[o + (i >> 3)] >> (i & 7u)) & 1u);
+                hta_net_bit_set(tmp->flag_has, first + i, true);
+            }
+            o += bytes;
+            flag_end = first + cnt; any_flags = true;
+        } else return ws_fail(err, n, "WORLD_STATE section kind %u unsupported (at byte %u)", kind, (unsigned)o);
     }
-    uint8_t check[1 + HTA_NET_MAX_WORLD_STATE * HTA_NET_WORLD_STATE_BYTES];
-    if (!hta_net_world_state_pack(check, sizeof(check), &tmp, NULL)) return false;
-    *w = tmp; return true;
+    *w = *tmp;
+    return true;
+}
+
+bool hta_net_peek(const uint8_t *src, size_t len, uint16_t *version, uint8_t *type)
+{
+    if (!src || len < HTA_NET_HEADER || hta_net_u32_read(src) != HTA_NET_MAGIC) return false;
+    if (version) *version = u16r(src + 4);
+    if (type) *type = src[6];
+    return true;
+}
+
+bool hta_net_pack_probe(uint8_t *dst, size_t cap, uint16_t version, uint32_t nonce, size_t *written)
+{
+    if (!dst || cap < HTA_NET_HEADER + 4u || version < HTA_NET_PROBE_OLDEST || version >= HTA_NET_VERSION) return false;
+    memset(dst, 0, HTA_NET_HEADER);
+    hta_net_u32_write(dst, HTA_NET_MAGIC);
+    u16w(dst + 4, version);
+    dst[6] = HTA_NET_DISCOVER;
+    u16w(dst + 16, 4);
+    hta_net_u32_write(dst + HTA_NET_HEADER, nonce);
+    if (written) *written = HTA_NET_HEADER + 4u;
+    return true;
 }

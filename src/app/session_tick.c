@@ -265,7 +265,8 @@ void hta_session_tick(hta_session *s, float dt, double now, void (*unit_added)(h
         if (s->host_server.stats.refused != refused)
             hta_log("[net] refused a joiner: %s", s->host_server.last_refusal == HTA_NET_REJECT_CONTENT
                     ? "different characters/weapons" : s->host_server.last_refusal == HTA_NET_REJECT_MAP
-                    ? "different map" : "full");
+                    ? "different map" : s->host_server.last_refusal == HTA_NET_REJECT_VERSION
+                    ? "different protocol version" : "full");
         hta_host_peers(s, now, unit_added);
         hta_host_world(s);
     }

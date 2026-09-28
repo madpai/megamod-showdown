@@ -73,7 +73,7 @@
 #include <stdint.h>
 
 #define HTA_WDEF_SCHEMA 6u            /* newest understood; 1 (X1) .. 5 (X6) still load */
-#define HTA_WDEF_MAX_MOVER_DEFS 64u   /* one per mover at most (schema 1) */
+#define HTA_WDEF_MAX_MOVER_DEFS 256u  /* one per mover at most (schema 1, prefab movers): the movers' limit (X8) */
 #define HTA_WDEF_NO_DEF 0xFFFFu
 #define HTA_WDEF_MAX_SCRIPTS 16u
 #define HTA_WDEF_SCRIPT_POOL (64u * 1024u)  /* all scripts' source, bytes */
@@ -81,9 +81,13 @@
 #define HTA_WDEF_SCRIPT_API "megamod.v1"
 /* Callbacks a script may declare (script/script.h implements them). */
 enum { HTA_WCB_ON_USED = 1u, HTA_WCB_ON_ABILITY = 2u };
-#define HTA_WDEF_MAX_ENTITIES 64u
+/* X8: runtime world objects -- every placed and expanded entity, whatever
+ * its kind. 64 until X8, when WORLD_STATE named them by a 6-bit index; the
+ * wire now names only replicated state (asset/world_repl.h), so this is a
+ * memory and load-time bound, not a network one. Indices fit 16 bits. */
+#define HTA_WDEF_MAX_ENTITIES 1024u
 #define HTA_WDEF_MAX_LINKS_PER 8u
-#define HTA_WDEF_MAX_LINKS 256u
+#define HTA_WDEF_MAX_LINKS 1024u
 #define HTA_WDEF_MAX_CHAIN 16u        /* links from a root event to its last consequence */
 #define HTA_WDEF_ID_MAX 96u
 #define HTA_WDEF_MAX_REACH 4.0f       /* wu */
@@ -184,7 +188,7 @@ typedef struct {
     uint16_t first, count;             /* the entities it expanded to */
     float    pos[3], yaw_deg, scale;
 } hta_wprefab_instance;
-#define HTA_WDEF_MAX_INSTANCES 32u
+#define HTA_WDEF_MAX_INSTANCES 128u   /* X8: 32 before; `instance` (index + 1) is a byte */
 
 /* ---- X7: declarative event bindings (docs/EVENT_BINDINGS.md) ----------------
  *
@@ -194,11 +198,11 @@ typedef struct {
  * them in world_entities.bindings (schema 6); a prefab in its own
  * "bindings" (prefab schema 2), naming its children, expanded per instance.
  * Every reference is resolved to an index here, once. */
-#define HTA_WDEF_MAX_BINDINGS      128u   /* one world, after expansion */
+#define HTA_WDEF_MAX_BINDINGS      1024u  /* one world, after expansion (X8: 128 before) */
 #define HTA_WDEF_MAX_CONDS_PER     4u     /* one binding */
 #define HTA_WDEF_MAX_ACTIONS_PER   8u     /* one binding */
-#define HTA_WDEF_MAX_CONDS         256u   /* one world */
-#define HTA_WDEF_MAX_ACTIONS       512u   /* one world */
+#define HTA_WDEF_MAX_CONDS         1024u  /* one world (X8: 256 before) */
+#define HTA_WDEF_MAX_ACTIONS       2048u  /* one world (X8: 512 before) */
 #define HTA_WDEF_MAX_BINDINGS_PER_EVENT 16u   /* one source's one event */
 #define HTA_WDEF_MAX_DAMAGE        500.0f /* one damage action (Lua's game.damage limit) */
 #define HTA_WDEF_BINDING_ID_MAX    23u    /* a binding's local ID (the prefab local-ID grammar) */

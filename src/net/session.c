@@ -104,6 +104,7 @@ static void server_packet(hta_net_server *s, const hta_udp_addr *from,
                     peer->active=true; peer->addr=*from; peer->player.id=(uint8_t)(i+1);
                     peer->token=random_word(); peer->nonce=nonce;
                     if (!peer->token) { peer->active=false; return; }
+                    s->ws_force=true;   /* X8: the newcomer gets the world now */
                     break;
                 }
             }
@@ -227,7 +228,22 @@ void hta_net_server_pump(hta_net_server *s, double now)
         s->stats.packets_in++; s->stats.bytes_in+=(unsigned)n;
         if (!rate_allow(s,&from,now)) { s->stats.limited++; continue; }
         hta_net_packet p;
-        if (!hta_net_unpack(wire,(size_t)n,&p)) { s->stats.invalid++; continue; }
+        if (!hta_net_unpack(wire,(size_t)n,&p)) {
+            s->stats.invalid++;
+            /* v11: a HELLO in another protocol is a joiner we cannot talk
+             * to: say so in the log, and answer in ours (an older client
+             * cannot read it; a newer one reads our version off it). */
+            uint16_t v; uint8_t t;
+            if (hta_net_peek(wire,(size_t)n,&v,&t) && v!=HTA_NET_VERSION && t==HTA_NET_HELLO) {
+                s->stats.refused++;
+                s->last_refusal=HTA_NET_REJECT_VERSION; s->last_refused_version=v;
+                uint8_t reject[7]={0};
+                if ((size_t)n>=HTA_NET_HEADER+4u) memcpy(reject,wire+HTA_NET_HEADER,4);
+                reject[4]=HTA_NET_REJECT_VERSION; reject[5]=(uint8_t)HTA_NET_VERSION; reject[6]=(uint8_t)(HTA_NET_VERSION>>8);
+                send_packet(&s->udp,&from,&s->stats,HTA_NET_REJECT,&s->sequence,s->tick,reject,sizeof(reject));
+            }
+            continue;
+        }
         server_packet(s,&from,&p,now);
     }
     for (unsigned i=0;i<HTA_NET_MAX_PLAYERS;i++)
@@ -368,17 +384,42 @@ bool hta_net_server_game(hta_net_server *s, const hta_net_game *game)
     return sent;
 }
 
+/* X8: does `ws` differ from what went out last in what it says (a phase,
+ * a flag, a table size), or only in how far movers have got? */
+static void ws_compare(const hta_net_world_state *a, const hta_net_world_state *b, bool *discrete, bool *moved)
+{
+    *discrete = a->spatial_total != b->spatial_total || a->flag_total != b->flag_total ||
+                memcmp(a->phase, b->phase, a->spatial_total) || memcmp(a->flag, b->flag, (a->flag_total + 7u) / 8u) ||
+                memcmp(a->spatial_has, b->spatial_has, sizeof(a->spatial_has)) || memcmp(a->flag_has, b->flag_has, sizeof(a->flag_has));
+    *moved = false;
+    for (uint32_t i = 0; !*discrete && i < a->spatial_total; i++) if (a->t[i] != b->t[i]) { *moved = true; break; }
+}
+
 bool hta_net_server_world_state(hta_net_server *s, const hta_net_world_state *ws)
 {
     if (!s || !ws || s->udp.fd<0 || s->last_world_state_tick==s->tick) return false;
-    uint8_t payload[1+HTA_NET_MAX_WORLD_STATE*HTA_NET_WORLD_STATE_BYTES];
+    bool discrete = true, moved = false;
+    if (s->ws_have) ws_compare(ws, &s->ws_sent, &discrete, &moved);
+    uint32_t since = s->tick - s->ws_last_tick;
+    if (discrete) s->ws_repeat = HTA_NET_WSTATE_REPEATS + 1u;
+    bool go = discrete || s->ws_force || s->ws_repeat || (moved && since >= HTA_NET_WSTATE_MOVING_TICKS) ||
+              since >= HTA_NET_WSTATE_KEYFRAME_TICKS;
+    s->last_world_state_tick=s->tick;
+    if (!go) return false;
+    uint8_t payload[HTA_NET_MAX_PACKET];
     size_t len=0;
     if (!hta_net_world_state_pack(payload,sizeof(payload),ws,&len)) return false;
-    s->last_world_state_tick=s->tick;
+    if (s->ws_repeat) s->ws_repeat--;
+    s->ws_force=false;
+    s->ws_sent=*ws; s->ws_have=true; s->ws_last_tick=s->tick;
     bool sent=false;
     for (unsigned i=0;i<HTA_NET_MAX_PLAYERS;i++) if (s->peers[i].active)
         if (send_packet(&s->udp,&s->peers[i].addr,&s->stats,HTA_NET_WORLD_STATE,
                         &s->sequence,s->tick,payload,(uint16_t)len)) sent=true;
+    if (sent) {
+        s->stats.world_states++; s->stats.world_state_bytes+=len;
+        if (len>s->stats.world_state_max) s->stats.world_state_max=(uint32_t)len;
+    }
     return sent;
 }
 
@@ -443,6 +484,15 @@ static void client_packet(hta_net_client *c, const hta_net_packet *p, double now
         (p->payload[4]==HTA_NET_REJECT_FULL || p->payload[4]==HTA_NET_REJECT_MAP ||
          p->payload[4]==HTA_NET_REJECT_CONTENT)) {
         c->reject_reason=p->payload[4];
+        c->last_receive=now;
+        return;
+    }
+    /* v11: a same-version host never sends VERSION to us; a newer one does,
+     * in its own header, which the pump already peeked. Kept for symmetry. */
+    if (p->type==HTA_NET_REJECT && p->length==7 && !c->connected &&
+        hta_net_u32_read(p->payload)==c->nonce && p->payload[4]==HTA_NET_REJECT_VERSION) {
+        c->reject_reason=HTA_NET_REJECT_VERSION;
+        c->peer_version=(uint16_t)(p->payload[5] | (p->payload[6]<<8));
         c->last_receive=now;
         return;
     }
@@ -567,8 +617,12 @@ static void client_packet(hta_net_client *c, const hta_net_packet *p, double now
     case HTA_NET_WORLD_STATE: {
         if (p->tick<=c->last_world_state_tick) { c->stats.dropped++; break; }
         hta_net_world_state ws;
-        if (!hta_net_world_state_unpack(p->payload,p->length,&ws)) { c->stats.invalid++; break; }
+        if (!hta_net_world_state_unpack(p->payload,p->length,&ws,c->world_state_error,sizeof(c->world_state_error))) {
+            c->stats.invalid++; break;
+        }
         c->world_state=ws; c->have_world_state=true; c->last_world_state_tick=p->tick;
+        c->stats.world_states++; c->stats.world_state_bytes+=p->length;
+        if (p->length>c->stats.world_state_max) c->stats.world_state_max=p->length;
         break;
     }
     default: c->stats.invalid++; break;
@@ -605,6 +659,18 @@ void hta_net_client_pump(hta_net_client *c, double now)
         hta_net_u32_write(payload+12,(uint32_t)(c->content>>32));
         send_packet(&c->udp,&c->server,&c->stats,HTA_NET_HELLO,&c->sequence,0,payload,16);
         c->last_hello=now;
+        /* v11: and, once a second, a DISCOVER in each older protocol: an
+         * older host answers one in its own version, and the pump below
+         * then knows why no WELCOME comes. */
+        if (c->last_probe==0 || now-c->last_probe>=1.0) {
+            for (uint16_t v=HTA_NET_PROBE_OLDEST; v<HTA_NET_VERSION; v++) {
+                uint8_t wire[HTA_NET_HEADER+4]; size_t n=0;
+                if (hta_net_pack_probe(wire,sizeof(wire),v,c->nonce,&n) && hta_udp_send(&c->udp,&c->server,wire,n)) {
+                    c->stats.packets_out++; c->stats.bytes_out+=n;
+                }
+            }
+            c->last_probe=now;
+        }
     }
     if (c->connected && (c->last_ping==0 || now-c->last_ping>=1.0)) {
         uint8_t payload[8]; hta_net_u32_write(payload,c->token);
@@ -618,8 +684,16 @@ void hta_net_client_pump(hta_net_client *c, double now)
         if (n<0) break;
         c->stats.packets_in++; c->stats.bytes_in+=(unsigned)n;
         hta_net_packet p;
-        if (!hta_udp_addr_equal(&from,&c->server) ||
-            !hta_net_unpack(wire,(size_t)n,&p)) { c->stats.invalid++; continue; }
+        if (!hta_udp_addr_equal(&from,&c->server)) { c->stats.invalid++; continue; }
+        if (!hta_net_unpack(wire,(size_t)n,&p)) {
+            c->stats.invalid++;
+            /* v11: the host answered in another protocol: we cannot play. */
+            uint16_t v;
+            if (!c->connected && hta_net_peek(wire,(size_t)n,&v,NULL) && v!=HTA_NET_VERSION) {
+                c->reject_reason=HTA_NET_REJECT_VERSION; c->peer_version=v; c->last_receive=now;
+            }
+            continue;
+        }
         client_packet(c,&p,now);
     }
 }

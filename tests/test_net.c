@@ -47,13 +47,23 @@ static void world_codec(void)
     /* X7: a binding's world sound -- a world entity and a sound index
      * (low byte in `weapon`, high in `material`), bounded both ways. */
     {
-        hta_net_fx ws={.kind=HTA_NET_FX_WORLD_SOUND,.entity=63,.weapon=0xFF,.material=1,.pos={-3,2.5f,0.9f}}, ws2;
+        /* v11 (X8): the entity is a 16-bit runtime object index: past the
+         * old 6-bit range, up to the last legal one, and not one more. */
+        hta_net_fx ws={.kind=HTA_NET_FX_WORLD_SOUND,.entity=1023,.weapon=0xFF,.material=1,.pos={-3,2.5f,0.9f}}, ws2;
         uint8_t w[HTA_NET_FX_BYTES];
         assert(hta_net_fx_pack(w,sizeof(w),&ws) && hta_net_fx_unpack(w,sizeof(w),&ws2));
-        assert(ws2.kind==HTA_NET_FX_WORLD_SOUND && ws2.entity==63 && (ws2.weapon|(ws2.material<<8))==511 && ws2.pos[1]==2.5f);
-        ws.entity=64; assert(!hta_net_fx_pack(w,sizeof(w),&ws));
-        ws.entity=0; ws.material=2; assert(!hta_net_fx_pack(w,sizeof(w),&ws));
-        w[0]=6; assert(!hta_net_fx_unpack(w,sizeof(w),&ws2));
+        assert(ws2.kind==HTA_NET_FX_WORLD_SOUND && ws2.entity==1023 && (ws2.weapon|(ws2.material<<8))==511 && ws2.pos[1]==2.5f);
+        assert(w[1]==0xFF && w[2]==0x03);                        /* little-endian on the wire */
+        ws.entity=72; assert(hta_net_fx_pack(w,sizeof(w),&ws) && hta_net_fx_unpack(w,sizeof(w),&ws2) && ws2.entity==72);
+        ws.entity=HTA_NET_FX_MAX_WORLD_ENTITIES; assert(!hta_net_fx_pack(w,sizeof(w),&ws));
+        ws.entity=0; ws.material=8; assert(!hta_net_fx_pack(w,sizeof(w),&ws));   /* sound 2303: over 2048 */
+        ws.material=7; assert(hta_net_fx_pack(w,sizeof(w),&ws));                  /* sound 2047 */
+        ws.material=1; assert(hta_net_fx_pack(w,sizeof(w),&ws));
+        w[1]=0x00; w[2]=0x04; assert(!hta_net_fx_unpack(w,sizeof(w),&ws2));   /* 1024 on the wire */
+        w[2]=0; w[0]=6; assert(!hta_net_fx_unpack(w,sizeof(w),&ws2));
+        /* a unit FX keeps its unit (or 255) in the same 16 bits */
+        hta_net_fx u={.kind=HTA_NET_FX_FIRE,.entity=256,.weapon=1};
+        assert(!hta_net_fx_pack(w,sizeof(w),&u));
     }
     assert(fx2.entity==255 && fx2.pos[2]==3);
     hta_net_projectiles projs={0},projs2;
@@ -360,27 +370,22 @@ static void sessions(void)
       buf[32+HTA_NET_MAX_VEHICLES+40]=1; assert(!hta_net_game_unpack(buf,sizeof(buf),&ok));
       assert(hta_net_game_pack(buf,sizeof(buf),&gm)); buf[8]=0xFF;
       hta_net_game back; assert(!hta_net_game_unpack(buf,sizeof(buf),&back)); }
-    /* WORLD_STATE: the world's movers, over the same loopback. */
-    { hta_net_world_state ws; memset(&ws,0,sizeof(ws));
-      ws.count=2; ws.mover[0].entity=2; ws.mover[0].phase=1; ws.mover[0].t=12345;
-      ws.mover[1].entity=40; ws.mover[1].phase=2; ws.mover[1].t=65535;
+    /* WORLD_STATE (v11): movers and relays by replication index, over the
+     * same loopback; sent when it changes, not every tick. */
+    { static hta_net_world_state ws; memset(&ws,0,sizeof(ws));
+      ws.spatial_total=100; ws.flag_total=20;
+      for (unsigned i=0;i<100;i++) hta_net_bit_set(ws.spatial_has,i,true);
+      for (unsigned i=0;i<20;i++) hta_net_bit_set(ws.flag_has,i,true);
+      ws.phase[72]=1; ws.t[72]=12345; ws.phase[99]=2; ws.t[99]=65535;
+      hta_net_bit_set(ws.flag,4,true); hta_net_bit_set(ws.flag,19,true);
       assert(hta_net_server_world_state(&s,&ws));
       assert(!hta_net_server_world_state(&s,&ws)); /* once per server tick */
       hta_net_client_pump(&b,2.30585);
-      assert(b.have_world_state && b.world_state.count==2 && b.world_state.mover[0].entity==2 &&
-             b.world_state.mover[0].phase==1 && b.world_state.mover[0].t==12345 &&
-             b.world_state.mover[1].entity==40 && b.world_state.mover[1].t==65535);
-      uint8_t buf[1+HTA_NET_MAX_WORLD_STATE*HTA_NET_WORLD_STATE_BYTES]; size_t n; hta_net_world_state bad=ws, back;
-      bad.mover[1].entity=2; assert(!hta_net_world_state_pack(buf,sizeof(buf),&bad,&n));   /* not increasing */
-      bad=ws; bad.mover[0].phase=4; assert(!hta_net_world_state_pack(buf,sizeof(buf),&bad,&n));
-      bad=ws; bad.mover[1].entity=HTA_NET_MAX_WORLD_STATE; assert(!hta_net_world_state_pack(buf,sizeof(buf),&bad,&n));
-      bad=ws; bad.count=HTA_NET_MAX_WORLD_STATE+1; assert(!hta_net_world_state_pack(buf,sizeof(buf),&bad,&n));
-      assert(hta_net_world_state_pack(buf,sizeof(buf),&ws,&n) && n==9);
-      assert(hta_net_world_state_unpack(buf,n,&back) && back.count==2);
-      assert(!hta_net_world_state_unpack(buf,n-1,&back) && !hta_net_world_state_unpack(buf,n+1,&back));
-      buf[2+4]=9; assert(!hta_net_world_state_unpack(buf,n,&back));                    /* phase 9 */
-      buf[2+4]=2; buf[1+4]=1; assert(!hta_net_world_state_unpack(buf,n,&back));        /* entity 1 < 2 */
-      uint8_t empty=0; assert(hta_net_world_state_unpack(&empty,1,&back) && back.count==0); }
+      assert(b.have_world_state && b.world_state.spatial_total==100 && b.world_state.flag_total==20 &&
+             b.world_state.phase[72]==1 && b.world_state.t[72]==12345 && b.world_state.phase[99]==2 &&
+             b.world_state.t[99]==65535 && hta_net_bit(b.world_state.flag,4) && hta_net_bit(b.world_state.flag,19) &&
+             !hta_net_bit(b.world_state.flag,5) && b.stats.world_states==1);
+      assert(s.stats.world_states==1 && s.stats.world_state_bytes==5+4+100+2+5+3); }
     hta_net_fx fx={.kind=HTA_NET_FX_FIRE,.entity=0,.weapon=1};
     assert(hta_net_server_fx(&s,&fx));
     hta_net_client_pump(&b,2.306);
@@ -484,4 +489,311 @@ static void discovery(void)
     hta_net_client_close(&a); hta_net_server_close(&s);
 }
 
-int main(void) { codec(); world_codec(); interpolation(); sessions(); discovery(); puts("net: codec, world, interpolation, malformed input, two UDP clients, snapshots, events, ping, disconnect, LAN discovery, player cap OK"); }
+/* ---- X8: v11 WORLD_STATE -------------------------------------------------- */
+
+static uint32_t rng_state = 12345u;
+static uint32_t rnd(void) { rng_state = rng_state * 1664525u + 1013904223u; return rng_state >> 8; }
+
+/* Two decoded states say the same (a resting mover's progress is implied). */
+static bool ws_equal(const hta_net_world_state *a, const hta_net_world_state *b)
+{
+    if (a->spatial_total != b->spatial_total || a->flag_total != b->flag_total) return false;
+    for (unsigned i = 0; i < a->spatial_total; i++) {
+        if (hta_net_bit(a->spatial_has, i) != hta_net_bit(b->spatial_has, i)) return false;
+        if (!hta_net_bit(a->spatial_has, i)) continue;
+        if (a->phase[i] != b->phase[i]) return false;
+        if ((a->phase[i] == 1 || a->phase[i] == 3) && a->t[i] != b->t[i]) return false;
+    }
+    for (unsigned i = 0; i < a->flag_total; i++) {
+        if (hta_net_bit(a->flag_has, i) != hta_net_bit(b->flag_has, i)) return false;
+        if (hta_net_bit(a->flag_has, i) && hta_net_bit(a->flag, i) != hta_net_bit(b->flag, i)) return false;
+    }
+    return true;
+}
+
+static void ws_random(hta_net_world_state *w, bool full)
+{
+    memset(w, 0, sizeof(*w));
+    w->spatial_total = (uint16_t)(rnd() % (HTA_NET_WSTATE_MAX_SPATIAL + 1));
+    w->flag_total = (uint16_t)(rnd() % (HTA_NET_WSTATE_MAX_FLAGS + 1));
+    /* partial: blocks of carried and skipped entries, as a sender would pick them */
+    bool take = true;
+    for (unsigned i = 0, left = 0; i < w->spatial_total; i++) {
+        if (!left) { left = 1 + rnd() % 40; take = full || rnd() % 3; }
+        left--;
+        if (!take) continue;
+        hta_net_bit_set(w->spatial_has, i, true);
+        w->phase[i] = (uint8_t)(rnd() & 3u);
+        w->t[i] = (uint16_t)rnd();
+    }
+    for (unsigned i = 0, left = 0; i < w->flag_total; i++) {
+        if (!left) { left = 1 + rnd() % 80; take = full || rnd() % 3; }
+        left--;
+        if (!take) continue;
+        hta_net_bit_set(w->flag_has, i, true);
+        hta_net_bit_set(w->flag, i, rnd() & 1u);
+    }
+}
+
+static void world_state_codec(void)
+{
+    static hta_net_world_state w, back;
+    uint8_t buf[HTA_NET_MAX_PACKET];
+    size_t n = 0;
+    char err[160];
+    /* An empty world, and one with only relays: nothing a mover needs. */
+    memset(&w, 0, sizeof(w));
+    assert(hta_net_world_state_pack(buf, sizeof(buf), &w, &n) && n == HTA_NET_WSTATE_HEADER);
+    assert(hta_net_world_state_unpack(buf, n, &back, err, sizeof(err)) && back.spatial_total == 0);
+    w.flag_total = 9;
+    for (unsigned i = 0; i < 9; i++) hta_net_bit_set(w.flag_has, i, true);
+    hta_net_bit_set(w.flag, 0, true); hta_net_bit_set(w.flag, 8, true);
+    assert(hta_net_world_state_pack(buf, sizeof(buf), &w, &n) && n == 5 + 5 + 2);
+    assert(buf[0] == 1 && buf[3] == 9 && buf[4] == 0 && buf[5] == HTA_NET_WSTATE_FLAGS && buf[10] == 0x01 && buf[11] == 0x01);
+    assert(hta_net_world_state_unpack(buf, n, &back, err, sizeof(err)) && ws_equal(&w, &back));
+    /* The largest complete snapshot: every mover moving, every flag. It
+     * fits one packet (which is why the host never splits one). */
+    memset(&w, 0, sizeof(w));
+    w.spatial_total = HTA_NET_WSTATE_MAX_SPATIAL; w.flag_total = HTA_NET_WSTATE_MAX_FLAGS;
+    for (unsigned i = 0; i < w.spatial_total; i++) { hta_net_bit_set(w.spatial_has, i, true); w.phase[i] = 1; w.t[i] = (uint16_t)(i * 7); }
+    for (unsigned i = 0; i < w.flag_total; i++) { hta_net_bit_set(w.flag_has, i, true); hta_net_bit_set(w.flag, i, i % 3 == 0); }
+    assert(hta_net_world_state_pack(buf, sizeof(buf), &w, &n) && n == HTA_NET_WSTATE_FULL_MAX);
+    assert(HTA_NET_WSTATE_FULL_MAX + HTA_NET_HEADER <= HTA_NET_MAX_PACKET);
+    assert(hta_net_world_state_unpack(buf, n, &back, err, sizeof(err)) && ws_equal(&w, &back));
+    assert(back.phase[255] == 1 && back.t[255] == (uint16_t)(255 * 7) && hta_net_bit(back.flag, 1023) == (1023 % 3 == 0));
+    /* At rest a mover is one byte: progress implied, exactly 0 or 1. */
+    for (unsigned i = 0; i < w.spatial_total; i++) w.phase[i] = (uint8_t)(i & 1 ? 2 : 0);
+    assert(hta_net_world_state_pack(buf, sizeof(buf), &w, &n) && n == 5 + 2 * 4 + 256 + 5 + 128);
+    assert(hta_net_world_state_unpack(buf, n, &back, err, sizeof(err)) && back.t[1] == 65535 && back.t[2] == 0);
+    /* Over the limits: refused both ways, in words. */
+    w.spatial_total = HTA_NET_WSTATE_MAX_SPATIAL + 1; assert(!hta_net_world_state_pack(buf, sizeof(buf), &w, &n));
+    w.spatial_total = HTA_NET_WSTATE_MAX_SPATIAL; w.flag_total = HTA_NET_WSTATE_MAX_FLAGS + 1;
+    assert(!hta_net_world_state_pack(buf, sizeof(buf), &w, &n));
+    w.flag_total = HTA_NET_WSTATE_MAX_FLAGS; w.phase[3] = 4; assert(!hta_net_world_state_pack(buf, sizeof(buf), &w, &n));
+    w.phase[3] = 0;
+    assert(!hta_net_world_state_pack(buf, 100, &w, &n));                       /* no room: refused, not cut */
+    uint8_t m[64];
+    /* a hand-made message: 300 movers declared */
+    m[0] = 1; m[1] = 0x2C; m[2] = 0x01; m[3] = 0; m[4] = 0;
+    assert(!hta_net_world_state_unpack(m, 5, &back, err, sizeof(err)) &&
+           !strcmp(err, "WORLD_STATE describes 300 movers, exceeding the spatial limit 256"));
+    /* spatial 241 declared, a record for 317 */
+    m[1] = 241; m[2] = 0; m[5] = HTA_NET_WSTATE_SPATIAL; m[6] = 0x3D; m[7] = 0x01; m[8] = 1; m[9] = 0;
+    assert(!hta_net_world_state_unpack(m, 10, &back, err, sizeof(err)) &&
+           !strcmp(err, "WORLD_STATE record references spatial object 317, but the snapshot defines 241"));
+    /* the maximum index is legal, one past it is not */
+    m[1] = 0; m[2] = 1; m[6] = 0xFF; m[7] = 0; m[8] = 1; m[9] = 2;           /* 256 movers, record 255 open */
+    assert(hta_net_world_state_unpack(m, 10, &back, err, sizeof(err)) && back.phase[255] == 2 && hta_net_bit(back.spatial_has, 255));
+    m[6] = 0; m[7] = 1;                                                        /* record 256 */
+    assert(!hta_net_world_state_unpack(m, 10, &back, err, sizeof(err)) && strstr(err, "spatial object 256, but the snapshot defines 256"));
+    /* duplicates / out of order */
+    m[6] = 5; m[7] = 0; m[8] = 1; m[9] = 0; m[10] = HTA_NET_WSTATE_SPATIAL; m[11] = 5; m[12] = 0; m[13] = 1; m[14] = 2;
+    assert(!hta_net_world_state_unpack(m, 15, &back, err, sizeof(err)) &&
+           !strcmp(err, "WORLD_STATE spatial run at 5 repeats or precedes entries up to 5 (runs must ascend)"));
+    m[11] = 6; assert(!hta_net_world_state_unpack(m, 15, &back, err, sizeof(err)) &&
+                      !strcmp(err, "WORLD_STATE spatial run at 6 continues the previous one (runs are maximal)"));
+    m[11] = 7; assert(hta_net_world_state_unpack(m, 15, &back, err, sizeof(err)) && back.phase[7] == 2 && !hta_net_bit(back.spatial_has, 6));
+    /* unknown phase, empty run, truncation, unknown kind, format */
+    m[9] = 7; assert(!hta_net_world_state_unpack(m, 15, &back, err, sizeof(err)) && strstr(err, "unknown mover phase 7"));
+    m[9] = 1; assert(!hta_net_world_state_unpack(m, 15, &back, err, sizeof(err)));      /* moving: needs 2 more bytes */
+    m[9] = 0; m[8] = 0; assert(!hta_net_world_state_unpack(m, 10, &back, err, sizeof(err)) && strstr(err, "is empty"));
+    m[8] = 1; assert(!hta_net_world_state_unpack(m, 9, &back, err, sizeof(err)) && strstr(err, "truncated"));
+    m[10] = 9; assert(!hta_net_world_state_unpack(m, 15, &back, err, sizeof(err)) &&
+                      !strcmp(err, "WORLD_STATE section kind 9 unsupported (at byte 10)"));
+    m[0] = 2; assert(!hta_net_world_state_unpack(m, 10, &back, err, sizeof(err)) &&
+                     !strcmp(err, "WORLD_STATE format 2 unsupported (this build reads format 1)"));
+    assert(!hta_net_world_state_unpack(m, 4, &back, err, sizeof(err)) && strstr(err, "truncated"));
+    /* flags: padding bits, past the total, over the limit */
+    m[0] = 1; m[1] = 0; m[2] = 0; m[3] = 10; m[4] = 0;
+    m[5] = HTA_NET_WSTATE_FLAGS; m[6] = 0; m[7] = 0; m[8] = 10; m[9] = 0; m[10] = 0xFF; m[11] = 0x03;
+    assert(hta_net_world_state_unpack(m, 12, &back, err, sizeof(err)) && hta_net_bit(back.flag, 9) && !hta_net_bit(back.flag, 10));
+    m[11] = 0x07; assert(!hta_net_world_state_unpack(m, 12, &back, err, sizeof(err)) && strstr(err, "sets bits past its 10 flags"));
+    m[11] = 0x03; m[8] = 11; assert(!hta_net_world_state_unpack(m, 12, &back, err, sizeof(err)) &&
+                                    !strcmp(err, "WORLD_STATE record references logical flag 10, but the snapshot defines 10"));
+    m[3] = 0x01; m[4] = 0x04; assert(!hta_net_world_state_unpack(m, 5, &back, err, sizeof(err)) && strstr(err, "1025 logical flags"));
+    /* A refused message leaves the destination untouched. */
+    back.spatial_total = 77; m[0] = 5; assert(!hta_net_world_state_unpack(m, 12, &back, err, sizeof(err)) && back.spatial_total == 77);
+    /* Deterministic little-endian bytes: this exact message, on any host. */
+    memset(&w, 0, sizeof(w));
+    w.spatial_total = 3; w.flag_total = 2;
+    for (unsigned i = 0; i < 3; i++) hta_net_bit_set(w.spatial_has, i, true);
+    w.phase[0] = 0; w.phase[1] = 3; w.t[1] = 0x1234; w.phase[2] = 2;
+    hta_net_bit_set(w.flag_has, 0, true); hta_net_bit_set(w.flag_has, 1, true); hta_net_bit_set(w.flag, 1, true);
+    static const uint8_t want[] = { 1, 3, 0, 2, 0, 1, 0, 0, 3, 0, 3, 0x34, 0x12, 2, 2, 0, 0, 2, 0, 0x02 };
+    assert(hta_net_world_state_pack(buf, sizeof(buf), &w, &n) && n == sizeof(want) && !memcmp(buf, want, n));
+    /* Random states round trip, full and partial; a complete one's size is
+     * what hta_net_world_state_bytes (the contract's formula) says. */
+    for (int it = 0; it < 2000; it++) {
+        ws_random(&w, it & 1);
+        if (!hta_net_world_state_pack(buf, sizeof(buf), &w, &n)) { assert(!(it & 1)); continue; }
+        if (it & 1) {
+            uint32_t moving = 0;
+            for (unsigned i = 0; i < w.spatial_total; i++) moving += w.phase[i] == 1 || w.phase[i] == 3;
+            assert(n == hta_net_world_state_bytes(w.spatial_total, moving, w.flag_total));
+        }
+        assert(hta_net_world_state_unpack(buf, n, &back, err, sizeof(err)) && ws_equal(&w, &back));
+    }
+}
+
+/* Mutated messages: never a crash or a read past the end; whatever decodes
+ * re-encodes to the same state; a refusal says the same thing each time. */
+static void world_state_fuzz(void)
+{
+    static hta_net_world_state w, back, again;
+    uint8_t good[HTA_NET_MAX_PACKET], buf[HTA_NET_MAX_PACKET + 8], re[HTA_NET_MAX_PACKET];
+    char err[160], err2[160];
+    unsigned accepted = 0, refused = 0;
+    for (int it = 0; it < 20000; it++) {
+        ws_random(&w, it % 3 != 0);
+        size_t n = 0;
+        assert(hta_net_world_state_pack(good, sizeof(good), &w, &n));
+        memcpy(buf, good, n);
+        size_t len = n;
+        switch (rnd() % 6) {
+        case 0: for (int k = 1 + (int)(rnd() % 4); k > 0; k--) buf[rnd() % len] ^= (uint8_t)(1u << (rnd() % 8)); break;
+        case 1: buf[rnd() % len] = (uint8_t)rnd(); break;
+        case 2: len = rnd() % (n + 1); break;                                   /* truncated */
+        case 3: { size_t extra = 1 + rnd() % 8; for (size_t k = 0; k < extra; k++) buf[len + k] = (uint8_t)rnd(); len += extra; } break;
+        case 4: if (len > 7) { size_t a = 5 + rnd() % (len - 5); buf[a] = (uint8_t)(rnd() % 4); } break;   /* a kind byte */
+        default: if (len >= 5) { buf[1] = (uint8_t)rnd(); buf[2] = (uint8_t)(rnd() % 3); } break;            /* totals */
+        }
+        memset(&back, 0x5A, sizeof(back));
+        bool ok = hta_net_world_state_unpack(buf, len, &back, err, sizeof(err));
+        if (ok) {
+            accepted++;
+            assert(back.spatial_total <= HTA_NET_WSTATE_MAX_SPATIAL && back.flag_total <= HTA_NET_WSTATE_MAX_FLAGS);
+            for (unsigned i = 0; i < back.spatial_total; i++) assert(!hta_net_bit(back.spatial_has, i) || back.phase[i] <= 3);
+            size_t m = 0;
+            assert(hta_net_world_state_pack(re, sizeof(re), &back, &m));
+            assert(hta_net_world_state_unpack(re, m, &again, err2, sizeof(err2)) && ws_equal(&back, &again));
+        } else {
+            refused++;
+            assert(err[0] && strlen(err) < sizeof(err) - 1);
+            assert(!hta_net_world_state_unpack(buf, len, &again, err2, sizeof(err2)) && !strcmp(err, err2));
+        }
+    }
+    /* Pure noise, at every length. */
+    for (int it = 0; it < 20000; it++) {
+        size_t len = rnd() % (HTA_NET_MAX_PACKET - HTA_NET_HEADER + 4);
+        for (size_t k = 0; k < len; k++) buf[k] = (uint8_t)rnd();
+        if (len) buf[0] = rnd() % 4 ? 1 : buf[0];
+        if (hta_net_world_state_unpack(buf, len, &back, err, sizeof(err))) accepted++; else refused++;
+    }
+    assert(accepted > 1000 && refused > 1000);
+    printf("net: WORLD_STATE fuzz %u accepted, %u refused (no crash)\n", accepted, refused);
+}
+
+/* The server's send policy: complete state on change, then twice more,
+ * while moving every 4th tick, a keyframe every 20th, and at once for a
+ * new peer. */
+static void world_state_policy(void)
+{
+    hta_net_server s; hta_net_client a, b;
+    assert(hta_net_server_open(&s, 0));
+    uint16_t port = hta_udp_port(&s.udp);
+    assert(hta_net_client_open(&a, "127.0.0.1", port));
+    double now = 1.0;
+    for (int i = 0; i < 5; i++, now += 0.06) pump(&s, &a, NULL, now);
+    assert(a.connected);
+    static hta_net_world_state w;
+    memset(&w, 0, sizeof(w));
+    w.spatial_total = 3; w.flag_total = 2;
+    for (unsigned i = 0; i < 3; i++) hta_net_bit_set(w.spatial_has, i, true);
+    for (unsigned i = 0; i < 2; i++) hta_net_bit_set(w.flag_has, i, true);
+    unsigned sent[64] = { 0 };
+    /* tick 0: first -> sent; the next two repeat it; then quiet until the keyframe */
+    for (int t = 0; t < 30; t++, now += 0.06) {
+        pump(&s, &a, NULL, now);
+        if (t == 25) hta_net_bit_set(w.flag, 1, true);           /* a relay goes active */
+        sent[t] = hta_net_server_world_state(&s, &w);
+    }
+    for (int t = 0; t < 30; t++) {
+        bool want = t <= 2 || t == 22 || (t >= 25 && t <= 27);
+        if (sent[t] != want) { printf("tick %d sent %u\n", t, sent[t]); assert(0); }
+    }
+    pump(&s, &a, NULL, now); now += 0.06;
+    assert(a.have_world_state && hta_net_bit(a.world_state.flag, 1));
+    /* a mover moving: every 4th tick (plus the phase change's own three) */
+    w.phase[2] = 1;
+    memset(sent, 0, sizeof(sent));
+    for (int t = 0; t < 16; t++, now += 0.06) {
+        pump(&s, &a, NULL, now);
+        w.t[2] = (uint16_t)(1000 * (t + 1));
+        sent[t] = hta_net_server_world_state(&s, &w);
+    }
+    for (int t = 0; t < 16; t++) {
+        bool want = t <= 2 || t == 6 || t == 10 || t == 14;
+        if (sent[t] != want) { printf("moving tick %d sent %u\n", t, sent[t]); assert(0); }
+    }
+    /* a newcomer is sent the world on the next tick, whatever it is */
+    w.phase[2] = 2; w.t[2] = 65535;
+    for (int t = 0; t < 5; t++, now += 0.06) { pump(&s, &a, NULL, now); hta_net_server_world_state(&s, &w); }
+    assert(hta_net_client_open(&b, "127.0.0.1", port));
+    bool got = false;
+    for (int t = 0; t < 6 && !got; t++, now += 0.06) {
+        pump(&s, &a, &b, now);
+        hta_net_server_world_state(&s, &w);
+        hta_net_client_pump(&b, now + 0.001);
+        got = b.have_world_state;
+    }
+    assert(b.connected && got && b.world_state.phase[2] == 2 && hta_net_bit(b.world_state.flag, 1));
+    hta_net_client_close(&a); hta_net_client_close(&b); hta_net_server_close(&s);
+}
+
+/* v11: peers that speak another protocol are named, not just ignored. */
+static void version_mismatch(void)
+{
+    uint8_t wire[HTA_NET_MAX_PACKET + 1];
+    size_t n = 0;
+    uint16_t v; uint8_t t;
+    assert(hta_net_pack(wire, sizeof(wire), HTA_NET_PING, 1, 0, NULL, 0, &n));
+    assert(hta_net_peek(wire, n, &v, &t) && v == HTA_NET_VERSION && t == HTA_NET_PING);
+    wire[0] ^= 1; assert(!hta_net_peek(wire, n, &v, &t));
+    assert(hta_net_pack_probe(wire, sizeof(wire), 10, 0xABCD, &n) && n == HTA_NET_HEADER + 4);
+    assert(hta_net_peek(wire, n, &v, &t) && v == 10 && t == HTA_NET_DISCOVER);
+    hta_net_packet p;
+    assert(!hta_net_unpack(wire, n, &p));                                    /* not ours to read */
+    assert(!hta_net_pack_probe(wire, sizeof(wire), HTA_NET_VERSION, 1, &n)); /* only older ones */
+    assert(!hta_net_pack_probe(wire, sizeof(wire), HTA_NET_PROBE_OLDEST - 1, 1, &n));
+    /* An older joiner's HELLO: refused with its version in the host's stats. */
+    hta_net_server s;
+    assert(hta_net_server_open(&s, 0));
+    uint16_t port = hta_udp_port(&s.udp);
+    hta_udp old; assert(hta_udp_open(&old, 0));
+    hta_udp_addr to; assert(hta_udp_resolve(&to, "127.0.0.1", port));
+    uint8_t hello[16] = { 0x44, 0x33, 0x22, 0x11 };
+    assert(hta_net_pack(wire, sizeof(wire), HTA_NET_HELLO, 1, 0, hello, 16, &n));
+    wire[4] = 10; wire[5] = 0;                                                /* as a v10 build sends it */
+    assert(hta_udp_send(&old, &to, wire, n));
+    for (int i = 0; i < 20 && !s.stats.refused; i++) hta_net_server_pump(&s, 1.0 + i * 0.001);
+    assert(s.stats.refused == 1 && s.last_refusal == HTA_NET_REJECT_VERSION && s.last_refused_version == 10 &&
+           hta_net_server_count(&s) == 0);
+    /* its answer is ours (v11): the old build cannot read it, a peek can */
+    hta_udp_addr from; int got = -1;
+    for (int i = 0; i < 200 && got < 0; i++) got = hta_udp_recv(&old, wire, sizeof(wire), &from);
+    assert(got > 0 && hta_net_unpack(wire, (size_t)got, &p) && p.type == HTA_NET_REJECT && p.length == 7 &&
+           hta_net_u32_read(p.payload) == 0x11223344u && p.payload[4] == HTA_NET_REJECT_VERSION && p.payload[5] == HTA_NET_VERSION);
+    hta_net_server_close(&s);
+    /* An older host: it ignores our HELLO but answers the v10 probe in v10. */
+    hta_net_client c;
+    assert(hta_net_client_open(&c, "127.0.0.1", hta_udp_port(&old)));
+    hta_net_client_pump(&c, 5.0);
+    bool answered = false;
+    for (int i = 0; i < 400; i++) {
+        got = hta_udp_recv(&old, wire, sizeof(wire), &from);
+        if (got < 0) continue;
+        if (hta_net_peek(wire, (size_t)got, &v, &t) && v == 10 && t == HTA_NET_DISCOVER) {
+            wire[6] = HTA_NET_INFO;                                          /* any v10 answer will do */
+            assert(hta_udp_send(&old, &from, wire, (size_t)got));
+            answered = true;
+            break;
+        }
+    }
+    assert(answered);
+    for (int i = 0; i < 200 && !c.reject_reason; i++) hta_net_client_pump(&c, 5.001 + i * 0.001);
+    assert(!c.connected && c.reject_reason == HTA_NET_REJECT_VERSION && c.peer_version == 10);
+    hta_net_client_close(&c);
+    hta_udp_close(&old);
+}
+
+int main(void) { codec(); world_codec(); world_state_codec(); world_state_fuzz(); world_state_policy(); version_mismatch(); interpolation(); sessions(); discovery(); puts("net: codec, world, interpolation, malformed input, two UDP clients, snapshots, events, ping, disconnect, LAN discovery, player cap, v11 WORLD_STATE (codec, fuzz, send policy), version refusal OK"); }

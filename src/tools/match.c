@@ -6,8 +6,13 @@
  *
  *   megamod-match [--trial DIR] [--bundle DIR] [--world NAME] [--bots N]
  *                 [--mode slayer|team|ctf] [--skill 0-3] [--score N] [--seconds S]
- *                 [--cache DIR] [--host PORT] [--trace-events]
+ *                 [--cache DIR] [--host PORT] [--trace-events] [--world-state]
  *   (or HTA_TRIAL_DIR / HTA_BUNDLE_DIR). Exit 0 if the match loaded and ran.
+ *
+ * --world-state (X8): at the end, one line per world object -- authored ID,
+ * kind, runtime index, replication channel and index (or host-only), and
+ * its state ("match: object nightshift:entity/aux_power relay runtime 3
+ * logical 0 active"). docs/WORLD_STATE.md.
  *
  * --trace-events: log every X7 event that has bindings, each binding's
  * conditions and what it queued ("[bind] ..."; bounded per step). A debug
@@ -45,7 +50,7 @@ int main(int argc, char **argv)
     int bots = 7, mode = HTA_MODE_SLAYER, skill = 1, score = 25;
     double seconds = 60.0;
     int host_port = 0;
-    bool trace_events = false;
+    bool trace_events = false, world_state = false;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
         if (!strcmp(a, "--trial") && v) { trial = v; i++; }
@@ -58,12 +63,14 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--cache") && v) { cache = v; i++; }
         else if (!strcmp(a, "--host") && v) { host_port = atoi(v); i++; }
         else if (!strcmp(a, "--trace-events")) trace_events = true;
+        else if (!strcmp(a, "--world-state")) world_state = true;
         else if (!strcmp(a, "--mode") && v) {
             mode = !strcmp(v, "ctf") ? HTA_MODE_CTF : !strcmp(v, "team") ? HTA_MODE_TEAM_SLAYER : HTA_MODE_SLAYER;
             i++;
         } else {
             fprintf(stderr, "usage: %s [--trial DIR] [--bundle DIR] [--world NAME] [--bots N] "
-                            "[--mode slayer|team|ctf] [--skill 0-3] [--score N] [--seconds S] [--cache DIR] [--host PORT] [--trace-events]\n", argv[0]);
+                            "[--mode slayer|team|ctf] [--skill 0-3] [--score N] [--seconds S] [--cache DIR] [--host PORT] [--trace-events] "
+                            "[--world-state]\n", argv[0]);
             return 2;
         }
     }
@@ -164,9 +171,19 @@ int main(int argc, char **argv)
         for (uint32_t i = 0; i < s->went.defs->count; i++)
             if (s->went.defs->entity[i].kind == HTA_WDEF_MOVER)
                 printf("match: mover %s phase %u t %.2f\n", s->went.defs->entity[i].id, s->went.st[i].phase, s->went.st[i].t);
-            else if (s->went.defs->entity[i].kind == HTA_WDEF_RELAY && s->went.defs->binding_count)
+            else if (s->went.defs->entity[i].kind == HTA_WDEF_RELAY)
                 printf("match: relay %s %s\n", s->went.defs->entity[i].id,
                        hta_went_relay_active(&s->went, i) ? "active" : "inactive");
+        /* X8: what the world costs on the wire, and (--world-state) every
+         * object's identities and state. */
+        uint32_t sp, fl, ho;
+        hta_wrep_count(s->went.defs, &sp, &fl, &ho);
+        printf("match: world state: %u runtime objects: %u spatial (movers), %u logical (relays), %u host-only\n",
+               s->went.defs->count, sp, fl, ho);
+        for (uint32_t i = 0; world_state && i < s->went.defs->count; i++) {
+            char line[256];
+            if (hta_went_describe(&s->went, i, line, sizeof(line))) printf("match: object %s\n", line);
+        }
         const hta_asset_table *a = &s->world_ext.assets;
         if (a->model_count || a->sound_count)
             printf("match: assets: %u textures, %u materials, %u models, %u sounds; %u mover sounds started (%u distinct clips)\n",
@@ -187,9 +204,17 @@ int main(int argc, char **argv)
         s->script = NULL;
         printf("match: Lua state closed, %zu bytes left\n", left);
     }
-    if (host_port)
+    if (host_port) {
+        const hta_net_stats *ns = &s->host_server.stats;
         printf("match: hosted on UDP %d: %llu joiners refused, %u peers at the end\n", host_port,
-               (unsigned long long)s->host_server.stats.refused, hta_net_server_count(&s->host_server));
+               (unsigned long long)ns->refused, hta_net_server_count(&s->host_server));
+        if (s->host_server.last_refusal == HTA_NET_REJECT_VERSION)
+            printf("match: the last joiner refused spoke protocol v%u (this host v%u)\n",
+                   s->host_server.last_refused_version, HTA_NET_VERSION);
+        printf("match: WORLD_STATE sent %llu times (%llu payload bytes, largest %u, %.1f per s); %llu bytes out in all\n",
+               (unsigned long long)ns->world_states, (unsigned long long)ns->world_state_bytes, ns->world_state_max,
+               seconds > 0 ? (double)ns->world_states / seconds : 0.0, (unsigned long long)ns->bytes_out);
+    }
     /* The world's own state goes with it (X5: its asset table and the sound
      * bank's copies), so a leak-checked run sees the teardown. The rest of
      * the session lives until exit, as it always has. */

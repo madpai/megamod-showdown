@@ -64,7 +64,7 @@
 #define HTA_PREFAB_MAX_LINKS       64u      /* one prefab, all its children */
 #define HTA_PREFAB_MAX_LINKS_PER   8u       /* one child (the world's per-entity limit) */
 #define HTA_PREFAB_LOCAL_MAX       23u      /* bytes in a child's local ID, and an instance ID */
-#define HTA_PREFAB_MAX_INSTANCES   32u      /* one world */
+#define HTA_PREFAB_MAX_INSTANCES   128u     /* one world (HTA_WDEF_MAX_INSTANCES; X8: 32 before) */
 #define HTA_PREFAB_MAX_LOCAL       256.0f   /* |a child's position| in prefab space, wu */
 #define HTA_PREFAB_SCALE_MIN       0.25f    /* an instance's uniform scale */
 #define HTA_PREFAB_SCALE_MAX       4.0f

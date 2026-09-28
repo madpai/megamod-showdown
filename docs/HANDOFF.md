@@ -195,6 +195,26 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-27 X8 World State vNext (docs/WORLD_STATE.md).** The separate
+Night Shift X8 world restores D2 and D5 and reaches 74 runtime objects,
+while using 23 spatial mover states, 11 logical relay flags and 40 host-only
+objects. OAL and the engine agree on key `cc52fc69`; the original Night
+Shift remains key `356266bd`, byte for byte. The automated desktop proof
+(`scripts/test_x8.sh`) checks a real v11 host and joiner with a 39-byte
+at-rest snapshot. An Android 14 emulator also hosted it and accepted a
+desktop joiner, which synced all 23 movers and 11 relays in one 39-byte
+state with zero refusals (software graphics: 3–7 fps). On a device, host
+`night_shift_x8`, press the console and coolant valve, and confirm D2 and
+D5 power and open for joiners, including one joining after they change.
+Check that the valve,
+vents and movers above runtime index 63 still respond and that joining
+does not replay the sounds or Lua events. Protocol v10 peers should show
+the version mismatch message. Record device frame time and outbound
+bytes from the host log. This is the X8 device objective; leave scenario
+rules, lighting, AI and inventory for later milestones.
+
+---
+
 **2026-09-27 MegaMod: Night Shift, the first production vertical slice
 (docs/night_shift/).** A 2-4 player co-op horror scenario in an original
 facility, HARROW ANNEX, built from X3-X7 as they are -- **no engine code

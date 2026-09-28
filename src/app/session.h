@@ -65,6 +65,7 @@
 #include "../game/world_fx_audio.h"
 #include "../game/world_fx_gpu.h"
 #include "../game/world_entities_gpu.h"
+#include "../game/net_world_state.h"
 #include "report.h"
 
 #define HTA_SND_MAX_BANK  192u
@@ -484,9 +485,8 @@
      * went_version: bumps when a mover changes (the platform redraws). */                     \
     hta_world_entities went;                                                                   \
     uint32_t      went_diag_seen;                                                              \
-    bool          went_synced;       /* LAN client: a first WORLD_STATE applied */              \
+    hta_net_wstate_sync went_sync;   /* LAN client: the host's WORLD_STATE (X8) */             \
     uint32_t      went_teleports;    /* host: players moved by teleports, for tests */          \
-    uint32_t      went_state_tick;   /* LAN client: the last WORLD_STATE applied */             \
     hta_went_gpu  went_gpu;          /* the movers' meshes (the platform draws them) */       \
     /* X5: the world's sound resources as mixer clips (game/world_sounds.h): \
      * bound at match begin, a bank for the session's life. */               \

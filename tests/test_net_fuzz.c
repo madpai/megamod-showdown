@@ -63,7 +63,7 @@ int main(void)
         if (hta_net_event_unpack(p, len, &ev)) accepted[9]++;
         if (hta_net_info_unpack(p, len, &in)) accepted[10]++;
         if (hta_net_control_unpack(p, len, &ct)) accepted[11]++;
-        if (hta_net_world_state_unpack(p, len, &ws)) {
+        if (hta_net_world_state_unpack(p, len, &ws, NULL, 0)) {
             accepted[12]++;
             size_t n = 0;
             assert(hta_net_world_state_pack(again, sizeof(again), &ws, &n) && n == len && !memcmp(again, p, len));

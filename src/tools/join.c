@@ -72,7 +72,7 @@ typedef struct {
     hta_bsp_mesh mesh, sky, coll_mesh;
     hta_external_map ext; bool have_ext;
     hta_collision col;
-    hta_collision_instance merged[1024];
+    hta_collision_instance merged[1024 + HTA_WDEF_MAX_ENTITIES];   /* props (1024), then world entities */
     hta_instance_index col_index;
     uint32_t map_crc;
     hta_spawn_point spawns[64]; uint32_t spawn_count;
@@ -350,7 +350,7 @@ static bool frame(join *j, hta_gfx *g, double now, float dt)
 {
     /* Props solid while whole, with a broad phase over them. */
     j->col.instances = j->merged;
-    j->col.instance_count = hta_props_instances(&j->wfx.props, NULL, 0, j->merged, 1024 - HTA_WDEF_MAX_ENTITIES);
+    j->col.instance_count = hta_props_instances(&j->wfx.props, NULL, 0, j->merged, 1024);
     j->col.instance_count += hta_went_instances(&j->went, j->merged + j->col.instance_count, HTA_WDEF_MAX_ENTITIES);
     hta_collision_index_instances(&j->col, &j->col_index, 0.25f);
     prop_events(j);
@@ -373,12 +373,20 @@ static bool frame(join *j, hta_gfx *g, double now, float dt)
     return hta_gfx_draw(g, &cam, &sc, j->gpu_world, j->gpu_sky, NULL, dyn, n, NULL, NULL);
 }
 
-/* Every mover's state as this joiner has it, one line each. */
+/* Every mover's and (X8) every relay's state as this joiner has it, one
+ * line each -- a relay's only from the host's WORLD_STATE: a joiner never
+ * evaluates a binding. */
 static void movers(const join *j, const char *when)
 {
     static const char *phase[] = { "closed", "opening", "open", "closing" };
     for (uint32_t i = 0; j->went.loaded && i < j->went.defs->count; i++) {
-        if (j->went.defs->entity[i].kind != HTA_WDEF_MOVER) continue;
+        uint8_t kind = j->went.defs->entity[i].kind;
+        if (kind == HTA_WDEF_RELAY) {
+            printf("join: %s relay %s %s (logical %u)\n", when, j->went.defs->entity[i].id,
+                   j->went.st[i].active ? "active" : "inactive", j->went.rep.index[i]);
+            continue;
+        }
+        if (kind != HTA_WDEF_MOVER) continue;
         float off[3];
         hta_went_offset(&j->went, i, off);
         printf("join: %s mover %s %s (t %.2f, offset %.2f %.2f %.2f), %u world states\n", when, j->went.defs->entity[i].id,
@@ -427,7 +435,7 @@ static void play(join *j, const hta_input *in, double now, float dt)
      * where (nothing here evaluates a binding). */
     for (uint32_t k = 0; k < j->view.world_sound_count; k++) {
         const uint16_t snd = j->view.world_sound[k].sound;
-        uint8_t ent = j->view.world_sound[k].entity;
+        uint16_t ent = j->view.world_sound[k].entity;
         if (snd >= j->ext.assets.sound_count || !j->went.loaded || ent >= j->went.defs->count) continue;
         float fwd[3];
         hta_camera_forward(&j->cam, fwd);
@@ -548,13 +556,14 @@ int main(int argc, char **argv)
     if (argc < 2) {
         fprintf(stderr, "usage: %s <host> [port] [--world NAME] [--trial DIR] [--bundle DIR]\n"
                         "       [--map bloodgulch.map] [--oalmap m.oalmap] [--preset P] "
-                        "[--weather W] [--auto S] [--shot out.ppm]\n"
+                        "[--weather W] [--auto S] [--shot out.ppm] [--route R] [--world-state]\n"
                         "  --world picks the host's map by name (bloodgulch, ctf_2fort, ...) from the\n"
                         "  Trial folder and the Asset Lab bundle (or HTA_TRIAL_DIR / HTA_BUNDLE_DIR)\n", argv[0]);
         return 2;
     }
     static join j;
     const char *host = argv[1], *map = NULL, *oal = NULL, *shot = NULL, *world = NULL;
+    bool world_state = false;   /* X8: --world-state, every object as this joiner has it */
     const char *trial = getenv("HTA_TRIAL_DIR"), *bundle = getenv("HTA_BUNDLE_DIR");
     unsigned port = 32270;
     double autos = 0;
@@ -573,6 +582,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--auto") && i + 1 < argc) autos = atof(argv[++i]);
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
         else if (!strcmp(argv[i], "--route") && i + 1 < argc) snprintf(j.route, sizeof(j.route), "%s", argv[++i]);
+        else if (!strcmp(argv[i], "--world-state")) world_state = true;
         else if (argv[i][0] != '-') port = (unsigned)atoi(argv[i]);
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
@@ -670,6 +680,9 @@ int main(int argc, char **argv)
         if (j.route[0] && j.route_done) break;
     }
     unsigned seen = 0, broken = 0;
+    char refusal[96];
+    snprintf(refusal, sizeof(refusal), "REFUSED (the host speaks protocol v%u; this build speaks v%u)",
+             j.net.peer_version, HTA_NET_VERSION);
     for (uint32_t i = 0; i < HTA_NET_MAX_ENTITIES; i++) seen += j.view.ent[i].live;
     for (uint32_t i = 0; i < j.wfx.props.count; i++) broken += j.wfx.props.props[i].broken;
     printf("join: %s, player %u, %u entities live, %u kills (%u gibbed), %u effects, %u corrections, "
@@ -677,10 +690,22 @@ int main(int argc, char **argv)
            j.net.connected ? "connected" :
            j.net.reject_reason == HTA_NET_REJECT_CONTENT ? "REFUSED (characters/weapons differ from the host's)" :
            j.net.reject_reason == HTA_NET_REJECT_MAP ? "REFUSED (not the host's map)" :
-           j.net.reject_reason == HTA_NET_REJECT_FULL ? "REFUSED (full)" : "NOT connected", j.net.id, seen,
+           j.net.reject_reason == HTA_NET_REJECT_FULL ? "REFUSED (full)" :
+           j.net.reject_reason == HTA_NET_REJECT_VERSION ? refusal : "NOT connected", j.net.id, seen,
            j.view.kills, j.view.gibs, j.view.fx, j.view.corrections, j.view.team_score[0], j.view.team_score[1],
            broken, j.wfx_audio.played);
     movers(&j, "at the end:");
+    if (j.went.loaded) {
+        printf("join: world state: %u applied (%llu payload bytes, largest %u), %s, %u refused%s%s%s\n", j.view.ws.applied,
+               (unsigned long long)j.net.stats.world_state_bytes, j.net.stats.world_state_max,
+               j.view.ws.synced ? "synced" : "NOT synced", j.view.ws.refused,
+               j.view.ws.refused ? " (" : "", j.view.ws.refused ? j.view.ws.error : "", j.view.ws.refused ? ")" : "");
+        if (j.net.world_state_error[0]) printf("join: a WORLD_STATE did not decode: %s\n", j.net.world_state_error);
+        for (uint32_t i = 0; world_state && i < j.went.defs->count; i++) {
+            char line[256];
+            if (hta_went_describe(&j.went, i, line, sizeof(line))) printf("join: object %s\n", line);
+        }
+    }
     if (j.went.loaded || j.moved_by_host)
         printf("join: moved by the host %u time(s); at (%.2f %.2f %.2f)%s\n", j.moved_by_host,
                j.player.pos[0], j.player.pos[1], j.player.pos[2], j.route_failed ? "; ROUTE FAILED" : "");

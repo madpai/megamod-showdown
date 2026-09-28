@@ -225,7 +225,7 @@ static void resolution(void)
         snprintf(id, sizeof(id), "t:script/s%u", i);
         CHECK(hta_res_add(&big, id, HTA_RT_SCRIPT, 0, (uint16_t)i, err, sizeof(err)));
     }
-    CHECK(!hta_res_add(&big, "t:script/one_more", HTA_RT_SCRIPT, 0, 0, err, sizeof(err)) && strstr(err, "more than 512"));
+    CHECK(!hta_res_add(&big, "t:script/one_more", HTA_RT_SCRIPT, 0, 0, err, sizeof(err)) && strstr(err, "more than 2048"));
     clock_t t0 = clock();
     for (uint32_t i = 0; i < HTA_RES_MAX; i++) {
         char id[40];

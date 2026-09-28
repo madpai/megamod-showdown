@@ -6,7 +6,12 @@
 #include <stdint.h>
 
 #define HTA_NET_MAGIC 0x31415448u /* "HTA1" on the wire */
-#define HTA_NET_VERSION 10u   /* v10: HELLO carries the content fingerprint (app/compat.h) */
+/* v10: HELLO carries the content fingerprint (app/compat.h).
+ * v11 (X8): WORLD_STATE carries replicated world state by replication index
+ * (movers' spatial state, relays' logical flags) instead of a 6-bit entity
+ * index, and the FX world sound names a 16-bit runtime object. v10 and v11
+ * refuse each other (docs/WORLD_STATE.md "Protocol v11"). */
+#define HTA_NET_VERSION 11u
 #define HTA_NET_HEADER 20u
 #define HTA_NET_MAX_PACKET 1200u
 #define HTA_NET_MAX_PLAYERS 8u
@@ -17,7 +22,7 @@
 #define HTA_NET_WORLD_HEADER 86u
 #define HTA_NET_CONTROL_BYTES 35u
 #define HTA_NET_KILL_BYTES 128u
-#define HTA_NET_FX_BYTES 28u
+#define HTA_NET_FX_BYTES 29u    /* v11: the entity is 16 bits */
 #define HTA_NET_PROJECTILE_BYTES 30u
 #define HTA_NET_MAX_PROJECTILES 32u
 /* Projectile pools: the match's own first, then the host's first-person
@@ -42,11 +47,9 @@ typedef enum {
     HTA_NET_REJECT, HTA_NET_VEHICLES, HTA_NET_DROPS,
     /* v4: the rules -- mode, team scores, the flags, vehicle hulls. */
     HTA_NET_GAME,
-    /* The world's movers (doors), host -> clients. Additive in v10: only a
-     * host playing an OALMAP v3 world sends it, and only an engine that
-     * implements world entities can load one (older ones refuse v3), so no
-     * two peers that can share a match disagree about it. See
-     * docs/WORLD_ENTITIES.md "Networking". */
+    /* The world's replicated state, host -> clients: movers and (v11)
+     * relays. X1 added it within v10; X8 changed its layout, which is why
+     * v11 exists (docs/WORLD_STATE.md). */
     HTA_NET_WORLD_STATE
 } hta_net_type;
 
@@ -121,7 +124,12 @@ typedef struct {
 /* v6 HTA_NET_READY: the player has chosen a class and may be spawned. */
 enum { HTA_NET_JUMP=1, HTA_NET_TRIGGER=2, HTA_NET_DUCK=4, HTA_NET_ALT=8, HTA_NET_READY=16, HTA_NET_FLY=32 };
 /* v10: CONTENT -- the imported characters/weapons differ (app/compat.h). */
-enum { HTA_NET_REJECT_FULL=1, HTA_NET_REJECT_MAP=2, HTA_NET_REJECT_CONTENT=3 };
+/* v11: VERSION -- the peers speak different protocols. A v11+ host answers
+ * a foreign HELLO with it (payload: nonce, reason, its version u16), which a
+ * newer client can read by peeking at the header; an older client cannot
+ * read anything newer and simply gets no answer. A client also sets it
+ * itself when any answer arrives in another version (hta_net_peek). */
+enum { HTA_NET_REJECT_FULL=1, HTA_NET_REJECT_MAP=2, HTA_NET_REJECT_CONTENT=3, HTA_NET_REJECT_VERSION=4 };
 /* A Trial item spawn's weighted choices (asset/items.h HTA_ITEM_MAX_CHOICES):
  * WORLD's item_choice indexes them, so it is checked against this. */
 #define HTA_NET_MAX_ITEM_CHOICES 8u
@@ -179,10 +187,12 @@ typedef struct {
 can load such a world, so none is ever in that match (the X1 WORLD_STATE
 rule, docs/WORLD_ENTITIES.md "Why not v11"). */
 enum { HTA_NET_FX_FIRE=1, HTA_NET_FX_IMPACT, HTA_NET_FX_DETONATE, HTA_NET_FX_WRECK, HTA_NET_FX_WORLD_SOUND };
-#define HTA_NET_FX_MAX_WORLD_ENTITIES 64u   /* HTA_WDEF_MAX_ENTITIES */
-#define HTA_NET_FX_MAX_WORLD_SOUNDS 512u    /* HTA_RES_MAX */
+#define HTA_NET_FX_MAX_WORLD_ENTITIES 1024u /* HTA_WDEF_MAX_ENTITIES (v11: a runtime object index, 16 bits) */
+#define HTA_NET_FX_MAX_WORLD_SOUNDS 2048u   /* HTA_RES_MAX */
 typedef struct {
-    uint8_t kind, entity, weapon, material; /* weapon: roster or pool index */
+    uint8_t kind;
+    uint16_t entity;                        /* a unit (255 none), or (world sound) a runtime object */
+    uint8_t weapon, material;               /* weapon: roster or pool index */
     float pos[3], dir[3];
 } hta_net_fx;
 typedef struct {
@@ -253,18 +263,76 @@ typedef struct {
 bool hta_net_game_pack(uint8_t *dst, size_t cap, const hta_net_game *g);
 bool hta_net_game_unpack(const uint8_t *src, size_t len, hta_net_game *g);
 
-/* Each mover of the world: its entity index (the same on every peer: the
- * map check covers the manifest that lists them), phase (0 closed, 1
- * opening, 2 open, 3 closing) and progress in 1/65535ths. Indices strictly
- * increase. Resulting state only -- clients never see the events. */
-#define HTA_NET_MAX_WORLD_STATE 64u
-#define HTA_NET_WORLD_STATE_BYTES 4u
+/* v11 WORLD_STATE (X8, docs/WORLD_STATE.md): the world's replicated state,
+ * addressed by REPLICATION index -- never by what both sides already know
+ * from the package (placements, definitions, bindings).
+ *
+ *   u8  format (1)   u16 spatial_total   u16 flag_total
+ *   then sections, each a run of consecutive entries of one table:
+ *     u8 1 (SPATIAL)  u16 first  u8 n (1..255)   n movers: u8 phase
+ *                     (0 closed, 1 opening, 2 open, 3 closing), and for a
+ *                     moving phase u16 progress in 1/65535ths (at rest it is
+ *                     exactly 0 or 1 and not sent)
+ *     u8 2 (FLAGS)    u16 first  u16 n (1..1024) ceil(n/8) bytes, bit k =
+ *                     flag first+k active; unused high bits zero
+ *
+ * Totals are the sender's table sizes: a receiver whose world differs
+ * refuses the message. Runs of one table ascend and never overlap (so no
+ * entry appears twice). A message may carry any subset; the host sends all
+ * of it every time (it fits: HTA_NET_WSTATE_FULL_MAX), so each is a complete
+ * snapshot and a late joiner needs nothing earlier. Resulting state only --
+ * clients never see the events. */
+#define HTA_NET_WSTATE_FORMAT 1u
+#define HTA_NET_WSTATE_MAX_SPATIAL 256u    /* HTA_WREP_MAX_SPATIAL */
+#define HTA_NET_WSTATE_MAX_FLAGS 1024u     /* HTA_WREP_MAX_FLAGS */
+#define HTA_NET_WSTATE_HEADER 5u
+#define HTA_NET_WSTATE_SPATIAL_RUN 4u      /* kind, first, n */
+#define HTA_NET_WSTATE_FLAG_RUN 5u         /* kind, first, n */
+#define HTA_NET_WSTATE_MAX_RUN 255u
+/* Every mover moving and every flag, in maximal runs: the largest complete snapshot. */
+#define HTA_NET_WSTATE_FULL_MAX (HTA_NET_WSTATE_HEADER + \
+    ((HTA_NET_WSTATE_MAX_SPATIAL + HTA_NET_WSTATE_MAX_RUN - 1u) / HTA_NET_WSTATE_MAX_RUN) * HTA_NET_WSTATE_SPATIAL_RUN + \
+    HTA_NET_WSTATE_MAX_SPATIAL * 3u + HTA_NET_WSTATE_FLAG_RUN + HTA_NET_WSTATE_MAX_FLAGS / 8u)
+enum { HTA_NET_WSTATE_SPATIAL = 1, HTA_NET_WSTATE_FLAGS = 2 };
+/* When the host sends it (net/session.c), in 20 Hz server ticks: on a change,
+ * then REPEATS more times; while only progress moves, every MOVING_TICKS;
+ * idle, every KEYFRAME_TICKS; and at once for a new peer. */
+#define HTA_NET_WSTATE_REPEATS 2u
+#define HTA_NET_WSTATE_MOVING_TICKS 4u     /* 5 Hz */
+#define HTA_NET_WSTATE_KEYFRAME_TICKS 20u  /* 1 s */
 typedef struct {
-    uint8_t count;
-    struct { uint8_t entity, phase; uint16_t t; } mover[HTA_NET_MAX_WORLD_STATE];
+    uint16_t spatial_total, flag_total;
+    uint8_t  spatial_has[HTA_NET_WSTATE_MAX_SPATIAL / 8u];  /* entries carried */
+    uint8_t  phase[HTA_NET_WSTATE_MAX_SPATIAL];
+    uint16_t t[HTA_NET_WSTATE_MAX_SPATIAL];
+    uint8_t  flag_has[HTA_NET_WSTATE_MAX_FLAGS / 8u];
+    uint8_t  flag[HTA_NET_WSTATE_MAX_FLAGS / 8u];           /* bit k: flag k active */
 } hta_net_world_state;
+/* False (and `err`, when given, says why in words) for anything malformed,
+ * over a limit, out of order or truncated; nothing is written then. */
 bool hta_net_world_state_pack(uint8_t *dst, size_t cap, const hta_net_world_state *w, size_t *written);
-bool hta_net_world_state_unpack(const uint8_t *src, size_t len, hta_net_world_state *w);
+/* The size of a complete snapshot of `spatial` movers (`moving` of them
+ * moving) and `flags` relays, as hta_net_world_state_pack writes it. */
+static inline uint32_t hta_net_world_state_bytes(uint32_t spatial, uint32_t moving, uint32_t flags)
+{
+    return HTA_NET_WSTATE_HEADER +
+           (spatial ? (spatial + HTA_NET_WSTATE_MAX_RUN - 1u) / HTA_NET_WSTATE_MAX_RUN * HTA_NET_WSTATE_SPATIAL_RUN + spatial + 2u * moving : 0u) +
+           (flags ? HTA_NET_WSTATE_FLAG_RUN + (flags + 7u) / 8u : 0u);
+}
+bool hta_net_world_state_unpack(const uint8_t *src, size_t len, hta_net_world_state *w, char *err, size_t errlen);
+static inline bool hta_net_bit(const uint8_t *bits, uint32_t k) { return (bits[k >> 3] >> (k & 7u)) & 1u; }
+static inline void hta_net_bit_set(uint8_t *bits, uint32_t k, bool on)
+{ if (on) bits[k >> 3] |= (uint8_t)(1u << (k & 7u)); else bits[k >> 3] &= (uint8_t)~(1u << (k & 7u)); }
+
+/* v11: any packet's version and type, if it carries this protocol's magic
+ * (the header's first 7 bytes have kept one layout since v1). A peer uses
+ * it to name the other side's version instead of just not answering. */
+bool hta_net_peek(const uint8_t *src, size_t len, uint16_t *version, uint8_t *type);
+/* v11: a DISCOVER in an OLDER protocol's header (DISCOVER and its 4-byte
+ * nonce are the same in every version since v4): a host of that version
+ * answers it, which is how a newer client learns it has found an older host. */
+bool hta_net_pack_probe(uint8_t *dst, size_t cap, uint16_t version, uint32_t nonce, size_t *written);
+#define HTA_NET_PROBE_OLDEST 8u
 
 bool hta_net_vehicles_pack(uint8_t *dst, size_t cap, const hta_net_vehicles *v,
                            size_t *written);

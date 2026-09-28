@@ -106,8 +106,9 @@ variant('badinstance', patched_world(north, north.replace('north_door', 'North_d
 variant('scale0', patched_world('"yaw_degrees":-90.0}', '"scale":0.0,"yaw_degrees":-90.0}'))
 variant('scaleneg', patched_world('"yaw_degrees":-90.0}', '"scale":-1.0,"yaw_degrees":-90.0}'))
 variant('dupinstance', patched_world('"id":"south_door"', '"id":"north_door"'))
-# eleven more instances before north_door: 1 + 11 x 6 entities passes 64 at the eleventh
-variant('toomany', patched_world(north, ','.join(north.replace('north_door', f'n{i:02d}') for i in range(11)) + ',' + north))
+# 127 more instances before north_door: with the two originals, 129 exceeds
+# X8's independent 128-instance limit (the old 67-entity variant now loads).
+variant('toomany', patched_world(north, ','.join(north.replace('north_door', f'n{i:03d}') for i in range(127)) + ',' + north))
 # the prefab's side
 variant('childmissing', facility=F('"model":"x6shared:model/door_panel"', '"model":"x6shared:model/door_panels"'))
 variant('childwrongtype', facility=F('"model":"x6shared:model/frame_top"', '"model":"x6shared:sound/door_hiss"'))
@@ -205,7 +206,7 @@ refuse badinstance "prefab instance 'North_door': instance id has capital 'N' (I
 refuse scale0 "prefab instance south_door: scale 0 out of range (uniform, 0.25 to 4)"
 refuse scaleneg "prefab instance south_door: scale -1 out of range (uniform, 0.25 to 4)"
 refuse dupinstance "prefab instance north_door appears twice"
-refuse toomany "prefab instance n10 expands the world to 67 entities, exceeding limit 64"
+refuse toomany "world_entities: more than 128 prefab instances"
 refuse childmissing "prefab x6:prefab/security_door child 'door' references missing model x6shared:model/door_panels"
 refuse childwrongtype "prefab x6:prefab/security_door child 'frame_top': model x6shared:sound/door_hiss is a sound, expected a model"
 refuse childunimported "prefab x6:prefab/security_door child 'frame_top': model x6shared:model/frame_top is provided by package x6.shared_assets, which package x6.facility requires but does not import it from"

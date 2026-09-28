@@ -1,5 +1,10 @@
 # World entities (X1, X2): generic, source-independent world behaviour
 
+> **Current limits and networking:** X8 separates runtime indices from
+> replicated mover and relay state. See [WORLD_STATE.md](WORLD_STATE.md).
+> The 64-object limits and v10 wire details below describe the original
+> X1–X7 implementation and its historical fixtures.
+
 **Status:** X1 implemented 2026-09-26; X2 (reusable mover definitions and
 the world key) the same day, [below](#x2-reusable-mover-definitions). This
 describes the code as it is.

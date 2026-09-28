@@ -11,6 +11,9 @@
 #include "resource.h"
 #include "world_def.h"
 #include "../engine/world_entities.h"
+#include "world_repl.h"
+#include "../net/protocol.h"
+#include "../gfx/gfx.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -150,6 +153,47 @@ static void bindings_json(out *o)
            "open at the end of its travel emit here and queue behind\", \"world.movers: movers move; arriving -> opened/closed, "
            "queued for the next step's dispatch\", \"host.apply: teleports, damage (hta_game_hurt), sounds (and the world-sound "
            "effect to joiners)\", \"network: snapshots and WORLD_STATE out\"]},\n", HTA_WENT_BUDGET);
+}
+
+/* X8: world state and replication (asset/world_repl.h, net/protocol.h,
+ * docs/WORLD_STATE.md) -- the limits, the wire's costs, when it is sent,
+ * and each kind's classification, from the tables the engine runs on. */
+_Static_assert(HTA_NET_WSTATE_MAX_SPATIAL == HTA_WREP_MAX_SPATIAL && HTA_NET_WSTATE_MAX_FLAGS == HTA_WREP_MAX_FLAGS &&
+               HTA_NET_FX_MAX_WORLD_ENTITIES == HTA_WDEF_MAX_ENTITIES && HTA_NET_FX_MAX_WORLD_SOUNDS == HTA_RES_MAX,
+               "the wire's world-state limits are the world's");
+_Static_assert(HTA_NET_WSTATE_FULL_MAX + HTA_NET_HEADER <= HTA_NET_MAX_PACKET, "a complete WORLD_STATE fits one packet");
+
+static void world_state_json(out *o)
+{
+    put(o, "  \"world_state\": {\"protocol\": %u, \"message_format\": %u, "
+           "\"identity\": {\"runtime\": \"every placed or expanded entity, in compiled order: the host simulates by it; links, bindings, "
+           "Lua handles and traces name it\", \"spatial\": \"movers only, in runtime order: WORLD_STATE's mover index\", "
+           "\"logical\": \"relays only, in runtime order: WORLD_STATE's flag index\", \"host_only\": \"every other kind: no replicated "
+           "slot, no bytes\", \"requests\": \"no client message names an object: a press is controls, the host finds the target by its "
+           "reach test\"}, ",
+        HTA_NET_VERSION, HTA_NET_WSTATE_FORMAT);
+    put(o, "\"limits\": {\"runtime_objects\": %u, \"spatial\": %u, \"logical_flags\": %u, \"mover_definitions\": %u, "
+           "\"prefab_instances\": %u, \"links\": %u, \"bindings\": %u, \"conditions\": %u, \"actions\": %u, \"resources\": %u, "
+           "\"packet_payload\": %u, \"snapshot_max_bytes\": %u, \"gfx_instances\": %u}, ",
+        HTA_WDEF_MAX_ENTITIES, HTA_WREP_MAX_SPATIAL, HTA_WREP_MAX_FLAGS, HTA_WDEF_MAX_MOVER_DEFS, HTA_WDEF_MAX_INSTANCES,
+        HTA_WDEF_MAX_LINKS, HTA_WDEF_MAX_BINDINGS, HTA_WDEF_MAX_CONDS, HTA_WDEF_MAX_ACTIONS, HTA_RES_MAX,
+        HTA_NET_MAX_PACKET - HTA_NET_HEADER, (unsigned)HTA_NET_WSTATE_FULL_MAX, HTA_GFX_MAX_INSTANCES);
+    put(o, "\"encoding\": {\"packet_header\": %u, \"header\": %u, \"spatial_run\": %u, \"spatial_run_max\": %u, "
+           "\"mover_at_rest\": 1, \"mover_moving\": 3, \"flag_run\": %u, \"flags_per_byte\": 8, "
+           "\"snapshot\": \"header + per 255 movers a spatial run + 1 byte a resting mover, 3 a moving one + (any relays) a flag run + "
+           "ceil(relays / 8)\"}, ",
+        HTA_NET_HEADER, HTA_NET_WSTATE_HEADER, HTA_NET_WSTATE_SPATIAL_RUN, HTA_NET_WSTATE_MAX_RUN, HTA_NET_WSTATE_FLAG_RUN);
+    put(o, "\"send\": {\"tick_hz\": 20, \"complete\": true, \"on_change_repeats\": %u, \"moving_every_ticks\": %u, "
+           "\"keyframe_every_ticks\": %u, \"on_join\": true}, \"kinds\": {",
+        HTA_NET_WSTATE_REPEATS, HTA_NET_WSTATE_MOVING_TICKS, HTA_NET_WSTATE_KEYFRAME_TICKS);
+    for (uint8_t k = 1; k < HTA_WDEF_KIND_COUNT; k++) {
+        const hta_wrep_kind_info *i = hta_wrep_kind(k);
+        put(o, "%s\"%s\": {\"channel\": \"%s\", \"host_state\": \"%s\", \"replicated\": \"%s\", \"static_known\": %s, "
+               "\"late_join\": %s, \"interaction\": %s, \"positioned\": %s}", k > 1 ? ", " : "", hta_wdef_kind_name(k),
+            hta_wrep_channel_name(i->channel), i->host_state, i->replicated, i->static_known ? "true" : "false",
+            i->late_join ? "true" : "false", i->interaction ? "true" : "false", i->positioned ? "true" : "false");
+    }
+    put(o, "}},\n");
 }
 
 size_t hta_resource_contract_json(char *buf, size_t cap)
@@ -295,6 +339,7 @@ size_t hta_resource_contract_json(char *buf, size_t cap)
             "\"order\": \"canonical byte order of id, each once\", \"reserved\": \"a schema 5 world's own placed IDs may not hold __\"}, "
             "\"bindings\": {\"schema\": 6, \"see\": \"bindings\"}},\n");
     bindings_json(&o);
+    world_state_json(&o);
     put(&o, "  \"scripts\": {\"api\": \"%s\", \"max_scripts\": %u, \"max_source_bytes\": %u, \"max_pool_bytes\": %u}\n}\n",
         HTA_WDEF_SCRIPT_API, HTA_WDEF_MAX_SCRIPTS, HTA_WDEF_SCRIPT_MAX_BYTES, HTA_WDEF_SCRIPT_POOL);
     return o.len;

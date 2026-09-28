@@ -184,6 +184,7 @@ bool hta_went_load(hta_world_entities *w, const hta_world_defs *defs, char *err,
     hta_went_free(w);
     if (!defs || !defs->count) return true;
     if (!hta_world_defs_check(defs, err, errlen)) return false;
+    if (!hta_wrep_build(&w->rep, defs, err, errlen)) return false;
     w->defs = defs;
     for (uint32_t i = 0; i < defs->count; i++) w->st[i].generation = 1;
     for (uint32_t k = 0; k < defs->mover_def_count; k++)
@@ -429,7 +430,7 @@ bool hta_went_use(hta_world_entities *w, uint32_t i, uint8_t actor, uint8_t dept
     w->st[i].cooldown = HTA_WENT_COOLDOWN;
     emit(w, i, HTA_WEV_USED, actor, depth);
     if (w->defs->entity[i].script) {
-        if (w->call_count < HTA_WENT_MAX_CALLS) w->calls[w->call_count++] = (hta_went_call){ (uint8_t)i, actor };
+        if (w->call_count < HTA_WENT_MAX_CALLS) w->calls[w->call_count++] = (hta_went_call){ (uint16_t)i, actor };
         else diag(w, "world events: too many scripted uses this step, one dropped", i);
     }
     return true;
@@ -532,7 +533,7 @@ static void dispatch(hta_world_entities *w, const hta_went_event *e)
         if (!hta_went_position(w, (uint32_t)i, pos)) return;
         if (w->cue_count >= HTA_WENT_MAX_CUES) { diag(w, "world sounds: too many at once, one dropped", (uint32_t)i); return; }
         hta_went_cue *c = &w->cues[w->cue_count++];
-        c->entity = (uint8_t)i;
+        c->entity = (uint16_t)i;
         c->sound = (uint16_t)(a->sound - 1u);
         memcpy(c->pos, pos, sizeof(pos));
         c->binding = e->binding;
@@ -633,7 +634,7 @@ void hta_went_step(hta_world_entities *w, float dt)
         if (!sound || (s->phase != HTA_MOVER_OPENING && s->phase != HTA_MOVER_CLOSING)) continue;
         if (w->cue_count >= HTA_WENT_MAX_CUES) { diag(w, "world sounds: too many at once, one dropped", i); continue; }
         hta_went_cue *c = &w->cues[w->cue_count++];
-        c->entity = (uint8_t)i;
+        c->entity = (uint16_t)i;
         c->sound = (uint16_t)(sound - 1u);
         c->binding = 0;
         for (int k = 0; k < 3; k++) c->pos[k] = w->inst[i].pos[k];
@@ -659,15 +660,33 @@ void hta_went_offset(const hta_world_entities *w, uint32_t index, float out[3])
 uint32_t hta_went_snapshot(const hta_world_entities *w, hta_went_mover_state *out, uint32_t cap)
 {
     uint32_t n = 0;
-    for (uint32_t i = 0; w && w->loaded && out && i < w->defs->count && n < cap; i++) {
-        if (w->defs->entity[i].kind != HTA_WDEF_MOVER) continue;
+    for (; w && w->loaded && out && n < w->rep.spatial_count && n < cap; n++) {
+        uint32_t i = w->rep.spatial[n];
         float t = w->st[i].t < 0.0f ? 0.0f : w->st[i].t > 1.0f ? 1.0f : w->st[i].t;
-        out[n].index = (uint8_t)i;
+        out[n].index = (uint16_t)i;
         out[n].phase = w->st[i].phase;
-        out[n].t_q = (uint16_t)lrintf(t * 65535.0f);
-        n++;
+        /* At rest the progress is exact (0 closed, 1 open): the wire leaves it out. */
+        out[n].t_q = w->st[i].phase == HTA_MOVER_CLOSED ? 0 : w->st[i].phase == HTA_MOVER_OPEN ? 65535 : (uint16_t)lrintf(t * 65535.0f);
     }
     return n;
+}
+
+uint32_t hta_went_flags(const hta_world_entities *w, uint8_t *bits, uint32_t cap_bits)
+{
+    if (!w || !w->loaded || !bits) return 0;
+    uint32_t n = w->rep.flag_count < cap_bits ? w->rep.flag_count : cap_bits;
+    memset(bits, 0, (n + 7u) / 8u);
+    for (uint32_t k = 0; k < n; k++)
+        if (w->st[w->rep.flag[k]].active) bits[k >> 3] |= (uint8_t)(1u << (k & 7u));
+    return n;
+}
+
+bool hta_went_apply_flag(hta_world_entities *w, uint32_t flag, bool active)
+{
+    if (!w || !w->loaded || flag >= w->rep.flag_count) return false;
+    hta_went_state *s = &w->st[w->rep.flag[flag]];
+    if ((s->active != 0) != active) { s->active = active ? 1 : 0; w->version++; }
+    return true;
 }
 
 bool hta_went_apply(hta_world_entities *w, const hta_went_mover_state *m, bool snap)
@@ -683,5 +702,21 @@ bool hta_went_apply(hta_world_entities *w, const hta_went_mover_state *m, bool s
     if (snap || fabsf(s->t - t) > 0.1f || m->phase == HTA_MOVER_OPEN || m->phase == HTA_MOVER_CLOSED) s->t = t;
     if (snap) s->heard = s->phase;          /* the world as we found it: no sound */
     place(w, m->index);
+    return true;
+}
+
+bool hta_went_describe(const hta_world_entities *w, uint32_t i, char *out, size_t n)
+{
+    if (!w || !w->loaded || !out || !n || i >= w->defs->count) return false;
+    static const char *phase[] = { "closed", "opening", "open", "closing" };
+    const hta_wdef *d = &w->defs->entity[i];
+    const hta_wrep_kind_info *k = hta_wrep_kind(d->kind);
+    uint8_t ch = k ? k->channel : HTA_WREP_HOST_ONLY;
+    char where[32], state[48] = "";
+    if (ch == HTA_WREP_HOST_ONLY) snprintf(where, sizeof(where), "host-only");
+    else snprintf(where, sizeof(where), "%s %u", hta_wrep_channel_name(ch), w->rep.index[i]);
+    if (d->kind == HTA_WDEF_MOVER) snprintf(state, sizeof(state), " %s t %.2f", phase[w->st[i].phase & 3u], (double)w->st[i].t);
+    else if (d->kind == HTA_WDEF_RELAY) snprintf(state, sizeof(state), " %s", w->st[i].active ? "active" : "inactive");
+    snprintf(out, n, "%s %s runtime %u %s%s", d->id, hta_wdef_kind_name(d->kind), i, where, state);
     return true;
 }

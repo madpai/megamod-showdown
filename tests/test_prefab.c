@@ -564,14 +564,19 @@ static char *instances_world(unsigned count, const char *prefab)
 
 static void limits(void)
 {
-    /* 22 instances of 3 children: 66 entities, over 64 -- refused before
-     * anything is written past the limit. */
-    CHECK(refused(instances_world(22, "tf:prefab/door"), NULL, "prefab instance i021 expands the world to 66 entities, exceeding limit 64"));
-    CHECK(refused(instances_world(33, "tf:prefab/door"), NULL, "world_entities: more than 32 prefab instances"));
-    /* 17 children: over 16. */
+    /* X8: 65 instances of 16 children: 1040 runtime objects, over 1024 --
+     * refused before anything is written past the limit. (Until X8, 22
+     * instances of 3 -- 66 -- were over 64.) */
     char big[16384];
     size_t at = (size_t)snprintf(big, sizeof(big), "{\"kind\":\"library\",\"package\":{\"id\":\"t.fac\",\"provides\":[\"tf:prefab/door\"],"
                                  "\"requires\":[],\"schema\":1},\"prefabs\":{\"prefabs\":[{\"children\":[");
+    for (int i = 0; i < 16; i++) at += (size_t)snprintf(big + at, sizeof(big) - at, "%s{\"id\":\"r%02d\",\"kind\":\"relay\",\"links\":[]}", i ? "," : "", i);
+    snprintf(big + at, sizeof(big) - at, "],\"id\":\"tf:prefab/door\"}],\"schema\":1},\"scripts\":[]}");
+    CHECK(refused(instances_world(65, "tf:prefab/door"), big, "prefab instance i064 expands the world to 1040 entities, exceeding limit 1024"));
+    CHECK(refused(instances_world(129, "tf:prefab/door"), NULL, "world_entities: more than 128 prefab instances"));
+    /* 17 children: over 16. */
+    at = (size_t)snprintf(big, sizeof(big), "{\"kind\":\"library\",\"package\":{\"id\":\"t.fac\",\"provides\":[\"tf:prefab/door\"],"
+                          "\"requires\":[],\"schema\":1},\"prefabs\":{\"prefabs\":[{\"children\":[");
     for (int i = 0; i < 17; i++) at += (size_t)snprintf(big + at, sizeof(big) - at, "%s{\"id\":\"r%02d\",\"kind\":\"relay\",\"links\":[]}", i ? "," : "", i);
     snprintf(big + at, sizeof(big) - at, "],\"id\":\"tf:prefab/door\"}],\"schema\":1},\"scripts\":[]}");
     CHECK(refused(NULL, big, "prefab tf:prefab/door has more than 16 children"));
@@ -593,8 +598,9 @@ static void limits(void)
         if (ok) hta_external_map_free(&m);
         reset_libs();
     }
-    /* Stress: 32 instances of a 2-child prefab (64 entities, the most a
-     * world holds), expanded and loaded; time it. */
+    /* Stress: 128 instances of a 2-child prefab (256 entities: the most
+     * instances a world holds; until X8, 32 -> 64 was the whole world),
+     * expanded and loaded; time it. */
     const char *two = "{\"kind\":\"library\",\"package\":{\"id\":\"t.fac\",\"provides\":[\"tf:prefab/pair\"],"
         "\"requires\":[{\"package\":\"t.art\",\"resources\":[\"xs:model/crate\"]}],\"schema\":1},"
         "\"prefabs\":{\"prefabs\":[{\"children\":["
@@ -610,15 +616,15 @@ static void limits(void)
     clock_gettime(CLOCK_MONOTONIC, &t0);
     bool ok = true;
     for (int rep = 0; rep < 20 && ok; rep++) {
-        ok = world_loads(instances_world(32, "tf:prefab/pair"), &m, err, sizeof(err)) && hta_went_load(&w, &m.world_defs, err, sizeof(err));
-        if (ok) { CHECK(m.world_defs.count == 64 && !strcmp(m.world_defs.entity[63].id, "t:entity/i031__b")); hta_went_free(&w); hta_external_map_free(&m); }
+        ok = world_loads(instances_world(128, "tf:prefab/pair"), &m, err, sizeof(err)) && hta_went_load(&w, &m.world_defs, err, sizeof(err));
+        if (ok) { CHECK(m.world_defs.count == 256 && !strcmp(m.world_defs.entity[255].id, "t:entity/i127__b")); hta_went_free(&w); hta_external_map_free(&m); }
     }
     clock_gettime(CLOCK_MONOTONIC, &t1);
     if (!ok) fprintf(stderr, "stress: %s\n", err);
     CHECK(ok);
     double ms = ((double)(t1.tv_sec - t0.tv_sec) * 1e3 + (double)(t1.tv_nsec - t0.tv_nsec) / 1e6) / 20.0;
     reset_libs();
-    printf("  limits: 66 entities, 33 instances, 17 children refused; a 15-link chain loads; stress: 32 instances -> 64 entities "
+    printf("  limits: 1040 entities, 129 instances, 17 children refused; a 15-link chain loads; stress: 128 instances -> 256 entities "
            "loaded, expanded and collision built in %.2f ms each (20 runs): ok\n", ms);
 }
 
