@@ -195,6 +195,36 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**2026-09-27 MegaMod: Night Shift, the first production vertical slice
+(docs/night_shift/).** A 2-4 player co-op horror scenario in an original
+facility, HARROW ANNEX, built from X3-X7 as they are -- **no engine code
+changed**. Open Asset Lab's `projects/night_shift` builds three packages
+(`nightshift.assets`, `nightshift.facility` with 11 prefabs,
+`nightshift.world01`; key `356266bd`; 62/64 entities; 59 bindings; one
+32-line Lua script) with the new `assetlab project build`. Flow: dead
+dock -> aux breaker -> D1 -> security console + coolant valve (an AND gate)
+-> D3 -> research wing (Lua: a player alone in the cold spot is taken to
+the holding cell) -> pull the data core -> lockdown (D1 sealed, alarms,
+tunnel opens, steam vents) -> lift breaker -> freight lift -> surface.
+Checked: `scripts/test_night_shift.sh` (in verify.sh: a crew of seven
+desktop joiners, hazard on the right player, late join as state,
+compatibility mutations, the X6 engine refuses it), ASan/UBSan (the e2e
+test and a 50-cycle load/step bench with LSan), and the **emulator hosting
+it** with the same desktop crew through udprelay (every step, 60 fps, 0
+dropped sounds). Findings and the recommended next milestone (World State
+vNext: entity capacity + visible state; not started):
+docs/night_shift/FINDINGS.md. **Phone check (the open one -- a person
+playing):** build it (`cd ../open-asset-lab && .venv/bin/python -m
+assetlab project build projects/night_shift --output /tmp/ns`), put
+`/tmp/ns/maps/night_shift.oalmap` in `$HTA_IMPORTED` and the two
+`/tmp/ns/packages/*.oalasset` in `$HTA_IMPORTED/packages/`, publish, host
+NIGHT_SHIFT with 0 bots and no time limit, ideally with a second phone.
+Look for: can you find the aux breaker (behind the generator) without
+help; is the green strip over a door read as "powered"; do the buzz,
+generator, knock, alarm and steam sounds carry on a phone speaker; does
+the cold spot feel like anything; is the tunnel too long; frame rate.
+Record what you felt in docs/night_shift/PLAYTEST_NOTES.md.
+
 **2026-09-27 X7: declarative event bindings (docs/EVENT_BINDINGS.md).**
 Simple behaviour is data: a binding is an event of an entity (`used`,
 `activated`, `entered`, `deactivated`, `opened`, `closed`), read-only
