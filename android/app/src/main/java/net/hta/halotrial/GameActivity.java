@@ -973,6 +973,7 @@ public class GameActivity extends NativeActivity {
         private int caps;   /* nativeHudCaps at the last touch */
         private boolean telemetryVisible;
         private boolean playerPresentation;
+        private boolean scenarioPresentation;
         private final float[] lastX = new float[16];
         private final float[] lastY = new float[16];
 
@@ -1012,11 +1013,13 @@ public class GameActivity extends NativeActivity {
         /* `charge` 0..1 draws a cooldown sweep; 1 or more is ready. */
         private void button(Canvas c, float cx, float cy, float r, int ic, String cap, int accent,
                             boolean held, float charge) {
-            boolean quiet = playerPresentation && ic != IC_FIRE && ic != IC_ABILITY;
-            glass.setColor(held ? 0xA0303844 : quiet ? 0x4010141A : 0x7010141A);
+            boolean quiet = playerPresentation && ic != IC_FIRE && ic != IC_ABILITY && !"USE".equals(cap);
+            boolean iconOnly = scenarioPresentation && quiet && ic != IC_TEXT && !"USE".equals(cap);
+            String visibleCap = iconOnly ? null : cap;
+            glass.setColor(held ? 0xA0303844 : iconOnly ? 0x2010141A : quiet ? 0x4010141A : 0x7010141A);
             c.drawCircle(cx, cy, r, glass);
             rim.setStrokeWidth(Math.max(1.5f, r * (quiet ? 0.04f : 0.06f)));
-            rim.setColor(quiet ? 0x55CED8DD : accent);
+            rim.setColor(iconOnly ? 0x44CED8DD : quiet ? 0x55CED8DD : accent);
             c.drawCircle(cx, cy, r - rim.getStrokeWidth() * 0.5f, rim);
             if (charge < 1f) {
                 /* Cooling down: the ring fills clockwise, the icon greyed. */
@@ -1026,7 +1029,7 @@ public class GameActivity extends NativeActivity {
             }
             icon.setAlpha(charge < 1f ? 110 : quiet ? 166 : 240);
             icon.setStrokeWidth(Math.max(2.5f, r * 0.09f));
-            float s = r * 0.42f, iy = cap == null ? cy : cy - r * 0.12f;
+            float s = r * 0.42f, iy = visibleCap == null ? cy : cy - r * 0.12f;
             ip.reset();
             switch (ic) {
             case IC_FIRE:
@@ -1085,10 +1088,10 @@ public class GameActivity extends NativeActivity {
                 ip.close(); c.drawPath(ip, icon); break;
             default: break;
             }
-            if (cap != null) {
+            if (visibleCap != null) {
                 caption.setTextSize(r * (ic == IC_TEXT ? 0.36f : 0.27f));
                 caption.setAlpha(charge < 1f ? 140 : quiet ? 150 : 216);
-                c.drawText(cap, cx, ic == IC_TEXT ? cy + caption.getTextSize() * 0.35f : cy + r * 0.62f, caption);
+                c.drawText(visibleCap, cx, ic == IC_TEXT ? cy + caption.getTextSize() * 0.35f : cy + r * 0.62f, caption);
             }
         }
 
@@ -1286,7 +1289,9 @@ public class GameActivity extends NativeActivity {
                 } else if (!owner.exploreExternal && (caps & 16) == 0 && in(x, y, meleeCx, meleeCy, meleeR * 1.15f) && meleePtr < 0) {
                     meleePtr = id;
                     GameActivity.nativeHudMelee();
-                } else if (!owner.exploreExternal && in(x, y, swapCx, swapCy, swapR * 1.15f) && swapPtr < 0) {
+                } else if (!owner.exploreExternal && ((caps & 512) == 0 || (caps & 256) != 0
+                        || GameActivity.nativeVehicleMode() != 0)
+                        && in(x, y, swapCx, swapCy, swapR * 1.15f) && swapPtr < 0) {
                     swapPtr = id;
                     GameActivity.nativeHudSwap();
                 } else if (!owner.exploreExternal && (caps & 4) != 0 && in(x, y, zoomCx, zoomCy, zoomR * 1.15f) && zoomPtr < 0) {
@@ -1562,6 +1567,8 @@ public class GameActivity extends NativeActivity {
             }
             int vehicleMode = GameActivity.nativeVehicleMode();
             playerPresentation = GameActivity.nativePlayerPresentation() != 0;
+            int hc = GameActivity.nativeHudCaps();
+            scenarioPresentation = (hc & 512) != 0;
             int netStatus = GameActivity.nativeNetStatus();
             if (netStatus != 0) {
                 String connection = netStatus == 1 ? "CONNECTING TO GAME..." :
@@ -1631,13 +1638,14 @@ public class GameActivity extends NativeActivity {
                     label.setTextSize(savedSize);
                 }
             }
+            ring.setColor(scenarioPresentation ? 0x44FFFFFF : 0x66FFFFFF);
+            thumb.setColor(scenarioPresentation ? 0x70FFFFFF : 0x99FFFFFF);
             c.drawCircle(stickCx, stickCy, stickR, fill);
             c.drawCircle(stickCx, stickCy, stickR, ring);
             c.drawCircle(stickTx, stickTy, stickR * 0.38f, thumb);
 
             /* The pause button, small, top right. */
             button(c, pauseCx, pauseCy, pauseR, IC_TEXT, "II", 0x66FFFFFF, false, 1f);
-            int hc = GameActivity.nativeHudCaps();
             boolean inAir = (hc & 2) != 0;
             if (!owner.exploreExternal)
                 button(c, fireCx, fireCy, fireR, IC_FIRE, (hc & 16) != 0 ? "SWING" : "FIRE", 0xFFFF7A1A, firePtr >= 0, 1f);
@@ -1657,9 +1665,10 @@ public class GameActivity extends NativeActivity {
                 if ((hc & 8) != 0) button(c, reloadCx, reloadCy, reloadR, IC_RELOAD, "RELOAD", 0x88FFFFFF, reloadPtr >= 0, 1f);
                 if ((hc & 16) == 0) button(c, meleeCx, meleeCy, meleeR, IC_MELEE, "MELEE", 0x88FFFFFF, meleePtr >= 0, 1f);
                 if (seatMode >= 1) button(c, swapCx, swapCy, swapR, IC_TEXT, seatMode >= 2 ? "EXIT" : "GET IN", 0xFF7FD4FF, swapPtr >= 0, 1f);
-                else button(c, swapCx, swapCy, swapR, IC_SWAP,
-                            (hc & 256) != 0 ? "USE" : "SWAP",
-                            (hc & 256) != 0 ? 0xFF7FD4FF : 0x88FFFFFF, swapPtr >= 0, 1f);
+                else if (!scenarioPresentation || (hc & 256) != 0)
+                    button(c, swapCx, swapCy, swapR, IC_SWAP,
+                           (hc & 256) != 0 ? "USE" : "SWAP",
+                           (hc & 256) != 0 ? 0xFF7FD4FF : 0x88FFFFFF, swapPtr >= 0, 1f);
                 if ((hc & 4) != 0) button(c, zoomCx, zoomCy, zoomR, IC_ZOOM, "ZOOM", 0x88FFFFFF, zoomPtr >= 0, 1f);
                 if ((vehicleMode & 16) != 0) button(c, nadeCx, nadeCy, nadeR, IC_TEXT, "ALT", 0xFFFF7A1A, nadePtr >= 0, 1f);
                 else if ((hc & 32) != 0) button(c, nadeCx, nadeCy, nadeR, IC_NADE, "GRENADE", 0x88FFFFFF, nadePtr >= 0, 1f);

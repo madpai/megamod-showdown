@@ -195,8 +195,10 @@ composition; see [its evidence](night_shift/README.md) and
 measured about 120 FPS. The subsequent X9 solo S24+ review measured 120.2
 mean FPS and the owner reported a big visual improvement and smooth feel.
 A later [scenario-rules slice](night_shift/SCENARIO_RULES.md) added a native
-Night Shift mode and local flashlight; its phone performance is still
-unmeasured. A Lua/data Night Shift mode, PvE creature AI, Skate, Racing and
+Night Shift mode and local flashlight. The owner completed the solo route on
+an S24+ and says the flashlight works great; the report's last minute ran
+near 120 FPS, although its isolated light cost is unmeasured. A Lua/data
+Night Shift mode, PvE creature AI, Skate, Racing and
 Party capability systems remain future directions.
 
 ---
@@ -604,8 +606,8 @@ short Lua/data rounds that
 change capability combinations while roster and session score persist.
 None is a replacement for current foundations or a commitment to build
 next. Night Shift's present slice created horror without a creature, and
-X9 physical solo performance has been measured; the later flashlight's
-phone cost has not.
+X9 physical solo performance and a successful flashlight run have been
+measured. The flashlight's isolated phone cost has not.
 
 ## 19. The design question for every feature
 

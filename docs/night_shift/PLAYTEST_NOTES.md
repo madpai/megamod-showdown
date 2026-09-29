@@ -12,6 +12,23 @@ device reports. The hosted multiplayer part of the physical-device check
 remains open (CURRENT TESTING OBJECTIVE in HANDOFF.md). The notes below
 separate report evidence from the earlier screenshots and traces.
 
+## Physical phone: Scenario and flashlight (2026-09-29)
+
+The owner completed the `night_shift_x9` solo route on personal build
+`0.2-56b7f0e` and said the flashlight worked great and everything worked,
+while the touch UI felt cluttered. Two SEND REPORTs capture the flashlight
+on and `scenario_complete=true`; the app log records completion at the
+freight lift. On High, scale 1 and 2x MSAA, the latest report's last minute
+measured 120.0 mean FPS, 11 ms p99 and no hitches. The only >50 ms session
+hitch was 206 ms on frame one; audio dropped no voices. The report does not
+show how long the flashlight was on, so it cannot isolate its frame cost.
+Networking was off, leaving physical host and late-join behavior open.
+
+The touch pass removes captions from secondary Scenario controls and
+hides SWAP until a USE target is available. The owner still needs to judge
+that presentation on the phone; no screenshot of the revised layout exists
+yet.
+
 ## Physical phone: first X8 session (2026-09-28)
 
 Six SEND REPORT files from personal build `0.2-5ca7dbc` show

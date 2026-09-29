@@ -34,8 +34,8 @@ scenario declaration format or a completed PvE mode.
 
 The light has 12 wu range, intensity 2.5, near-white RGB
 `(0.92, 0.95, 1.0)`, inner cone cosine 0.94 and outer cosine 0.78. These
-are first-pass presentation values awaiting physical S24+ review, not an X9
-lighting retune. The world package and its source assets were not edited.
+are first-pass presentation values the owner found useful on an S24+, not an
+X9 lighting retune. The world package and its source assets were not edited.
 
 ## Boundaries and next evidence
 
@@ -46,10 +46,20 @@ moving this to validated generic mode requirements would need a second real
 consumer. Protocol v12 admits the new mode value and intentionally refuses
 older peers; WORLD_STATE's compact representation is unchanged.
 
-The next phone test should check the pistol/no-grenade start, objective text,
-USE prompt, flashlight usefulness and frame cost, route completion without a
-Slayer scoreboard or reset, and host/late-join agreement. The earlier X9
-physical solo run measured its authored visuals and route, **before** this
-rules and flashlight change. No physical performance result for this new
-light exists yet. SEND REPORT includes `match.flashlight_on` and
-`match.scenario_complete` for the final snapshot.
+The 2026-09-29 S24+ solo run on build `56b7f0e` completed the lift route.
+The flashlight was on when the report was sent. The owner says it worked
+great and everything worked, but the UI felt cluttered. Two SEND REPORTs
+confirm Scenario mode,
+`match.flashlight_on` and `match.scenario_complete`; the app log records the
+lift completion. On High at render scale 1 and 2x MSAA, the last minute
+measured 120.0 mean FPS, 11 ms p99, no hitches and no dropped audio voices.
+The only >50 ms session hitch was the first frame (206 ms). The report does
+not establish how long the light was on or its isolated frame cost. The
+reports are solo, so host/late-join agreement is still unmeasured on a
+physical phone.
+
+This presentation pass makes secondary Scenario buttons icon-only and
+hides SWAP when no USE target is available. FIRE, LIGHT and USE retain their
+labels. Phone review should check that the quieter controls remain easy to
+find and use, and a matching-build peer should late join during lockdown and
+after completion.

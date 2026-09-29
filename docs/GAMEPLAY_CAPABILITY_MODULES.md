@@ -175,7 +175,9 @@ A later [scenario-rules slice](night_shift/SCENARIO_RULES.md) added a native
 `Scenario` mode to `night_shift_x9`: one pistol, no grenades or pickups,
 crew friendly-fire protection, objective text, a host-authoritative
 completion state and a local toggleable flashlight. Its physical phone
-performance and physical multiplayer behavior remain unmeasured. It is a
+solo route has now completed on an S24+; the owner says the light works
+great, and the report's last minute ran near 120 FPS. The flashlight's
+isolated cost and physical multiplayer behavior remain unmeasured. It is a
 first rules slice, not a Lua/data game-mode framework.
 
 The facility created horror **without a creature**. [AI readiness](night_shift/AI_READINESS.md)

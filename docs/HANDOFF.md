@@ -202,32 +202,30 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-**Night Shift scenario and flashlight phone check (2026-09-29):** The owner
-has completed the proper X9 solo route on a physical S24+ and described the
-new visuals as a big improvement; the run felt smooth despite recorded late
-frame hitches. See [X9_VISUAL_PASS.md](night_shift/X9_VISUAL_PASS.md) for
-the measured result. The current implementation adds a dedicated scenario
-rule, a sidearm-only start without grenades or map pickups, an objective HUD,
-an explicit completion state when `shift_complete` activates, a USE label in
-reach of a world button, and a toggleable local flashlight using the existing
-eight-light budget. It does not add AI or a flashlight battery/visibility
-mechanic. The flashlight is currently local presentation; its on/off state
-is not replicated to peers.
+**Night Shift scenario phone result (2026-09-29):** The owner played the
+published `56b7f0e` build on an S24+ and reports: "Flashlight worked great,
+obviously UI is cluttered and not great, but everything works." Two SEND
+REPORTs from the solo `night_shift_x9` run record Scenario mode, the
+flashlight on at report time and `scenario_complete=true`. The app log records
+the lift completion. On High at render scale 1 and 2x MSAA, the last minute
+ran at 120.0 mean FPS, 11 ms p99 and no hitches; the session's sole >50 ms hitch
+was 206 ms on the first frame. Audio dropped no voices. The report cannot
+isolate the flashlight's frame cost because it does not say how long the light
+was on. This confirms the solo route and useful flashlight on the phone;
+the reports do not establish touch-label readability or multiplayer behavior.
+The flashlight remains local presentation and is not replicated to peers.
 
-**Next device check:** install the newly published build, select
-`night_shift_x9`, and start solo with zero bots. Check that the starting kit
-is one pistol and no grenades, that the objective text follows the AUX,
-security, coolant, core, lockdown and lift sequence, and that the touch
-button reads USE near each control. Toggle LIGHT ON/OFF in the dark passage,
-holding cell and core, and report whether the cone is useful or too bright;
-watch FPS/frame pacing with it on. Complete the route through the lift and
-confirm a persistent **Shift complete** state without a Slayer scoreboard or
-automatic reset. If possible, host from the S24+ with a matching-build peer,
+**Next device check:** review the quieter Scenario touch layout: secondary
+actions are icon-only, SWAP stays hidden until USE is available, and FIRE,
+LIGHT and USE remain labelled. Confirm the icons and touch targets are still
+easy to use, including USE at each control, and that the objective and ammo
+remain readable. If possible, host from the S24+ with a matching-build peer,
 then late join during lockdown and after completion; report world state and
-completion agreement. A failure is a Slayer announcement/scoreboard, an
-unavailable USE or LIGHT button, an exit that does not complete, a premature
-reset, or a material performance drop with the light on. Both peers need
-protocol v12 and matching `night_shift_x9` packages.
+completion agreement. Both peers need protocol v12 and matching
+`night_shift_x9` packages. A failure is a hidden or missed USE action, a
+hard-to-find jump/reload/melee control, unreadable objective or ammo, or a
+late joiner whose world state or completion differs from the host. The
+Scenario still has no AI or flashlight battery/visibility mechanic.
 
 **Historical 2026-09-28 X9 visual phone review (docs/night_shift/X9_VISUAL_PASS.md).**
 The new `night_shift_x9` package is a separate visual version of Night Shift
@@ -1896,7 +1894,7 @@ wrong, this list is the first place to look — they are all one constant.
 |---|---|---|
 | imported-map daylight | dir (0.35,0.4,0.85), ambient 0.7 | packages carry no lightmaps |
 | X9 local-light limits | 32 authored per world, nearest 8 active per frame | bounded forward lighting for mobile; `world_def.h` and `scene_visual.h` |
-| Night Shift flashlight first pass | 12 wu range, 2.5 intensity, RGB (0.92,0.95,1.0), inner/outer cone cosine 0.94/0.78; occupies one of eight local-light slots | camera-mounted local spot; physical phone brightness/FPS check pending |
+| Night Shift flashlight first pass | 12 wu range, 2.5 intensity, RGB (0.92,0.95,1.0), inner/outer cone cosine 0.94/0.78; occupies one of eight local-light slots | camera-mounted local spot; owner reports it works great on S24+; isolated FPS cost unmeasured |
 | Night Shift X9 environment | ambient RGB (0.015,0.022,0.034), fog RGB (0.045,0.055,0.075), density 0.08, clear-air start 2.5 wu | authored dark industrial palette in OAL `world_x9.py` |
 | X9 player HUD | imported HUD scale 0.75, viewmodel down 0.06 wu, crosshair alpha 0.55 | visual hierarchy in authored-environment worlds |
 | package limits (X4) | 256 provides, 16 requires, 64 imports, 16 packages, depth 8, 512 resources/set | `asset/package.h`, `resource.h`: bounds on untrusted declarations |

@@ -6050,7 +6050,8 @@ void android_main(struct android_app *app)
                            (body.can_fly && !broom ? 1 : 0) | (state.player.fly ? 2 : 0) |
                            (state.weap.zoom_levels > 0 ? 4 : 0) |
                            (!swung && state.ammo.recharge <= 0.0f && state.ammo.reserve_max > 0 ? 8 : 0) |
-                           (swung ? 16 : 0) | (state.nade_count > 0 ? 32 : 0) | (near_use ? 256 : 0);
+                           (swung ? 16 : 0) | (state.nade_count > 0 ? 32 : 0) | (near_use ? 256 : 0) |
+                           (state.game.mode == HTA_MODE_SCENARIO ? 512 : 0);
                 atomic_store(&g_hud_caps, caps);
             }
             if (state.dead) {

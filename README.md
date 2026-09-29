@@ -37,6 +37,9 @@ game plays Blood Gulch plus maps, characters and weapons that Open Asset
 Lab converts from the owner's own Source and Garry's Mod content. Every
 match still loads the owner's Trial data for its core gameplay tags; the
 desktop sandbox is the only part that runs with no game data at all.
+The original [Night Shift scenario](docs/night_shift/README.md) now exercises
+world interactions, authored lighting, Scenario rules and a flashlight on
+Android; its solo route has been completed on an S24+.
 
 **The direction** is an engine of its own. Worlds, characters, weapons,
 vehicles, abilities, scripts, rules and eventually reusable gameplay systems

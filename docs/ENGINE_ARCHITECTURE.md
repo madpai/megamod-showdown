@@ -25,8 +25,9 @@ for the current X1–X9 state. Night Shift now exercises original packages,
 world interactions, host Lua, authority and late join, and X9 lighting.
 The X9 solo visual route has since been tested on an S24+. A subsequent
 Night Shift rules slice added a native `Scenario` mode and a local flashlight;
-see [scenario rules](night_shift/SCENARIO_RULES.md). Lua/data composition,
-PvE AI and phone validation of the new light remain future work.
+the owner has since completed its solo route on an S24+ and says the light
+works great. See [scenario rules](night_shift/SCENARIO_RULES.md). Lua/data
+composition, PvE AI and physical multiplayer validation remain future work.
 
 **Current coupling:** Engine and Showdown share this repository and much
 of `src/app`/`src/game`; the Trial tag loader and historical `hta_` names
