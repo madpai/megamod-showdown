@@ -520,7 +520,7 @@ bool hta_net_drops_unpack(const uint8_t *src, size_t len, hta_net_drops *d)
 
 bool hta_net_game_pack(uint8_t *dst, size_t cap, const hta_net_game *g)
 {
-    if (!dst || !g || cap<HTA_NET_GAME_BYTES || g->mode>2) return false;
+    if (!dst || !g || cap<HTA_NET_GAME_BYTES || g->mode>3) return false;
     dst[0]=g->mode; dst[1]=g->score_limit;
     u16w(dst+2,(uint16_t)g->team_score[0]); u16w(dst+4,(uint16_t)g->team_score[1]);
     if (g->options & ~(HTA_NET_GAME_CLASSES | HTA_NET_GAME_DUPLICATES)) return false;
@@ -577,7 +577,7 @@ bool hta_net_game_unpack(const uint8_t *src, size_t len, hta_net_game *g)
     *g=tmp; return true;
 }
 
-/* ---- v11 WORLD_STATE (protocol.h, docs/WORLD_STATE.md) ------------------ */
+/* ---- v11+ WORLD_STATE, unchanged in v12 (protocol.h, docs/WORLD_STATE.md) */
 
 #if defined(__GNUC__)
 static bool ws_fail(char *err, size_t n, const char *fmt, ...) __attribute__((format(printf, 3, 4)));

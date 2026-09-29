@@ -1,5 +1,12 @@
 # Halo Trial Android — handoff
 
+**Current checkout (2026-09-29):** `/home/commander/projects/megamod-showdown`
+is on `main`; its `origin` currently points to
+`https://github.com/madpai/megamod-showdown.git`. The older `halo-sandbox`,
+`megamod`-remote and path references below describe the previous checkout.
+Always inspect `git branch -vv` and `git remote -v` before publishing, and
+never push MegaMod work to an Open Halo remote.
+
 > **On branch `halo-sandbox` this repository hosts MEGAMOD SHOWDOWN and
 > MEGAMOD ENGINE** (public repo
 > madpai/megamod-showdown, remote `megamod`). See CLAUDE.md's top section
@@ -195,12 +202,34 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
-**Documentation-only capability vision update (2026-09-28):** no runtime,
-package, APK or device-test state changed. The X9 physical S24+ visual
-and frame-pacing review below remains the next testing objective.
-Repository verification passed 96/96; no APK was published for this edit.
+**Night Shift scenario and flashlight phone check (2026-09-29):** The owner
+has completed the proper X9 solo route on a physical S24+ and described the
+new visuals as a big improvement; the run felt smooth despite recorded late
+frame hitches. See [X9_VISUAL_PASS.md](night_shift/X9_VISUAL_PASS.md) for
+the measured result. The current implementation adds a dedicated scenario
+rule, a sidearm-only start without grenades or map pickups, an objective HUD,
+an explicit completion state when `shift_complete` activates, a USE label in
+reach of a world button, and a toggleable local flashlight using the existing
+eight-light budget. It does not add AI or a flashlight battery/visibility
+mechanic. The flashlight is currently local presentation; its on/off state
+is not replicated to peers.
 
-**2026-09-28 X9 visual phone review (docs/night_shift/X9_VISUAL_PASS.md).**
+**Next device check:** install the newly published build, select
+`night_shift_x9`, and start solo with zero bots. Check that the starting kit
+is one pistol and no grenades, that the objective text follows the AUX,
+security, coolant, core, lockdown and lift sequence, and that the touch
+button reads USE near each control. Toggle LIGHT ON/OFF in the dark passage,
+holding cell and core, and report whether the cone is useful or too bright;
+watch FPS/frame pacing with it on. Complete the route through the lift and
+confirm a persistent **Shift complete** state without a Slayer scoreboard or
+automatic reset. If possible, host from the S24+ with a matching-build peer,
+then late join during lockdown and after completion; report world state and
+completion agreement. A failure is a Slayer announcement/scoreboard, an
+unavailable USE or LIGHT button, an exit that does not complete, a premature
+reset, or a material performance drop with the light on. Both peers need
+protocol v12 and matching `night_shift_x9` packages.
+
+**Historical 2026-09-28 X9 visual phone review (docs/night_shift/X9_VISUAL_PASS.md).**
 The new `night_shift_x9` package is a separate visual version of Night Shift
 (key `cd8e683f`); the X8 package and key `cc52fc69` remain historical. X9
 adds authored ambient darkness, 26 placed point/spot lights, relay-powered
@@ -211,7 +240,7 @@ be installed together using the normal sideload bundle. Select **Night Shift:
 Harrow Annex** (`night_shift_x9`, without the X8 suffix), zero bots, and begin
 at the dock.
 
-**Next device check:** compare the dock, AUX POWER corridor, security door
+**Original device checklist:** compare the dock, AUX POWER corridor, security door
 and narrow hall against the pre-X9 phone screenshots. Activate the AUX
 breaker using SWAP/Use and watch fixtures and the door control change; later
 open D3 and D5, pull the core to trigger lockdown and watch red emergency
@@ -1867,6 +1896,7 @@ wrong, this list is the first place to look — they are all one constant.
 |---|---|---|
 | imported-map daylight | dir (0.35,0.4,0.85), ambient 0.7 | packages carry no lightmaps |
 | X9 local-light limits | 32 authored per world, nearest 8 active per frame | bounded forward lighting for mobile; `world_def.h` and `scene_visual.h` |
+| Night Shift flashlight first pass | 12 wu range, 2.5 intensity, RGB (0.92,0.95,1.0), inner/outer cone cosine 0.94/0.78; occupies one of eight local-light slots | camera-mounted local spot; physical phone brightness/FPS check pending |
 | Night Shift X9 environment | ambient RGB (0.015,0.022,0.034), fog RGB (0.045,0.055,0.075), density 0.08, clear-air start 2.5 wu | authored dark industrial palette in OAL `world_x9.py` |
 | X9 player HUD | imported HUD scale 0.75, viewmodel down 0.06 wu, crosshair alpha 0.55 | visual hierarchy in authored-environment worlds |
 | package limits (X4) | 256 provides, 16 requires, 64 imports, 16 packages, depth 8, 512 resources/set | `asset/package.h`, `resource.h`: bounds on untrusted declarations |

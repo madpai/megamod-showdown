@@ -20,12 +20,15 @@ regression. See [synthesis](CROSS_ENGINE_SYNTHESIS.md),
 | X4 | Typed resource IDs, package requirements and world-key closure ([RESOURCES](../RESOURCES.md)); the older lockfile proposal is broader |
 | X5–X7 | Package-backed assets, prefabs and declarative bindings ([RESOURCES](../RESOURCES.md), [PREFABS](../PREFABS.md), [EVENT_BINDINGS](../EVENT_BINDINGS.md)) |
 | X8 | Compact replicated world state and the X8 S24+ solo test ([WORLD_STATE](../WORLD_STATE.md), [playtest](../night_shift/PLAYTEST_NOTES.md)) |
-| X9 | Authored lighting and presentation ([visual pass](../night_shift/X9_VISUAL_PASS.md)); physical X9 visuals/FPS still pending |
+| X9 | Authored lighting and presentation ([visual pass](../night_shift/X9_VISUAL_PASS.md)); subsequent S24+ solo review recorded 120.2 mean FPS and a positive visual assessment |
 
 The original Night Shift slice exercised X3–X7, and its X8/X9 variants
 build on it. It exposed real scenario-rules and authoring needs without
-requiring a creature. Current measured needs choose the next milestone;
-Skate, Racing and Party remain future validation targets.
+requiring a creature. A later [scenario-rules slice](../night_shift/SCENARIO_RULES.md)
+addresses the inherited Slayer HUD/loadout and adds a local flashlight;
+physical validation of that new light remains pending. Current measured
+needs choose the next milestone; Skate, Racing and Party remain future
+validation targets.
 
 ## N1–N3 (the original NOW research phase)
 

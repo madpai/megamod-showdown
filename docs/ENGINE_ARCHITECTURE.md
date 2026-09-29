@@ -19,12 +19,14 @@ are useful seeds, **not** already clean modules. Extract a reusable boundary
 only when a concrete second consumer and measured costs justify it. This
 direction does not prescribe plugins, dynamic libraries or an ECS.
 
-**Current-status note (2026-09-28):** the desktop extraction sequence below
+**Current-status note (2026-09-29):** the desktop extraction sequence below
 is a historical staged plan; use [HANDOFF](HANDOFF.md#current-testing-objective)
 for the current X1–X9 state. Night Shift now exercises original packages,
 world interactions, host Lua, authority and late join, and X9 lighting.
-Its dedicated scenario mode remains future work; physical X9 phone
-validation is pending.
+The X9 solo visual route has since been tested on an S24+. A subsequent
+Night Shift rules slice added a native `Scenario` mode and a local flashlight;
+see [scenario rules](night_shift/SCENARIO_RULES.md). Lua/data composition,
+PvE AI and phone validation of the new light remain future work.
 
 **Current coupling:** Engine and Showdown share this repository and much
 of `src/app`/`src/game`; the Trial tag loader and historical `hta_` names

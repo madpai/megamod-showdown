@@ -223,6 +223,14 @@ static void world_entities(hta_session *s, float dt, bool authority)
         hta_log("[world] %s (%u problems so far)", w->diag, w->diag_count);
         s->went_diag_seen = w->diag_count;
     }
+    if (authority && s->game_on && s->game.mode == HTA_MODE_SCENARIO && !s->game.over)
+        for (uint32_t i = 0; i < w->defs->count; i++)
+            if (!strcmp(w->defs->entity[i].id, "nightshift:entity/shift_complete") &&
+                hta_went_relay_active(w, i) == HTA_WRELAY_ACTIVE) {
+                hta_game_complete_scenario(&s->game, "Shift complete");
+                hta_log("[scenario] Shift complete at the freight lift");
+                break;
+            }
 }
 
 void hta_session_tick(hta_session *s, float dt, double now, void (*unit_added)(hta_session *))
@@ -239,7 +247,8 @@ void hta_session_tick(hta_session *s, float dt, double now, void (*unit_added)(h
         while (hta_game_pop(&s->game, &e)) {
             hta_wfx_game_event(&s->wfx, &e, &s->game);
             host_send(s, &e, now);
-            if (e.kind == HTA_EV_GAME_OVER) s->over_timer = HTA_POSTGAME;
+            if (e.kind == HTA_EV_GAME_OVER && s->game.mode != HTA_MODE_SCENARIO)
+                s->over_timer = HTA_POSTGAME;
             if (s->outbox_count < sizeof(s->outbox) / sizeof(s->outbox[0]))
                 s->outbox[s->outbox_count++] = e;
         }

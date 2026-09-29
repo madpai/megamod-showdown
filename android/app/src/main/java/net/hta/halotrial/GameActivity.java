@@ -1657,7 +1657,9 @@ public class GameActivity extends NativeActivity {
                 if ((hc & 8) != 0) button(c, reloadCx, reloadCy, reloadR, IC_RELOAD, "RELOAD", 0x88FFFFFF, reloadPtr >= 0, 1f);
                 if ((hc & 16) == 0) button(c, meleeCx, meleeCy, meleeR, IC_MELEE, "MELEE", 0x88FFFFFF, meleePtr >= 0, 1f);
                 if (seatMode >= 1) button(c, swapCx, swapCy, swapR, IC_TEXT, seatMode >= 2 ? "EXIT" : "GET IN", 0xFF7FD4FF, swapPtr >= 0, 1f);
-                else button(c, swapCx, swapCy, swapR, IC_SWAP, "SWAP", 0x88FFFFFF, swapPtr >= 0, 1f);
+                else button(c, swapCx, swapCy, swapR, IC_SWAP,
+                            (hc & 256) != 0 ? "USE" : "SWAP",
+                            (hc & 256) != 0 ? 0xFF7FD4FF : 0x88FFFFFF, swapPtr >= 0, 1f);
                 if ((hc & 4) != 0) button(c, zoomCx, zoomCy, zoomR, IC_ZOOM, "ZOOM", 0x88FFFFFF, zoomPtr >= 0, 1f);
                 if ((vehicleMode & 16) != 0) button(c, nadeCx, nadeCy, nadeR, IC_TEXT, "ALT", 0xFFFF7A1A, nadePtr >= 0, 1f);
                 else if ((hc & 32) != 0) button(c, nadeCx, nadeCy, nadeR, IC_NADE, "GRENADE", 0x88FFFFFF, nadePtr >= 0, 1f);

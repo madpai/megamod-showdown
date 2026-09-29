@@ -775,6 +775,37 @@ int main(int argc, char **argv)
         hta_game_free(&hero_match);
     }
 
+    printf("\n[scenario rules]\n");
+    CHECK(hta_game_set_mode(&g, HTA_MODE_SCENARIO) && !g.teams && g.score_limit == 0,
+          "scenario has no teams or frag limit");
+    g.time_limit = 0.01f;
+    hta_game_start(&g);
+    hta_game_event scenario_event;
+    bool scenario_announce = false;
+    while (hta_game_pop(&g, &scenario_event))
+        if (scenario_event.kind == HTA_EV_ANNOUNCE) scenario_announce = true;
+    CHECK(!scenario_announce, "scenario start has no Slayer announcement");
+    hta_game_update(&g, 0.1f);
+    CHECK(!g.over, "the world objective, not the match timer, ends a scenario");
+    if (g.unit_count >= 2) {
+        g.units[0].kind = HTA_UNIT_LOCAL;
+        hta_unit *crew = &g.units[1];
+        crew->kind = HTA_UNIT_REMOTE;
+        crew->alive = true;
+        crew->protect = 0.0f;
+        crew->vitals.health = crew->vitals.max_health = 100.0f;
+        crew->vitals.shield = crew->vitals.max_shield = 0.0f;
+        hta_game_hurt(&g, 1, 0, 10.0f, NULL);
+        CHECK(crew->vitals.health == 100.0f, "crew cannot damage one another");
+        hta_game_hurt(&g, 1, -1, 10.0f, NULL);
+        CHECK(crew->vitals.health == 90.0f, "world hazards still hurt the crew");
+    }
+    while (hta_game_pop(&g, &scenario_event)) { }
+    hta_game_complete_scenario(&g, "Shift complete");
+    hta_game_complete_scenario(&g, "Shift complete");
+    CHECK(g.over && hta_game_pop(&g, &scenario_event) && scenario_event.kind == HTA_EV_GAME_OVER &&
+          !strcmp(scenario_event.text, "Shift complete") && !hta_game_pop(&g, &scenario_event),
+          "objective completion emits one end event");
     hta_game_free(&g);
     hta_pickups_free(&items);
     hta_nav_free(&nav);

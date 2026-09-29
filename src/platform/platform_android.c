@@ -166,6 +166,7 @@ typedef struct {
      * come from JNI instead of hot-corners; what JNI sends waits in
      * g_hud_in until the frame takes it (android_read_input). */
     bool    hud_ready;
+    _Atomic bool flashlight_on; /* local Night Shift presentation and report snapshot */
 } hta_android;
 _Static_assert(offsetof(hta_android, session) == 0,
                "host_unit_added casts a session back to its hta_android");
@@ -2148,6 +2149,16 @@ static bool load_map(hta_android *s)
     s->map_loaded = true;
     snprintf(s->status, sizeof(s->status), "loaded %s", s->cache.name);
     start_game(s);
+    if (s->game_on && s->game.mode == HTA_MODE_SCENARIO && s->game.start_weapon[0] >= 0) {
+        s->start_count = s->held_count = 1;
+        s->start_weapon[0] = s->game.weapons[s->game.start_weapon[0]].tag;
+        s->start_asset[0] = -1;
+        s->held[0] = s->start_weapon[0];
+        s->held_asset[0] = -1;
+        s->held_slot = 0;
+        s->held_ammo_set[0] = false;
+        s->nade_count = s->nade_max = 0;
+    }
     /* With custom classes you start with your class, not the map's pair. */
     if (s->game_on && s->game.classes) {
         class_start(s);
@@ -2344,7 +2355,7 @@ static void start_game(hta_android *s)
      * the match's units, so it would stand there unhittable and walked
      * through -- with no bots as much as with them. */
     hta_bot_free(&s->bot);
-    static const char *const MODES[HTA_MODE_COUNT] = { "Slayer", "Team Slayer", "CTF" };
+    static const char *const MODES[HTA_MODE_COUNT] = { "Slayer", "Team Slayer", "CTF", "Scenario" };
     hta_log("[game] %s: you (team %d) and %d bot(s) at skill %d, first to %d, %d min, respawn %.0f s",
             MODES[s->game.mode], s->game.units[s->me].team, bots, s->bot_skill,
             s->game.score_limit, s->time_limit_min, s->respawn_delay);
@@ -2982,7 +2993,8 @@ static void game_events(hta_android *s)
         case HTA_EV_GAME_OVER:
             snprintf(s->banner, sizeof(s->banner), "%s", e.text);
             s->banner_age = 0.0f;
-            if (s->line_snd[HTA_LINE_GAME_OVER]) play_tag(s, s->line_snd[HTA_LINE_GAME_OVER], 1.0f);
+            if (s->game.mode != HTA_MODE_SCENARIO && s->line_snd[HTA_LINE_GAME_OVER])
+                play_tag(s, s->line_snd[HTA_LINE_GAME_OVER], 1.0f);
             break;
         default:
             break;
@@ -2997,7 +3009,28 @@ static void game_text(hta_android *s, float dt)
     s->banner_age += dt;
     for (int i = 0; i < 4; i++) s->feed_age[i] += dt;
     char place[96] = "";
-    if (s->me >= 0 && s->game.unit_count > 1)
+    if (s->game.mode == HTA_MODE_SCENARIO) {
+        const char *objective = "Restore auxiliary power";
+        if (s->game.over) objective = "Shift complete";
+        else if (s->went.loaded) {
+            bool aux = false, security = false, coolant = false, lockdown = false, lift = false;
+            for (uint32_t i = 0; i < s->went.defs->count; i++) {
+                const char *id = s->went.defs->entity[i].id;
+                bool active = hta_went_relay_active(&s->went, i) == HTA_WRELAY_ACTIVE;
+                if (!strcmp(id, "nightshift:entity/aux_power")) aux = active;
+                else if (!strcmp(id, "nightshift:entity/security_link")) security = active;
+                else if (!strcmp(id, "nightshift:entity/coolant_flow")) coolant = active;
+                else if (!strcmp(id, "nightshift:entity/lockdown")) lockdown = active;
+                else if (!strcmp(id, "nightshift:entity/lift__power")) lift = active;
+            }
+            if (aux && !security) objective = "Activate the security console";
+            else if (aux && !coolant) objective = "Open the coolant valve";
+            else if (aux && !lockdown) objective = "Recover the data core";
+            else if (aux && !lift) objective = "Power the freight lift";
+            else if (aux) objective = "Escape through the freight lift";
+        }
+        snprintf(place, sizeof(place), "%s", objective);
+    } else if (s->me >= 0 && s->game.unit_count > 1)
         hta_game_place_text(&s->game, s->me, place, sizeof(place));
     size_t n = 0;
     n += (size_t)snprintf(g_game_text + n, sizeof(g_game_text) - n, "%s\x1e%s\x1e",
@@ -3008,7 +3041,7 @@ static void game_text(hta_android *s, float dt)
     if (n < sizeof(g_game_text))
         n += (size_t)snprintf(g_game_text + n, sizeof(g_game_text) - n, "\x1e");
     size_t board_at = n;
-    if (s->game.over && n < sizeof(g_game_text)) {
+    if (s->game.over && s->game.mode != HTA_MODE_SCENARIO && n < sizeof(g_game_text)) {
         int32_t order[HTA_GAME_MAX_UNITS];
         uint32_t k = hta_game_standings(&s->game, order, HTA_GAME_MAX_UNITS);
         for (uint32_t i = 0; i < k && n < sizeof(g_game_text); i++) {
@@ -3193,6 +3226,8 @@ static size_t report_native(const hta_android *s, char *buf, size_t cap)
     hta_json_int(&j, "map_key", s->world_loaded ? (long long)s->world_ext.key : 0);
     hta_json_int(&j, "map_crc", (long long)s->cache.crc32);
     hta_json_int(&j, "mode", s->game.mode);
+    hta_json_bool(&j, "scenario_complete", s->game.mode == HTA_MODE_SCENARIO && s->game.over);
+    hta_json_bool(&j, "flashlight_on", s->flashlight_on);
     hta_json_int(&j, "units", s->game.unit_count);
     hta_json_int(&j, "bots", s->bot_count);
     hta_json_bool(&j, "me_alive", s->game_on && s->me >= 0 && s->game.units[s->me].alive);
@@ -3799,9 +3834,10 @@ static void match_take(hta_android *s)
     s->vehicle_roster = m.vehicles >= 0 && m.vehicles < HTA_VROSTER_COUNT ? m.vehicles
                                                                            : HTA_VROSTER_ALL;
     /* A host chooses the game; a joiner learns it from the host's GAME. */
-    s->game_mode = m.mode != 2 && m.gametype > 0 && m.gametype < HTA_MODE_COUNT
+    s->game_mode = m.mode != 2 && m.gametype > 0 && m.gametype <= HTA_MODE_CTF
                  ? m.gametype : HTA_MODE_SLAYER;
     snprintf(s->world, sizeof(s->world), "%s", m.map);
+    s->flashlight_on = false;
     /* Ours, and only off, 2, 3 or 5 from the menu: long enough to look
      * round, short enough that camping the spawn is not a hiding place. */
     s->spawn_protect = m.protect > 0 && m.protect <= 10 ? (float)m.protect : 0.0f;
@@ -4859,8 +4895,8 @@ static void net_client_world(hta_android *s)
         const char *winner="Nobody";
         if (s->game.winner>=0 && s->game.winner<(int32_t)s->game.unit_count)
             winner=s->game.units[s->game.winner].name;
-        snprintf(s->banner,sizeof(s->banner),"%s",s->game.winner==s->me ?
-                 "You won" : winner);
+        snprintf(s->banner,sizeof(s->banner),"%s",s->game.mode==HTA_MODE_SCENARIO ?
+                 "Shift complete" : s->game.winner==s->me ? "You won" : winner);
         s->banner_age=0.0f;
     }
     game_gpu_upload(s);
@@ -5382,7 +5418,7 @@ Java_net_hta_halotrial_GameActivity_nativeHudFly(JNIEnv *env, jclass cls)
 
 /* Which HUD buttons mean anything now, for the Java HUD: 1 can fly, 2 in
  * the air, 4 the weapon zooms, 8 it reloads, 16 it is swung, 32 grenades
- * in hand, 64 an ability is ready, 128 an ability exists. */
+ * in hand, 64 an ability is ready, 128 an ability exists, 256 world use. */
 static _Atomic int g_hud_caps;
 
 JNIEXPORT jint JNICALL
@@ -5961,6 +5997,9 @@ void android_main(struct android_app *app)
                 }
                 if (state.hud_ability) {
                     state.hud_ability = false;
+                    if (state.game.mode == HTA_MODE_SCENARIO && !state.dead) {
+                        state.flashlight_on = !state.flashlight_on;
+                    } else
                     /* The world's scripted ability: the host runs it, a joiner asks the host. */
                     if (world_ability && !state.dead) {
                         if (!state.net_enabled || state.net_hosting) hta_session_ability(&state.session, state.me);
@@ -5976,7 +6015,10 @@ void android_main(struct android_app *app)
                         }
                     }
                 }
-                if (charge >= 0.0f) {
+                if (state.game.mode == HTA_MODE_SCENARIO) {
+                    atomic_store(&g_ability_charge, 1000);
+                    atomic_store(&g_ability_name, state.flashlight_on ? "LIGHT OFF" : "LIGHT ON");
+                } else if (charge >= 0.0f) {
                     atomic_store(&g_ability_charge, (int)(charge * 1000.0f));
                     const hta_unit *mu = &state.game.units[state.me];
                     atomic_store(&g_ability_name, state.game.characters[mu->character]->ability_name);
@@ -6003,11 +6045,12 @@ void android_main(struct android_app *app)
                         }
                     }
                 }
-                int caps = (charge >= 0.0f || world_ability ? 128 : 0) | (charge >= 1.0f || world_ability ? 64 : 0) |
+                int caps = (state.game.mode == HTA_MODE_SCENARIO || charge >= 0.0f || world_ability ? 128 : 0) |
+                           (state.game.mode == HTA_MODE_SCENARIO || charge >= 1.0f || world_ability ? 64 : 0) |
                            (body.can_fly && !broom ? 1 : 0) | (state.player.fly ? 2 : 0) |
                            (state.weap.zoom_levels > 0 ? 4 : 0) |
                            (!swung && state.ammo.recharge <= 0.0f && state.ammo.reserve_max > 0 ? 8 : 0) |
-                           (swung ? 16 : 0) | (state.nade_count > 0 ? 32 : 0);
+                           (swung ? 16 : 0) | (state.nade_count > 0 ? 32 : 0) | (near_use ? 256 : 0);
                 atomic_store(&g_hud_caps, caps);
             }
             if (state.dead) {
@@ -7262,6 +7305,11 @@ void android_main(struct android_app *app)
             }
             if (state.world_loaded)
                 hta_scene_apply_visual(&drawscene, &state.world_ext.world_defs, &state.went, state.cam.pos);
+            if (state.flashlight_on && state.game.mode == HTA_MODE_SCENARIO && !state.dead) {
+                float forward[3];
+                hta_camera_forward(&state.cam, forward);
+                hta_scene_add_flashlight(&drawscene, state.cam.pos, forward);
+            }
             atomic_store(&g_player_presentation,
                          state.world_loaded && state.world_ext.world_defs.has_environment);
 

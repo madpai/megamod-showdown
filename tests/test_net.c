@@ -356,11 +356,13 @@ static void sessions(void)
            b.game.hull[4]==0 && b.game.hull[5]==100 && b.game.hull[6]==255);
     assert(b.game.prop_count==300 && b.game.prop_broken[0]==1 &&
            b.game.prop_broken[37]==(uint8_t)(1u<<3) && b.game.prop_broken[38]==0);
-    { uint8_t buf[HTA_NET_GAME_BYTES]; hta_net_game bad=gm; bad.flag[1].carrier=HTA_NET_MAX_ENTITIES;
+    { uint8_t buf[HTA_NET_GAME_BYTES]; hta_net_game bad=gm, ok; bad.flag[1].carrier=HTA_NET_MAX_ENTITIES;
       assert(!hta_net_game_pack(buf,sizeof(buf),&bad));
+      bad=gm; bad.mode=3; assert(hta_net_game_pack(buf,sizeof(buf),&bad) &&
+                                hta_net_game_unpack(buf,sizeof(buf),&ok) && ok.mode==3);
       bad=gm; bad.mode=7; assert(!hta_net_game_pack(buf,sizeof(buf),&bad));
       bad=gm; bad.options=4; assert(!hta_net_game_pack(buf,sizeof(buf),&bad));
-      bad=gm; bad.options=HTA_NET_GAME_CLASSES | HTA_NET_GAME_DUPLICATES; hta_net_game ok;
+      bad=gm; bad.options=HTA_NET_GAME_CLASSES | HTA_NET_GAME_DUPLICATES;
       assert(hta_net_game_pack(buf,sizeof(buf),&bad) && hta_net_game_unpack(buf,sizeof(buf),&ok) &&
              ok.options==(HTA_NET_GAME_CLASSES | HTA_NET_GAME_DUPLICATES));
       bad=gm; bad.prop_count=HTA_NET_MAX_PROPS+1; assert(!hta_net_game_pack(buf,sizeof(buf),&bad));

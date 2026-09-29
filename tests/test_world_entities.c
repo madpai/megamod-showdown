@@ -716,6 +716,10 @@ static void test_visual_state(void)
     assert(scene.light_count == HTA_SCENE_MAX_LIGHTS);
     for (uint32_t i = 0; i < scene.light_count; i++)
         assert(scene.lights[i].position[0] == (float)i);
+    const float forward[3] = {1, 0, 0};
+    hta_scene_add_flashlight(&scene, eye, forward);
+    assert(scene.light_count == HTA_SCENE_MAX_LIGHTS && scene.lights[7].outer_cos > 0.0f &&
+           scene.lights[7].direction[0] == 1.0f && scene.lights[6].position[0] == 6.0f);
 }
 
 int main(void)

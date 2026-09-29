@@ -5,6 +5,12 @@
 > separate 74-object `project_x8.py` build. The original 62-object package
 > and the measurements below remain fixed.
 
+> **Later status:** X9's authored lighting and presentation have landed and
+> received a positive physical S24+ visual review. The subsequent dedicated
+> scenario/flashlight slice is described in [SCENARIO_RULES.md](SCENARIO_RULES.md).
+> The ranked evidence below remains the historical decision record; no
+> creature or PvE AI has been added.
+
 What building MegaMod's first production vertical slice showed. Evidence
 is in the sibling docs; this page ranks it. Only what was hit while
 building and testing Night Shift is ranked -- not speculative features.

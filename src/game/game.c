@@ -551,6 +551,17 @@ static void finish(hta_game *g, int32_t winner)
     emit(g, &o);
 }
 
+void hta_game_complete_scenario(hta_game *g, const char *message)
+{
+    if (!g || g->mode != HTA_MODE_SCENARIO || g->over) return;
+    g->over = true;
+    g->winner = HTA_GAME_NONE;
+    hta_game_event e = { .kind = HTA_EV_GAME_OVER, .a = -1, .b = -1,
+                         .line = HTA_LINE_NONE, .for_local = true };
+    snprintf(e.text, sizeof(e.text), "%s", message ? message : "Scenario complete");
+    emit(g, &e);
+}
+
 /* A team game ends: `team` takes it, or nobody (-1) in a draw. */
 static void finish_team(hta_game *g, int32_t team)
 {
@@ -770,9 +781,10 @@ bool hta_game_set_mode(hta_game *g, hta_game_mode mode)
     }
     if (mode >= HTA_MODE_COUNT) { mode = HTA_MODE_SLAYER; ok = false; }
     g->mode = mode;
-    g->teams = mode != HTA_MODE_SLAYER;
+    g->teams = mode == HTA_MODE_TEAM_SLAYER || mode == HTA_MODE_CTF;
     /* The mode's own limit; the caller may set another after. */
-    g->score_limit = mode == HTA_MODE_CTF ? HTA_CTF_SCORE_LIMIT : HTA_SLAYER_SCORE_LIMIT;
+    g->score_limit = mode == HTA_MODE_SCENARIO ? 0 :
+                     mode == HTA_MODE_CTF ? HTA_CTF_SCORE_LIMIT : HTA_SLAYER_SCORE_LIMIT;
     return ok;
 }
 
@@ -832,6 +844,7 @@ void hta_game_start(hta_game *g)
     memset(g->drops, 0, sizeof(g->drops));
     for (uint32_t i = 0; i < HTA_VEHICLE_MAX; i++) g->vgun[i].last_driver = -1;
     hulls_reset(g);
+    if (g->mode == HTA_MODE_SCENARIO) return;
     char buf[96];
     hta_game_event e = { .kind = HTA_EV_ANNOUNCE, .a = -1, .b = -1,
                          .line = HTA_LINE_SLAYER, .for_local = true };
@@ -995,8 +1008,10 @@ void hta_game_hurt(hta_game *g, int32_t victim, int32_t attacker, float amount,
     }
     /* Nor by their own side. Ours: a gametype says, and bots do not check
      * their line of fire, so a team game would be a betrayal a minute. */
-    if (g->teams && attacker >= 0 && attacker != victim &&
-        attacker < (int32_t)g->unit_count && g->units[attacker].team == v->team) return;
+    if (attacker >= 0 && attacker != victim && attacker < (int32_t)g->unit_count &&
+        ((g->teams && g->units[attacker].team == v->team) ||
+         (g->mode == HTA_MODE_SCENARIO && g->units[attacker].kind != HTA_UNIT_BOT &&
+          v->kind != HTA_UNIT_BOT))) return;
     hta_vitals_damage(&v->vitals, amount);
     v->hurt = true;
     if (attacker >= 0 && attacker < (int32_t)g->unit_count) {
@@ -1351,7 +1366,7 @@ static void die(hta_game *g, int32_t idx)
         }
         bool betrayal = g->teams && k->team == v->team;
         /* Kills are the score in Slayer; in CTF only captures are. */
-        bool slaying = g->mode != HTA_MODE_CTF;
+        bool slaying = g->mode == HTA_MODE_SLAYER || g->mode == HTA_MODE_TEAM_SLAYER;
         if (betrayal) {
             k->betrayals++;
             if (slaying) k->score--;
@@ -1395,7 +1410,7 @@ static void die(hta_game *g, int32_t idx)
         /* Nobody to blame: a suicide if it was your own doing, else a
          * plain death. Halo's Slayer takes a point for both. */
         v->suicides++;
-        if (g->mode != HTA_MODE_CTF) v->score--;
+        if (g->mode == HTA_MODE_SLAYER || g->mode == HTA_MODE_TEAM_SLAYER) v->score--;
         if (g->mode == HTA_MODE_TEAM_SLAYER) g->team_score[v->team & 1u]--;
         if (killer == idx) text(g, 81, fmt, sizeof(fmt), "%s committed suicide");
         else if (by_vehicle) text(g, 77, fmt, sizeof(fmt), "%s was killed by a vehicle");
@@ -1634,7 +1649,8 @@ static void hero_shot(hta_game *g, int32_t idx)
 
 bool hta_game_ability(hta_game *g, int32_t idx)
 {
-    if (!g || idx<0 || idx>=(int32_t)g->unit_count || g->over) return false;
+    if (!g || idx<0 || idx>=(int32_t)g->unit_count || g->over ||
+        g->mode == HTA_MODE_SCENARIO) return false;
     hta_unit *u=&g->units[idx];
     if (!u->alive || u->ability_active>0.0f || u->ability_cool>0.0f || u->character<0 ||
         (uint32_t)u->character>=g->character_count || g->char_ability[u->character]<0) return false;
@@ -3017,7 +3033,7 @@ void hta_game_update(hta_game *g, float dt)
     if (dt > 0.1f) dt = 0.1f;
     if (!g->over) g->time += dt;
     /* Out of time: whoever is ahead wins. */
-    if (!g->over && g->time_limit > 0.0f && g->time >= g->time_limit) {
+    if (!g->over && g->mode != HTA_MODE_SCENARIO && g->time_limit > 0.0f && g->time >= g->time_limit) {
         if (g->teams) {
             int d = g->team_score[0] - g->team_score[1];
             finish_team(g, d > 0 ? HTA_TEAM_RED : d < 0 ? HTA_TEAM_BLUE : -1);

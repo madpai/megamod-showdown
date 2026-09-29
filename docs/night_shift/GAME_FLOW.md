@@ -1,7 +1,9 @@
 # MegaMod: Night Shift -- game flow
 
 **Status:** first playable vertical slice, 2026-09-27. This is the
-authoritative production design summary. Source: Open Asset Lab
+authoritative design summary for the original slice. X8, X9 and the later
+[scenario rules](SCENARIO_RULES.md) build on it without changing this route.
+Source: Open Asset Lab
 `projects/night_shift/` (world `world01.py`, prefabs `facility.py`, art and
 sound `art.py`, the one script `scripts/anomaly.lua`). Test:
 `scripts/test_night_shift.sh`. Related: [STATE_GRAPH](STATE_GRAPH.md),
@@ -17,8 +19,9 @@ data core from the research wing**. Nothing else is said. What happened is
 left to the dark, the barred specimen cells, the broken tank, the stains,
 the knocking, and the thing in the research wing's cold spot.
 
-No NPCs, no inventory, no combat (players still carry Showdown's rifles --
-see FINDINGS). The facility is the threat.
+In the original slice there were no NPCs, inventory or combat goals;
+players still carried Showdown's rifles (see FINDINGS). The facility is
+the threat. The later Scenario rules give the crew one sidearm.
 
 ## Areas
 

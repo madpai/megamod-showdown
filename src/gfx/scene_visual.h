@@ -41,4 +41,22 @@ static inline void hta_scene_apply_visual(hta_scene *s, const hta_world_defs *d,
         out->inner_cos = l->inner_cos; out->outer_cos = l->spot ? l->outer_cos : -1.0f;
     }
 }
+
+/* A camera-mounted local spot uses one of the same bounded light slots.
+ * It replaces the farthest selected authored light when the scene is full. */
+static inline void hta_scene_add_flashlight(hta_scene *s, const float eye[3],
+                                             const float forward[3])
+{
+    if (!s || !eye || !forward) return;
+    uint32_t slot = s->light_count < HTA_SCENE_MAX_LIGHTS
+                  ? s->light_count++ : HTA_SCENE_MAX_LIGHTS - 1;
+    hta_scene_light *light = &s->lights[slot];
+    memcpy(light->position, eye, sizeof(light->position));
+    light->range = 12.0f;
+    light->color[0] = 0.92f; light->color[1] = 0.95f; light->color[2] = 1.0f;
+    light->intensity = 2.5f;
+    memcpy(light->direction, forward, sizeof(light->direction));
+    light->inner_cos = 0.94f;
+    light->outer_cos = 0.78f;
+}
 #endif

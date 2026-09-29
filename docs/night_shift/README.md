@@ -2,8 +2,10 @@
 
 A 2-4 player co-op immersive-horror slice: a recovery crew restores power
 in a silent research annex, pulls its data core, survives the lockdown and
-rides the freight lift out. MegaMod's first production vertical slice
-(2026-09-27), built from the X3-X7 platform as it is -- no engine change.
+rides the freight lift out. MegaMod's first production vertical slice began
+on the X3-X7 platform (2026-09-27). X8 added compact world state, X9 added
+authored visual production, and the later scenario-rules slice removes the
+remaining Slayer presentation from `night_shift_x9`.
 
 - Content source: Open Asset Lab `projects/night_shift/`
   (`assetlab project build projects/night_shift --output BUNDLE`)
@@ -22,3 +24,5 @@ rides the freight lift out. MegaMod's first production vertical slice
 | [AUTHORING_WORKFLOW](AUTHORING_WORKFLOW.md) | how it was built, command by command |
 | [AI_READINESS](AI_READINESS.md) | the map as a future NPC test world |
 | [FINDINGS](FINDINGS.md) | ranked pain and the recommended next milestone |
+| [X9_VISUAL_PASS](X9_VISUAL_PASS.md) | authored lighting, visual evidence and subsequent S24+ review |
+| [SCENARIO_RULES](SCENARIO_RULES.md) | dedicated rules, flashlight, limits and next phone check |

@@ -11,7 +11,7 @@
  * (movers' spatial state, relays' logical flags) instead of a 6-bit entity
  * index, and the FX world sound names a 16-bit runtime object. v10 and v11
  * refuse each other (docs/WORLD_STATE.md "Protocol v11"). */
-#define HTA_NET_VERSION 11u
+#define HTA_NET_VERSION 12u
 #define HTA_NET_HEADER 20u
 #define HTA_NET_MAX_PACKET 1200u
 #define HTA_NET_MAX_PLAYERS 8u

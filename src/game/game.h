@@ -80,6 +80,7 @@ typedef enum {
     HTA_MODE_SLAYER = 0,      /* free for all */
     HTA_MODE_TEAM_SLAYER,
     HTA_MODE_CTF,
+    HTA_MODE_SCENARIO,        /* host ends the round from a world objective */
     HTA_MODE_COUNT
 } hta_game_mode;
 
@@ -505,6 +506,8 @@ bool hta_game_set_mode(hta_game *g, hta_game_mode mode);
 
 /* Start the game: scores cleared, flags home, everyone respawned. */
 void hta_game_start(hta_game *g);
+/* Complete a scenario once. The host calls this from an objective, not a kill limit. */
+void hta_game_complete_scenario(hta_game *g, const char *message);
 
 /* Add a unit. Returns its index, or -1. A bot with no name takes one from
  * the Trial's `random_player_names`. */

@@ -152,7 +152,7 @@ can come from another capability. Possible generic domains include arcade
 and hover handling, checkpoints, laps, position, boost, reset and scoring;
 their identifiers and contracts remain undecided.
 
-## 6. Night Shift: proven slice, future dedicated mode
+## 6. Night Shift: proven slice, first dedicated rules
 
 [Night Shift: Harrow Annex](night_shift/GAME_FLOW.md) is a real production
 vertical slice, not merely a scary map concept. Original content built in
@@ -165,18 +165,24 @@ carried 58 of 59 behaviors in the original slice. X8 added compact world
 state and had a physical S24+ solo playtest near 120 FPS; X9 added authored
 ambient/local lighting, fog, material response and presentation. X9's
 [visual pass](night_shift/X9_VISUAL_PASS.md) has desktop and SwiftShader
-evidence, while physical X9 visuals and FPS are **unmeasured** pending the
-owner's phone review. Desktop submit/fence timing is not an isolated GPU
-lighting benchmark; SwiftShader FPS does not predict phone FPS. X9 added no
+evidence. A subsequent S24+ solo review recorded 120.2 mean FPS, positive
+visual feedback and no perceived stutter. Desktop submit/fence timing is
+not an isolated GPU lighting benchmark; SwiftShader FPS does not predict
+phone FPS. X9 added no
 shadows or new bloom implementation.
 
-The current scenario still inherits Slayer HUD, weapons, friendly fire and
-match rules, and its world `shift_complete` state does not end the match.
+A later [scenario-rules slice](night_shift/SCENARIO_RULES.md) added a native
+`Scenario` mode to `night_shift_x9`: one pistol, no grenades or pickups,
+crew friendly-fire protection, objective text, a host-authoritative
+completion state and a local toggleable flashlight. Its physical phone
+performance and physical multiplayer behavior remain unmeasured. It is a
+first rules slice, not a Lua/data game-mode framework.
+
 The facility created horror **without a creature**. [AI readiness](night_shift/AI_READINESS.md)
 assesses a possible later NPC test; it built no PvE creature AI. A future
-dedicated Night Shift Lua/data mode could compose FPS locomotion, a
-flashlight, guard-style spawn/loadout with deliberately limited ammunition
-and equipment, scenario HUD and completion/failure state, richer objectives,
+dedicated Night Shift Lua/data mode could compose FPS locomotion, guard-style
+spawn/loadout with deliberately limited ammunition and equipment, dedicated
+failure state, richer objectives,
 PvE AI, horror spawning/director behavior, scripted encounters and survival
 rules. Zombies, aliens, creatures and other threats remain open design
 space, not established canon or implemented features. The proven slice
@@ -306,7 +312,7 @@ Possible future proofs, when product needs justify them:
 
 | Experience | What it could validate | Current evidence boundary |
 | --- | --- | --- |
-| Night Shift | Focused PvE/horror composition, dedicated scenario rules, objectives, director and enemy behavior | Original scenario, interactions, Lua, host/late join and X9 visuals exist; dedicated mode, AI and director do not |
+| Night Shift | Focused PvE/horror composition, Lua/data mode rules, objectives, director and enemy behavior | Original scenario, interactions, Lua, host/late join, X9 visuals and a first native Scenario rules slice exist; Lua/data mode, AI and director do not |
 | Skate Showdown | Alternate locomotion, shared roster, retargeting, tricks and scoring | Aspirational; no skate capability claimed |
 | MegaMod Racing | Generic race participants, checkpoints/laps and varied movement systems | Aspirational; current Halo vehicles are not this framework |
 | MegaMod Party | Rapid recombination, round reset, Lua/data rules and persistent roster/session score | Aspirational; no party playlist claimed |

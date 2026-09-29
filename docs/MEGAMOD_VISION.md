@@ -192,8 +192,11 @@ presentation. These are landed work, not future milestones. Night Shift:
 Harrow Annex is the original-content production slice exercising their
 composition; see [its evidence](night_shift/README.md) and
 [X9 checkpoint](night_shift/X9_VISUAL_PASS.md). The X8 solo S24+ report
-measured about 120 FPS. X9 physical-device visuals and FPS remain pending.
-The dedicated Night Shift game mode, PvE creature AI, Skate, Racing and
+measured about 120 FPS. The subsequent X9 solo S24+ review measured 120.2
+mean FPS and the owner reported a big visual improvement and smooth feel.
+A later [scenario-rules slice](night_shift/SCENARIO_RULES.md) added a native
+Night Shift mode and local flashlight; its phone performance is still
+unmeasured. A Lua/data Night Shift mode, PvE creature AI, Skate, Racing and
 Party capability systems remain future directions.
 
 ---
@@ -592,15 +595,17 @@ and it lets agents test on the desktop.
 ### Cross-genre validation [Someday]
 
 The [capability direction](GAMEPLAY_CAPABILITY_MODULES.md) gives four
-complementary tests of eventual generality: a dedicated Night Shift mode
-could extend its **already real** original horror slice into scenario
-rules and PvE; Skate Showdown could prove alternate locomotion on the
-shared roster; MegaMod Racing could prove race participants with different
-movement systems; MegaMod Party could prove short Lua/data rounds that
+complementary tests of eventual generality: Night Shift's first dedicated
+rules slice can grow from its **already real** original horror scenario
+toward Lua/data composition and PvE; Skate Showdown could prove alternate
+locomotion on the shared roster; MegaMod Racing could prove race
+participants with different movement systems; MegaMod Party could prove
+short Lua/data rounds that
 change capability combinations while roster and session score persist.
 None is a replacement for current foundations or a commitment to build
 next. Night Shift's present slice created horror without a creature, and
-X9 physical performance is not yet measured.
+X9 physical solo performance has been measured; the later flashlight's
+phone cost has not.
 
 ## 19. The design question for every feature
 

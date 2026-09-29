@@ -55,6 +55,13 @@ static void world_nav(hta_session *s, const char *writable_dir)
 
 bool hta_match_load_world(hta_session *s, const hta_fs *fs, const char *writable_dir)
 {
+    /* Showdown's first dedicated scenario adapter. Keep the historical X8
+     * fixture and every other imported world on their selected rules. */
+    if (!strcmp(s->world, "night_shift_x9")) {
+        s->game_mode = HTA_MODE_SCENARIO;
+        s->score_limit = s->time_limit_min = s->bot_count = 0;
+        s->classes = false;
+    }
     if (!s->map_data) {
         snprintf(s->status, sizeof(s->status), "no Trial map");
         return false;
@@ -158,7 +165,7 @@ bool hta_match_load_world(hta_session *s, const hta_fs *fs, const char *writable
     /* What the map leaves lying about. Every position, facing, respawn time
      * and weighted choice is the scenario's own -- on an imported map, all
      * but the position. */
-    if (hta_pickups_load(&s->items, &s->cache)) {
+    if (s->game_mode != HTA_MODE_SCENARIO && hta_pickups_load(&s->items, &s->cache)) {
         if (s->world_loaded) hta_pickups_relocate(&s->items, &s->nav, s->world_playable);
         char ierr[HTA_ERRLEN];
         if (hta_pickups_build(&s->items, &s->cache,
@@ -253,6 +260,22 @@ bool hta_match_start(hta_session *s, const char *writable_dir, bool local_player
     s->game.simulate_drops = !s->net_enabled || s->net_hosting;
     if (!hta_game_set_mode(&s->game, (hta_game_mode)s->game_mode))
         hta_log("[game] mode %d is not playable on this map: Slayer", s->game_mode);
+    if (s->game.mode == HTA_MODE_SCENARIO) {
+        /* A single Trial sidearm gives the crew a deliberate starting kit.
+         * The world has no enemy yet; no pickups or frag grenades are needed. */
+        int32_t sidearm = -1;
+        for (uint32_t i = 0; i < s->game.weapon_count; i++)
+            if (strstr(s->game.weapons[i].def.path, "weapons\\pistol\\pistol")) {
+                sidearm = (int32_t)i;
+                break;
+            }
+        if (sidearm < 0) sidearm = s->game.start_weapon[1] >= 0
+                                      ? s->game.start_weapon[1] : s->game.start_weapon[0];
+        s->game.start_weapon[0] = sidearm;
+        s->game.start_weapon[1] = -1;
+        s->game.start_grenades = s->game.max_grenades = 0;
+        hta_log("[scenario] Night Shift: sidearm roster %d, no pickups or grenades", sidearm);
+    }
     s->carried_flag = -1;
     s->game.score_limit = s->score_limit;
     s->game.time_limit = (float)s->time_limit_min * 60.0f;

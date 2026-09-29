@@ -222,3 +222,19 @@ should be more efficient OAL spatial authoring and reusable structural
 detail, with a tightly scoped static occlusion/shadow technique considered
 after its actual phone cost is measured. This is a recommendation, not X9
 implementation work.
+
+## Subsequent S24+ review (2026-09-28)
+
+The owner installed the proper `night_shift_x9` map, sent new screenshots
+and a SEND REPORT, and described the visual change as a **big improvement**.
+The solo route reached the surface after the console, valve, cold spot,
+D3/D5, core, lockdown and lift. The report identifies a Galaxy S24+
+(`SM-S926U`, Adreno 750), high preset, composed path, render scale 1 and
+2x MSAA. Across 23,725 frames it recorded 120.2 mean FPS, 9.0 ms p95,
+9.5 ms p99, ten frames over 50 ms and a 162 ms maximum. Several hitches
+clustered late during repeated weapon switching and reloading near the
+core; the owner said the run **felt smooth** and noticed no visible freeze
+or stutter. Audio reported zero dropped voices and the device reported no
+thermal warning. Networking was off, so physical phone host and late-join
+behavior remain unmeasured. These are physical-phone results, distinct from
+the earlier desktop submit/fence and SwiftShader emulator measurements.

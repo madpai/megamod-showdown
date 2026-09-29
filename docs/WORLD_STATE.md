@@ -37,6 +37,10 @@ checks expanded worlds before writing a package.
 
 ## Protocol v11
 
+Protocol v12 subsequently added the `Scenario` game-mode value for Night
+Shift. The WORLD_STATE encoding described below did not change; v11 peers
+are rejected by v12's version check.
+
 The v10 `WORLD_STATE` named a runtime entity in one byte and only carried
 movers. V11 carries two indexed channels, with format byte `1`. The message
 header is 5 bytes: format `u8`, spatial count `u16`, logical count `u16`.
