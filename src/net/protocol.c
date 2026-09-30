@@ -12,7 +12,7 @@ void hta_net_u32_write(uint8_t *p, uint32_t v)
 uint32_t hta_net_u32_read(const uint8_t *p)
 { return (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24); }
 
-static bool known(uint8_t t) { return t >= HTA_NET_HELLO && t <= HTA_NET_WORLD_STATE; }
+static bool known(uint8_t t) { return t >= HTA_NET_HELLO && t <= HTA_NET_RPG; }
 
 bool hta_net_pack(uint8_t *dst, size_t cap, uint8_t type, uint32_t seq,
                   uint32_t tick, const uint8_t *payload, uint16_t len,
@@ -230,7 +230,7 @@ bool hta_net_control_pack(uint8_t *dst, size_t cap, const hta_net_control *c)
         c->id>HTA_NET_MAX_PLAYERS || c->flags & ~63u || c->weapon_slot>1 ||
         (c->loadout[0]!=255 && c->loadout[0]>=HTA_NET_MAX_WEAPONS) ||
         (c->loadout[1]!=255 && c->loadout[1]>=HTA_NET_MAX_WEAPONS) ||
-        c->character>63 || c->team>2 ||
+        c->character>63 || c->team>2 || c->rpg_action>4 || c->rpg_item>=32 ||
         !isfinite(c->forward) || fabsf(c->forward)>1.0f ||
         !isfinite(c->right) || fabsf(c->right)>1.0f ||
         !isfinite(c->yaw) || fabsf(c->yaw)>1000.0f ||
@@ -243,6 +243,7 @@ bool hta_net_control_pack(uint8_t *dst, size_t cap, const hta_net_control *c)
     u16w(dst+27,c->action_count);
     dst[29]=c->loadout[0]; dst[30]=c->loadout[1]; dst[31]=c->character;
     dst[32]=c->team; u16w(dst+33,c->ability_count);
+    u16w(dst+35,c->rpg_serial);dst[37]=c->rpg_action;dst[38]=c->rpg_item;
     return true;
 }
 
@@ -251,7 +252,7 @@ bool hta_net_control_unpack(const uint8_t *src, size_t len, hta_net_control *c)
     if (!src || !c || len!=HTA_NET_CONTROL_BYTES) return false;
     hta_net_control tmp={src[0],src[1],src[2],fr(src+3),fr(src+7),
         fr(src+11),fr(src+15),u16r(src+19),u16r(src+21),u16r(src+23),u16r(src+25),
-        u16r(src+27),{src[29],src[30]},src[31],src[32],u16r(src+33)};
+        u16r(src+27),{src[29],src[30]},src[31],src[32],u16r(src+33),u16r(src+35),src[37],src[38]};
     uint8_t check[HTA_NET_CONTROL_BYTES];
     if (!hta_net_control_pack(check,sizeof(check),&tmp)) return false;
     *c=tmp; return true;
@@ -303,6 +304,8 @@ bool hta_net_fx_pack(uint8_t *dst, size_t cap, const hta_net_fx *fx)
          * object is a 16-bit runtime index. */
         if (fx->entity>=HTA_NET_FX_MAX_WORLD_ENTITIES ||
             (uint32_t)(fx->weapon|(fx->material<<8))>=HTA_NET_FX_MAX_WORLD_SOUNDS) return false;
+    } else if(fx->kind==HTA_NET_FX_SPELL) {
+        if(fx->entity>=HTA_NET_MAX_ENTITIES||fx->weapon>=32||fx->material>4)return false;
     } else if (fx->kind<HTA_NET_FX_FIRE || fx->kind>HTA_NET_FX_WRECK ||
         (fx->entity!=255 && fx->entity>=HTA_NET_MAX_ENTITIES) ||
         fx->weapon>=HTA_NET_MAX_WEAPONS) return false;
@@ -520,7 +523,7 @@ bool hta_net_drops_unpack(const uint8_t *src, size_t len, hta_net_drops *d)
 
 bool hta_net_game_pack(uint8_t *dst, size_t cap, const hta_net_game *g)
 {
-    if (!dst || !g || cap<HTA_NET_GAME_BYTES || g->mode>4) return false;
+    if (!dst || !g || cap<HTA_NET_GAME_BYTES || g->mode>5) return false;
     dst[0]=g->mode; dst[1]=g->score_limit;
     u16w(dst+2,(uint16_t)g->team_score[0]); u16w(dst+4,(uint16_t)g->team_score[1]);
     if (g->options & ~(HTA_NET_GAME_CLASSES | HTA_NET_GAME_DUPLICATES)) return false;
@@ -741,4 +744,30 @@ bool hta_net_pack_probe(uint8_t *dst, size_t cap, uint16_t version, uint32_t non
     hta_net_u32_write(dst + HTA_NET_HEADER, nonce);
     if (written) *written = HTA_NET_HEADER + 4u;
     return true;
+}
+
+static void rpg_u64(uint8_t *d,uint64_t v) {hta_net_u32_write(d,(uint32_t)v);hta_net_u32_write(d+4,(uint32_t)(v>>32));}
+static uint64_t rpg_read64(const uint8_t *d) {return (uint64_t)hta_net_u32_read(d)|((uint64_t)hta_net_u32_read(d+4)<<32);}
+bool hta_net_rpg_pack(uint8_t *dst,size_t cap,const hta_net_rpg *r) {
+    if(!dst||!r||cap<HTA_NET_RPG_BYTES||r->phase>2||r->result>5||
+       !isfinite(r->mana)||r->mana<0||!isfinite(r->stamina)||r->stamina<0||
+       !isfinite(r->timer)||r->timer<0||!isfinite(r->max_health)||r->max_health<=0)return false;
+    for(unsigned i=0;i<4;i++)if(r->equipment[i]!=255 && r->equipment[i]>=32)return false;
+    hta_net_u32_write(dst,r->wave);hta_net_u32_write(dst+4,r->queued);dst[8]=r->phase;dst[9]=r->result;u16w(dst+10,r->serial);
+    rpg_u64(dst+12,r->gold);rpg_u64(dst+20,r->experience);hta_net_u32_write(dst+28,r->prestige);
+    for(unsigned i=0;i<5;i++)hta_net_u32_write(dst+32+4*i,r->upgrade[i]);
+    for(unsigned i=0;i<8;i++)rpg_u64(dst+52+8*i,r->skill[i]);
+    for(unsigned i=0;i<32;i++)hta_net_u32_write(dst+116+4*i,r->quantity[i]);
+    memcpy(dst+244,r->equipment,4);fw(dst+248,r->mana);fw(dst+252,r->stamina);fw(dst+256,r->timer);fw(dst+260,r->max_health);return true;
+}
+bool hta_net_rpg_unpack(const uint8_t *src,size_t len,hta_net_rpg *r) {
+    if(!src||!r||len!=HTA_NET_RPG_BYTES)return false;
+    hta_net_rpg t={0};
+    t.wave=hta_net_u32_read(src);t.queued=hta_net_u32_read(src+4);t.phase=src[8];t.result=src[9];t.serial=u16r(src+10);
+    t.gold=rpg_read64(src+12);t.experience=rpg_read64(src+20);t.prestige=hta_net_u32_read(src+28);
+    for(unsigned i=0;i<5;i++)t.upgrade[i]=hta_net_u32_read(src+32+4*i);
+    for(unsigned i=0;i<8;i++)t.skill[i]=rpg_read64(src+52+8*i);
+    for(unsigned i=0;i<32;i++)t.quantity[i]=hta_net_u32_read(src+116+4*i);
+    memcpy(t.equipment,src+244,4);t.mana=fr(src+248);t.stamina=fr(src+252);t.timer=fr(src+256);t.max_health=fr(src+260);
+    uint8_t check[HTA_NET_RPG_BYTES];if(!hta_net_rpg_pack(check,sizeof(check),&t))return false;*r=t;return true;
 }

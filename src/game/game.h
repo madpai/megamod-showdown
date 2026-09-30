@@ -31,6 +31,7 @@
 #include "../asset/weapon.h"
 #include "../engine/vehicle.h"
 #include "nav.h"
+#include "../engine/progression.h"
 #include "brain.h"
 
 #define HTA_GAME_MAX_UNITS    16
@@ -82,6 +83,7 @@ typedef enum {
     HTA_MODE_CTF,
     HTA_MODE_SCENARIO,        /* host ends the round from a world objective */
     HTA_MODE_RACING,          /* authored route and native arcade vehicles */
+    HTA_MODE_SURVIVAL,        /* cooperative waves and persistent progression */
     HTA_MODE_COUNT
 } hta_game_mode;
 
@@ -308,6 +310,9 @@ typedef struct {
      * checked handle (slot | generation << 16, never 0) names this unit
      * for this life of the slot only (script/script.h). */
     uint16_t generation;
+    mm_progression *progression; /* host-owned; NULL outside progression modes */
+    float rpg_health,rpg_speed,rpg_damage,armor,ward,slow;
+    float mana,stamina,rpg_cast_wait;
 } hta_unit;
 
 /* ---- Things the caller turns into sound, words and effects ---------- */
@@ -434,6 +439,7 @@ typedef struct hta_game {
     int32_t         local;       /* the unit this device plays, or -1 */
 
     /* The rules. */
+    uint8_t practice_skill;
     hta_game_mode   mode;
     int             team_score[2];
     int32_t         winner_team;  /* when a team game is over; -1 a draw */

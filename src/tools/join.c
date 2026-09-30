@@ -29,6 +29,8 @@
  * vehicles, dropped weapons, flags, the HUD's health, and first-person
  * weapons. The title bar carries the score, ping and kill feed. */
 #define _POSIX_C_SOURCE 200809L
+#include "app/progression_store.h"
+#include <inttypes.h>
 #include "app/content.h"
 #include "app/fs.h"
 #include "asset/bitmap.h"
@@ -68,6 +70,7 @@ static uint32_t find_tag(const hta_cache *c, uint32_t cls, const char *part)
 
 typedef struct {
     /* the world */
+    uint16_t rpg_serial;uint8_t rpg_action,rpg_item;bool shop_open;
     hta_cache cache; bool have_cache;
     hta_resource_map bm; hta_fs_blob map_blob, bm_blob;
     hta_bsp_mesh mesh, sky, coll_mesh;
@@ -380,7 +383,7 @@ static bool frame(join *j, hta_gfx *g, double now, float dt)
     uint32_t w, h;
     hta_gfx_extent(g, &w, &h);
     cam.aspect = h ? (float)w / (float)h : 1.0f;
-    return hta_gfx_draw(g, &cam, &sc, j->gpu_world, j->gpu_sky, NULL, dyn, n, NULL, NULL);
+    return hta_gfx_draw(g, &cam, &sc, j->gpu_world, j->ext.world_defs.has_survival?NULL:j->gpu_sky, NULL, dyn, n, NULL, NULL);
 }
 
 /* Every mover's and (X8) every relay's state as this joiner has it, one
@@ -473,6 +476,18 @@ static void play(join *j, const hta_input *in, double now, float dt)
     if (in->key_pressed[SDL_SCANCODE_1]) slot = 0;
     if (in->key_pressed[SDL_SCANCODE_2]) slot = 1;
     ni.weapon_slot = slot;
+    if(j->ext.world_defs.has_survival && j->net.have_rpg) {
+        const mm_survival_def *d=&j->ext.world_defs.survival;
+        if(in->key_pressed[SDL_SCANCODE_B])j->shop_open=!j->shop_open;
+        if(j->shop_open) {
+            if(in->key_pressed[SDL_SCANCODE_DOWN])j->rpg_item=(j->rpg_item+1)%d->item_count;
+            if(in->key_pressed[SDL_SCANCODE_UP])j->rpg_item=(j->rpg_item+d->item_count-1)%d->item_count;
+            uint8_t action=in->key_pressed[SDL_SCANCODE_RETURN]?1:in->key_pressed[SDL_SCANCODE_TAB]?2:in->key_pressed[SDL_SCANCODE_H]?3:in->key_pressed[SDL_SCANCODE_P]?4:0;
+            if(action){if(++j->rpg_serial==0)++j->rpg_serial;j->rpg_action=action;}
+            ni.forward=ni.right=0;ni.fire=ni.jump=ni.ability=false;
+        }
+        ni.rpg_serial=j->rpg_serial;ni.rpg_action=j->rpg_action;ni.rpg_item=j->rpg_item;
+    }
     hta_net_view_send(&j->view, &j->net, now, &ni, &j->cam, &j->player, true);
 }
 
@@ -549,6 +564,11 @@ static void title(join *j, hta_desktop *d, double now, const char *host, unsigne
         snprintf(t, sizeof(t), "Megamod LAN | player %u%s | %d - %d | %.0f ms | %s%s",
                  j->net.id, j->view.me_alive ? "" : " (dead)", j->view.team_score[0], j->view.team_score[1],
                  j->net.stats.ping_ms, hta_quality_name(j->video.preset), nf ? " | " : "");
+    if(j->net.have_rpg && j->ext.world_defs.has_survival) {
+        const hta_net_rpg *r=&j->net.rpg;const mm_shop_item *item=&j->ext.world_defs.survival.item[j->rpg_item];
+        uint64_t price=item->price;if(item->kind==MM_ITEM_UPGRADE){uint64_t tier=(uint64_t)r->upgrade[item->upgrade]+1;price=tier>UINT64_MAX/tier?UINT64_MAX:tier*tier;price=item->price && price>UINT64_MAX/item->price?UINT64_MAX:price*item->price;}
+        snprintf(t,sizeof(t),"Gatebound | Wave %u %s | Gold %" PRIu64 " | Magicka %.0f | B shop | %s | %s %" PRIu64 "g owned %u | Enter buy / Tab equip / H drink / P prestige | result %u",r->wave,r->phase==1?"FIGHT":"SHOP",r->gold,r->mana,j->shop_open?"SHOP OPEN":"",item->name,price,r->quantity[j->rpg_item],r->result);
+    }
     if (nf) strncat(t, feed[0], sizeof(t) - strlen(t) - 1);
     float fwd[3];
     hta_camera_forward(&j->cam, fwd);
@@ -575,6 +595,7 @@ int main(int argc, char **argv)
     const char *host = argv[1], *map = NULL, *oal = NULL, *shot = NULL, *world = NULL;
     bool world_state = false;   /* X8: --world-state, every object as this joiner has it */
     const char *trial = getenv("HTA_TRIAL_DIR"), *bundle = getenv("HTA_BUNDLE_DIR");
+    const char *profile_dir=NULL;char default_profile[1024];
     unsigned port = 32270;
     double autos = 0;
     hta_gfx_settings_preset(&j.video, HTA_QUALITY_HIGH);
@@ -597,6 +618,7 @@ int main(int argc, char **argv)
             j.shot_view = true;
         }
         else if (!strcmp(argv[i], "--route") && i + 1 < argc) snprintf(j.route, sizeof(j.route), "%s", argv[++i]);
+        else if (!strcmp(argv[i], "--profile-dir") && i+1<argc)profile_dir=argv[++i];
         else if (!strcmp(argv[i], "--world-state")) world_state = true;
         else if (argv[i][0] != '-') port = (unsigned)atoi(argv[i]);
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
@@ -614,6 +636,15 @@ int main(int argc, char **argv)
     hta_gfx_settings_clamp(&j.video);
     setup_effects(&j);
     if (!hta_net_client_open(&j.net, host, (uint16_t)port)) { fprintf(stderr, "bad host address %s\n", host); return 1; }
+    if(j.ext.world_defs.has_survival) {
+        if(!profile_dir) {const char *base=getenv("XDG_DATA_HOME"),*home=getenv("HOME");
+            if(base&&*base)snprintf(default_profile,sizeof(default_profile),"%s/megamod/progression/client",base);
+            else if(home&&*home)snprintf(default_profile,sizeof(default_profile),"%s/.local/share/megamod/progression/client",home);
+            else {fprintf(stderr,"Gatebound needs --profile-dir\n");return 1;}
+            profile_dir=default_profile;}
+        if(!mm_profile_identity(profile_dir,j.net.identity,err,sizeof(err))){fprintf(stderr,"profile: %s\n",err);return 1;}
+        printf("Gatebound controls: B shop, arrows select, Enter buy, Tab equip, H drink, P prestige, Q cast.\n");
+    }
     j.net.map_crc = j.map_crc;
     /* The host's imported characters and weapons, in the same order: they
      * travel as positions (app/compat.h). From the bundle (--bundle or

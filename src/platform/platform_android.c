@@ -1,3 +1,6 @@
+#include "app/survival.h"
+#include "app/progression_store.h"
+#include <inttypes.h>
 /* Android platform layer — the only native file that touches Android APIs.
  *
  * Responsibilities: NativeActivity lifecycle, locating the user's own Halo
@@ -868,6 +871,7 @@ static void apply_my_body(hta_android *s)
     hta_body_attr b = hta_game_body(&s->game, s->me);
     hta_player_physics ph;
     hta_game_body_physics(&s->game, b.speed, &ph);
+    if(s->game.units[s->me].progression) ph.jump_speed*=1+.35f*mm_skill_bonus(s->game.units[s->me].progression,MM_ACROBATICS);
     hta_player_apply_physics(&s->player, &ph);
 }
 
@@ -2185,6 +2189,9 @@ static bool load_map(hta_android *s)
  * separated by 0x1E, lines by '\n'. Written on the game thread, read by the
  * HUD's own redraw; a torn read shows one odd frame of text, nothing worse. */
 static char g_game_text[1536];
+static pthread_mutex_t g_rpg_lock=PTHREAD_MUTEX_INITIALIZER;
+static char g_rpg_text[8192];
+static uint8_t g_rpg_action,g_rpg_item;
 
 /* How long a feed line and a banner stay up. Ours: Halo fades its kill
  * messages after a few seconds and the tag does not say how many. */
@@ -2201,6 +2208,58 @@ static uint32_t find_sound(const hta_cache *c, const char *path)
         if (hta_cache_tag_path(c, &t, p, sizeof(p)) && !strcasecmp(p, path)) return t.tag_id;
     }
     return 0;
+}
+
+/* UI sees a copied view; purchases cross a bounded mailbox to the game thread. */
+static void survival_frame(hta_android *s)
+{
+    if(!s->survival.active || s->me<0) {pthread_mutex_lock(&g_rpg_lock);g_rpg_text[0]=0;pthread_mutex_unlock(&g_rpg_lock);return;}
+    if(s->net_enabled && !s->net_hosting && s->net.have_rpg && s->rpg_applied_tick!=s->net.last_rpg_tick) {
+        hta_survival_apply(&s->session,s->me,&s->net.rpg);s->rpg_applied_tick=s->net.last_rpg_tick;
+    }
+    pthread_mutex_lock(&g_rpg_lock);unsigned action=g_rpg_action,item=g_rpg_item;g_rpg_action=0;pthread_mutex_unlock(&g_rpg_lock);
+    if(action) {
+        if(++s->rpg_serial==0)++s->rpg_serial;s->rpg_action=(uint8_t)action;s->rpg_item=(uint8_t)item;
+        if(!s->net_enabled||s->net_hosting)hta_survival_request(&s->session,s->me,(uint8_t)action,item,s->rpg_serial);
+    }
+    hta_unit *u=&s->game.units[s->me];
+    /* The platform still owns first-person weapon animation/ammo. Adopt
+     * purchases here before its mirror can overwrite the approved roster. */
+    for(unsigned k=0;k<2;k++) {
+        int w=u->carry[k].weapon;if(w<0||(unsigned)w>=s->game.weapon_count)continue;
+        const hta_game_weapon *gw=&s->game.weapons[w];int asset=gw->asset?w:-1;
+        if(s->held[k]!=gw->tag || s->held_asset[k]!=asset || k>=s->held_count) {
+            s->held[k]=gw->tag;s->held_asset[k]=asset;s->held_ammo[k]=u->carry[k].ammo;s->held_ammo_set[k]=true;
+            if(s->held_count<=k)s->held_count=k+1;
+            if(k==s->held_slot){equip_weapon(s,gw->tag);s->ammo=u->carry[k].ammo;}
+        }
+    }
+    unsigned approved=u->carry[1].weapon>=0?2:u->carry[0].weapon>=0?1:0;
+    s->held_count=approved;
+    if(approved && s->held_slot!=(unsigned)u->slot){s->held_slot=(unsigned)u->slot;equip_weapon(s,s->held[s->held_slot]);s->ammo=u->carry[s->held_slot].ammo;}
+    apply_my_body(s);
+    char text[8192];hta_survival_text(&s->session,s->me,text,sizeof(text));size_t used=strlen(text);
+    mm_progression *p=&s->survival.profile[s->me];
+    for(unsigned i=0;i<MM_SKILLS;i++)used+=(size_t)snprintf(text+used,sizeof(text)-used,"\n%s %u",mm_skill_name(i),mm_skill_rank(p->skill[i]));
+    static const char *const result[]={"","Purchase complete","Unavailable here","Need more gold","Already owned","Save failed: purchase rolled back"};
+    unsigned status=s->survival.result[s->me];used+=(size_t)snprintf(text+used,sizeof(text)-used,"\n%s\nShop opens between waves; stand near the blue counter.\x1e",status<6?result[status]:"");
+    const mm_survival_def *d=&s->world_ext.world_defs.survival;
+    for(unsigned i=0;i<d->item_count && used<sizeof(text)-160;i++)used+=(size_t)snprintf(text+used,sizeof(text)-used,"%u\t%s\t%" PRIu64 "\t%u\t%u\t%s\n",i,d->item[i].name,hta_survival_price(&s->session,s->me,i),mm_item_quantity(p,d->item[i].id),d->item[i].kind,d->item[i].id);
+    unsigned remaining=s->survival.queued;
+    if(!s->net_enabled||s->net_hosting)for(unsigned i=0;i<s->game.unit_count;i++)if(s->game.units[i].kind==HTA_UNIT_BOT && s->game.units[i].alive)remaining++;
+    int spell=-1;for(unsigned i=0;i<d->item_count;i++)if(!strcmp(p->equipment[3],d->item[i].id))spell=(int)i;
+    float health=s->vit?hta_vitals_health_fraction(s->vit):hta_vitals_health_fraction(&u->vitals);
+    used+=(size_t)snprintf(text+used,sizeof(text)-used,"\x1e%u\t%u\t%u\t%.0f\t%" PRIu64 "\t%u\t%u\t%.4f\t%.4f\t%.4f\t%s",s->survival.wave,remaining,s->survival.phase,s->survival.timer,p->gold,mm_character_level(p),p->prestige,health,u->mana/(100+10*sqrtf((float)p->upgrade[MM_MAGICKA])+50*mm_skill_bonus(p,MM_DESTRUCTION)),u->stamina/(100+10*sqrtf((float)p->upgrade[MM_STAMINA])+50*mm_skill_bonus(p,MM_ATHLETICS)),spell>=0?d->item[spell].name:"No spell");
+    pthread_mutex_lock(&g_rpg_lock);snprintf(g_rpg_text,sizeof(g_rpg_text),"%s",text);pthread_mutex_unlock(&g_rpg_lock);
+}
+JNIEXPORT jstring JNICALL Java_net_hta_halotrial_GameActivity_nativeRpgText(JNIEnv *env,jclass cls)
+{
+    (void)cls;pthread_mutex_lock(&g_rpg_lock);jstring text=(*env)->NewStringUTF(env,g_rpg_text);pthread_mutex_unlock(&g_rpg_lock);return text;
+}
+JNIEXPORT void JNICALL Java_net_hta_halotrial_GameActivity_nativeHudRpg(JNIEnv *env,jclass cls,jint action,jint item)
+{
+    (void)env;(void)cls;if(action<1||action>4||item<0||item>=32)return;
+    pthread_mutex_lock(&g_rpg_lock);if(!g_rpg_action){g_rpg_action=(uint8_t)action;g_rpg_item=(uint8_t)item;}pthread_mutex_unlock(&g_rpg_lock);
 }
 
 static int32_t held_roster(hta_android *s)
@@ -2287,7 +2346,7 @@ static void start_game(hta_android *s)
     s->vit = &s->game.units[s->me].vitals;
     /* Bodies for everyone -- ours too, for the seats watched from outside. */
     if (!hta_game_view_load(&s->gview, &s->game, bm,
-                            s->net_enabled ? HTA_GAME_MAX_UNITS : s->game.unit_count,
+                            (s->net_enabled || s->game.mode==HTA_MODE_SURVIVAL) ? HTA_GAME_MAX_UNITS : s->game.unit_count,
                             err, sizeof(err)))
         hta_log("[game] bodies: %s", err);
     else
@@ -3010,6 +3069,9 @@ static void game_events(hta_android *s)
 static void game_text(hta_android *s, float dt)
 {
     if (!s->game_on) { g_game_text[0] = 0; return; }
+    if(s->survival.active) {
+        g_game_text[0]=0;return;
+    }
     if (s->game.mode==HTA_MODE_RACING) {
         unsigned me=s->me>=0 && s->me<(int)HTA_RACE_MAX_RACERS ? (unsigned)s->me : 0;
         const hta_arcade_racer *car=&s->race_car[me];
@@ -3876,6 +3938,10 @@ static void net_begin(hta_android *s, const char *host, bool hosting, uint16_t p
     }
     if (hosting && !s->net_hosting && s->net_enabled) {
         hta_net_client_close(&s->net); s->net_enabled = false;
+    }
+    if(s->net_enabled) {
+        char dir[640],err[160];snprintf(dir,sizeof(dir),"%s/progression/client",s->app->activity->externalDataPath);
+        if(!mm_profile_identity(dir,s->net.identity,err,sizeof(err))) {hta_log("[survival] %s",err);hta_net_client_close(&s->net);s->net_enabled=false;}
     }
     atomic_store(&g_net_status, s->net_enabled ? 1 : 5);
     hta_log("[net] %s %s:%u", s->net_enabled ? (hosting ? "hosting, joined" : "joining")
@@ -4993,6 +5059,7 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
     while (hta_net_client_pop_fx(&s->net,&fx)) {
         if (s->net_hosting || !s->game_on) continue;
         /* X7: a sound the host's event bindings played, at the place it says. */
+        if(fx.kind==HTA_NET_FX_SPELL) {if(!s->net_hosting)hta_wfx_spell(&s->wfx,fx.material,fx.pos,fx.dir);continue;}
         if (fx.kind==HTA_NET_FX_WORLD_SOUND) {
             uint16_t snd=(uint16_t)(fx.weapon|(fx.material<<8));
             if (snd<s->world_ext.assets.sound_count) {
@@ -5217,6 +5284,7 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
         if (s->hud_alt) c.flags|=HTA_NET_ALT;
         c.action_count=s->net_action_count;
         c.ability_count=s->net_ability_count;
+        c.rpg_serial=s->rpg_serial;c.rpg_action=s->rpg_action;c.rpg_item=s->rpg_item;
         c.team=s->selected_team<0 ? 0 : (uint8_t)(s->selected_team+1);
         if(s->power_fly) c.flags|=HTA_NET_FLY;
         c.melee_count=s->net_melee_count;
@@ -6230,7 +6298,7 @@ void android_main(struct android_app *app)
             if (state.game_on && state.me >= 0 && state.game.units[state.me].stagger > 0.0f)
                 state.power_fly = false;
             bool knocked = state.game_on && state.me >= 0 && state.game.units[state.me].stagger > 0.0f;
-            bool riding = (broom && !knocked) || state.power_fly;
+            bool riding = !state.survival.active && ((broom && !knocked) || state.power_fly);
             state.player.fly = riding;
             state.player.fly_speed = broom ? mount->asset->fly_speed : riding ? body.fly_speed : 0.0f;
             if (state.game_on && state.me >= 0) {
@@ -6251,7 +6319,12 @@ void android_main(struct android_app *app)
                 }
                 if (state.hud_ability) {
                     state.hud_ability = false;
-                    if (state.game.mode == HTA_MODE_SCENARIO && !state.dead) {
+                    if(state.survival.active && !state.dead) {
+                        bool cast=false;
+                        if(!state.net_enabled||state.net_hosting)cast=hta_survival_cast(&state.session,state.me);
+                        else {state.net_ability_count++;cast=true;}
+                        if(cast){state.ivm_role="cast";state.ivm_clip=-2;state.ivm_rate=1;}
+                    } else if (state.game.mode == HTA_MODE_SCENARIO && !state.dead) {
                         state.flashlight_on = !state.flashlight_on;
                     } else
                     /* The world's scripted ability: the host runs it, a joiner asks the host. */
@@ -6269,7 +6342,9 @@ void android_main(struct android_app *app)
                         }
                     }
                 }
-                if (state.game.mode == HTA_MODE_SCENARIO) {
+                if(state.survival.active) {
+                    atomic_store(&g_ability_charge,1000);atomic_store(&g_ability_name,"CAST");
+                } else if (state.game.mode == HTA_MODE_SCENARIO) {
                     atomic_store(&g_ability_charge, 1000);
                     atomic_store(&g_ability_name, state.flashlight_on ? "LIGHT OFF" : "LIGHT ON");
                 } else if (charge >= 0.0f) {
@@ -6299,10 +6374,10 @@ void android_main(struct android_app *app)
                         }
                     }
                 }
-                int caps = (state.game.mode == HTA_MODE_SCENARIO || charge >= 0.0f || world_ability ? 128 : 0) |
-                           (state.game.mode == HTA_MODE_SCENARIO || charge >= 1.0f || world_ability ? 64 : 0) |
+                int caps = (state.survival.active || state.game.mode == HTA_MODE_SCENARIO || charge >= 0.0f || world_ability ? 128 : 0) |
+                           (state.survival.active || state.game.mode == HTA_MODE_SCENARIO || charge >= 1.0f || world_ability ? 64 : 0) |
                            (body.can_fly && !broom ? 1 : 0) | (state.player.fly ? 2 : 0) |
-                           (state.weap.zoom_levels > 0 ? 4 : 0) |
+                           (state.weap.zoom_levels > 0 && !swung ? 4 : 0) |
                            (!swung && state.ammo.recharge <= 0.0f && state.ammo.reserve_max > 0 ? 8 : 0) |
                            (swung ? 16 : 0) | (state.nade_count > 0 ? 32 : 0) | (near_use ? 256 : 0) |
                            (state.game.mode == HTA_MODE_SCENARIO ? 512 : 0);
@@ -6315,9 +6390,13 @@ void android_main(struct android_app *app)
                 hta_player_corpse_update(&state.player,state.col.built ? &state.col : NULL,state.player.gravity,dt);
                 for (int k=0;k<3;k++) state.cam.pos[k]=state.player.pos[k];
                 state.cam.pos[2]+=state.player.eye_height;
-            } else hta_player_update(&state.player, &state.cam,
+            } else {
+                if(state.survival.active && state.me>=0 && state.game.units[state.me].stamina<10)in.jump=false;
+                hta_player_update(&state.player, &state.cam,
                 state.col.built ? &state.col : NULL, &in, dt);
+            }
         }
+        if(state.survival.active && state.me>=0)state.game.units[state.me].in.move=in;
         vehicle_status(&state, seated, near_car, near_seat);
         bool driving = seated;
         /* Everyone else sees, aims at and is hit by where you are now. */
@@ -6453,6 +6532,8 @@ void android_main(struct android_app *app)
         float fade = 0.0f;
         class_poll(&state);
         if (state.dead) {
+            if(state.survival.active && (!state.net_enabled||state.net_hosting) && state.me>=0 && state.game.units[state.me].alive) state.dead_timer=0;
+            else if(state.survival.active) state.dead_timer=state.respawn_delay+dt;
             state.dead_timer -= dt;
             /* Clear while you watch; black only over the last moment. */
             if (state.dead_timer < HTA_DEATH_FADE_OUT) {
@@ -6555,7 +6636,7 @@ void android_main(struct android_app *app)
          * item it picks it up, and off one it cycles as before. */
         if (state.items.loaded && (!state.net_enabled || state.net_hosting))
             hta_pickups_update(&state.items, dt);
-        if (state.items.loaded && state.net_enabled && !state.net_hosting &&
+        if (state.game.mode!=HTA_MODE_SURVIVAL && state.items.loaded && state.net_enabled && !state.net_hosting &&
             state.hud_swap && !state.dead) {
             int32_t slot=hta_pickups_at_kind(&state.items,state.player.pos,HTA_ITEM_WEAPON);
             const hta_item_choice *item=hta_pickups_item(&state.items,slot);
@@ -6576,7 +6657,7 @@ void android_main(struct android_app *app)
                 state.hud_swap=false;
             }
         }
-        if (state.items.loaded && (!state.net_enabled || state.net_hosting) &&
+        if (state.game.mode!=HTA_MODE_SURVIVAL && state.items.loaded && (!state.net_enabled || state.net_hosting) &&
             !state.dead && !driving) {
             const float *feet = state.player.pos;
 
@@ -7104,6 +7185,7 @@ void android_main(struct android_app *app)
          * projectile appears when your hand does. Letting it go on the press
          * put a grenade out of the player's chest with the weapon still
          * sitting there, which is what it looked like. */
+        if(state.game.mode==HTA_MODE_SURVIVAL){state.hud_grenade=false;state.nade_count=0;}
         if (state.hud_grenade) {
             state.hud_grenade = false;
             if (state.nades.loaded && state.nade_count > 0 && !swinging &&
@@ -7348,6 +7430,7 @@ void android_main(struct android_app *app)
          * dead come back and the score is kept. Before the particles, so a
          * bot's explosion bursts this frame. */
         hta_session_tick(&state.session, dt, now, host_unit_added);
+        survival_frame(&state);
         props_shown(&state);
         if (state.game_on) {
             game_events(&state);
@@ -7432,7 +7515,7 @@ void android_main(struct android_app *app)
             memset(&vmdraw, 0, sizeof(vmdraw));
             hta_gfx_overlay huddraw;
             memset(&huddraw, 0, sizeof(huddraw));
-            if (state.gpu_hud && state.game.mode!=HTA_MODE_RACING) {
+            if (state.gpu_hud && state.game.mode!=HTA_MODE_RACING && state.game.mode!=HTA_MODE_SURVIVAL) {
                 uint32_t ew = 0, eh = 0;
                 hta_gfx_extent(state.gfx, &ew, &eh);
                 state.hud.presentation_scale = state.world_loaded &&
@@ -7608,10 +7691,10 @@ void android_main(struct android_app *app)
             hta_shake_apply(&state.shake, &drawcam);
             g_phase = "draw";
             if (!hta_gfx_draw(state.gfx, &drawcam, &drawscene, state.gpu_mesh,
-                              state.gpu_sky, state.gpu_fx,
+                              state.game.mode==HTA_MODE_SURVIVAL?NULL:state.gpu_sky, state.gpu_fx,
                               dynlist, dyncount,
                               vmdraw.mesh ? &vmdraw : NULL,
-                              state.gpu_hud ? &huddraw : NULL)) {
+                              state.gpu_hud && state.game.mode!=HTA_MODE_SURVIVAL ? &huddraw : NULL)) {
                 hta_log("[app] surface lost; rebuilding renderer");
                 stop_gfx(&state);
                 if (app->window) start_gfx(&state);
@@ -7712,6 +7795,7 @@ done:
     state.bank_count = 0;
     stop_gfx(&state);
     hta_game_view_free(&state.gview);
+    hta_survival_flush(&state.session);
     hta_game_free(&state.game);
     hta_nav_free(&state.nav);
     hta_wfx_free(&state.wfx);

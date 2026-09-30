@@ -29,15 +29,15 @@ int main(void)
     static hta_net_world w; static hta_net_game g; static hta_net_kill k; static hta_net_fx fx;
     static hta_net_projectiles pr; static hta_net_vehicles v; static hta_net_drops d;
     static hta_net_world_state ws; static hta_net_player pl; static hta_net_event ev; static hta_net_info in; static hta_net_control ct;
-    hta_net_packet pk;
+    hta_net_packet pk; hta_net_rpg rpg;
     const size_t fixed[] = { HTA_NET_KILL_BYTES, HTA_NET_FX_BYTES, HTA_NET_GAME_BYTES, HTA_NET_CONTROL_BYTES,
-                             HTA_NET_PLAYER_BYTES };
+                             HTA_NET_PLAYER_BYTES, HTA_NET_RPG_BYTES };
     unsigned accepted[16] = { 0 };
     for (int iter = 0; iter < 400000; iter++) {
         size_t len;
         int mode = iter % 3;
         if (mode == 0) len = rnd() % (HTA_NET_MAX_PACKET + 32);
-        else len = (size_t)((long)fixed[rnd() % 5] + (mode == 2 ? (long)(rnd() % 3) - 1 : 0));
+        else len = (size_t)((long)fixed[rnd() % 6] + (mode == 2 ? (long)(rnd() % 3) - 1 : 0));
         /* Mostly small values: garbage that is close to plausible reaches
          * deeper into a decoder than uniform noise. */
         for (size_t i = 0; i < len; i++) buf[i] = (uint8_t)(rnd() % 7 == 0 ? rnd() : rnd() % 4);
@@ -68,8 +68,24 @@ int main(void)
             size_t n = 0;
             assert(hta_net_world_state_pack(again, sizeof(again), &ws, &n) && n == len && !memcmp(again, p, len));
         }
+        if (hta_net_rpg_unpack(p, len, &rpg)) {
+            accepted[13]++;
+            assert(hta_net_rpg_pack(again, sizeof(again), &rpg) && !memcmp(again, p, len));
+        }
         free(p);
     }
+    hta_net_rpg original = {.phase=1,.max_health=1,.mana=.75f,.stamina=.5f};
+    uint8_t rpg_good[HTA_NET_RPG_BYTES];
+    assert(hta_net_rpg_pack(rpg_good,sizeof(rpg_good),&original));
+    unsigned rpg_kept=0;
+    for(size_t bit=0;bit<sizeof(rpg_good)*8;bit++) {
+        uint8_t *p=exact(rpg_good,sizeof(rpg_good));p[bit/8]^=(uint8_t)(1u<<(bit%8));
+        if(hta_net_rpg_unpack(p,sizeof(rpg_good),&rpg)) {
+            rpg_kept++;assert(hta_net_rpg_pack(again,sizeof(again),&rpg)&&!memcmp(again,p,sizeof(rpg_good)));
+        }
+        free(p);
+    }
+    printf("RPG: %u accepted random packets; %u/%zu canonical bit flips\n",accepted[13],rpg_kept,sizeof(rpg_good)*8);
     /* Valid packets, one bit flipped: decoders either refuse them or accept
      * a canonical one. */
     hta_net_game gm;

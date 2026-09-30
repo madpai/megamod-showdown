@@ -68,6 +68,7 @@
 #include "../game/world_entities_gpu.h"
 #include "../game/net_world_state.h"
 #include "report.h"
+#include "survival_state.h"
 
 #define HTA_SND_MAX_BANK  192u
 #define HTA_SND_MAX_PERMS   8u
@@ -104,6 +105,10 @@
     hta_viewmodel vm;                                                                          \
     hta_collision col;                                                                         \
     hta_vehicles vehicles;                                                                     \
+    uint16_t rpg_serial;                                                                     \
+    uint8_t rpg_action,rpg_item;                                                              \
+    uint32_t rpg_applied_tick;                                                                \
+    mm_survival   survival;                                                                   \
     hta_race      race;                                                                         \
     hta_arcade_racer race_car[HTA_RACE_MAX_RACERS];                                             \
     hta_arcade_racer race_net_target[HTA_RACE_MAX_RACERS];                                      \

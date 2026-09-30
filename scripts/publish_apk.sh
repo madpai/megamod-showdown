@@ -85,6 +85,8 @@ if [ "$BUILD" = 1 ]; then
         echo "bundling imported $kind $(basename "$f" .oalasset)"
       done
     done
+    # Owner-supplied presentation textures remain private, like world packages.
+    if [ -d "$HTA_IMPORTED/ui" ]; then cp -a "$HTA_IMPORTED/ui" "$STAGE/ui"; fi
     PROPS="$PROPS -PhtaAssetsDir=$STAGE"
     # SEND REPORT posts to this page's /report: the owner's build only.
     PROPS="$PROPS -PhtaReportUrl=http://$BIND:$PORT/report"

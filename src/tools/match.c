@@ -24,11 +24,13 @@
  * two-client, late-join and world-entity runs (docs/WORLD_ENTITIES.md);
  * the dedicated server proper is docs/DEDICATED_SERVER.md. */
 #include "app/fs.h"
+#include "app/content.h"
 #include "app/match_load.h"
 #include "app/session.h"
 #include "app/session_tick.h"
 #include "platform/platform.h"
 #include "script/script.h"
+#include "app/survival.h"
 #include <stdio.h>
 #include <math.h>
 #include <time.h>
@@ -53,6 +55,7 @@ int main(int argc, char **argv)
     int host_port = 0;
     bool trace_events = false, world_state = false, race_smoke = false;
     const char *race_route=NULL;
+    bool survival_smoke=false;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
         if (!strcmp(a, "--trial") && v) { trial = v; i++; }
@@ -66,6 +69,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--host") && v) { host_port = atoi(v); i++; }
         else if (!strcmp(a, "--trace-events")) trace_events = true;
         else if (!strcmp(a, "--world-state")) world_state = true;
+        else if (!strcmp(a, "--gatebound-smoke")) survival_smoke=true;
         else if (!strcmp(a, "--race-smoke")) race_smoke = true;
         else if (!strcmp(a, "--race-route") && v) { race_route=v; i++; }
         else if (!strcmp(a, "--mode") && v) {
@@ -74,7 +78,7 @@ int main(int argc, char **argv)
         } else {
             fprintf(stderr, "usage: %s [--trial DIR] [--bundle DIR] [--world NAME] [--bots N] "
                             "[--mode slayer|team|ctf] [--skill 0-3] [--score N] [--seconds S] [--cache DIR] [--host PORT] [--trace-events] "
-                            "[--world-state] [--race-smoke] [--race-route WAYPOINTS]\n", argv[0]);
+                            "[--world-state] [--gatebound-smoke] [--race-smoke] [--race-route WAYPOINTS]\n", argv[0]);
             return 2;
         }
     }
@@ -132,15 +136,22 @@ int main(int argc, char **argv)
         snprintf(s->host_server.info.map, sizeof(s->host_server.info.map), "%s", world);
         s->host_server.info.score_limit = (uint8_t)(score > 255 ? 255 : score);
     }
+    hta_session_load_imported(s,&fs);
     double t0 = hta_time_seconds();
     if (!hta_match_load_world(s, &fs, cache)) { fprintf(stderr, "match: %s\n", s->status); return 1; }
     double t1 = hta_time_seconds();
-    if (!hta_match_start(s, cache, race_smoke || race_route)) { fprintf(stderr, "match: no playable game on this map\n"); return 1; }
+    if (!hta_match_start(s, cache, race_smoke || race_route || survival_smoke)) { fprintf(stderr, "match: no playable game on this map\n"); return 1; }
     s->map_loaded = true;
     hta_match_begin(s);
     if ((race_smoke || race_route) && s->game.mode!=HTA_MODE_RACING) {
         fprintf(stderr,"match: race driving needs an authored racing world\n"); return 2;
     }
+    if(survival_smoke) {
+        if(!s->survival.active || !s->game_on || s->me<0){fprintf(stderr,"Gatebound smoke requires a survival world and writable --cache\n");return 1;}
+        s->game.units[s->me].kind=HTA_UNIT_REMOTE;
+    }
+    uint64_t survival_kills=survival_smoke?s->survival.profile[s->me].kills:0;
+    uint64_t survival_xp=survival_smoke?s->survival.profile[s->me].experience:0;
     s->went.trace = trace_events;
     double t2 = hta_time_seconds();
     printf("match: %s, mode %d, %u units, nav %s, items %s; world %.0f ms, start %.0f ms\n",
@@ -187,6 +198,17 @@ int main(int argc, char **argv)
                 now = hta_time_seconds() - sim0;
             }
         }
+        if(survival_smoke && s->game.units[s->me].alive) {
+            hta_unit *u=&s->game.units[s->me];int target=-1;float best=INFINITY;
+            for(unsigned i=0;i<s->game.unit_count;i++)if(s->game.units[i].kind==HTA_UNIT_BOT && s->game.units[i].alive) {
+                float dx=s->game.units[i].body.pos[0]-u->body.pos[0],dy=s->game.units[i].body.pos[1]-u->body.pos[1],d=dx*dx+dy*dy;
+                if(d<best){best=d;target=(int)i;}}
+            if(target>=0) {
+                float pt[3];hta_game_centre(&s->game,target,pt);
+                u->eye.yaw=atan2f(pt[1]-u->eye.pos[1],pt[0]-u->eye.pos[0]);u->eye.pitch=atan2f(pt[2]-u->eye.pos[2],sqrtf(best));
+                u->in.move.fire=true;hta_survival_cast(s,s->me);
+            } else u->in.move.fire=false;
+        }
         hta_pickups_update(&s->items, dt);
         hta_session_tick(s, dt, now, NULL);
         if (race_route && s->me>=0) {
@@ -214,6 +236,11 @@ int main(int argc, char **argv)
         rounds += s->round_restarted;
     }
     double sim = hta_time_seconds() - sim0;
+    if(survival_smoke) {
+        const mm_progression *p=&s->survival.profile[s->me];
+        printf("match: Gatebound wave %u phase %u lifetime kills %llu gold %llu level XP %llu\n",s->survival.wave,s->survival.phase,(unsigned long long)p->kills,(unsigned long long)p->gold,(unsigned long long)p->experience);
+        if(seconds>=45 && (p->kills<=survival_kills || p->experience<=survival_xp)){fprintf(stderr,"Gatebound smoke did not prove combat practice\n");return 1;}
+    }
     if (race_smoke) {
         const hta_arcade_racer *car=&s->race_car[s->me];
         float speed=hypotf(car->vel[0],car->vel[1]);
@@ -311,6 +338,7 @@ int main(int argc, char **argv)
     hta_went_free(&s->went);
     hta_wfx_free(&s->wfx);
     hta_instance_index_free(&s->col_index);
+    hta_survival_flush(s);
     hta_game_free(&s->game);
     hta_nav_free(&s->nav);
     hta_pickups_free(&s->items);

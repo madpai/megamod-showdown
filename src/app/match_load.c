@@ -5,6 +5,7 @@
 #include "app/content.h"
 #include "app/session.h"
 #include "app/racing.h"
+#include "app/survival.h"
 #include "platform/platform.h"
 #include "script/script.h"
 #include <stdio.h>
@@ -83,6 +84,9 @@ bool hta_match_load_world(hta_session *s, const hta_fs *fs, const char *writable
             hta_log("[world] %s: %s", s->world, err);
             snprintf(s->status, sizeof(s->status), "%s: %s", s->world, err);
             return false;
+        }
+        if (s->world_ext.world_defs.has_survival) {
+            s->game_mode=HTA_MODE_SURVIVAL;s->score_limit=s->time_limit_min=s->bot_count=0;s->classes=false;
         }
         if (s->world_ext.world_defs.has_racing) {
             s->game_mode = HTA_MODE_RACING;
@@ -223,6 +227,8 @@ bool hta_match_load_world(hta_session *s, const hta_fs *fs, const char *writable
 
 bool hta_match_start(hta_session *s, const char *writable_dir, bool local_player)
 {
+    hta_survival_flush(s);
+    if(writable_dir && *writable_dir) snprintf(s->survival.directory,sizeof(s->survival.directory),"%s/progression/%s",writable_dir,s->net_enabled?"server":"solo");
     char err[HTA_ERRLEN];
     const hta_resource_map *bm = s->bitmaps_ok ? &s->bitmaps_rm : NULL;
     if (!hta_game_load(&s->game, &s->cache, bm, &s->col, err, sizeof(err))) {
@@ -421,6 +427,9 @@ void hta_match_begin(hta_session *s)
             hta_log("[race] %u laps, %u gates, %u pads, %u grid slots",
                     track->lap_count, track->gate_count, track->pad_count, track->grid_count);
         }
+    }
+    if(s->game.mode==HTA_MODE_SURVIVAL && !hta_survival_begin(s)) {
+        snprintf(s->status,sizeof(s->status),"Gatebound: %s",s->survival.error);s->game_on=false;hta_log("[survival] %s",s->status);
     }
     s->world_round = 1;
 }

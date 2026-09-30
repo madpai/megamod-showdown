@@ -345,7 +345,7 @@ size_t hta_resource_contract_json(char *buf, size_t cap)
             "\"environment\": [\"ambient\", \"clear\", \"fog_color\", \"fog_density\", \"fog_start\"]}, "
             "\"racing\": {\"schema\": 8, \"max_racers\": %u, \"max_gates\": %u, \"max_pads\": %u, "
             "\"fields\": [\"laps\", \"grid\", \"gates\", \"pads\", \"vehicle\"], "
-            "\"authority\": \"host\", \"gate_order\": \"array order; gate 0 is finish and gate 1 is first expected\"}},\n",
+            "\"authority\": \"host\", \"gate_order\": \"array order; gate 0 is finish and gate 1 is first expected\"}, \"survival\": {\"schema\": 9, \"max_gates\": 8, \"max_enemies\": 8, \"max_items\": 32, \"authority\": \"host\"}},\n",
         HTA_WDEF_MAX_LIGHTS, HTA_RACE_MAX_RACERS, HTA_RACE_MAX_CHECKPOINTS, HTA_RACE_MAX_PADS);
     bindings_json(&o);
     world_state_json(&o);

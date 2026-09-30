@@ -6,6 +6,7 @@
  * unit needs its look uploaded to the GPU -- is the platform's callback. */
 #include "host_net.h"
 #include "racing.h"
+#include "survival.h"
 #include "../platform/platform.h"
 #include "../script/script.h"
 #include <stdio.h>
@@ -21,6 +22,7 @@ void hta_host_peers(hta_session *s, double now, void (*unit_added)(hta_session *
         if (!p->active) {
             if (unit>=0 && unit!=s->me && (uint32_t)unit<HTA_RACE_MAX_RACERS)
                 hta_racing_leave(s,(uint8_t)unit);
+            if (unit>=0 && unit!=s->me) hta_survival_leave(s,unit);
             if (unit>=0 && unit!=s->me) hta_game_remove(&s->game,unit);
             s->peer_unit[i]=-1;
             s->peer_melee_seen[i]=s->peer_grenade_seen[i]=0;
@@ -50,6 +52,9 @@ void hta_host_peers(hta_session *s, double now, void (*unit_added)(hta_session *
             s->peer_class_reject[i]=false;
             if (!s->game.classes) hta_game_spawn(&s->game,unit);
             else s->game.units[unit].dead_for=1e4f;   /* nobody there to see yet */
+            if(s->game.mode==HTA_MODE_SURVIVAL && !hta_survival_join(s,unit,p->identity,false)) {
+                hta_game_remove(&s->game,unit);s->peer_unit[i]=-1;p->active=false;continue;
+            }
             if (unit_added) unit_added(s);   /* the platform uploads its look */
             hta_log("[net] player %u joined game unit %d",p->player.id,unit);
         }
@@ -74,7 +79,7 @@ void hta_host_peers(hta_session *s, double now, void (*unit_added)(hta_session *
             continue;
         }
         s->peer_class_reject[i]=false;
-        if (s->game.classes) {
+        if (s->game.classes && s->game.mode!=HTA_MODE_SURVIVAL) {
             int32_t a=c->loadout[0]==255 ? -1 : c->loadout[0], b=c->loadout[1]==255 ? -1 : c->loadout[1];
             if (a!=u->loadout[0] || b!=u->loadout[1]) hta_game_set_loadout(&s->game,unit,a,b);
             if (!s->peer_ready[i]) {
@@ -87,6 +92,10 @@ void hta_host_peers(hta_session *s, double now, void (*unit_added)(hta_session *
                     continue;
                 }
             }
+        }
+        if(s->game.mode==HTA_MODE_SURVIVAL) {
+            u->team=HTA_TEAM_RED;
+            hta_survival_request(s,unit,c->rpg_action,c->rpg_item,c->rpg_serial);
         }
         in->move.move_forward=c->forward;
         in->move.move_right=c->right;
@@ -146,7 +155,7 @@ void hta_host_mirror_local(hta_session *s)
     local->slot=s->held_slot&1u;
     /* An imported weapon is its own roster entry, not its base's: by tag
      * alone the broom went back to being a plasma pistol, for everyone. */
-    for (unsigned slot=0;slot<2;slot++)
+    for (unsigned slot=0;s->game.mode!=HTA_MODE_SURVIVAL && slot<2;slot++)
         local->carry[slot].weapon=slot>=s->held_count ? -1 :
             s->held_asset[slot]>=0 ? s->held_asset[slot] : hta_game_weapon_index(&s->game,s->held[slot]);
     local->carry[local->slot].ammo=s->ammo;
@@ -162,6 +171,10 @@ void hta_host_world(hta_session *s)
      * headless one (no player) has none to wait for. */
     if (!s->game_on || (s->me >= 0 && !s->net.connected)) return;
     hta_host_mirror_local(s);
+    if(s->survival.active) for(unsigned p=0;p<HTA_NET_MAX_PLAYERS;p++) {
+        int unit=s->peer_unit[p];if(unit<0||unit>=16||!s->survival.bound[unit])continue;
+        hta_net_rpg r={0};hta_survival_snapshot(s,unit,&r);hta_net_server_rpg(&s->host_server,p,&r);
+    }
     hta_net_world w={0};
     w.time=s->game.time; w.round=s->world_round;
     w.bot_count=(uint8_t)s->bot_count; w.over=s->game.over;
@@ -369,6 +382,7 @@ void hta_host_world(hta_session *s)
 
 void hta_session_ability(hta_session *s, int32_t unit)
 {
+    if(s->game.mode==HTA_MODE_SURVIVAL) {hta_survival_cast(s,unit);return;}
     if (hta_game_ability(&s->game, unit)) return;
     if (s->script && hta_game_ability_charge(&s->game, unit) < 0.0f) hta_script_ability(s->script, unit);
 }

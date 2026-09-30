@@ -143,6 +143,7 @@ void hta_net_view_update(hta_net_view *v, hta_net_client *net, double now,
             continue;
         }
         if (!wfx || !wfx->ready) continue;
+        if(fx.kind==HTA_NET_FX_SPELL){hta_wfx_spell(wfx,fx.material,fx.pos,fx.dir);continue;}
         if (fx.kind == HTA_NET_FX_DETONATE)
             hta_wfx_net_fx(wfx, HTA_WFX_NET_DETONATE, fx.pos, fx.dir, VIEW_BLAST_RADIUS);
         else if (fx.kind == HTA_NET_FX_WRECK)
@@ -180,6 +181,7 @@ bool hta_net_view_send(hta_net_view *v, hta_net_client *net, double now,
     hta_net_control c;
     memset(&c, 0, sizeof(c));
     c.id = net->id;
+    c.rpg_serial=in->rpg_serial;c.rpg_action=in->rpg_action;c.rpg_item=in->rpg_item;
     c.weapon_slot = in->weapon_slot & 1u;
     c.forward = fmaxf(-1.0f, fminf(1.0f, in->forward));
     c.right = fmaxf(-1.0f, fminf(1.0f, in->right));

@@ -72,8 +72,9 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "racing_def.h"
+#include "survival_def.h"
 
-#define HTA_WDEF_SCHEMA 8u            /* X10 adds authored racing configuration */
+#define HTA_WDEF_SCHEMA 9u            /* X10 adds authored racing configuration */
 #define HTA_WDEF_MAX_LIGHTS 32u
 typedef struct {
     char id[24];                 /* local ID, canonical order */
@@ -283,6 +284,8 @@ typedef struct hta_world_defs {
     uint32_t      light_count;
     bool          has_racing;
     hta_race_track racing;
+    bool has_survival;
+    mm_survival_def survival;
     char          pool[HTA_WDEF_SCRIPT_POOL];
 } hta_world_defs;
 

@@ -99,12 +99,12 @@ int main(void)
      * and a zero nonce -- all invalid, nobody let in, nothing refused. */
     drain();
     uint64_t invalid = srv.stats.invalid, refused = srv.stats.refused;
-    uint8_t hello[17] = { 7, 0, 0, 0 };
+    uint8_t hello[33] = { 7, 0, 0, 0 };
     raw(HTA_NET_HELLO, hello, 8);
     raw(HTA_NET_HELLO, hello, 15);
     raw(HTA_NET_HELLO, hello, 17);
     memset(hello, 0, sizeof(hello));
-    raw(HTA_NET_HELLO, hello, 16);
+    raw(HTA_NET_HELLO, hello, 32);
     printf("malformed: invalid %llu -> %llu, refused %llu -> %llu, limited %llu\n",
            (unsigned long long)invalid, (unsigned long long)srv.stats.invalid,
            (unsigned long long)refused, (unsigned long long)srv.stats.refused,
@@ -125,7 +125,7 @@ int main(void)
         for (int i = 0; i < 1000 && got <= 0; i++) got = hta_udp_recv(&fake, buf, sizeof(buf), &from);
         assert(got > 0);
         hta_net_packet hp;
-        assert(hta_net_unpack(buf, (size_t)got, &hp) && hp.type == HTA_NET_HELLO && hp.length == 16);
+        assert(hta_net_unpack(buf, (size_t)got, &hp) && hp.type == HTA_NET_HELLO && hp.length == 32);
         uint8_t rej[5];
         memcpy(rej, hp.payload, 4);                    /* its own nonce */
         rej[4] = 99;

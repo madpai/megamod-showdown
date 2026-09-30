@@ -578,3 +578,12 @@ void hta_fx_build_sprites(hta_fx *fx, const hta_camera *cam)
     }
     (void)fwd;
 }
+
+void hta_fx_arc(hta_fx *fx,const float from[3],const float to[3],const float color[4]) {
+    if(!fx || !fx->pool)return;
+    for(unsigned i=0;i<=24;i++) {
+        float t=i/24.0f;hta_sprite s={.size0=.07f,.size1=.015f,.life=.35f,.tile=HTA_TILE_SPARK,.mode=HTA_SPRITE_BILLBOARD,.additive=true};
+        for(unsigned k=0;k<3;k++)s.pos[k]=from[k]+(to[k]-from[k])*t;
+        memcpy(s.color,color,sizeof(s.color));hta_fx_emit(fx,&s);
+    }
+}

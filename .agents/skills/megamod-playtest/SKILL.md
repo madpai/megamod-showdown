@@ -46,3 +46,11 @@ symptom; preserve unresolved checks.
 
 The source lesson is repeatable runtime evidence; see
 [Universal Modder study](../../../docs/research/UNIVERSAL_MODDER.md).
+
+For donor-content claims, check that the session actually loads the imported
+roster before starting; actor names and package presence do not prove donor
+meshes. Exercise a matching host/peer fingerprint and inspect native actor
+images. For Android presentation, inspect real screenshots of the HUD,
+casting control and inventory categories, including font scaling, overflow,
+lighting and first-person weapon orientation/optional attachments. A full
+regression gate cannot establish these appearance requirements.

@@ -20,6 +20,8 @@ if ./build-host/test_net >/dev/null 2>&1; then ok "UDP protocol and two-client s
 if ./build-host/test_world_state >/dev/null 2>&1; then ok "X8 large world: runtime identity, relays, late join, codec and limits"; else bad "X8 large world: runtime identity, relays, late join, codec and limits"; fi
 if ./build-host/test_cache  >/dev/null 2>&1; then ok "cache parser tests";  else bad "cache parser tests"; fi
 if ./build-host/test_vehicle >/dev/null 2>&1; then ok "vehicle driving and collision tests"; else bad "vehicle driving and collision tests"; fi
+if ./build-host/test_progression >/dev/null 2>&1; then ok "progression arithmetic, prestige and atomic profile saves"; else bad "progression arithmetic, prestige and atomic profile saves"; fi
+if ./build-host/test_survival >/dev/null 2>&1; then ok "Gatebound shop, waves, spells, practice and server reconnect"; else bad "Gatebound shop, waves, spells, practice and server reconnect"; fi
 if ./build-host/test_racing_core >/dev/null 2>&1; then ok "X10 native arcade handling, drift boost and ordered race rules"; else bad "X10 native arcade handling, drift boost and ordered race rules"; fi
 if ./build-host/test_model >/dev/null 2>&1; then ok "model UV and lighting tests"; else bad "model UV and lighting tests"; fi
 if ./build-host/test_bsp    >/dev/null 2>&1; then ok "bsp extraction tests"; else bad "bsp extraction tests"; fi

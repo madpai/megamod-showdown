@@ -259,6 +259,73 @@ static bool fnum(rd *r, float *out)
     return true;
 }
 
+/* Schema 9 survival uses fixed bounded records; every field is required. */
+static bool survival_uint(rd *r,uint32_t *out)
+{
+    double d; if(!num(r,&d)||d<0||d>UINT32_MAX||floor(d)!=d) return false;
+    *out=(uint32_t)d; return true;
+}
+static bool survival_record(rd *r,void *record,bool enemy)
+{
+    static const char *const en[]={"name","character","weapon","health","speed","damage","gold"};
+    static const char *const it[]={"id","name","asset","price","kind","upgrade","effect","power","range","radius","duration","cost"};
+    unsigned seen=0,count=enemy?7:12; char key[24];
+    if(!eat(r,'{')) return false;
+    do {
+        if(!str(r,key,sizeof(key))||!eat(r,':')) return false;
+        unsigned k=0; const char *const *names=enemy?en:it;
+        while(k<count && strcmp(names[k],key)) k++;
+        if(k==count || (seen&(1u<<k))) return false;
+        seen|=1u<<k; bool ok=false;
+        if(enemy) {
+            mm_enemy_def *e=record;
+            if(k<3) ok=str(r,k==0?e->name:k==1?e->character:e->weapon,64);
+            else if(k==6) ok=survival_uint(r,&e->gold);
+            else ok=fnum(r,k==3?&e->health:k==4?&e->speed:&e->damage);
+        } else {
+            mm_shop_item *i=record;
+            if(k<3) ok=str(r,k==0?i->id:k==1?i->name:i->asset,64);
+            else if(k==3) ok=survival_uint(r,&i->price);
+            else if(k<7) { uint32_t v; ok=survival_uint(r,&v)&&v<=255;
+                if(ok) *(k==4?&i->kind:k==5?&i->upgrade:&i->effect)=(uint8_t)v; }
+            else ok=fnum(r,k==7?&i->power:k==8?&i->range:k==9?&i->radius:k==10?&i->duration:&i->cost);
+        }
+        if(!ok) return false;
+    } while(eat(r,','));
+    return eat(r,'}') && seen==((1u<<count)-1);
+}
+static bool parse_survival(rd *r,mm_survival_def *d,char *err,size_t n)
+{
+    static const char *const names[]={"shop","gates","rest_seconds","spawn_interval","base_enemies","wave_enemies","enemies","items"};
+    unsigned seen=0; char key[24];
+    if(!eat(r,'{')) return failv(err,n,"survival: expected object");
+    do {
+        if(!str(r,key,sizeof(key))||!eat(r,':')) return failv(err,n,"survival: malformed field");
+        unsigned k=0; while(k<8 && strcmp(names[k],key)) k++;
+        if(k==8 || (seen&(1u<<k))) return failv(err,n,"survival: unknown or repeated field %s",key);
+        seen|=1u<<k; bool ok=true;
+        if(k==0) ok=vec3(r,d->shop);
+        else if(k==2 || k==3) ok=fnum(r,k==2?&d->rest_seconds:&d->spawn_interval);
+        else if(k==4 || k==5) ok=survival_uint(r,k==4?&d->base_enemies:&d->wave_enemies);
+        else {
+            uint8_t *count=k==1?&d->gate_count:k==6?&d->enemy_count:&d->item_count;
+            unsigned cap=k==1?MM_GATES:k==6?MM_ENEMIES:MM_SHOP_ITEMS;
+            ok=eat(r,'[');
+            if(ok && !eat(r,']')) {
+                do {
+                    if(*count>=cap) {ok=false; break;}
+                    ok=k==1?vec3(r,d->gates[*count]):survival_record(r,k==6?(void *)&d->enemy[*count]:(void *)&d->item[*count],k==6);
+                    if(!ok) break;
+                    (*count)++;
+                } while(eat(r,','));
+                ok=ok&&eat(r,']');
+            }
+        }
+        if(!ok) return failv(err,n,"survival: invalid %s",key);
+    } while(eat(r,','));
+    return eat(r,'}') && seen==255 && mm_survival_valid(d) ? true : failv(err,n,"survival: missing or out of bounds data");
+}
+
 static bool vec2(rd *r, float out[2])
 {
     if (!eat(r, '[')) return false;
@@ -1527,7 +1594,7 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
         if (!str(r, key, sizeof(key)) || !eat(r, ':')) return fail(err, n, "world_entities: malformed%s%s", NULL, NULL);
         if (!strcmp(key, "schema")) {
             double v;
-            if (!num(r, &v) || (v < 1.0 || v > 8.0 || floor(v) != v))
+            if (!num(r, &v) || (v < 1.0 || v > 9.0 || floor(v) != v))
                 return fail(err, n, "world_entities: unsupported schema%s%s", NULL, NULL);
             d->schema = (uint32_t)v;
             have_schema = true;
@@ -1573,6 +1640,9 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
                 if (!eat(r, ']')) return failv(err, n, "world_entities: malformed lights");
             }
             have_lights = true;
+        } else if (!strcmp(key, "survival")) {
+            if(d->has_survival || !parse_survival(r,&d->survival,err,n)) return false;
+            d->has_survival=true;
         } else if (!strcmp(key, "racing")) {
             if (d->has_racing || !parse_racing(r,&d->racing,pend.race_model,err,n)) return false;
             d->has_racing=true;
@@ -1589,6 +1659,8 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
         return failv(err, n, "world_entities: environment and lights need schema 7");
     if (d->has_racing && d->schema < 8)
         return failv(err,n,"world_entities: racing needs schema 8");
+    if(d->has_survival && (d->schema<9 || d->has_racing))
+        return failv(err,n,"survival needs schema 9 and cannot combine with racing");
     /* IDs first, so a duplicate is reported as one, not as a link to it. */
     for (uint32_t i = 0; i < d->mover_def_count; i++) {
         if (!mover_id(d->mover_def[i].id))
@@ -1828,6 +1900,8 @@ bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t n)
         return fail(err, n, "mover definitions over their limit%s%s", NULL, NULL);
     if (d->light_count > HTA_WDEF_MAX_LIGHTS || ((d->has_environment || d->light_count) && d->schema < 7))
         return failv(err, n, "world visual data exceeds the light limit or needs schema 7");
+    if(d->has_survival && (d->schema<9 || d->has_racing || !mm_survival_valid(&d->survival)))
+        return failv(err,n,"invalid survival definition");
     if (d->has_racing && (d->schema < 8 || !hta_race_track_valid(&d->racing)))
         return failv(err,n,"world racing data invalid or needs schema 8");
     for (uint32_t i = 0; i < d->light_count; i++) {

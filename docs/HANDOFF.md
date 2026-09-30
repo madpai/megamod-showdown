@@ -201,6 +201,62 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**Gatebound RPG survival (2026-09-30):** [Design and controls](gatebound/DESIGN.md).
+Native survival mode 5, world schema 9 and LAN protocol 14. Eight practiced
+skills, unlimited diminishing progression, five upgrade tracks, armor,
+potions, five configurable spell effects, persistent solo/server characters,
+and level-only prestige are implemented. Private personal bundle includes
+both `gatebound` and `gatebound_mashup` with the corrected donor arena: actual
+Oblivion gates/Ayleid floor meshes/castle textures/cheese, rigid Daedroth,
+first-person iron sword and spell hands, animated Workshop claws composed
+with Source hands, Source zombie and existing guns. The public original
+fixture remains separate. Private world key a0dab19c; original bc17ebe0.
+Personal APK stages Oblivion parchment, inventory icons and HUD ribbons from
+the private bundle UI directory. Gatebound setup exposes survival options.
+Daedroth is explicitly a frozen stored pose; armor changes stats, not worn art.
+
+**Phone testing order:** Install the personal APK. Choose Gatebound, survive
+wave one, tap Inventory near the counter, inspect Character/Weapons/Magic/
+Armor/Supplies/Upgrades, buy/equip a weapon and a spell, cast and jump.
+Check the actual gate art, readable floor, correctly held sword and hands,
+CAST button and three Oblivion resource ribbons; melee has no ammo overlay. Quit/relaunch: gold, skills and equipment must return.
+Host LAN using identical APK/content; reconnect a player and confirm their
+server progression returns. Late join/death waits for the next break.
+Failure symptoms: missing enemy art, free extra guns, shop charging twice,
+missing progression after restart, no spell effects, or dead players respawning
+mid-wave, wrapped tab labels, upside-down weapon or dark arena. Physical touch feel/performance and longer wave balance are unmeasured.
+
+**Verification (2026-09-30):** full Trial-data/Android/native/network gate
+101 passed, zero failed. Additional survival assertions and 400,000 protocol
+fuzz cases, including 2,112 RPG bit flips, passed under ASan/UBSan. Asset Lab
+226 tests passed with the optional decoder. Original/private repeat builds
+agree with native keys bc17ebe0/a0dab19c. The phone preview report showed
+119.7 FPS last-minute on S24+ but loaded the original placeholder map; it
+cannot establish performance of the corrected imports. Android emulator
+screenshots confirm the imported courtyard, CAST, hand/sword meshes, compact
+HUD, parchment and category tabs. Current device performance, touch feel and
+long-session balance remain owner tests. Actual Oblivion KF/particles and
+wearable armor geometry are not implemented. Named sword scabbard exclusion
+and camera pose are authored import decisions, recorded in private provenance.
+
+**Invented Gatebound tuning:** 100 starting gold; rank sqrt(XP/100), level
+1+sqrt(XP/1000); prestige level 50, only level XP reset, XP bonus
+floor(award/20)*sqrt(prestige). Skill bonus rank/(rank+100); health multiplier
+1+.08*sqrt(vitality tier)+.025*sqrt(level-1); power 1+.08*sqrt(power tier).
+Damage/healing practice approximately 100 XP per full target vitality; walking
+10 XP/wu, completed jump 25 XP. Upgrade base prices 150/100/125/200/250,
+quadratic tier prices. Mana/stamina base 100, +10*sqrt(upgrade)+50*skill bonus;
+regen 5/15 per second, jump cost 10; cast delay .6 s. Shop radius 4 wu,
+break 30 s, wipe 8 s, spawn 1.5 s, 4+2*(wave-1) enemies, +50% per extra
+player, max 8 concurrent NPCs/16 total units. NPC health 1+.15*sqrt(wave),
+damage 1+.08*sqrt(wave); slow speed .6; armor cap .85, ward .35.
+Kill fortune sqrt(tier) plus .25*Athletics bonus, clear gold 25+5*wave.
+Ten-second save checkpoints; catalogue tuning in the original OAL project.
+Spell aim cone .93; imported scale 1/128, Daedroth fit .85 wu, iron sword .4 wu.
+Procedural spell arc 25 sparks, .35 s, size .07 -> .015 wu; original arena
+24x24 wu. These are authored tuning, not recovered Oblivion constants.
+
+
 **Local donor scan (2026-09-30):** [Library mashups and Oblivion proof](research/LOCAL_LIBRARY_MASHUPS.md)
 records 15 distinct Steam games, 226 Workshop item folders and additional
 Trial/Bedrock/authored-map donors. The owner prioritized classic Oblivion.

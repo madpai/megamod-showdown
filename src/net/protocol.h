@@ -11,7 +11,7 @@
  * (movers' spatial state, relays' logical flags) instead of a 6-bit entity
  * index, and the FX world sound names a 16-bit runtime object. v10 and v11
  * refuse each other (docs/WORLD_STATE.md "Protocol v11"). */
-#define HTA_NET_VERSION 13u
+#define HTA_NET_VERSION 14u
 #define HTA_NET_HEADER 20u
 #define HTA_NET_MAX_PACKET 1200u
 #define HTA_NET_MAX_PLAYERS 8u
@@ -20,7 +20,7 @@
 #define HTA_NET_ENTITY_NAME 12u
 #define HTA_NET_ENTITY_BYTES 68u
 #define HTA_NET_WORLD_HEADER 86u
-#define HTA_NET_CONTROL_BYTES 35u
+#define HTA_NET_CONTROL_BYTES 39u
 #define HTA_NET_KILL_BYTES 128u
 #define HTA_NET_FX_BYTES 29u    /* v11: the entity is 16 bits */
 #define HTA_NET_PROJECTILE_BYTES 30u
@@ -50,7 +50,7 @@ typedef enum {
     /* The world's replicated state, host -> clients: movers and (v11)
      * relays. X1 added it within v10; X8 changed its layout, which is why
      * v11 exists (docs/WORLD_STATE.md). */
-    HTA_NET_WORLD_STATE
+    HTA_NET_WORLD_STATE, HTA_NET_RPG
 } hta_net_type;
 
 typedef struct {
@@ -129,7 +129,7 @@ enum { HTA_NET_JUMP=1, HTA_NET_TRIGGER=2, HTA_NET_DUCK=4, HTA_NET_ALT=8, HTA_NET
  * newer client can read by peeking at the header; an older client cannot
  * read anything newer and simply gets no answer. A client also sets it
  * itself when any answer arrives in another version (hta_net_peek). */
-enum { HTA_NET_REJECT_FULL=1, HTA_NET_REJECT_MAP=2, HTA_NET_REJECT_CONTENT=3, HTA_NET_REJECT_VERSION=4 };
+enum { HTA_NET_REJECT_FULL=1, HTA_NET_REJECT_MAP=2, HTA_NET_REJECT_CONTENT=3, HTA_NET_REJECT_VERSION=4, HTA_NET_REJECT_IDENTITY=5 };
 /* A Trial item spawn's weighted choices (asset/items.h HTA_ITEM_MAX_CHOICES):
  * WORLD's item_choice indexes them, so it is checked against this. */
 #define HTA_NET_MAX_ITEM_CHOICES 8u
@@ -143,7 +143,22 @@ typedef struct {
     uint8_t loadout[2], character;
     uint8_t team; /* 0 unchosen, 1 crimson, 2 azure */
     uint16_t ability_count;
+    uint16_t rpg_serial;
+    uint8_t rpg_action,rpg_item;
 } hta_net_control;
+
+/* v14: private authoritative character state; catalogue indices require
+ * identical world/content fingerprints. No player identifiers exposed. */
+#define HTA_NET_RPG_BYTES 264u
+typedef struct {
+    uint32_t wave,queued,prestige,upgrade[5],quantity[32];
+    uint64_t gold,experience,skill[8];
+    uint16_t serial;
+    uint8_t phase,result,equipment[4];
+    float mana,stamina,timer,max_health;
+} hta_net_rpg;
+bool hta_net_rpg_pack(uint8_t *dst,size_t cap,const hta_net_rpg *r);
+bool hta_net_rpg_unpack(const uint8_t *src,size_t len,hta_net_rpg *r);
 
 /* Every vehicle the host runs, whole, at snapshot rate. Positions are
  * hundredths of a world unit and angles ten-thousandths of a radian on the
@@ -186,7 +201,7 @@ typedef struct {
  * an older decoder would refuse this kind as malformed -- but no older build
 can load such a world, so none is ever in that match (the X1 WORLD_STATE
 rule, docs/WORLD_ENTITIES.md "Why not v11"). */
-enum { HTA_NET_FX_FIRE=1, HTA_NET_FX_IMPACT, HTA_NET_FX_DETONATE, HTA_NET_FX_WRECK, HTA_NET_FX_WORLD_SOUND };
+enum { HTA_NET_FX_FIRE=1, HTA_NET_FX_IMPACT, HTA_NET_FX_DETONATE, HTA_NET_FX_WRECK, HTA_NET_FX_WORLD_SOUND, HTA_NET_FX_SPELL };
 #define HTA_NET_FX_MAX_WORLD_ENTITIES 1024u /* HTA_WDEF_MAX_ENTITIES (v11: a runtime object index, 16 bits) */
 #define HTA_NET_FX_MAX_WORLD_SOUNDS 2048u   /* HTA_RES_MAX */
 typedef struct {

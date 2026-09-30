@@ -28,6 +28,7 @@ typedef struct {
     double last_seen;
     hta_net_player player;
     hta_net_control control;
+    uint8_t identity[16];
     bool has_control;
     double last_control_at;
     hta_net_pending_kill pending_kills[16];
@@ -93,6 +94,10 @@ typedef struct {
     uint32_t sequence, nonce, token;
     uint32_t last_snapshot_tick;
     uint8_t id;
+    uint8_t identity[16];
+    hta_net_rpg rpg;
+    bool have_rpg;
+    uint32_t last_rpg_tick;
     bool connected;
     uint8_t reject_reason;
     uint16_t peer_version;     /* v11: with REJECT_VERSION, the host's protocol (0 unknown) */
@@ -148,6 +153,7 @@ bool hta_net_server_fx(hta_net_server *s, const hta_net_fx *fx);
 bool hta_net_server_projectiles(hta_net_server *s, const hta_net_projectiles *projectiles);
 bool hta_net_server_vehicles(hta_net_server *s, const hta_net_vehicles *vehicles);
 bool hta_net_server_drops(hta_net_server *s, const hta_net_drops *drops);
+bool hta_net_server_rpg(hta_net_server *s,unsigned peer,const hta_net_rpg *rpg);
 bool hta_net_server_game(hta_net_server *s, const hta_net_game *game);
 /* X8: the world's complete replicated state now (every entry carried); the
  * server decides whether it goes out this tick (see ws_* above). True when sent. */

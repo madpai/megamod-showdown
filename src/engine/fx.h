@@ -107,6 +107,8 @@ void hta_fx_burst(hta_fx *fx, hta_burst kind, const float pos[3], const float di
 void hta_fx_splat(hta_fx *fx, const float pos[3], const float normal[3], float size,
                   const float color[4], float life);
 
+/* Original procedural energy trail; no content/game dependency. */
+void hta_fx_arc(hta_fx *fx,const float from[3],const float to[3],const float color[4]);
 void hta_fx_update(hta_fx *fx, float dt);
 uint32_t hta_fx_live(const hta_fx *fx);
 

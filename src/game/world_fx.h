@@ -80,6 +80,7 @@ typedef struct {
 
 /* Sizes pools from the settings (debris budget, particle density, gore). */
 bool hta_wfx_init(hta_world_fx *w, const hta_collision *col, const hta_gfx_settings *s);
+void hta_wfx_spell(hta_world_fx *w,unsigned effect,const float from[3],const float to[3]);
 void hta_wfx_free(hta_world_fx *w);
 /* New settings: resizes the debris pool, rescales density, gore level. */
 void hta_wfx_settings(hta_world_fx *w, const hta_gfx_settings *s);

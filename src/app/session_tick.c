@@ -6,6 +6,7 @@
 #include "app/match_load.h"
 #include "app/session.h"
 #include "app/racing.h"
+#include "app/survival.h"
 #include "platform/platform.h"
 #include "script/script.h"
 #include <math.h>
@@ -247,6 +248,7 @@ void hta_session_tick(hta_session *s, float dt, double now, void (*unit_added)(h
         else hta_game_update(&s->game, dt);
         hta_game_event e;
         while (hta_game_pop(&s->game, &e)) {
+            hta_survival_event(s,&e);
             hta_wfx_game_event(&s->wfx, &e, &s->game);
             host_send(s, &e, now);
             if (e.kind == HTA_EV_GAME_OVER && s->game.mode != HTA_MODE_SCENARIO)
@@ -254,6 +256,9 @@ void hta_session_tick(hta_session *s, float dt, double now, void (*unit_added)(h
             if (s->outbox_count < sizeof(s->outbox) / sizeof(s->outbox[0]))
                 s->outbox[s->outbox_count++] = e;
         }
+        unsigned spawned_before=s->survival.spawned;
+        hta_survival_tick(s,dt);
+        if(unit_added && s->survival.active && s->survival.spawned!=spawned_before)unit_added(s);
         if (s->game.mode!=HTA_MODE_RACING && s->over_timer > 0.0f) {
             s->over_timer -= dt;
             if (s->over_timer <= 0.0f) {

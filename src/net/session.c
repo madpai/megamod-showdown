@@ -73,7 +73,7 @@ static void server_packet(hta_net_server *s, const hta_udp_addr *from,
         return;
     }
     if (p->type==HTA_NET_HELLO) {
-        if (p->length!=16) { s->stats.invalid++; return; }
+        if (p->length!=32) { s->stats.invalid++; return; }
         uint32_t nonce=hta_net_u32_read(p->payload);
         uint32_t map_crc=hta_net_u32_read(p->payload+4);
         uint64_t content=(uint64_t)hta_net_u32_read(p->payload+8) |
@@ -86,6 +86,11 @@ static void server_packet(hta_net_server *s, const hta_udp_addr *from,
         uint8_t refuse=0;
         if (s->map_crc && s->map_crc!=map_crc) refuse=HTA_NET_REJECT_MAP;
         else if (s->content && s->content!=content) refuse=HTA_NET_REJECT_CONTENT;
+        /* Nonzero identities are bearer keys. Refuse two simultaneous users
+         * of one key; zero is allowed for non-progression test clients. */
+        bool keyed=false;for(unsigned k=0;k<16;k++)keyed=keyed||p->payload[16+k]!=0;
+        if(keyed)for(unsigned i=0;i<HTA_NET_MAX_PLAYERS;i++)
+            if(s->peers[i].active && &s->peers[i]!=peer && !memcmp(s->peers[i].identity,p->payload+16,16))refuse=HTA_NET_REJECT_IDENTITY;
         if (refuse) {
             uint8_t reject[5]; hta_net_u32_write(reject,nonce);
             reject[4]=refuse;
@@ -103,6 +108,7 @@ static void server_packet(hta_net_server *s, const hta_udp_addr *from,
                     peer=&s->peers[i]; memset(peer,0,sizeof(*peer));
                     peer->active=true; peer->addr=*from; peer->player.id=(uint8_t)(i+1);
                     peer->token=random_word(); peer->nonce=nonce;
+                    memcpy(peer->identity,p->payload+16,16);
                     if (!peer->token) { peer->active=false; return; }
                     s->ws_force=true;   /* X8: the newcomer gets the world now */
                     break;
@@ -116,7 +122,7 @@ static void server_packet(hta_net_server *s, const hta_udp_addr *from,
                         &s->sequence,s->tick,reject,sizeof(reject));
             return;
         }
-        if (peer->nonce!=nonce) { s->stats.invalid++; return; }
+        if (peer->nonce!=nonce || memcmp(peer->identity,p->payload+16,16)) { s->stats.invalid++; return; }
         peer->last_seen=now;
         uint8_t payload[9]={peer->player.id};
         hta_net_u32_write(payload+1,peer->token);
@@ -482,7 +488,7 @@ static void client_packet(hta_net_client *c, const hta_net_packet *p, double now
     if (p->type==HTA_NET_REJECT && p->length==5 && !c->connected &&
         hta_net_u32_read(p->payload)==c->nonce &&
         (p->payload[4]==HTA_NET_REJECT_FULL || p->payload[4]==HTA_NET_REJECT_MAP ||
-         p->payload[4]==HTA_NET_REJECT_CONTENT)) {
+         p->payload[4]==HTA_NET_REJECT_CONTENT || p->payload[4]==HTA_NET_REJECT_IDENTITY)) {
         c->reject_reason=p->payload[4];
         c->last_receive=now;
         return;
@@ -614,6 +620,11 @@ static void client_packet(hta_net_client *c, const hta_net_packet *p, double now
         c->game=gm; c->have_game=true; c->last_game_tick=p->tick;
         break;
     }
+    case HTA_NET_RPG: {
+        if(p->tick<=c->last_rpg_tick){c->stats.dropped++;break;}
+        if(p->length!=4+HTA_NET_RPG_BYTES || hta_net_u32_read(p->payload)!=c->token || !hta_net_rpg_unpack(p->payload+4,p->length-4,&c->rpg)){c->stats.invalid++;break;}
+        c->last_rpg_tick=p->tick;c->have_rpg=true;break;
+    }
     case HTA_NET_WORLD_STATE: {
         if (p->tick<=c->last_world_state_tick) { c->stats.dropped++; break; }
         hta_net_world_state ws;
@@ -641,6 +652,7 @@ void hta_net_client_pump(hta_net_client *c, double now)
         c->have_vehicles=false; c->last_vehicle_tick=0;
         c->have_drops=false; c->last_drop_tick=0;
         c->have_game=false; c->last_game_tick=0;
+        c->have_rpg=false;c->last_rpg_tick=0;
         c->have_world_state=false; c->last_world_state_tick=0;
         memset(c->seen_kills,0,sizeof(c->seen_kills));
         memset(c->present,0,sizeof(c->present));
@@ -653,11 +665,12 @@ void hta_net_client_pump(hta_net_client *c, double now)
     }
     if (!c->connected && !c->reject_reason &&
         (c->last_hello==0 || now-c->last_hello>=0.25)) {
-        uint8_t payload[16]; hta_net_u32_write(payload,c->nonce);
+        uint8_t payload[32]; hta_net_u32_write(payload,c->nonce);
         hta_net_u32_write(payload+4,c->map_crc);
         hta_net_u32_write(payload+8,(uint32_t)c->content);
         hta_net_u32_write(payload+12,(uint32_t)(c->content>>32));
-        send_packet(&c->udp,&c->server,&c->stats,HTA_NET_HELLO,&c->sequence,0,payload,16);
+        memcpy(payload+16,c->identity,16);
+        send_packet(&c->udp,&c->server,&c->stats,HTA_NET_HELLO,&c->sequence,0,payload,32);
         c->last_hello=now;
         /* v11: and, once a second, a DISCOVER in each older protocol: an
          * older host answers one in its own version, and the pump below
@@ -742,4 +755,11 @@ bool hta_net_client_pop_fx(hta_net_client *c, hta_net_fx *fx)
     *fx=c->fx[0]; c->fx_count--;
     memmove(c->fx,c->fx+1,c->fx_count*sizeof(c->fx[0]));
     return true;
+}
+
+bool hta_net_server_rpg(hta_net_server *s,unsigned peer,const hta_net_rpg *rpg) {
+    if(!s||peer>=HTA_NET_MAX_PLAYERS||!s->peers[peer].active)return false;
+    uint8_t payload[4+HTA_NET_RPG_BYTES];hta_net_u32_write(payload,s->peers[peer].token);
+    if(!hta_net_rpg_pack(payload+4,sizeof(payload)-4,rpg))return false;
+    return send_packet(&s->udp,&s->peers[peer].addr,&s->stats,HTA_NET_RPG,&s->sequence,s->tick,payload,sizeof(payload));
 }

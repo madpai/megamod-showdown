@@ -434,3 +434,8 @@ int hta_wfx_parse_weather(const char *text, size_t len)
     }
     return HTA_WFX_WEATHER_AUTO;
 }
+
+void hta_wfx_spell(hta_world_fx *w,unsigned effect,const float from[3],const float to[3]) {
+    static const float colors[5][4]={{1,.25f,.02f,1},{.15f,.65f,1,1},{.3f,1,1,1},{.2f,1,.3f,1},{1,.85f,.25f,1}};
+    if(w&&w->ready && effect<5)hta_fx_arc(&w->fx,from,to,colors[effect]);
+}

@@ -649,7 +649,7 @@ hta_body_attr hta_game_body(const hta_game *g, int32_t idx)
     hta_body_attr b = { 1.0f, 1.0f, 1.0f, 1.0f, false, 0.0f, 1.0f };
     if (!g || idx < 0 || idx >= (int32_t)g->unit_count) return b;
     const hta_unit *u = &g->units[idx];
-    if (u->character < 0 || (uint32_t)u->character >= g->character_count || !g->characters[u->character]) return b;
+    if (u->character >= 0 && (uint32_t)u->character < g->character_count && g->characters[u->character]) {
     const hta_oal_asset *a = g->characters[u->character];
     if (a->body_health > 0.0f) b.health = a->body_health;
     if (a->body_shield >= 0.0f) b.shield = a->body_shield;
@@ -658,6 +658,16 @@ hta_body_attr hta_game_body(const hta_game *g, int32_t idx)
     b.can_fly = a->can_fly;
     b.fly_speed = a->fly_speed > 0.0f ? a->fly_speed : 3.5f;
     if (a->fly_damage > 0.0f) b.fly_damage = a->fly_damage;
+    }
+    if(g->mode==HTA_MODE_SURVIVAL) {
+        b.health*=u->rpg_health>0?u->rpg_health:1;
+        b.speed*=u->rpg_speed>0?u->rpg_speed:1;
+        b.damage*=u->rpg_damage>0?u->rpg_damage:1;
+        if(u->progression) { b.health*=mm_health_bonus(u->progression); b.damage*=mm_power_bonus(u->progression);
+            b.speed*=1+.25f*mm_skill_bonus(u->progression,MM_ATHLETICS); }
+        if(u->slow>0) b.speed*=.6f;
+        b.can_fly=false; b.shield=0;
+    }
     return b;
 }
 
@@ -707,6 +717,7 @@ void hta_game_apply_body(hta_game *g, int32_t idx)
     u->vitals.max_shield = g->vitals_template.max_shield * b.shield;
     hta_player_physics ph;
     hta_game_body_physics(g, b.speed, &ph);
+    if(u->progression) ph.jump_speed*=1+.35f*mm_skill_bonus(u->progression,MM_ACROBATICS);
     hta_player_apply_physics(&u->body, &ph);
 }
 
@@ -781,9 +792,10 @@ bool hta_game_set_mode(hta_game *g, hta_game_mode mode)
     }
     if (mode >= HTA_MODE_COUNT) { mode = HTA_MODE_SLAYER; ok = false; }
     g->mode = mode;
-    g->teams = mode == HTA_MODE_TEAM_SLAYER || mode == HTA_MODE_CTF;
+    g->practice_skill=MM_MARKSMANSHIP;
+    g->teams = mode == HTA_MODE_TEAM_SLAYER || mode == HTA_MODE_CTF || mode == HTA_MODE_SURVIVAL;
     /* The mode's own limit; the caller may set another after. */
-    g->score_limit = mode == HTA_MODE_SCENARIO || mode == HTA_MODE_RACING ? 0 :
+    g->score_limit = mode == HTA_MODE_SCENARIO || mode == HTA_MODE_RACING || mode == HTA_MODE_SURVIVAL ? 0 :
                      mode == HTA_MODE_CTF ? HTA_CTF_SCORE_LIMIT : HTA_SLAYER_SCORE_LIMIT;
     return ok;
 }
@@ -874,7 +886,7 @@ void hta_game_sync_local(hta_game *g, const hta_player *body, const hta_camera *
     hta_unit *u = &g->units[g->local];
     u->body = *body;
     u->eye = *eye;
-    if (weapon >= 0 && (uint32_t)weapon < g->weapon_count) {
+    if (g->mode!=HTA_MODE_SURVIVAL && weapon >= 0 && (uint32_t)weapon < g->weapon_count) {
         u->carry[u->slot & 1u].weapon = weapon;
     }
 }
@@ -996,7 +1008,7 @@ int32_t hta_game_near(const hta_game *g, const float pos[3], float reach, int32_
 void hta_game_hurt(hta_game *g, int32_t victim, int32_t attacker, float amount,
                    const float at[3])
 {
-    if (!g || victim < 0 || victim >= (int32_t)g->unit_count || amount <= 0.0f) return;
+    if (!g || victim < 0 || victim >= (int32_t)g->unit_count || (!isfinite(amount) || amount <= 0.0f)) return;
     hta_unit *v = &g->units[victim];
     /* Nobody gets hurt in the postgame, nor just after coming back. */
     if (!v->alive || g->over || v->protect > 0.0f) return;
@@ -1012,7 +1024,15 @@ void hta_game_hurt(hta_game *g, int32_t victim, int32_t attacker, float amount,
         ((g->teams && g->units[attacker].team == v->team) ||
          (g->mode == HTA_MODE_SCENARIO && g->units[attacker].kind != HTA_UNIT_BOT &&
           v->kind != HTA_UNIT_BOT))) return;
+    if(g->mode==HTA_MODE_SURVIVAL) amount*=1-fminf(.85f,v->armor+(v->ward>0?.35f:0));
+    float before=v->vitals.health+v->vitals.shield;
+    if(g->mode==HTA_MODE_SURVIVAL && attacker>=0 && attacker<(int32_t)g->unit_count && g->units[attacker].progression)
+        amount*=1+.5f*mm_skill_bonus(g->units[attacker].progression,g->practice_skill);
     hta_vitals_damage(&v->vitals, amount);
+    if(g->mode==HTA_MODE_SURVIVAL && v->kind==HTA_UNIT_BOT && attacker>=0 && attacker<(int32_t)g->unit_count && g->units[attacker].progression)
+        mm_practice(g->units[attacker].progression,g->practice_skill,(uint64_t)ceilf(fmaxf(0,before-v->vitals.health-v->vitals.shield)/fmaxf(.001f,v->vitals.max_health+v->vitals.max_shield)*100));
+    if(g->mode==HTA_MODE_SURVIVAL && v->progression && attacker>=0 && attacker!=victim)
+        mm_practice(v->progression,MM_DEFENSE,(uint64_t)ceilf(fmaxf(0,before-v->vitals.health-v->vitals.shield)/fmaxf(.001f,v->vitals.max_health+v->vitals.max_shield)*100));
     v->hurt = true;
     if (attacker >= 0 && attacker < (int32_t)g->unit_count) {
         v->last_attacker = attacker;
@@ -1020,7 +1040,7 @@ void hta_game_hurt(hta_game *g, int32_t victim, int32_t attacker, float amount,
         if (attacker != victim) v->attackers[attacker] = 1;
     }
     hta_game_event e = { .kind = HTA_EV_HIT_UNIT, .a = victim, .b = attacker,
-                         .amount = amount };
+                         .amount = g->mode==HTA_MODE_SURVIVAL ? fmaxf(0,before-v->vitals.health-v->vitals.shield) : amount };
     if (at) for (int k = 0; k < 3; k++) e.pos[k] = at[k];
     else hta_game_centre(g, victim, e.pos);
     emit(g, &e);
@@ -1766,7 +1786,7 @@ static void shoot(hta_game *g, int32_t idx, int32_t wi, float spread)
         if (hits[v]) hta_game_hurt_jpt_scaled(g, (int32_t)v, idx, w->impact_jpt, hits[v], hit_at[v], w->damage_scale);
 }
 
-int32_t hta_game_melee(hta_game *g, int32_t idx)
+static int32_t melee_attack(hta_game *g, int32_t idx)
 {
     if (!g || idx < 0 || idx >= (int32_t)g->unit_count) return -1;
     hta_unit *u = &g->units[idx];
@@ -1880,9 +1900,9 @@ static bool take_drops(hta_game *g, int32_t idx)
         }
         if (d->live && u->in.pickup && u->carry[0].weapon != d->weapon &&
             u->carry[1].weapon != d->weapon) {
-            int32_t wi;
-            hta_ammo am;
-            hta_game_take_drop(g, dr, &wi, &am);
+            int32_t wi=-1;
+            hta_ammo am={0};
+            if(!hta_game_take_drop(g, dr, &wi, &am))return false;
             hta_game_give(g, idx, wi, &am);
             hta_game_event e = { .kind = HTA_EV_PICKUP, .a = idx, .b = -1,
                                  .tag = g->weapons[wi].tag };
@@ -1892,6 +1912,15 @@ static bool take_drops(hta_game *g, int32_t idx)
         }
     }
     return false;
+}
+
+int32_t hta_game_melee(hta_game *g,int32_t idx)
+{
+    if(!g || idx<0 || idx>=(int32_t)g->unit_count) return -1;
+    uint8_t old=g->practice_skill;
+    const hta_game_weapon *w=hta_game_held(g,idx);
+    g->practice_skill=w && w->melee_only && (!w->asset || strcmp(w->asset->hold_type,"fist"))?MM_BLADE:MM_UNARMED;
+    int32_t hit=melee_attack(g,idx);g->practice_skill=old;return hit;
 }
 
 static void take_items(hta_game *g, int32_t idx)
@@ -2870,6 +2899,7 @@ static void simulate(hta_game *g, int32_t idx, float dt)
     hta_unit_input *in = &u->in;
     u->fired = u->meleed = u->threw = u->hurt = false;
 
+    if(u->progression && u->stamina<10)in->move.jump=false;
     hta_player_update(&u->body, &u->eye, g->col, &in->move, dt);
     if (u->body.landed) {
         float cost = hta_vitals_land(&u->vitals, u->body.land_speed);
@@ -2943,7 +2973,7 @@ static void simulate(hta_game *g, int32_t idx, float dt)
     } else if (in->move.fire && u->cooldown <= 0.0f && u->swing <= 0.0f && u->throwing <= 0.0f &&
         c->ammo.phase == HTA_AMMO_READY && u->flag < 0)
         fire(g, idx, dt);
-    take_items(g, idx);
+    if(g->mode!=HTA_MODE_SURVIVAL) take_items(g, idx);
     in->pickup = false;
 }
 
@@ -3086,7 +3116,7 @@ void hta_game_update(hta_game *g, float dt)
                 u->tumble += u->tumble_rate * dt;
                 if (u->body.on_ground) u->tumble_rate *= expf(-2.5f * dt);
             }
-            if (u->kind != HTA_UNIT_LOCAL && !g->over) {
+            if (u->kind != HTA_UNIT_LOCAL && !g->over && g->mode!=HTA_MODE_SURVIVAL) {
                 u->respawn -= dt;
                 if (u->respawn <= 0.0f) spawn_unit(g, (int32_t)i);
             }
@@ -3124,7 +3154,7 @@ void hta_game_update(hta_game *g, float dt)
             if (u->vehicle >= 0) continue;
         }
         if (u->kind != HTA_UNIT_LOCAL) simulate(g, (int32_t)i, dt);
-        if(u->kind==HTA_UNIT_BOT && u->alive && u->character>=0 &&
+        if(g->mode!=HTA_MODE_SURVIVAL && u->kind==HTA_UNIT_BOT && u->alive && u->character>=0 &&
            g->brains[i].visible && g->brains[i].target>=0 && u->ability_cool<=0.0f && u->in.move.fire) {
             const hta_oal_asset *a=g->characters[u->character];
             const hta_unit *target=&g->units[g->brains[i].target];

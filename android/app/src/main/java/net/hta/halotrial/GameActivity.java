@@ -217,6 +217,8 @@ public class GameActivity extends NativeActivity {
     static native String nativeReport();
     /* Banner, place, kill feed and scoreboard, separated by 0x1E. */
     static native String nativeGameText();
+    static native String nativeRpgText();
+    static native void nativeHudRpg(int action,int item);
     /* 1 while the main menu is up: the overlay draws no controls and hands
      * touches to the menu instead. */
     static native int nativeMenuMode();
@@ -488,6 +490,21 @@ public class GameActivity extends NativeActivity {
                 row(word(11, "MAX PLAYERS") + ": " + maxPlayers, () -> maxPlayers = maxPlayers == 8 ? 2 : maxPlayers + 1);
             }
             row("MAP: " + mapName(maps.get(map)), this::cycleMap);
+            if (maps.get(map).startsWith("gatebound")) {
+                row("GAME: GATEBOUND SURVIVAL", () -> {});
+                row("CHARACTER: " + up(charName(selected().character)), () -> {
+                    classReturn = screen; open(7);
+                });
+                row(host ? "PROGRESSION: SAVED ON THIS SERVER" : "PROGRESSION: YOUR SOLO CHARACTER", () -> {});
+                row("SKILLS: IMPROVE WITH USE", () -> {});
+                row("PRESTIGE: KEEP SKILLS & EQUIPMENT", () -> {});
+                row(word(12, "START GAME"), () -> {
+                    if (host) start(1, "127.0.0.1", maps.get(map));
+                    else start(0, "", maps.get(map));
+                });
+                row(word(18, "BACK"), this::back);
+                return;
+            }
             if (maps.get(map).equals("cinder_circuit")) {
                 row("GAME: RACING", () -> {});
                 row("DRIVER: " + up(charName(selected().character)), () -> {
@@ -1024,6 +1041,80 @@ public class GameActivity extends NativeActivity {
         private final android.graphics.Path ip = new android.graphics.Path();
         private final android.graphics.RectF arc = new android.graphics.RectF();
 
+        private final java.util.Map<String,android.graphics.Bitmap> rpgArt=new java.util.HashMap<>();
+        private android.graphics.Bitmap rpgImage(String name) {
+            if(!rpgArt.containsKey(name)) {
+                android.graphics.Bitmap b=null;
+                try(java.io.InputStream in=owner.getAssets().open("ui/gatebound/"+name+".png")){b=android.graphics.BitmapFactory.decodeStream(in);}catch(Exception ignored){}
+                rpgArt.put(name,b);
+            }
+            return rpgArt.get(name);
+        }
+        private android.widget.TextView rpgText(String value,int size) {
+            android.widget.TextView v=new android.widget.TextView(owner);v.setText(value);v.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,getHeight()*size/720f);v.setTextColor(0xFF30291C);
+            v.setTypeface(android.graphics.Typeface.create("serif",android.graphics.Typeface.NORMAL));v.setPadding(18,8,18,8);return v;
+        }
+        private android.widget.Button rpgButton(String value,Runnable action) {
+            android.widget.Button b=new android.widget.Button(owner);b.setText(value);b.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,getHeight()*.023f);b.setTextColor(0xFF382C18);
+            b.setMinWidth(0);b.setMinimumWidth(0);b.setMinHeight(0);b.setMinimumHeight(0);b.setPadding(10,12,10,12);
+            b.setTypeface(android.graphics.Typeface.create("serif",android.graphics.Typeface.BOLD));b.setAllCaps(false);
+            b.setBackgroundColor(0x99D2BF94);b.setOnClickListener(v->action.run());return b;
+        }
+        private void showRpgShop() {
+            String data=nativeRpgText();if(data==null||data.isEmpty())return;
+            android.app.Dialog dialog=new android.app.Dialog(owner);dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+            android.widget.FrameLayout page=new android.widget.FrameLayout(owner);page.setBackgroundColor(0xFFF0DFC0);
+            android.graphics.Bitmap paper=rpgImage("parchment");if(paper==null)paper=rpgImage("inventory");
+            if(paper!=null){android.widget.ImageView bg=new android.widget.ImageView(owner);bg.setImageBitmap(paper);bg.setScaleType(android.widget.ImageView.ScaleType.FIT_XY);page.addView(bg,new android.widget.FrameLayout.LayoutParams(-1,-1));}
+            android.widget.LinearLayout layout=new android.widget.LinearLayout(owner);layout.setOrientation(1);layout.setPadding((int)(getWidth()*.05f),(int)(getHeight()*.11f),(int)(getWidth()*.05f),(int)(getHeight()*.10f));page.addView(layout,new android.widget.FrameLayout.LayoutParams(-1,-1));
+            android.widget.LinearLayout heading=new android.widget.LinearLayout(owner);heading.addView(rpgText("Gatebound  ·  Character & Inventory",23),new android.widget.LinearLayout.LayoutParams(0,-2,1));heading.addView(rpgButton("Return",dialog::dismiss));layout.addView(heading);
+            android.widget.TextView totals=rpgText("",16);layout.addView(totals);
+            android.widget.LinearLayout tabs=new android.widget.LinearLayout(owner);layout.addView(tabs);
+            android.widget.ScrollView scroll=new android.widget.ScrollView(owner);android.widget.LinearLayout entries=new android.widget.LinearLayout(owner);entries.setOrientation(1);scroll.addView(entries);layout.addView(scroll,new android.widget.LinearLayout.LayoutParams(-1,0,1));
+            final int[] category={-1};
+            Runnable refresh=()->{
+                String[] parts=nativeRpgText().split("\u001e",-1);if(parts.length<2)return;
+                String[] profile=parts[0].split("\n");String[] hf=parts.length>2?parts[2].split("\t"):new String[0];totals.setText(hf.length>6?"Level "+hf[5]+"  ·  "+hf[4]+" gold  ·  Prestige "+hf[6]:"");if(profile.length>1 && !profile[profile.length-2].isEmpty())totals.append("  ·  "+profile[profile.length-2]);int scrollY=scroll.getScrollY();entries.removeAllViews();
+                if(category[0]<0){
+                    for(int i=1;i<profile.length;i++)entries.addView(rpgText(profile[i],17));
+                    entries.addView(rpgButton("Prestige — level 50, keep skills and equipment",()->nativeHudRpg(4,0)));
+                }else for(String row:parts[1].trim().split("\n")){
+                    String[] f=row.split("\t");if(f.length<5)continue;int item=Integer.parseInt(f[0]),kind=Integer.parseInt(f[4]);
+                    if(category[0]!=kind && !(category[0]==4 && kind==5))continue;
+                    android.widget.LinearLayout line=new android.widget.LinearLayout(owner);line.setPadding(4,6,4,6);
+                    if(f.length>5){android.graphics.Bitmap art=rpgImage("items/"+f[5].replace(':','_').replace('/','_'));if(art!=null){android.widget.ImageView itemArt=new android.widget.ImageView(owner);itemArt.setImageBitmap(art);line.addView(itemArt,new android.widget.LinearLayout.LayoutParams(70,70));}}
+                    line.addView(rpgText(f[1]+"\n"+f[2]+" gold · owned "+f[3],17),new android.widget.LinearLayout.LayoutParams(0,-2,1));
+                    line.addView(rpgButton(kind==0?"Upgrade":"Buy",()->nativeHudRpg(1,item)));
+                    if(kind!=0)line.addView(rpgButton(kind>=4?"Drink":"Equip",()->nativeHudRpg(kind>=4?3:2,item)));
+                    entries.addView(line);
+                }
+                scroll.post(()->scroll.scrollTo(0,scrollY));
+            };
+            String[] titles={"Character","Weapons","Magic","Armor","Supplies","Upgrades"};int[] kinds={-1,1,3,2,4,0};
+            for(int i=0;i<titles.length;i++){final int k=kinds[i];tabs.addView(rpgButton(titles[i],()->{category[0]=k;refresh.run();}),new android.widget.LinearLayout.LayoutParams(0,-2,1));}
+            refresh.run();dialog.setContentView(page);android.view.Window window=dialog.getWindow();if(window!=null){window.setBackgroundDrawableResource(android.R.color.transparent);window.setLayout((int)(getWidth()*.76f),(int)(getHeight()*.86f));}
+            dialog.show();if(window!=null)window.setLayout((int)(getWidth()*.76f),(int)(getHeight()*.86f));
+            android.os.Handler updater=new android.os.Handler(android.os.Looper.getMainLooper());Runnable poll=new Runnable(){public void run(){if(dialog.isShowing()){refresh.run();updater.postDelayed(this,1200);}}};updater.postDelayed(poll,1200);
+        }
+        private void drawRpgBar(Canvas c,String name,float fraction,float x,float y,float width,float height,int color) {
+            android.graphics.RectF rect=new android.graphics.RectF(x,y,x+width,y+height);android.graphics.Bitmap empty=rpgImage(name+"_empty"),full=rpgImage(name+"_full");
+            Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);p.setColor(0xB0201710);c.drawRect(rect,p);if(empty!=null)c.drawBitmap(empty,null,rect,p);
+            c.save();c.clipRect(x,y,x+width*Math.max(0,Math.min(1,fraction)),y+height);p.setColor(color);if(full!=null)c.drawBitmap(full,null,rect,p);else c.drawRect(rect,p);c.restore();
+        }
+        private void drawRpg(Canvas c,String data) {
+            String[] sections=data.split("\u001e",-1);if(sections.length<3)return;String[] f=sections[2].split("\t");if(f.length<11)return;
+            try{
+                float w=getWidth(),h=getHeight();Paint text=new Paint(Paint.ANTI_ALIAS_FLAG);text.setTypeface(android.graphics.Typeface.create("serif",android.graphics.Typeface.BOLD));text.setTextAlign(Paint.Align.CENTER);text.setColor(0xFFFFE4AF);text.setTextSize(h*.033f);text.setShadowLayer(3,0,1,0xFF100A04);
+                int phase=Integer.parseInt(f[2]);String state=phase==1?"Wave "+f[0]+"  ·  "+f[1]+" enemies":phase==2?"Defeated  ·  regroup in "+f[3]+"s":"Wave "+f[0]+" complete  ·  shop "+f[3]+"s";
+                c.drawText(state,w*.5f,h*.052f,text);text.setTextSize(h*.024f);c.drawText("Level "+f[5]+"  ·  "+f[4]+" gold",w*.5f,h*.088f,text);
+                Paint panel=new Paint(Paint.ANTI_ALIAS_FLAG);panel.setColor(0xB0221A11);c.drawRoundRect(w*.025f,h*.028f,w*.17f,h*.106f,8,8,panel);text.setTextSize(h*.026f);c.drawText("Inventory",w*.0975f,h*.078f,text);
+                float x=w*.30f,width=w*.22f,y=h*.84f,bh=h*.018f;
+                drawRpgBar(c,"health",Float.parseFloat(f[7]),x,y,width,bh,0xFFAD3024);drawRpgBar(c,"magic",Float.parseFloat(f[8]),x,y+bh*1.7f,width,bh,0xFF365CB5);drawRpgBar(c,"fatigue",Float.parseFloat(f[9]),x,y+bh*3.4f,width,bh,0xFF427238);
+                text.setTextSize(h*.021f);c.drawText(f[10],x+width*.5f,y-bh*.7f,text);
+                android.graphics.Bitmap reticle=rpgImage("reticle");if(reticle!=null)c.drawBitmap(reticle,null,new android.graphics.RectF(w*.5f-h*.018f,h*.482f,w*.5f+h*.018f,h*.518f),null);
+            }catch(RuntimeException ignored){}
+        }
+
         private void initButtons() {
             glass.setColor(0x7010141A);
             rim.setStyle(Paint.Style.STROKE);
@@ -1292,6 +1383,9 @@ public class GameActivity extends NativeActivity {
             int id = e.getPointerId(idx);
             float x = e.getX(idx), y = e.getY(idx);
 
+            if(action==MotionEvent.ACTION_DOWN && x>getWidth()*.025f && x<getWidth()*.17f && y>getHeight()*.028f && y<getHeight()*.106f && !nativeRpgText().isEmpty()) {
+                showRpgShop();return true;
+            }
             switch (action) {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN:
@@ -1696,7 +1790,7 @@ public class GameActivity extends NativeActivity {
                 if ((hc & 8) != 0) button(c, reloadCx, reloadCy, reloadR, IC_RELOAD, "RELOAD", 0x88FFFFFF, reloadPtr >= 0, 1f);
                 if ((hc & 16) == 0) button(c, meleeCx, meleeCy, meleeR, IC_MELEE, "MELEE", 0x88FFFFFF, meleePtr >= 0, 1f);
                 if (seatMode >= 1 && !racing) button(c, swapCx, swapCy, swapR, IC_TEXT, seatMode >= 2 ? "EXIT" : "GET IN", 0xFF7FD4FF, swapPtr >= 0, 1f);
-                else if (!scenarioPresentation || (hc & 256) != 0)
+                else if (nativeRpgText().isEmpty() && (!scenarioPresentation || (hc & 256) != 0))
                     button(c, swapCx, swapCy, swapR, IC_SWAP,
                            (hc & 256) != 0 ? "USE" : "SWAP",
                            (hc & 256) != 0 ? 0xFF7FD4FF : 0x88FFFFFF, swapPtr >= 0, 1f);
@@ -1708,9 +1802,9 @@ public class GameActivity extends NativeActivity {
                  * magazine is out. */
                 String a = null;
                 try { a = nativeAmmoText(); } catch (Throwable ignored) { }
-                if (a != null && a.length() > 0)
+                if (a != null && a.length() > 0 && (hc & 16) == 0)
                 {
-                    ammo.setTextSize(Math.min(getWidth(), getHeight()) * (playerPresentation ? 0.052f : 0.085f));
+                    ammo.setTextSize(Math.min(getWidth(), getHeight()) * (!nativeRpgText().isEmpty() ? 0.034f : playerPresentation ? 0.052f : 0.085f));
                     ammo.setColor(playerPresentation ? 0xBBDDE5E7 : 0xF2FFFFFF);
                     c.drawText(a, getWidth() - 28f,
                                getHeight() * (playerPresentation ? 0.22f : 0.30f), ammo);
@@ -1718,6 +1812,7 @@ public class GameActivity extends NativeActivity {
 
             }
             if (!owner.exploreExternal) drawGame(c);
+            String rpg=nativeRpgText();if(!rpg.isEmpty())drawRpg(c,rpg);
 
             /* Position readout, so a bug report screenshot carries coordinates.
              * Keep it clear of the camera cutout: the status bar no longer

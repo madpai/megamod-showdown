@@ -54,6 +54,7 @@ typedef struct {
 typedef struct {
     float forward, right;         /* -1..1 */
     bool  jump, fire, crouch, alt;
+    uint16_t rpg_serial;uint8_t rpg_action,rpg_item;
     bool  melee, grenade, reload, pickup, action, ability;   /* pressed this frame */
     uint8_t weapon_slot;
 } hta_net_view_input;
