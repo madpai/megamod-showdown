@@ -18,13 +18,15 @@ static void nap(void)
 int main(int argc, char **argv)
 {
     if (argc<2) {
-        fprintf(stderr,"usage: htanet server [port] [seconds] | client <numeric IPv4> [port] [seconds]\n");
+        fprintf(stderr,"usage: htanet server [port] [seconds] | client <numeric IPv4> [port] [seconds] | race-client <IPv4> <port> <seconds> <map-crc-hex> <content-hex>\n");
         return 2;
     }
     signal(SIGINT,stop); signal(SIGTERM,stop);
     bool server=!strcmp(argv[1],"server");
     bool client=!strcmp(argv[1],"client");
-    if (!server && !client) return 2;
+    bool race_client=!strcmp(argv[1],"race-client");
+    if (!server && !client && !race_client) return 2;
+    if (race_client && argc!=7) return 2;
     int port_arg=server ? 2 : 3, duration_arg=server ? 3 : 4;
     unsigned port=(unsigned)atoi(argc>port_arg ? argv[port_arg] : "32270");
     if (port<1 || port>65535) return 2;
@@ -53,11 +55,40 @@ int main(int argc, char **argv)
         if (argc<3) return 2;
         hta_net_client c;
         if (!hta_net_client_open(&c,argv[2],(uint16_t)port)) { perror("client open"); return 1; }
+        if (race_client) {
+            char *end=NULL;
+            unsigned long map=strtoul(argv[5],&end,16);
+            if (!end || *end || map>UINT32_MAX) return 2;
+            unsigned long long content=strtoull(argv[6],&end,16);
+            if (!end || *end) return 2;
+            c.map_crc=(uint32_t)map;
+            c.content=(uint64_t)content;
+        }
         printf("client connecting %s:%u\n",argv[2],port); fflush(stdout);
         double last_state=0; unsigned event_id=0;
+        bool saw_go=false, saw_racer=false, saw_motion=false;
         while (running && now_seconds()-start<duration) {
             double now=now_seconds(); hta_net_client_pump(&c,now);
+            if (race_client && c.reject_reason) {
+                printf("race-client refused reason=%u protocol=%u\n",c.reject_reason,c.peer_version);
+                hta_net_client_close(&c); return 3;
+            }
+            if (race_client && c.have_game && c.have_world) {
+                if (c.game.mode==4 && c.game.race_phase>=2) saw_go=true;
+                for (unsigned i=0;i<8;i++) if (c.game.race[i].flags&1) saw_racer=true;
+                for (unsigned i=0;i<c.world.count;i++) if (c.world.entities[i].peer_id==c.id &&
+                    hypotf(c.world.entities[i].velocity[0],c.world.entities[i].velocity[1])>3)
+                    saw_motion=true;
+            }
             if (c.connected && now-last_state>=0.05) {
+                if (race_client) {
+                    hta_net_control ctl={0};
+                    ctl.id=c.id; ctl.flags=HTA_NET_READY;
+                    ctl.forward=1; ctl.loadout[0]=ctl.loadout[1]=255;
+                    hta_net_client_control(&c,&ctl);
+                    last_state=now;
+                    continue;
+                }
                 float t=(float)(now-start);
                 hta_net_player p={.id=c.id,.weapon=(uint8_t)((int)t%2),
                     .flags=(t-(int)t)<0.2f ? HTA_NET_CROUCH : HTA_NET_GROUNDED,
@@ -82,6 +113,15 @@ int main(int argc, char **argv)
                 fflush(stdout); last=now;
             }
             nap();
+        }
+        if (race_client) {
+            printf("race-client connected=%d go=%d racer=%d motion=%d worlds=%llu bytes_in=%llu bytes_out=%llu invalid=%llu\n",
+                   c.connected,saw_go,saw_racer,saw_motion,
+                   (unsigned long long)c.stats.worlds_in,
+                   (unsigned long long)c.stats.bytes_in,(unsigned long long)c.stats.bytes_out,
+                   (unsigned long long)c.stats.invalid);
+            int ok=c.connected && saw_go && saw_racer && saw_motion;
+            hta_net_client_close(&c); return ok ? 0 : 1;
         }
         int ok=c.connected && c.stats.snapshots_in>0;
         hta_net_client_close(&c); return ok ? 0 : 1;

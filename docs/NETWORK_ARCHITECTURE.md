@@ -1,5 +1,13 @@
 # Native multiplayer architecture
 
+**X10 update (2026-09-29):** Protocol v13 adds the concrete Racing mode and
+52 fixed bytes to GAME: phase/countdown/time plus eight compact racer
+summaries. The host advances kart physics, checkpoint/lap state, collisions
+and recovery; clients send bounded CONTROL and interpolate WORLD poses.
+No racing prediction/rollback is implemented. A localhost host/peer run
+measured about 6.9 KB/s host-to-peer and 1.2 KB/s peer-to-host; real Wi-Fi
+latency and correction still require device measurement. See [RACING.md](RACING.md).
+
 Status: original design and baseline audit for the first network slice,
 2026-09-21. For implemented state and test results, read
 `NETWORK_PROGRESS.md` (protocol v7 on Megamod as of 2026-09-24). The

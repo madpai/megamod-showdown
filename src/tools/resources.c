@@ -86,7 +86,12 @@ static int inspect(const char *bundle, const char *world)
         printf(", \"direct\": %s, \"digest\": \"%016llx\"}", pk->dep_direct[i] ? "true" : "false",
                (unsigned long long)pk->dep_digest[i]);
     }
-    printf("]},\n \"scripts\": [");
+    printf("]},\n \"racing\": {\"present\": %s", d->has_racing ? "true" : "false");
+    if (d->has_racing)
+        printf(", \"laps\": %u, \"grid\": %u, \"gates\": %u, \"pads\": %u, \"max_speed\": %.3f, \"boost_speed\": %.3f",
+               d->racing.lap_count,d->racing.grid_count,d->racing.gate_count,d->racing.pad_count,
+               d->racing.vehicle.max_speed,d->racing.vehicle.boost_speed);
+    printf("},\n \"scripts\": [");
     for (uint32_t i = 0; i < d->script_count; i++) {
         printf("%s{\"id\": ", i ? ", " : "");
         json_str(d->script[i].id);

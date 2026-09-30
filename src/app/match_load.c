@@ -4,6 +4,7 @@
 #include "app/compat.h"
 #include "app/content.h"
 #include "app/session.h"
+#include "app/racing.h"
 #include "platform/platform.h"
 #include "script/script.h"
 #include <stdio.h>
@@ -83,6 +84,11 @@ bool hta_match_load_world(hta_session *s, const hta_fs *fs, const char *writable
             snprintf(s->status, sizeof(s->status), "%s: %s", s->world, err);
             return false;
         }
+        if (s->world_ext.world_defs.has_racing) {
+            s->game_mode = HTA_MODE_RACING;
+            s->score_limit = s->time_limit_min = s->bot_count = 0;
+            s->classes = false;
+        }
     } else if (!hta_bsp_load_first(&s->cache, &s->mesh, err, sizeof(err))) {
         hta_log("[assets] BSP extraction failed: %s", err);
         snprintf(s->status, sizeof(s->status), "bsp: %s", err);
@@ -160,12 +166,13 @@ bool hta_match_load_world(hta_session *s, const hta_fs *fs, const char *writable
 
     /* An imported world needs its walkable grid now, before the items: they
      * are spread over it. */
-    if (s->world_loaded) world_nav(s, writable_dir);
+    if (s->world_loaded && s->game_mode!=HTA_MODE_RACING) world_nav(s, writable_dir);
 
     /* What the map leaves lying about. Every position, facing, respawn time
      * and weighted choice is the scenario's own -- on an imported map, all
      * but the position. */
-    if (s->game_mode != HTA_MODE_SCENARIO && hta_pickups_load(&s->items, &s->cache)) {
+    if (s->game_mode != HTA_MODE_SCENARIO && s->game_mode != HTA_MODE_RACING &&
+        hta_pickups_load(&s->items, &s->cache)) {
         if (s->world_loaded) hta_pickups_relocate(&s->items, &s->nav, s->world_playable);
         char ierr[HTA_ERRLEN];
         if (hta_pickups_build(&s->items, &s->cache,
@@ -219,8 +226,17 @@ bool hta_match_start(hta_session *s, const char *writable_dir, bool local_player
     char err[HTA_ERRLEN];
     const hta_resource_map *bm = s->bitmaps_ok ? &s->bitmaps_rm : NULL;
     if (!hta_game_load(&s->game, &s->cache, bm, &s->col, err, sizeof(err))) {
-        hta_log("[game] not playable: %s", err);
-        return false;
+        /* An original race needs grid starts and a vehicle, not Trial
+         * weapons. The public synthetic bootstrap map has no arsenal. */
+        if (s->game_mode==HTA_MODE_RACING && s->world_ext.world_defs.has_racing &&
+            s->game.spawn_count>0 && s->game.weapon_count==0) {
+            s->game.loaded=true;
+            s->game.start_grenades=s->game.max_grenades=0;
+            hta_log("[game] original Racing world: no Trial weapons required");
+        } else {
+            hta_log("[game] not playable: %s", err);
+            return false;
+        }
     }
     hta_log("[game] %s", err);
     /* Imported weapons join the roster before anything reads it; the
@@ -336,6 +352,7 @@ static void script_log(void *ctx, const char *line)
 void hta_match_begin(hta_session *s)
 {
     s->game_on = true;
+    s->race_audio_ready=false;
     if (s->net_enabled) {
         /* Both phones must stand in the same world, not only the same Trial. */
         uint32_t crc = s->cache.crc32 ^ (s->world_loaded ? s->world_ext.key : 0u);
@@ -396,5 +413,14 @@ void hta_match_begin(hta_session *s)
     }
     hta_match_nav_props(s);
     hta_game_start(&s->game);
+    if (s->game.mode == HTA_MODE_RACING && s->went.loaded && s->went.defs->has_racing) {
+        const hta_race_track *track = &s->went.defs->racing;
+        if (hta_race_init(&s->race, track, 0)) {
+            if (s->me >= 0 && s->me < (int32_t)HTA_RACE_MAX_RACERS)
+                hta_racing_join(s, (uint8_t)s->me);
+            hta_log("[race] %u laps, %u gates, %u pads, %u grid slots",
+                    track->lap_count, track->gate_count, track->pad_count, track->grid_count);
+        }
+    }
     s->world_round = 1;
 }

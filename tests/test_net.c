@@ -751,8 +751,8 @@ static void version_mismatch(void)
     assert(hta_net_pack(wire, sizeof(wire), HTA_NET_PING, 1, 0, NULL, 0, &n));
     assert(hta_net_peek(wire, n, &v, &t) && v == HTA_NET_VERSION && t == HTA_NET_PING);
     wire[0] ^= 1; assert(!hta_net_peek(wire, n, &v, &t));
-    assert(hta_net_pack_probe(wire, sizeof(wire), 10, 0xABCD, &n) && n == HTA_NET_HEADER + 4);
-    assert(hta_net_peek(wire, n, &v, &t) && v == 10 && t == HTA_NET_DISCOVER);
+    assert(hta_net_pack_probe(wire, sizeof(wire), 12, 0xABCD, &n) && n == HTA_NET_HEADER + 4);
+    assert(hta_net_peek(wire, n, &v, &t) && v == 12 && t == HTA_NET_DISCOVER);
     hta_net_packet p;
     assert(!hta_net_unpack(wire, n, &p));                                    /* not ours to read */
     assert(!hta_net_pack_probe(wire, sizeof(wire), HTA_NET_VERSION, 1, &n)); /* only older ones */
@@ -765,18 +765,18 @@ static void version_mismatch(void)
     hta_udp_addr to; assert(hta_udp_resolve(&to, "127.0.0.1", port));
     uint8_t hello[16] = { 0x44, 0x33, 0x22, 0x11 };
     assert(hta_net_pack(wire, sizeof(wire), HTA_NET_HELLO, 1, 0, hello, 16, &n));
-    wire[4] = 10; wire[5] = 0;                                                /* as a v10 build sends it */
+    wire[4] = 12; wire[5] = 0;                                                /* as a v12 build sends it */
     assert(hta_udp_send(&old, &to, wire, n));
     for (int i = 0; i < 20 && !s.stats.refused; i++) hta_net_server_pump(&s, 1.0 + i * 0.001);
-    assert(s.stats.refused == 1 && s.last_refusal == HTA_NET_REJECT_VERSION && s.last_refused_version == 10 &&
+    assert(s.stats.refused == 1 && s.last_refusal == HTA_NET_REJECT_VERSION && s.last_refused_version == 12 &&
            hta_net_server_count(&s) == 0);
-    /* its answer is ours (v11): the old build cannot read it, a peek can */
+    /* The host answers in v13; the older build cannot read it, a peek can. */
     hta_udp_addr from; int got = -1;
     for (int i = 0; i < 200 && got < 0; i++) got = hta_udp_recv(&old, wire, sizeof(wire), &from);
     assert(got > 0 && hta_net_unpack(wire, (size_t)got, &p) && p.type == HTA_NET_REJECT && p.length == 7 &&
            hta_net_u32_read(p.payload) == 0x11223344u && p.payload[4] == HTA_NET_REJECT_VERSION && p.payload[5] == HTA_NET_VERSION);
     hta_net_server_close(&s);
-    /* An older host: it ignores our HELLO but answers the v10 probe in v10. */
+    /* An older host: it ignores our HELLO but answers the v12 probe in v12. */
     hta_net_client c;
     assert(hta_net_client_open(&c, "127.0.0.1", hta_udp_port(&old)));
     hta_net_client_pump(&c, 5.0);
@@ -784,8 +784,8 @@ static void version_mismatch(void)
     for (int i = 0; i < 400; i++) {
         got = hta_udp_recv(&old, wire, sizeof(wire), &from);
         if (got < 0) continue;
-        if (hta_net_peek(wire, (size_t)got, &v, &t) && v == 10 && t == HTA_NET_DISCOVER) {
-            wire[6] = HTA_NET_INFO;                                          /* any v10 answer will do */
+        if (hta_net_peek(wire, (size_t)got, &v, &t) && v == 12 && t == HTA_NET_DISCOVER) {
+            wire[6] = HTA_NET_INFO;                                          /* any v12 answer will do */
             assert(hta_udp_send(&old, &from, wire, (size_t)got));
             answered = true;
             break;
@@ -793,7 +793,7 @@ static void version_mismatch(void)
     }
     assert(answered);
     for (int i = 0; i < 200 && !c.reject_reason; i++) hta_net_client_pump(&c, 5.001 + i * 0.001);
-    assert(!c.connected && c.reject_reason == HTA_NET_REJECT_VERSION && c.peer_version == 10);
+    assert(!c.connected && c.reject_reason == HTA_NET_REJECT_VERSION && c.peer_version == 12);
     hta_net_client_close(&c);
     hta_udp_close(&old);
 }

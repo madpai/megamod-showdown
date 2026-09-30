@@ -26,11 +26,10 @@ never push MegaMod work to an Open Halo remote.
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-25. The cloud engine and LAN v9 work is
-merged, verified against the owner's Trial data, and published as build
-`ac90e21`. The owner reports that this session's build seems to work fine;
-no specific device measurements or feature-by-feature results were supplied.
-See CURRENT TESTING OBJECTIVE for what remains open.
+**Date of this revision:** 2026-09-29. X10 Racing is the active product
+slice; see [RACING.md](RACING.md) and CURRENT TESTING OBJECTIVE. The older
+branch/path and protocol notes immediately below are historical context
+from the 2026-09-25 cloud/LAN build `ac90e21`.
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Branches -- read this first:**
 - `halo-sandbox` is **MEGAMOD SHOWDOWN**. Push this branch only to public
@@ -201,6 +200,35 @@ the section below, and update it every time.
 ---
 
 ## CURRENT TESTING OBJECTIVE
+
+**X10 MegaMod Racing first playable build (2026-09-29):** Select
+**Cinder Circuit**, choose any existing character under DRIVER, then start
+with zero bots. Drive the original Hyperkart using the left stick to steer
+(down to brake), GAS, DRIFT and RESET. Test in this order: straight-line
+acceleration and camera speed feel; easy turn then held/released drift;
+three cyan boost pads; the banked east curve; the elevated jump and landing;
+wall brush/head-on contact; track-edge fall and RESET; gate/lap HUD;
+three-lap finish and automatic next-round reset. A failure is poor touch
+steering, drift that never charges or cannot be held, missing boost, getting
+stuck/airborne on ordinary road, skipped gate counting, reset to an invalid
+spot, unreadable HUD or unstable frame pacing. Use pause diagnostics to
+record FPS/p99 and temperature/warmth. Host with a same-build peer if
+possible; both need protocol v13 and world key `87915509`. The peer should
+see the same countdown, motion, laps, finish order and reset; after GO a new
+joiner spectates until the next race. Report subjective input delay and
+whether the kart feels dramatically fast while controllable. The first
+driver body is hidden while the selected roster identity stays in the
+picker and session; driver animation is a later capability. See
+[RACING.md](RACING.md) for architecture, evidence and limits.
+
+**X10 invented tuning ledger:** Hyperkart cap 38 wu/s, boost cap 52 wu/s,
+acceleration 18 wu/s², grip 12, drift grip 3.2, low/high steering 2.5/0.9;
+OAL Cinder Circuit `RaceConfig` owns the authored overrides. Race READY
+staging is 8 seconds, countdown 3 seconds, RESULTS hold 8 seconds;
+`src/app/racing.c` and `src/game/race.c` own those rules. Eight grid slots,
+32 maximum gates, 16 maximum pads are resource bounds, not a promise of
+eight-racer performance. Physical S24+ racing FPS and feel remain
+unmeasured until the owner tests the APK.
 
 **Night Shift scenario phone result (2026-09-29):** The owner played the
 published `56b7f0e` build on an S24+ and reports: "Flashlight worked great,

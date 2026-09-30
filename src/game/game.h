@@ -81,6 +81,7 @@ typedef enum {
     HTA_MODE_TEAM_SLAYER,
     HTA_MODE_CTF,
     HTA_MODE_SCENARIO,        /* host ends the round from a world objective */
+    HTA_MODE_RACING,          /* authored route and native arcade vehicles */
     HTA_MODE_COUNT
 } hta_game_mode;
 

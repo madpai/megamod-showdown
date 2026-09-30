@@ -5,6 +5,7 @@
 #include "app/host_net.h"
 #include "app/match_load.h"
 #include "app/session.h"
+#include "app/racing.h"
 #include "platform/platform.h"
 #include "script/script.h"
 #include <math.h>
@@ -242,7 +243,8 @@ void hta_session_tick(hta_session *s, float dt, double now, void (*unit_added)(h
      * dead come back and the score is kept. */
     if (s->game_on && authority) {
         world_interact(s);
-        hta_game_update(&s->game, dt);
+        if (s->game.mode==HTA_MODE_RACING) hta_racing_tick(s,dt);
+        else hta_game_update(&s->game, dt);
         hta_game_event e;
         while (hta_game_pop(&s->game, &e)) {
             hta_wfx_game_event(&s->wfx, &e, &s->game);
@@ -252,7 +254,7 @@ void hta_session_tick(hta_session *s, float dt, double now, void (*unit_added)(h
             if (s->outbox_count < sizeof(s->outbox) / sizeof(s->outbox[0]))
                 s->outbox[s->outbox_count++] = e;
         }
-        if (s->over_timer > 0.0f) {
+        if (s->game.mode!=HTA_MODE_RACING && s->over_timer > 0.0f) {
             s->over_timer -= dt;
             if (s->over_timer <= 0.0f) {
                 hta_match_nav_props(s);

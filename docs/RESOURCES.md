@@ -1,5 +1,13 @@
 # Resource identity, package dependencies and asset resources (X4, X5)
 
+**X10 Racing extension (2026-09-29):** Original worlds may carry a bounded
+`world_entities` schema 8 `racing` section. It identifies a typed vehicle
+model, finite tune, ordered checkpoint planes and recovery anchors, start
+grid and boost pads. OAL and the engine validate the same limits (eight
+racers, 32 gates, 16 pads). The section and its dependencies affect the
+compatibility world key; older schemas and fixture keys remain valid. See
+[RACING.md](RACING.md) for the mode and host authority.
+
 **Status:** X4 implemented 2026-09-27; **X5 (package-backed asset
 resources) implemented 2026-09-27** -- see "Asset resources (X5)" below.
 **X6 (prefabs) implemented 2026-09-27**: `prefab` is a supported,

@@ -783,7 +783,7 @@ bool hta_game_set_mode(hta_game *g, hta_game_mode mode)
     g->mode = mode;
     g->teams = mode == HTA_MODE_TEAM_SLAYER || mode == HTA_MODE_CTF;
     /* The mode's own limit; the caller may set another after. */
-    g->score_limit = mode == HTA_MODE_SCENARIO ? 0 :
+    g->score_limit = mode == HTA_MODE_SCENARIO || mode == HTA_MODE_RACING ? 0 :
                      mode == HTA_MODE_CTF ? HTA_CTF_SCORE_LIMIT : HTA_SLAYER_SCORE_LIMIT;
     return ok;
 }
@@ -844,7 +844,7 @@ void hta_game_start(hta_game *g)
     memset(g->drops, 0, sizeof(g->drops));
     for (uint32_t i = 0; i < HTA_VEHICLE_MAX; i++) g->vgun[i].last_driver = -1;
     hulls_reset(g);
-    if (g->mode == HTA_MODE_SCENARIO) return;
+    if (g->mode == HTA_MODE_SCENARIO || g->mode == HTA_MODE_RACING) return;
     char buf[96];
     hta_game_event e = { .kind = HTA_EV_ANNOUNCE, .a = -1, .b = -1,
                          .line = HTA_LINE_SLAYER, .for_local = true };
@@ -3030,6 +3030,7 @@ static void corpse_move(hta_game *g, hta_unit *u, float dt)
 void hta_game_update(hta_game *g, float dt)
 {
     if (!g || !g->loaded || dt <= 0.0f) return;
+    if (g->mode == HTA_MODE_RACING) return; /* racing owns movement and rules */
     if (dt > 0.1f) dt = 0.1f;
     if (!g->over) g->time += dt;
     /* Out of time: whoever is ahead wins. */

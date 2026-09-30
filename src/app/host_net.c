@@ -5,9 +5,11 @@
  * server run the same code. The one piece of presentation -- a joiner's
  * unit needs its look uploaded to the GPU -- is the platform's callback. */
 #include "host_net.h"
+#include "racing.h"
 #include "../platform/platform.h"
 #include "../script/script.h"
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
 
 void hta_host_peers(hta_session *s, double now, void (*unit_added)(hta_session *s))
@@ -17,6 +19,8 @@ void hta_host_peers(hta_session *s, double now, void (*unit_added)(hta_session *
         hta_net_peer *p=&s->host_server.peers[i];
         int32_t unit=s->peer_unit[i];
         if (!p->active) {
+            if (unit>=0 && unit!=s->me && (uint32_t)unit<HTA_RACE_MAX_RACERS)
+                hta_racing_leave(s,(uint8_t)unit);
             if (unit>=0 && unit!=s->me) hta_game_remove(&s->game,unit);
             s->peer_unit[i]=-1;
             s->peer_melee_seen[i]=s->peer_grenade_seen[i]=0;
@@ -40,6 +44,8 @@ void hta_host_peers(hta_session *s, double now, void (*unit_added)(hta_session *
             unit=hta_game_add(&s->game,HTA_UNIT_REMOTE,name,HTA_TEAM_AUTO);
             if (unit<0) continue;
             s->peer_unit[i]=(int8_t)unit;
+            if (s->game.mode==HTA_MODE_RACING && (uint32_t)unit<HTA_RACE_MAX_RACERS)
+                hta_racing_join(s,(uint8_t)unit); /* after GO: spectator until next race */
             s->peer_ready[i]=false;
             s->peer_class_reject[i]=false;
             if (!s->game.classes) hta_game_spawn(&s->game,unit);
@@ -89,6 +95,16 @@ void hta_host_peers(hta_session *s, double now, void (*unit_added)(hta_session *
         in->move.crouch=(c->flags&HTA_NET_DUCK)!=0;
         in->fire2=(c->flags&HTA_NET_ALT)!=0;
         in->move.look_yaw=in->move.look_pitch=0.0f;
+        if (s->game.mode==HTA_MODE_RACING) {
+            /* The selected character remains the peer's roster identity.
+             * Racing controls only drive the native vehicle; character
+             * flight, weapons and abilities cannot fire through it. */
+            in->move.fire=false;
+            in->fire2=false;
+            u->flying=false;
+            u->body.fly=false;
+            continue;
+        }
         if (s->peer_action_seen[i]!=c->action_count) {
             s->peer_action_seen[i]=c->action_count; in->action=true;
         }
@@ -308,6 +324,24 @@ void hta_host_world(hta_session *s)
     }
     if (s->wfx.ready)
         gm.prop_count=(uint16_t)hta_props_broken_mask(&s->wfx.props,gm.prop_broken,HTA_NET_MAX_PROPS);
+    if (s->game.mode==HTA_MODE_RACING) {
+        gm.race_phase=(uint8_t)s->race.phase;
+        gm.race_countdown=(uint8_t)fminf(30.0f,ceilf(fmaxf(0,s->race.countdown)*10.0f));
+        gm.race_elapsed=(uint16_t)fminf(60000.0f,s->race.elapsed*100.0f);
+        for (unsigned i=0;i<s->race.count && i<8;i++) {
+            const hta_race_entry *e=&s->race.racer[i];
+            if (!e->active) continue;
+            gm.race[i].lap=e->lap;
+            gm.race[i].next_gate=e->next_gate;
+            gm.race[i].flags=(uint8_t)(1u|(e->finished?2u:0u)|
+                                (s->race_car[i].drifting?4u:0u)|(e->wrong_way?8u:0u)|
+                                (s->race_car[i].boost_time>0?16u:0u));
+            gm.race[i].finish_order=e->finish_order;
+            gm.race[i].boost_tier=(uint8_t)(s->race_car[i].boost_time>0 ?
+                                           s->race_car[i].boost_tier : 0);
+            gm.race[i].position=(uint8_t)hta_race_position(&s->race,(uint8_t)i);
+        }
+    }
     hta_net_server_game(&s->host_server,&gm);
     /* The world's replicated state as it is now (X8): every mover's phase
      * and progress and every relay's flag, by replication index. A joiner,

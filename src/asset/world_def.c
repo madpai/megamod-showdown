@@ -10,6 +10,7 @@
 #include "package.h"
 #include "prefab.h"
 #include "resource.h"
+#include "../game/race.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -258,6 +259,148 @@ static bool fnum(rd *r, float *out)
     return true;
 }
 
+static bool vec2(rd *r, float out[2])
+{
+    if (!eat(r, '[')) return false;
+    for (int k=0;k<2;k++) {
+        double d;
+        if ((k && !eat(r, ',')) || !num(r,&d) || fabs(d)>HTA_WDEF_WORLD_LIMIT) return false;
+        out[k]=(float)d;
+    }
+    return eat(r,']');
+}
+
+static bool parse_race_gate(rd *r, hta_race_gate *g, char *err, size_t n)
+{
+    char key[32]; unsigned seen=0;
+    if (!eat(r,'{')) return failv(err,n,"racing gate: expected object");
+    if (!eat(r,'}')) do {
+        if (!str(r,key,sizeof(key)) || !eat(r,':')) return failv(err,n,"racing gate: malformed field");
+        static const char *const names[]={"id","position","forward","half_width","half_height","recovery","recovery_yaw"};
+        int k=0; while (k<7 && strcmp(key,names[k])) k++;
+        if (k==7 || (seen & (1u<<k))) return failv(err,n,"racing gate: unknown or repeated field '%s'",key);
+        seen|=1u<<k;
+        bool ok=k==0 ? str(r,g->id,sizeof(g->id)) : k==1 ? vec3(r,g->pos) :
+                k==2 ? vec2(r,g->forward) : k==3 ? fnum(r,&g->half_width) :
+                k==4 ? fnum(r,&g->half_height) : k==5 ? vec3(r,g->recovery) :
+                fnum(r,&g->recovery_yaw);
+        if (!ok) return failv(err,n,"racing gate: invalid %s",key);
+    } while (eat(r,','));
+    if (!eat(r,'}') || seen!=127u) return failv(err,n,"racing gate: missing field");
+    char why[128];
+    if (!hta_prefab_local_valid(g->id,"racing gate id",why,sizeof(why)))
+        return failv(err,n,"racing gate: %s",why);
+    return true;
+}
+
+static bool parse_race_grid(rd *r, float pos[3], float *yaw, char *err, size_t n)
+{
+    char key[24]; unsigned seen=0;
+    if (!eat(r,'{')) return failv(err,n,"racing grid: expected object");
+    if (!eat(r,'}')) do {
+        if (!str(r,key,sizeof(key)) || !eat(r,':')) return failv(err,n,"racing grid: malformed field");
+        int k=!strcmp(key,"position")?0:!strcmp(key,"yaw")?1:-1;
+        if (k<0 || (seen & (1u<<k))) return failv(err,n,"racing grid: unknown or repeated field '%s'",key);
+        seen|=1u<<k;
+        if (!(k==0?vec3(r,pos):fnum(r,yaw))) return failv(err,n,"racing grid: invalid %s",key);
+    } while (eat(r,','));
+    return eat(r,'}') && seen==3u ? true : failv(err,n,"racing grid: missing field");
+}
+
+static bool parse_race_pad(rd *r, hta_race_pad *p, char *err, size_t n)
+{
+    char key[24]; unsigned seen=0;
+    if (!eat(r,'{')) return failv(err,n,"racing pad: expected object");
+    if (!eat(r,'}')) do {
+        if (!str(r,key,sizeof(key)) || !eat(r,':')) return failv(err,n,"racing pad: malformed field");
+        int k=!strcmp(key,"position")?0:!strcmp(key,"radius")?1:-1;
+        if (k<0 || (seen & (1u<<k))) return failv(err,n,"racing pad: unknown or repeated field '%s'",key);
+        seen|=1u<<k;
+        if (!(k==0?vec3(r,p->pos):fnum(r,&p->radius))) return failv(err,n,"racing pad: invalid %s",key);
+    } while (eat(r,','));
+    return eat(r,'}') && seen==3u ? true : failv(err,n,"racing pad: missing field");
+}
+
+static bool parse_race_vehicle(rd *r, hta_arcade_tuning *t, char *err, size_t n)
+{
+    static const struct { const char *name; size_t off; } field[]={
+#define VF(name) {#name, offsetof(hta_arcade_tuning,name)}
+        VF(max_speed),VF(reverse_speed),VF(acceleration),VF(brake_acceleration),
+        VF(coast_drag),VF(grip),VF(drift_grip),VF(steer_low),VF(steer_high),
+        VF(steer_fade_speed),VF(drift_yaw),VF(boost_speed),VF(boost_acceleration),
+        VF(boost_seconds),VF(jump_gravity),VF(air_steer),VF(wall_restitution),
+        VF(wall_speed_loss),VF(radius),VF(height),VF(ground_clearance)
+#undef VF
+    };
+    char key[32]; uint32_t seen=0;
+    if (!eat(r,'{')) return failv(err,n,"racing vehicle: expected object");
+    if (!eat(r,'}')) do {
+        if (!str(r,key,sizeof(key)) || !eat(r,':')) return failv(err,n,"racing vehicle: malformed field");
+        unsigned k=0; while (k<sizeof(field)/sizeof(field[0]) && strcmp(key,field[k].name)) k++;
+        if (k==sizeof(field)/sizeof(field[0]) || (seen & (1u<<k)))
+            return failv(err,n,"racing vehicle: unknown or repeated field '%s'",key);
+        seen|=1u<<k;
+        if (!fnum(r,(float *)((uint8_t *)t+field[k].off))) return failv(err,n,"racing vehicle: invalid %s",key);
+    } while (eat(r,','));
+    if (!eat(r,'}') || !seen || !hta_arcade_tuning_valid(t))
+        return failv(err,n,"racing vehicle: tuning out of bounds");
+    return true;
+}
+
+static bool parse_racing(rd *r, hta_race_track *t, char *model, char *err, size_t n)
+{
+    char key[24]; unsigned seen=0;
+    t->vehicle=hta_arcade_default_tuning();
+    if (!eat(r,'{')) return failv(err,n,"racing: expected object");
+    if (!eat(r,'}')) do {
+        if (!str(r,key,sizeof(key)) || !eat(r,':')) return failv(err,n,"racing: malformed field");
+        int k=!strcmp(key,"laps")?0:!strcmp(key,"grid")?1:!strcmp(key,"gates")?2:
+              !strcmp(key,"pads")?3:!strcmp(key,"vehicle")?4:
+              !strcmp(key,"model")?5:-1;
+        if (k<0 || (seen & (1u<<k))) return failv(err,n,"racing: unknown or repeated field '%s'",key);
+        seen|=1u<<k;
+        if (k==0) {
+            double v; if (!num(r,&v) || v<1 || v>9 || floor(v)!=v) return failv(err,n,"racing: laps out of bounds");
+            t->lap_count=(uint8_t)v;
+        } else if (k==1) {
+            if (!eat(r,'[')) return failv(err,n,"racing: grid is not a list");
+            if (!eat(r,']')) {
+                do {
+                    if (t->grid_count>=HTA_RACE_MAX_RACERS) return failv(err,n,"racing: too many grid slots");
+                    unsigned at=t->grid_count++;
+                    if (!parse_race_grid(r,t->grid[at],&t->grid_yaw[at],err,n)) return false;
+                } while (eat(r,','));
+                if (!eat(r,']')) return failv(err,n,"racing: malformed grid");
+            }
+        } else if (k==2) {
+            if (!eat(r,'[')) return failv(err,n,"racing: gates is not a list");
+            if (!eat(r,']')) {
+                do {
+                    if (t->gate_count>=HTA_RACE_MAX_CHECKPOINTS) return failv(err,n,"racing: too many gates");
+                    if (!parse_race_gate(r,&t->gate[t->gate_count++],err,n)) return false;
+                } while (eat(r,','));
+                if (!eat(r,']')) return failv(err,n,"racing: malformed gates");
+            }
+        } else if (k==3) {
+            if (!eat(r,'[')) return failv(err,n,"racing: pads is not a list");
+            if (!eat(r,']')) {
+                do {
+                    if (t->pad_count>=HTA_RACE_MAX_PADS) return failv(err,n,"racing: too many pads");
+                    if (!parse_race_pad(r,&t->pad[t->pad_count++],err,n)) return false;
+                } while (eat(r,','));
+                if (!eat(r,']')) return failv(err,n,"racing: malformed pads");
+            }
+        } else if (k==4) {
+            if (!parse_race_vehicle(r,&t->vehicle,err,n)) return false;
+        } else if (!str(r,model,HTA_WDEF_ID_MAX+1)) return failv(err,n,"racing: invalid model reference");
+    } while (eat(r,','));
+    if (!eat(r,'}') || (seen & 7u)!=7u || !hta_race_track_valid(t))
+        return failv(err,n,"racing: invalid route, grid or vehicle");
+    for (unsigned i=0;i<t->gate_count;i++) for (unsigned j=0;j<i;j++)
+        if (!strcmp(t->gate[i].id,t->gate[j].id)) return failv(err,n,"racing: duplicate gate id %s",t->gate[i].id);
+    return true;
+}
+
 static int lookup(const char *const *names, int n, const char *s)
 {
     for (int i = 1; i < n; i++) if (!strcmp(names[i], s)) return i;
@@ -281,6 +424,7 @@ typedef struct {
     char  sound[HTA_WDEF_MAX_MOVER_DEFS][HTA_WDEF_ID_MAX + 1];    /* X5: a mover definition's sound */
     uint8_t has_sound[HTA_WDEF_MAX_MOVER_DEFS];
     char  ability[HTA_WDEF_ID_MAX + 1];
+    char  race_model[HTA_WDEF_ID_MAX + 1];
     char  api[HTA_WDEF_MAX_SCRIPTS][24];
     bool  has_ability;
     /* X6: authored props' transform (schema 5), prefab instances' prefab
@@ -759,6 +903,7 @@ static bool resolve_assets(hta_world_defs *d, pending *pend, const hta_pkg_set *
         d->asset_models = hta_pkg_set_asset_base(set, set->dep_count, HTA_RT_MODEL);
         d->asset_sounds = hta_pkg_set_asset_base(set, set->dep_count, HTA_RT_SOUND);
     }
+    any = any || (d->has_racing && pend->race_model[0]);
     if (!any) return true;
     if (d->schema < 4) return fail(err, n, "world_entities: props and sounds need schema 4%s%s", NULL, NULL);
     for (uint32_t i = 0; i < d->mover_def_count; i++) {
@@ -766,6 +911,12 @@ static bool resolve_assets(hta_world_defs *d, pending *pend, const hta_pkg_set *
         const hta_res_entry *e = hta_res_resolve(&pend->rs, HTA_REF_MOVER_SOUND, d->mover_def[i].id, pend->sound[i], err, n);
         if (!e) return false;
         d->mover_def[i].sound = (uint16_t)(e->index + 1u);
+    }
+    if (d->has_racing && pend->race_model[0]) {
+        const hta_res_entry *m=hta_res_resolve(&pend->rs,HTA_REF_PROP_MODEL,
+                                               "racing vehicle",pend->race_model,err,n);
+        if (!m || !hta_pkg_set_model(set,m->index)) return false;
+        d->racing.vehicle_model=(uint16_t)(m->index+1u);
     }
     for (uint32_t i = 0; i < d->count; i++) {
         hta_wdef *e = &d->entity[i];
@@ -1376,7 +1527,7 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
         if (!str(r, key, sizeof(key)) || !eat(r, ':')) return fail(err, n, "world_entities: malformed%s%s", NULL, NULL);
         if (!strcmp(key, "schema")) {
             double v;
-            if (!num(r, &v) || (v < 1.0 || v > 7.0 || floor(v) != v))
+            if (!num(r, &v) || (v < 1.0 || v > 8.0 || floor(v) != v))
                 return fail(err, n, "world_entities: unsupported schema%s%s", NULL, NULL);
             d->schema = (uint32_t)v;
             have_schema = true;
@@ -1422,6 +1573,9 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
                 if (!eat(r, ']')) return failv(err, n, "world_entities: malformed lights");
             }
             have_lights = true;
+        } else if (!strcmp(key, "racing")) {
+            if (d->has_racing || !parse_racing(r,&d->racing,pend.race_model,err,n)) return false;
+            d->has_racing=true;
         } else if (!strcmp(key, "ability_script")) {
             if (!str(r, pend.ability, sizeof(pend.ability))) return fail(err, n, "world_entities: malformed ability_script%s%s", NULL, NULL);
             pend.has_ability = true;
@@ -1433,6 +1587,8 @@ static bool parse_section(rd *r, hta_world_defs *d, const hta_pkg_set *set, char
         return fail(err, n, "world_entities: mover_definitions need schema 2%s%s", NULL, NULL);
     if ((have_environment || have_lights) && d->schema < 7)
         return failv(err, n, "world_entities: environment and lights need schema 7");
+    if (d->has_racing && d->schema < 8)
+        return failv(err,n,"world_entities: racing needs schema 8");
     /* IDs first, so a duplicate is reported as one, not as a link to it. */
     for (uint32_t i = 0; i < d->mover_def_count; i++) {
         if (!mover_id(d->mover_def[i].id))
@@ -1672,6 +1828,8 @@ bool hta_world_defs_check(const hta_world_defs *d, char *err, size_t n)
         return fail(err, n, "mover definitions over their limit%s%s", NULL, NULL);
     if (d->light_count > HTA_WDEF_MAX_LIGHTS || ((d->has_environment || d->light_count) && d->schema < 7))
         return failv(err, n, "world visual data exceeds the light limit or needs schema 7");
+    if (d->has_racing && (d->schema < 8 || !hta_race_track_valid(&d->racing)))
+        return failv(err,n,"world racing data invalid or needs schema 8");
     for (uint32_t i = 0; i < d->light_count; i++) {
         const hta_wlight_def *l = &d->light[i];
         if (!finite3(l->position, HTA_WDEF_WORLD_LIMIT) || !finite3(l->color, 1.0f) ||

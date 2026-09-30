@@ -56,6 +56,7 @@
 #include "../net/session.h"
 #include "../net/replication.h"
 #include "../game/game.h"
+#include "../game/race.h"
 #include "../game/view.h"
 #include "../game/nav.h"
 #include "../game/menu.h"
@@ -103,6 +104,25 @@
     hta_viewmodel vm;                                                                          \
     hta_collision col;                                                                         \
     hta_vehicles vehicles;                                                                     \
+    hta_race      race;                                                                         \
+    hta_arcade_racer race_car[HTA_RACE_MAX_RACERS];                                             \
+    hta_arcade_racer race_net_target[HTA_RACE_MAX_RACERS];                                      \
+    bool race_net_have[HTA_RACE_MAX_RACERS];                                                    \
+    float race_net_age;                                                                         \
+    hta_arcade_input race_local_input;                                                          \
+    bool race_reset_local;                                                                      \
+    bool race_reset_held[HTA_RACE_MAX_RACERS];                                                  \
+    bool race_cam_ready;                                                                        \
+    float race_ready_wait;                                                                      \
+    uint8_t race_net_position[HTA_RACE_MAX_RACERS];                                             \
+    hta_gfx_mesh *gpu_race_kart;                                                                \
+    float race_pad_wait[HTA_RACE_MAX_RACERS][HTA_RACE_MAX_PADS];                                \
+    uint32_t race_pad_hits[HTA_RACE_MAX_RACERS];                                                \
+    float race_peak_speed[HTA_RACE_MAX_RACERS];                                                 \
+    uint16_t race_sound[6];                                                                     \
+    bool race_audio_ready, race_audio_drift, race_audio_boost, race_audio_finished;             \
+    uint8_t race_audio_gate, race_audio_lap, race_audio_phase, race_audio_count, race_audio_charge; \
+    float race_audio_impact_wait;                                                               \
     /* One static mesh per vehicle type, drawn as rigid parts. */                              \
     hta_gfx_mesh *gpu_vtypes[HTA_VEHICLE_TYPES];                                               \
     int           vehicle_roster;     /* HTA_VROSTER_*, from the match setup */                \

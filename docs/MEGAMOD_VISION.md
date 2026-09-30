@@ -1,5 +1,12 @@
 # MegaMod Engine and Showdown vision — the north star
 
+**X10 landed evidence (2026-09-29):** The first [MegaMod Racing](RACING.md)
+slice now applies this direction to original content: native arcade vehicle
+mechanics, separate host-owned race rules, one shared roster identity and an
+OAL-authored kart/track. Its C Racing mode is a concrete production seam;
+Lua/data mode composition remains a direction. Physical S24+ racing feel and
+performance still await owner testing.
+
 **Read this before any major architectural decision** in this repository or
 in [Open Asset Lab](https://github.com/madpai/open-asset-lab) (its companion
 is `docs/ASSET_LAB_VISION.md` there). This is the canonical statement of

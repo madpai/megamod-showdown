@@ -11,7 +11,7 @@
  * (movers' spatial state, relays' logical flags) instead of a 6-bit entity
  * index, and the FX world sound names a 16-bit runtime object. v10 and v11
  * refuse each other (docs/WORLD_STATE.md "Protocol v11"). */
-#define HTA_NET_VERSION 12u
+#define HTA_NET_VERSION 13u
 #define HTA_NET_HEADER 20u
 #define HTA_NET_MAX_PACKET 1200u
 #define HTA_NET_MAX_PLAYERS 8u
@@ -243,7 +243,9 @@ bool hta_net_drops_unpack(const uint8_t *src, size_t len, hta_net_drops *d);
 /* v9: and which of the map's destructible props are broken, one bit
  * each, in the order both sides loaded them from the same map. */
 #define HTA_NET_MAX_PROPS 512u
-#define HTA_NET_GAME_BYTES (8u + 2u * 11u + HTA_NET_MAX_VEHICLES + 2u + HTA_NET_MAX_PROPS / 8u)
+#define HTA_NET_RACE_BYTES (4u + 8u * 6u)
+#define HTA_NET_GAME_BASE_BYTES (8u + 2u * 11u + HTA_NET_MAX_VEHICLES + 2u + HTA_NET_MAX_PROPS / 8u)
+#define HTA_NET_GAME_BYTES (HTA_NET_GAME_BASE_BYTES + HTA_NET_RACE_BYTES)
 enum { HTA_NET_FLAG_HOME = 0, HTA_NET_FLAG_CARRIED, HTA_NET_FLAG_DROPPED };
 enum { HTA_NET_GAME_CLASSES = 1, HTA_NET_GAME_DUPLICATES = 2 };
 typedef struct {
@@ -259,6 +261,10 @@ typedef struct {
     uint8_t hull[HTA_NET_MAX_VEHICLES];
     uint16_t prop_count;       /* <= HTA_NET_MAX_PROPS */
     uint8_t prop_broken[HTA_NET_MAX_PROPS / 8u];
+    /* v13: host-owned racing rules; inactive entries are zero. */
+    uint8_t race_phase, race_countdown; /* countdown in tenths */
+    uint16_t race_elapsed;              /* centiseconds */
+    struct { uint8_t lap, next_gate, flags, finish_order, boost_tier, position; } race[8];
 } hta_net_game;
 bool hta_net_game_pack(uint8_t *dst, size_t cap, const hta_net_game *g);
 bool hta_net_game_unpack(const uint8_t *src, size_t len, hta_net_game *g);

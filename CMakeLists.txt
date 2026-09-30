@@ -28,6 +28,7 @@ if(ANDROID)
         src/engine/camera.c
         src/engine/player.c
         src/engine/vehicle.c
+        src/engine/arcade_racer.c
         src/engine/gun.c
         src/engine/projectile.c
         src/engine/particle.c
@@ -57,6 +58,7 @@ if(ANDROID)
         src/app/content.c
         src/app/match_load.c
         src/app/session_tick.c
+        src/app/racing.c
         src/app/compat.c
         src/game/nav.c
         src/game/external_world.c
@@ -68,6 +70,7 @@ if(ANDROID)
         src/game/world_fx_gpu.c
         src/game/world_entities_gpu.c
         src/game/game.c
+        src/game/race.c
         src/game/brain.c
         src/game/view.c
         src/game/menu.c
@@ -106,7 +109,7 @@ else()
     target_include_directories(hta_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_options(hta_net PRIVATE -Wall -Wextra)
     # Host build: the portable engine only, plus its tests.
-    add_library(hta_engine STATIC src/engine/engine.c src/engine/camera.c src/engine/player.c src/engine/vehicle.c src/engine/gun.c
+    add_library(hta_engine STATIC src/engine/engine.c src/engine/camera.c src/engine/player.c src/engine/vehicle.c src/engine/arcade_racer.c src/engine/gun.c
         src/engine/projectile.c
         src/engine/particle.c
         src/engine/contrail.c
@@ -121,6 +124,7 @@ else()
         src/game/imported.c
         src/game/world_fx.c src/game/world_fx_audio.c src/game/world_sounds.c src/game/net_world_state.c
         src/game/game.c
+        src/game/race.c
         src/game/brain.c
         src/game/view.c
         src/game/menu.c
@@ -186,7 +190,7 @@ else()
     target_link_libraries(megamod-content PRIVATE hta_engine m)
     target_compile_options(megamod-content PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
     # A real match with no GPU and no player: the phone's load and start (app/match_load.h).
-    add_executable(megamod-match src/tools/match.c src/app/compat.c src/app/session_tick.c src/app/host_net.c src/app/match_load.c src/app/content.c src/app/fs.c src/platform/platform_posix.c)
+    add_executable(megamod-match src/tools/match.c src/app/compat.c src/app/session_tick.c src/app/racing.c src/app/host_net.c src/app/match_load.c src/app/content.c src/app/fs.c src/platform/platform_posix.c)
     target_link_libraries(megamod-match PRIVATE hta_engine hta_net m)
     target_compile_options(megamod-match PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
     add_executable(test_net_view tests/test_net_view.c)
@@ -293,6 +297,10 @@ else()
     target_link_libraries(test_vehicle PRIVATE hta_engine m)
     add_test(NAME vehicle COMMAND test_vehicle)
 
+    add_executable(test_racing_core tests/test_racing_core.c)
+    target_link_libraries(test_racing_core PRIVATE hta_engine m)
+    add_test(NAME racing_core COMMAND test_racing_core)
+
     add_executable(test_model tests/test_model.c)
     target_link_libraries(test_model PRIVATE hta_engine m)
     add_test(NAME model COMMAND test_model)
@@ -396,7 +404,7 @@ else()
     # The procedural sound bank as WAV files, to listen to.
     add_executable(megamod-sfxdump src/tools/sfxdump.c)
     target_link_libraries(megamod-sfxdump PRIVATE hta_engine m)
-    add_executable(test_host_net tests/test_host_net.c src/app/host_net.c src/platform/platform_posix.c)
+    add_executable(test_host_net tests/test_host_net.c src/app/host_net.c src/app/racing.c src/platform/platform_posix.c)
     target_link_libraries(test_host_net PRIVATE hta_engine hta_net m)
     add_test(NAME host_net COMMAND test_host_net)
     add_executable(test_agent tests/test_agent.c src/app/agent.c src/app/report.c)

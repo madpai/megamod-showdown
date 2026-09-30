@@ -8,6 +8,14 @@ Current priorities follow measured project needs and the
 [handoff](HANDOFF.md#current-testing-objective). X1–X9 are already landed;
 physical S24+ validation of X9 visuals and frame pacing is still pending.
 
+**X10 production evidence:** [MegaMod Racing](RACING.md) now has one native
+arcade vehicle capability, one concrete Racing mode, host-owned ordered
+checkpoint/lap rules and an original OAL track. This supports the proposed
+native mechanics/rules split without adding dynamic modules or Lua physics.
+The X10 development route and emulator load are verified; physical S24+
+handling and multiplayer feel remain unmeasured. Items, AI and Party remain
+future directions.
+
 **Showdown can be ridiculous. The engine must remain clean.**
 **MegaMod does not merge games. MegaMod learns reusable capabilities.**
 **Native capabilities simulate. Lua composes.**

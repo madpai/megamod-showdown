@@ -520,7 +520,7 @@ bool hta_net_drops_unpack(const uint8_t *src, size_t len, hta_net_drops *d)
 
 bool hta_net_game_pack(uint8_t *dst, size_t cap, const hta_net_game *g)
 {
-    if (!dst || !g || cap<HTA_NET_GAME_BYTES || g->mode>3) return false;
+    if (!dst || !g || cap<HTA_NET_GAME_BYTES || g->mode>4) return false;
     dst[0]=g->mode; dst[1]=g->score_limit;
     u16w(dst+2,(uint16_t)g->team_score[0]); u16w(dst+4,(uint16_t)g->team_score[1]);
     if (g->options & ~(HTA_NET_GAME_CLASSES | HTA_NET_GAME_DUPLICATES)) return false;
@@ -551,6 +551,16 @@ bool hta_net_game_pack(uint8_t *dst, size_t cap, const hta_net_game *g)
                      (uint8_t)((1u<<(g->prop_count-lo))-1u);
         pr[2+i]=g->prop_broken[i]&keep;
     }
+    uint8_t *race=dst+HTA_NET_GAME_BASE_BYTES;
+    if (g->race_phase>3 || g->race_countdown>30 || g->race_elapsed>60000) return false;
+    race[0]=g->race_phase; race[1]=g->race_countdown; u16w(race+2,g->race_elapsed);
+    for (unsigned i=0;i<8;i++) {
+        const uint8_t *e=(const uint8_t *)&g->race[i];
+        if (g->race[i].lap>9 || g->race[i].next_gate>32 ||
+            (g->race[i].flags&~31u) || g->race[i].finish_order>8 ||
+            g->race[i].boost_tier>3 || g->race[i].position>8) return false;
+        memcpy(race+4+i*6,e,6);
+    }
     return true;
 }
 
@@ -572,6 +582,9 @@ bool hta_net_game_unpack(const uint8_t *src, size_t len, hta_net_game *g)
     memcpy(tmp.hull,src+30,HTA_NET_MAX_VEHICLES);
     tmp.prop_count=u16r(src+30+HTA_NET_MAX_VEHICLES);
     memcpy(tmp.prop_broken,src+32+HTA_NET_MAX_VEHICLES,HTA_NET_MAX_PROPS/8u);
+    const uint8_t *race=src+HTA_NET_GAME_BASE_BYTES;
+    tmp.race_phase=race[0]; tmp.race_countdown=race[1]; tmp.race_elapsed=u16r(race+2);
+    for (unsigned i=0;i<8;i++) memcpy(&tmp.race[i],race+4+i*6,6);
     uint8_t check[HTA_NET_GAME_BYTES];
     if (!hta_net_game_pack(check,sizeof(check),&tmp) || memcmp(check,src,len)) return false;
     *g=tmp; return true;

@@ -342,8 +342,11 @@ size_t hta_resource_contract_json(char *buf, size_t cap)
             "\"bindings\": {\"schema\": 6, \"see\": \"bindings\"}, "
             "\"visual\": {\"schema\": 7, \"lights_max\": %u, \"active_max\": 8, "
             "\"light_types\": [\"point\", \"spot\"], \"dynamic_state\": \"optional relay ID reads X8 replicated logical state\", "
-            "\"environment\": [\"ambient\", \"clear\", \"fog_color\", \"fog_density\", \"fog_start\"]}},\n",
-            HTA_WDEF_MAX_LIGHTS);
+            "\"environment\": [\"ambient\", \"clear\", \"fog_color\", \"fog_density\", \"fog_start\"]}, "
+            "\"racing\": {\"schema\": 8, \"max_racers\": %u, \"max_gates\": %u, \"max_pads\": %u, "
+            "\"fields\": [\"laps\", \"grid\", \"gates\", \"pads\", \"vehicle\"], "
+            "\"authority\": \"host\", \"gate_order\": \"array order; gate 0 is finish and gate 1 is first expected\"}},\n",
+        HTA_WDEF_MAX_LIGHTS, HTA_RACE_MAX_RACERS, HTA_RACE_MAX_CHECKPOINTS, HTA_RACE_MAX_PADS);
     bindings_json(&o);
     world_state_json(&o);
     put(&o, "  \"scripts\": {\"api\": \"%s\", \"max_scripts\": %u, \"max_source_bytes\": %u, \"max_pool_bytes\": %u}\n}\n",

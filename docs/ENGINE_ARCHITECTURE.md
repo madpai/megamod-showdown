@@ -19,6 +19,16 @@ are useful seeds, **not** already clean modules. Extract a reusable boundary
 only when a concrete second consumer and measured costs justify it. This
 direction does not prescribe plugins, dynamic libraries or an ECS.
 
+**X10 landed boundary (2026-09-29):** [RACING.md](RACING.md) documents the
+first native arcade racing vehicle in `engine/arcade_racer.*`, separate
+host-owned ordered race rules in `game/race.*`, and the concrete Showdown
+adapter in `app/racing.*`. The OAL schema 8 racing section supplies a typed
+vehicle model and bounded tuning, grid, gate, pad and recovery data. This is
+one concrete mode, not a generic mode framework. Historical Trial vehicles
+remain in `engine/vehicle.*`. The app still opens a Halo-format cache during
+an original-world match. A public generated synthetic cache boots desktop
+Racing; an Android standalone bootstrap remains open.
+
 **Current-status note (2026-09-29):** the desktop extraction sequence below
 is a historical staged plan; use [HANDOFF](HANDOFF.md#current-testing-objective)
 for the current X1–X9 state. Night Shift now exercises original packages,

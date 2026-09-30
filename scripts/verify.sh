@@ -20,6 +20,7 @@ if ./build-host/test_net >/dev/null 2>&1; then ok "UDP protocol and two-client s
 if ./build-host/test_world_state >/dev/null 2>&1; then ok "X8 large world: runtime identity, relays, late join, codec and limits"; else bad "X8 large world: runtime identity, relays, late join, codec and limits"; fi
 if ./build-host/test_cache  >/dev/null 2>&1; then ok "cache parser tests";  else bad "cache parser tests"; fi
 if ./build-host/test_vehicle >/dev/null 2>&1; then ok "vehicle driving and collision tests"; else bad "vehicle driving and collision tests"; fi
+if ./build-host/test_racing_core >/dev/null 2>&1; then ok "X10 native arcade handling, drift boost and ordered race rules"; else bad "X10 native arcade handling, drift boost and ordered race rules"; fi
 if ./build-host/test_model >/dev/null 2>&1; then ok "model UV and lighting tests"; else bad "model UV and lighting tests"; fi
 if ./build-host/test_bsp    >/dev/null 2>&1; then ok "bsp extraction tests"; else bad "bsp extraction tests"; fi
 if ./build-host/test_external_map >/dev/null 2>&1; then ok "external map package loader and collision"; else bad "external map package loader and collision"; fi
@@ -117,6 +118,9 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
     if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_x9.sh > scratch/test_x9.log 2>&1; then
       ok "X9 Night Shift: authored visuals and X8 gameplay, host actions, late join"
     else bad "X9 Night Shift: authored visuals and X8 gameplay, host actions, late join"; fi
+    if HTA_TRIAL_DIR="$(dirname "$HTA_MAP")" scripts/test_racing.sh > scratch/test_racing.log 2>&1; then
+      ok "X10 Racing: original track and kart, full route, multiplayer and compatibility refusal"
+    else bad "X10 Racing: original track and kart, full route, multiplayer and compatibility refusal"; fi
   fi
   if ./build-host/test_particle "$HTA_MAP" >/dev/null 2>&1; then ok "effect particles from the effect tags"; else bad "effect particles from the effect tags"; fi
   if ./build-host/test_vitals "$HTA_MAP" >/dev/null 2>&1; then ok "vitality and falling from the Trial tags"; else bad "vitality and falling from the Trial tags"; fi
@@ -130,6 +134,15 @@ if [ -n "$HTA_MAP" ] && [ -f "$HTA_MAP" ]; then
   if ./build-host/test_contrail "$HTA_MAP" >/dev/null 2>&1; then ok "tracers and trails from the Trial's contrails"; else bad "tracers and trails from the Trial's contrails"; fi
   if ./build-host/test_shake "$HTA_MAP" >/dev/null 2>&1; then ok "blasts and cannons shake the camera; one tracer in four"; else bad "blasts and cannons shake the camera; one tracer in four"; fi
   if ./build-host/test_ride   "$HTA_MAP" >/dev/null 2>&1; then ok "players drive, gun, splatter and bail from every vehicle"; else bad "players drive, gun, splatter and bail from every vehicle"; fi
+fi
+
+# The X10 project also runs with a generated public bootstrap cache when no
+# private Trial data is supplied. Keep the real-asset run above when present.
+if { [ -z "$HTA_MAP" ] || [ ! -f "$HTA_MAP" ]; } &&
+   [ -d "${OAL_DIR:-../open-asset-lab}/assetlab" ]; then
+  if scripts/test_racing.sh > scratch/test_racing.log 2>&1; then
+    ok "X10 Racing: public original content, full route and multiplayer"
+  else bad "X10 Racing: public original content, full route and multiplayer"; fi
 fi
 
 # Optional: validate against the user's own Trial data if HTA_MAP points at it.

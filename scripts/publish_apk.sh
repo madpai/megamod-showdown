@@ -112,7 +112,9 @@ if [ -n "$SYM" ]; then cp "$SYM" "$ROOT/symbols/libhta_native-$SOURCE.so"; echo 
 # Materialize the copy before Gradle cleans its source; verify before
 # replacing the served APK so a failed read cannot publish a broken file.
 cp --reflink=never "$APK" "$ROOT/megamod-showdown.apk.tmp"
-sha256sum "$ROOT/megamod-showdown.apk.tmp" >/dev/null
+cmp -s "$APK" "$ROOT/megamod-showdown.apk.tmp" || {
+  echo "personal APK copy differs from $APK" >&2; exit 1;
+}
 mv "$ROOT/megamod-showdown.apk.tmp" "$ROOT/megamod-showdown.apk"
 
 # A guest needs the same code but must import their own Trial data. Build and
@@ -125,6 +127,9 @@ if [ "$BUILD" = 1 ] && [ "$WITH_ASSETS" = 1 ]; then
     echo "guest APK unexpectedly contains Trial maps" >&2; exit 1
   fi
   cp "$APK" "$ROOT/megamod-showdown-guest.apk"
+  cmp -s "$APK" "$ROOT/megamod-showdown-guest.apk" || {
+    echo "guest APK copy differs from $APK" >&2; exit 1;
+  }
 fi
 
 # Hashes so the phone can confirm it got the build you meant.

@@ -1879,12 +1879,15 @@ static bool load_map(hta_android *s)
     s->held_slot = 0;
     if (s->held_count) equip_weapon(s, s->held[0]);
     else hta_log("[weapon] nothing to hold");
-    if (hta_sky_load(&s->sky, &s->cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL, err, sizeof(err))) {
+    /* Racing's authored X9 environment supplies its own sky colour. The
+     * Trial sky geometry belongs to the compatibility map, not this track. */
+    if (s->game_mode!=HTA_MODE_RACING &&
+        hta_sky_load(&s->sky, &s->cache, s->bitmaps_rm.data ? &s->bitmaps_rm : NULL, err, sizeof(err))) {
         s->have_sky = true;
         hta_log("[assets] sky %u verts / %u submeshes", s->sky.vertex_count, s->sky.submesh_count);
-    } else {
+    } else if (s->game_mode!=HTA_MODE_RACING) {
         hta_log("[assets] sky: %s", err);
-    }
+    } else s->have_sky=false;
 
     /* spawn at a real player start if the scenario has one. Kept, because
      * dying means coming back at another one. */
@@ -2355,7 +2358,7 @@ static void start_game(hta_android *s)
      * the match's units, so it would stand there unhittable and walked
      * through -- with no bots as much as with them. */
     hta_bot_free(&s->bot);
-    static const char *const MODES[HTA_MODE_COUNT] = { "Slayer", "Team Slayer", "CTF", "Scenario" };
+    static const char *const MODES[HTA_MODE_COUNT] = { "Slayer", "Team Slayer", "CTF", "Scenario", "Racing" };
     hta_log("[game] %s: you (team %d) and %d bot(s) at skill %d, first to %d, %d min, respawn %.0f s",
             MODES[s->game.mode], s->game.units[s->me].team, bots, s->bot_skill,
             s->game.score_limit, s->time_limit_min, s->respawn_delay);
@@ -2387,6 +2390,7 @@ static void game_gpu_upload(hta_android *s)
 
 static void game_gpu_free(hta_android *s)
 {
+    if (s->gpu_race_kart) { hta_gfx_mesh_free(s->gfx,s->gpu_race_kart); s->gpu_race_kart=NULL; }
     for (uint32_t i = 0; i < HTA_GAME_MAX_UNITS; i++)
         if (s->gpu_units[i]) { hta_gfx_mesh_free(s->gfx, s->gpu_units[i]); s->gpu_units[i] = NULL; }
     for (uint32_t w = 0; w < HTA_GAME_MAX_WEAPONS; w++)
@@ -3006,6 +3010,41 @@ static void game_events(hta_android *s)
 static void game_text(hta_android *s, float dt)
 {
     if (!s->game_on) { g_game_text[0] = 0; return; }
+    if (s->game.mode==HTA_MODE_RACING) {
+        unsigned me=s->me>=0 && s->me<(int)HTA_RACE_MAX_RACERS ? (unsigned)s->me : 0;
+        const hta_arcade_racer *car=&s->race_car[me];
+        const hta_race_entry *e=&s->race.racer[me];
+        unsigned rank=s->net_enabled && !s->net_hosting ? s->race_net_position[me] :
+                      hta_race_position(&s->race,(uint8_t)me);
+        unsigned active=0;
+        for (unsigned i=0;i<s->race.count;i++) active+=s->race.racer[i].active;
+        char result[64]="";
+        if (e->finished) {
+            if (!s->net_enabled || s->net_hosting)
+                snprintf(result,sizeof(result),"FINISHED %u / %u  %.1fs",
+                         e->finish_order,active,e->finish_time);
+            else snprintf(result,sizeof(result),"FINISHED %u / %u",
+                          e->finish_order,active);
+        }
+        const char *banner=!e->active ? "SPECTATING" : s->race.phase==HTA_RACE_COUNTDOWN ?
+            s->race.countdown>2 ? "3" : s->race.countdown>1 ? "2" : "1" :
+            s->race.phase==HTA_RACE_READY ? "READY" :
+            s->race.phase==HTA_RACE_RESULTS ? "RESULTS" :
+            e->finished ? result : s->race.elapsed<1 ? "GO" : "";
+        float speed=hypotf(car->vel[0],car->vel[1]);
+        unsigned charge=hta_arcade_charge_tier(car);
+        char drift_state[32]="";
+        if (car->drifting) snprintf(drift_state,sizeof(drift_state),"DRIFT %s",
+                                     charge==3 ? "+++" : charge==2 ? "++" : charge==1 ? "+" : "");
+        else if (car->boost_time>0) snprintf(drift_state,sizeof(drift_state),"BOOST %s",
+                                              car->boost_tier==3 ? "+++" : car->boost_tier==2 ? "++" : "+");
+        snprintf(g_game_text,sizeof(g_game_text),
+                 "%s\x1e%u / %u    LAP %u/%u    %3.0f km/h    %s\x1e\x1e\x1e%s\x1e",
+                 banner,rank,active,e->lap,s->race.track.lap_count,speed*10.973f,
+                 e->wrong_way ? "WRONG WAY" : e->finished ? "FINISHED" : "",
+                 drift_state);
+        return;
+    }
     s->banner_age += dt;
     for (int i = 0; i < 4; i++) s->feed_age[i] += dt;
     char place[96] = "";
@@ -3357,6 +3396,7 @@ static int32_t view_skip(const hta_android *s)
 static uint32_t game_draw(hta_android *s, hta_gfx_dynamic *dyn, uint32_t n)
 {
     if (!s->game_on || !s->gfx) return n;
+    if (s->game.mode==HTA_MODE_RACING) return n; /* seated body fallback: identity remains in game/net */
     for (uint32_t i = 0; i < s->game.unit_count && n < HTA_GFX_MAX_DYNAMIC; i++) {
         if ((int32_t)i == view_skip(s) || !s->gview.shown[i] || !s->gpu_units[i])
             continue;
@@ -3447,6 +3487,32 @@ static void vehicles_draw(hta_android *s)
         in->first_submesh = parts[i].first_submesh;
         in->submesh_count = parts[i].submesh_count;
         in->lit = true;
+    }
+}
+
+static void racing_draw(hta_android *s)
+{
+    if (!s->game_on || s->game.mode!=HTA_MODE_RACING || !s->gfx ||
+        !s->race.track.vehicle_model) return;
+    uint32_t model=s->race.track.vehicle_model-1u;
+    if (model>=s->world_ext.assets.model_count) return;
+    if (!s->gpu_race_kart) {
+        char err[HTA_ERRLEN];
+        s->gpu_race_kart=hta_gfx_mesh_upload(s->gfx,&s->world_ext.assets.model[model].mesh,err,sizeof(err));
+        if (!s->gpu_race_kart) { hta_log("[race] kart upload: %s",err); return; }
+    }
+    for (unsigned i=0;i<s->race.count && g_inst_count<HTA_GFX_MAX_INSTANCES;i++) {
+        if (!s->race.racer[i].active || i>=s->game.unit_count) continue;
+        const hta_arcade_racer *r=&s->race_car[i];
+        float cy=cosf(r->yaw),sy=sinf(r->yaw),cp=cosf(r->pitch),sp=sinf(r->pitch);
+        float cr=cosf(r->roll),sr=sinf(r->roll);
+        hta_gfx_instance *in=&g_inst[g_inst_count++];
+        memset(in,0,sizeof(*in)); in->mesh=s->gpu_race_kart; in->lit=true;
+        float *m=in->model;
+        m[0]=cy*cp; m[1]=sy*cp; m[2]=-sp;
+        m[4]=cy*sp*sr-sy*cr; m[5]=sy*sp*sr+cy*cr; m[6]=cp*sr;
+        m[8]=cy*sp*cr+sy*sr; m[9]=sy*sp*cr-cy*sr; m[10]=cp*cr;
+        m[12]=r->pos[0]; m[13]=r->pos[1]; m[14]=r->pos[2]; m[15]=1;
     }
 }
 
@@ -4748,6 +4814,7 @@ static void net_client_world(hta_android *s)
         s->banner[0]=0; s->over_timer=0.0f;
     }
     s->world_applied_tick=s->net.last_world_tick;
+    if (s->game.mode==HTA_MODE_RACING) s->race_net_age=0;
     s->bot_count=w->bot_count;
     bool was_over=s->game.over;
     s->game.time=w->time; s->game.over=w->over!=0;
@@ -4821,6 +4888,21 @@ static void net_client_world(hta_android *s)
             for (int k=0;k<3;k++) u->eye.pos[k]=e->pos[k];
             u->eye.pos[2]+=u->body.eye_height;
         }
+        if (s->game.mode==HTA_MODE_RACING && idx<(int32_t)HTA_RACE_MAX_RACERS) {
+            hta_arcade_racer *car=&s->race_net_target[idx];
+            for (int k=0;k<3;k++) {
+                car->pos[k]=e->pos[k];
+                if (k<2) car->vel[k]=e->velocity[k];
+                u->body.pos[k]=e->pos[k];
+            }
+            car->yaw=e->yaw; car->pitch=e->pitch;
+            car->grounded=(e->flags&HTA_NET_ENTITY_GROUNDED)!=0;
+            u->body.velocity[0]=e->velocity[0]; u->body.velocity[1]=e->velocity[1];
+            if (!s->race_net_have[idx]) {
+                s->race_car[idx]=*car;
+                s->race_net_have[idx]=true;
+            }
+        }
         if (idx==s->me && !u->alive && !s->dead) u->vitals.died=true;
         if (u->alive &&
             e->health+e->shield < u->vitals.health+u->vitals.shield-0.01f) {
@@ -4844,7 +4926,7 @@ static void net_client_world(hta_android *s)
             float dy=e->pos[1]-s->player.pos[1];
             float dz=e->pos[2]-s->player.pos[2];
             float dist=sqrtf(dx*dx+dy*dy+dz*dz);
-            float f=dist>0.5f || !s->net_spawned ? 1.0f : 0.12f;
+            float f=s->game.mode==HTA_MODE_RACING || dist>0.5f || !s->net_spawned ? 1.0f : 0.12f;
             for (int k=0;k<3;k++) {
                 float delta=(e->pos[k]-s->player.pos[k])*f;
                 s->player.pos[k]+=delta;
@@ -5051,6 +5133,29 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
         if (mode!=s->game.mode) hta_log("[net] the host plays mode %d",(int)mode);
         hta_game_mirror_rules(&s->game,mode,gm->score_limit,sc,
                               gm->winner_team==255 ? -1 : gm->winner_team,fl);
+        if (mode==HTA_MODE_RACING && s->race.track.gate_count) {
+            s->race.phase=(hta_race_phase)gm->race_phase;
+            s->race.countdown=(float)gm->race_countdown*0.1f;
+            s->race.elapsed=(float)gm->race_elapsed*0.01f;
+            s->race.count=0; s->race.finished_count=0;
+            for (unsigned i=0;i<HTA_RACE_MAX_RACERS;i++) {
+                hta_race_entry *e=&s->race.racer[i];
+                e->active=(gm->race[i].flags&1u)!=0;
+                e->finished=(gm->race[i].flags&2u)!=0;
+                e->wrong_way=(gm->race[i].flags&8u)!=0;
+                e->lap=gm->race[i].lap;
+                e->next_gate=gm->race[i].next_gate;
+                e->finish_order=gm->race[i].finish_order;
+                s->race_car[i].drifting=(gm->race[i].flags&4u)!=0;
+                s->race_car[i].boost_tier=gm->race[i].boost_tier;
+                s->race_car[i].boost_time=(gm->race[i].flags&16u) ? 0.2f : 0;
+                s->race_net_position[i]=gm->race[i].position;
+                if (e->active) {
+                    s->race.count=(uint8_t)(i+1);
+                    s->race.finished_count+=e->finished;
+                }
+            }
+        }
         /* The host's props: what it broke breaks here, what it rebuilt
          * comes back. The first sync after joining is quiet. */
         if (s->wfx.ready) {
@@ -5103,7 +5208,8 @@ static void net_frame(hta_android *s, double now, float dt, const hta_player_inp
     if (s->net.connected && now-s->net_last_send>=0.05) {
         hta_net_control c={0};
         c.id=s->net.id; c.weapon_slot=(uint8_t)(s->held_slot&1u);
-        c.forward=in->move_forward; c.right=in->move_right;
+        c.forward=s->game.mode==HTA_MODE_RACING ? s->race_local_input.throttle : in->move_forward;
+        c.right=in->move_right;
         c.yaw=s->cam.yaw; c.pitch=s->cam.pitch;
         if (in->jump) c.flags|=HTA_NET_JUMP;
         if (in->fire || s->veh_fire) c.flags|=HTA_NET_TRIGGER;
@@ -5563,6 +5669,136 @@ static void vehicle_camera(hta_android *s)
                    !(v->kind == HTA_VK_TANK && st && (st->flags & HTA_SEAT_DRIVER));
 }
 
+static void racing_camera(hta_android *s, float dt)
+{
+    if (!s->game_on || s->game.mode!=HTA_MODE_RACING || s->me<0 ||
+        s->me>=(int)HTA_RACE_MAX_RACERS) return;
+    unsigned watch=(unsigned)s->me;
+    if (!s->race.racer[watch].active)
+        for (unsigned i=0;i<s->race.count;i++) if (s->race.racer[i].active) {
+            watch=i; break;
+        }
+    const hta_arcade_racer *r=&s->race_car[watch];
+    float speed=hypotf(r->vel[0],r->vel[1]);
+    float blend=fminf(1.0f,fmaxf(0.0f,dt)*8.0f);
+    if (!s->race_cam_ready) { s->cam.yaw=r->yaw; s->race_cam_ready=true; blend=1; }
+    s->cam.yaw+=remainderf(r->yaw-s->cam.yaw,6.28318530718f)*blend;
+    s->cam.pitch=-0.08f;
+    float back=3.6f+fminf(speed,55.0f)*0.035f;
+    s->cam.pos[0]=r->pos[0]-cosf(s->cam.yaw)*back;
+    s->cam.pos[1]=r->pos[1]-sinf(s->cam.yaw)*back;
+    s->cam.pos[2]=r->pos[2]+1.6f+fminf(speed,55.0f)*0.012f;
+    s->cam.fov_y=1.12f+fminf(speed/55.0f,1.0f)*0.18f+
+                  (r->boost_time>0 ? 0.05f : 0.0f);
+    s->show_self=false;
+    for (int k=0;k<3;k++) {
+        s->player.pos[k]=r->pos[k]; s->player.velocity[k]=r->vel[k];
+    }
+}
+
+/* The track package owns these original clips. Resolve them once per world;
+ * only the local presentation plays them, from host-replicated state. */
+static void racing_audio(hta_android *s, float dt)
+{
+    enum { ENGINE, DRIFT, BOOST, IMPACT, CHECKPOINT, FINISH, COUNT };
+    const uint32_t loop_id=0x52414345u;
+    if (!s->audio_ok || !s->game_on || s->game.mode!=HTA_MODE_RACING ||
+        s->me<0 || s->me>=(int)HTA_RACE_MAX_RACERS) {
+        if (s->audio_ok) hta_audio_loop_stop(&s->audio,loop_id);
+        return;
+    }
+    if (!s->race_audio_ready) {
+        static const char *id[COUNT]={
+            "racing:sound/engine_loop","racing:sound/drift","racing:sound/boost",
+            "racing:sound/impact","racing:sound/checkpoint","racing:sound/finish"};
+        memset(s->race_sound,0,sizeof(s->race_sound));
+        for (unsigned i=0;i<s->world_ext.assets.sound_count;i++)
+            for (unsigned k=0;k<COUNT;k++)
+                if (!strcmp(s->world_ext.assets.sound[i].id,id[k]))
+                    s->race_sound[k]=(uint16_t)(i+1);
+        const hta_race_entry *e=&s->race.racer[s->me];
+        s->race_audio_gate=e->next_gate;
+        s->race_audio_lap=e->lap;
+        s->race_audio_phase=(uint8_t)s->race.phase;
+        s->race_audio_count=(uint8_t)ceilf(s->race.countdown);
+        s->race_audio_drift=s->race_car[s->me].drifting;
+        s->race_audio_charge=(uint8_t)hta_arcade_charge_tier(&s->race_car[s->me]);
+        s->race_audio_boost=s->race_car[s->me].boost_time>0;
+        s->race_audio_finished=e->finished;
+        s->race_audio_ready=true;
+    }
+    uint32_t clip[COUNT];
+    for (unsigned k=0;k<COUNT;k++) {
+        uint16_t v=s->race_sound[k];
+        clip[k]=v && v-1<HTA_RES_MAX ? s->world_sounds.clip_of[v-1] : HTA_AUDIO_NO_CLIP;
+    }
+    const hta_race_entry *e=&s->race.racer[s->me];
+    const hta_arcade_racer *car=&s->race_car[s->me];
+    float speed=hypotf(car->vel[0],car->vel[1]);
+    uint8_t count=(uint8_t)ceilf(s->race.countdown);
+    if (s->race.phase==HTA_RACE_COUNTDOWN && count!=s->race_audio_count &&
+        clip[CHECKPOINT]!=HTA_AUDIO_NO_CLIP)
+        hta_audio_play(&s->audio,clip[CHECKPOINT],0.65f);
+    if (s->race.phase==HTA_RACE_GO && s->race_audio_phase==HTA_RACE_COUNTDOWN &&
+        clip[BOOST]!=HTA_AUDIO_NO_CLIP)
+        hta_audio_play(&s->audio,clip[BOOST],0.9f);
+    if (e->active && s->race.phase==HTA_RACE_GO && !e->finished &&
+        clip[ENGINE]!=HTA_AUDIO_NO_CLIP)
+        hta_audio_loop_ex(&s->audio,loop_id,clip[ENGINE],0.27f,0,
+                          0.75f+fminf(speed/55.0f,1.0f)*1.15f);
+    else hta_audio_loop_stop(&s->audio,loop_id);
+    if (e->active && s->race.phase==HTA_RACE_GO) {
+        if (car->drifting && !s->race_audio_drift && clip[DRIFT]!=HTA_AUDIO_NO_CLIP)
+            hta_audio_play(&s->audio,clip[DRIFT],0.55f);
+        unsigned charge=hta_arcade_charge_tier(car);
+        if (charge>s->race_audio_charge && clip[DRIFT]!=HTA_AUDIO_NO_CLIP)
+            hta_audio_play(&s->audio,clip[DRIFT],0.28f+0.12f*charge);
+        if (car->boost_time>0 && !s->race_audio_boost && clip[BOOST]!=HTA_AUDIO_NO_CLIP)
+            hta_audio_play(&s->audio,clip[BOOST],0.75f);
+        if ((e->next_gate!=s->race_audio_gate || e->lap!=s->race_audio_lap) &&
+            clip[CHECKPOINT]!=HTA_AUDIO_NO_CLIP)
+            hta_audio_play(&s->audio,clip[CHECKPOINT],0.58f);
+        if (car->collision_speed>8 && s->race_audio_impact_wait<=0 &&
+            clip[IMPACT]!=HTA_AUDIO_NO_CLIP) {
+            hta_audio_play(&s->audio,clip[IMPACT],0.65f);
+            s->race_audio_impact_wait=0.25f;
+        }
+    }
+    if (e->finished && !s->race_audio_finished &&
+        clip[FINISH]!=HTA_AUDIO_NO_CLIP)
+        hta_audio_play(&s->audio,clip[FINISH],0.9f);
+    s->race_audio_impact_wait=fmaxf(0,s->race_audio_impact_wait-fmaxf(0,dt));
+    s->race_audio_gate=e->next_gate;
+    s->race_audio_lap=e->lap;
+    s->race_audio_phase=(uint8_t)s->race.phase;
+    s->race_audio_count=count;
+    s->race_audio_drift=car->drifting;
+    s->race_audio_charge=(uint8_t)hta_arcade_charge_tier(car);
+    s->race_audio_boost=car->boost_time>0;
+    s->race_audio_finished=e->finished;
+}
+
+static void racing_client_interpolate(hta_android *s, float dt)
+{
+    if (!s->game_on || s->game.mode!=HTA_MODE_RACING || !s->net_enabled ||
+        s->net_hosting) return;
+    s->race_net_age=fminf(0.1f,s->race_net_age+fmaxf(0,dt));
+    float blend=fminf(1.0f,fmaxf(0,dt)*28.0f);
+    for (unsigned i=0;i<HTA_RACE_MAX_RACERS;i++) if (s->race_net_have[i]) {
+        hta_arcade_racer *car=&s->race_car[i];
+        const hta_arcade_racer *target=&s->race_net_target[i];
+        float want[3]={target->pos[0]+target->vel[0]*s->race_net_age,
+                       target->pos[1]+target->vel[1]*s->race_net_age,target->pos[2]};
+        float dist=hypotf(want[0]-car->pos[0],want[1]-car->pos[1]);
+        float f=dist>10 ? 1.0f : blend;
+        for (int k=0;k<3;k++) car->pos[k]+=(want[k]-car->pos[k])*f;
+        car->yaw+=remainderf(target->yaw-car->yaw,6.28318530718f)*f;
+        car->pitch+=(target->pitch-car->pitch)*f;
+        for (int k=0;k<3;k++) car->vel[k]=target->vel[k];
+        car->grounded=target->grounded;
+    }
+}
+
 /* On a broom: out of your body and behind it, the way a Banshee's camera
  * rides, kept out of walls. Shots still leave from your eyes. Ours. */
 #define BROOM_CAM_BACK  1.25f
@@ -5731,6 +5967,11 @@ static void vehicle_transition(hta_android *s)
  * seat you are in. */
 static void vehicle_status(hta_android *s, bool seated, int32_t near_car, int32_t near_seat)
 {
+    if (s->game_on && s->game.mode==HTA_MODE_RACING) {
+        snprintf(g_vehicle_text,sizeof(g_vehicle_text),"HYPERKART  |  LEFT STICK STEER/BRAKE/REV  |  GAS + DRIFT");
+        atomic_store(&g_vehicle_mode,6);
+        return;
+    }
     int mode = 0;
     char text[96] = "";
     if (seated) {
@@ -5897,6 +6138,19 @@ void android_main(struct android_app *app)
          * hta_player_update with a blank input keeps gravity and the ground
          * query -- so dying on a slope still slides you down it. */
         if (state.dead) memset(&in, 0, sizeof(in));
+        if (state.game_on && state.game.mode==HTA_MODE_RACING) {
+            state.race_local_input=(hta_arcade_input){
+                .throttle=in.fire ? 1.0f : in.move_forward,
+                .steer=in.move_right,
+                .brake=!in.fire && in.move_forward < -0.15f,
+                .drift=in.crouch
+            };
+            state.race_reset_local=in.jump;
+            in.fire=false; /* FIRE is the gas pedal here; no character weapon */
+            state.hud_swap=state.hud_zoom=state.hud_melee=false;
+            state.hud_grenade=state.hud_reload=state.hud_ability=false;
+            state.power_fly=false;
+        }
 
         /* The flag: the game puts it in this player's hands, and takes it
          * away on a capture, a death or a drop. The gun goes to the belt
@@ -6052,9 +6306,12 @@ void android_main(struct android_app *app)
                            (!swung && state.ammo.recharge <= 0.0f && state.ammo.reserve_max > 0 ? 8 : 0) |
                            (swung ? 16 : 0) | (state.nade_count > 0 ? 32 : 0) | (near_use ? 256 : 0) |
                            (state.game.mode == HTA_MODE_SCENARIO ? 512 : 0);
+                if (state.game.mode==HTA_MODE_RACING) caps=0;
                 atomic_store(&g_hud_caps, caps);
             }
-            if (state.dead) {
+            if (state.game.mode==HTA_MODE_RACING) {
+                state.player.footstep=state.player.landed=false;
+            } else if (state.dead) {
                 hta_player_corpse_update(&state.player,state.col.built ? &state.col : NULL,state.player.gravity,dt);
                 for (int k=0;k<3;k++) state.cam.pos[k]=state.player.pos[k];
                 state.cam.pos[2]+=state.player.eye_height;
@@ -7105,10 +7362,13 @@ void android_main(struct android_app *app)
         hta_particles_update(&state.parts, state.col.built ? &state.col : NULL,
                              &state.cam, dt);
         net_frame(&state,now,dt,&in);
+        racing_client_interpolate(&state,dt);
         hero_occupancy(&state);
         vehicle_transition(&state);
         vehicle_camera(&state);
         broom_camera(&state);
+        racing_camera(&state,dt);
+        racing_audio(&state,dt);
         vehicle_sounds(&state);
         flight_music(&state);
         if (state.trails.loaded) {
@@ -7172,7 +7432,7 @@ void android_main(struct android_app *app)
             memset(&vmdraw, 0, sizeof(vmdraw));
             hta_gfx_overlay huddraw;
             memset(&huddraw, 0, sizeof(huddraw));
-            if (state.gpu_hud) {
+            if (state.gpu_hud && state.game.mode!=HTA_MODE_RACING) {
                 uint32_t ew = 0, eh = 0;
                 hta_gfx_extent(state.gfx, &ew, &eh);
                 state.hud.presentation_scale = state.world_loaded &&
@@ -7190,7 +7450,8 @@ void android_main(struct android_app *app)
              * off the screen entirely while zoomed. Without this the sniper
              * reads as a magnified view with a rifle in front of it. */
             /* And a corpse is not holding it either. */
-            bool fp_weapon = (!driving || (armed_seat && !state.show_self)) && !state.player.fly;
+            bool fp_weapon = state.game.mode!=HTA_MODE_RACING &&
+                             (!driving || (armed_seat && !state.show_self)) && !state.player.fly;
             const hta_game_weapon *iw = held_imported(&state);
             if (iw && state.gpu_ivm && state.ivm_posed && state.ivm_weapon == held_roster(&state) &&
                 state.zoom_level == 0 && !state.dead && fp_weapon) {
@@ -7235,7 +7496,7 @@ void android_main(struct android_app *app)
                 dynlist[dyncount].lit = true;     /* a body, not a spark */
                 dyncount++;
             }
-            if (state.gpu_items && dyncount < HTA_GFX_MAX_DYNAMIC) {
+            if (state.game.mode!=HTA_MODE_RACING && state.gpu_items && dyncount < HTA_GFX_MAX_DYNAMIC) {
                 dynlist[dyncount].mesh = state.gpu_items;
                 /* NULL skips the copy. The items do not move, so they are
                  * only written into the vertex slots after something is
@@ -7330,6 +7591,7 @@ void android_main(struct android_app *app)
             g_inst_count = 0;
             dyncount = game_draw(&state, dynlist, dyncount);
             vehicles_draw(&state);
+            racing_draw(&state);
             /* The world's movers (a door), cut from the world upload once
              * and drawn where they have slid to. */
             if (state.went.loaded && state.gpu_mesh && state.went_gpu_mesh != (const void *)state.gpu_mesh) {
@@ -7378,14 +7640,25 @@ void android_main(struct android_app *app)
             else
                 snprintf(g_ammo_text, sizeof(g_ammo_text), "%d / %d",
                          state.ammo.loaded, state.ammo.reserve);
-            snprintf(g_debug_text, sizeof(g_debug_text),
-                     "%.2f %.2f %.2f  %s  %.0f fps  net:%u/%u %.0fms",
-                     state.player.pos[0], state.player.pos[1], state.player.pos[2],
-                     state.player.on_ground ? "ground" : "air",
-                     state.fps_accum > 0.05 ? state.fps_frames / state.fps_accum : 0.0,
-                     state.net_enabled ? state.net.id : 0,
-                     state.remote_visible ? state.remote_id : 0,
-                     state.net_enabled ? state.net.stats.ping_ms : 0.0);
+            if (state.game.mode==HTA_MODE_RACING && state.me>=0 &&
+                state.me<(int)HTA_RACE_MAX_RACERS) {
+                const hta_arcade_racer *car=&state.race_car[state.me];
+                const hta_race_entry *entry=&state.race.racer[state.me];
+                float slip=-car->vel[0]*sinf(car->yaw)+car->vel[1]*cosf(car->yaw);
+                snprintf(g_debug_text,sizeof(g_debug_text),
+                         "R %.1fwu/s slip %.1f steer %.2f drift %.1f/%.1f tier %u boost %.1f %s G%u L%u %.0ffps",
+                         hypotf(car->vel[0],car->vel[1]),slip,state.race_local_input.steer,
+                         car->drift_time,car->drift_work,car->boost_tier,car->boost_time,
+                         car->grounded?"ground":"air",entry->next_gate,entry->lap,
+                         state.fps_accum>0.05 ? state.fps_frames/state.fps_accum : 0.0);
+            } else snprintf(g_debug_text, sizeof(g_debug_text),
+                            "%.2f %.2f %.2f  %s  %.0f fps  net:%u/%u %.0fms",
+                            state.player.pos[0], state.player.pos[1], state.player.pos[2],
+                            state.player.on_ground ? "ground" : "air",
+                            state.fps_accum > 0.05 ? state.fps_frames / state.fps_accum : 0.0,
+                            state.net_enabled ? state.net.id : 0,
+                            state.remote_visible ? state.remote_id : 0,
+                            state.net_enabled ? state.net.stats.ping_ms : 0.0);
             if (state.fps_accum >= 2.0) {
                 hta_log("[perf] %.1f fps | pos (%.2f %.2f %.2f) %s | tris %u"
                         " | draws %u lights %u gpu %.1f MiB | audio %s %u voices %u started %u dropped",
@@ -7441,6 +7714,8 @@ done:
     hta_game_view_free(&state.gview);
     hta_game_free(&state.game);
     hta_nav_free(&state.nav);
+    hta_wfx_free(&state.wfx);
+    hta_instance_index_free(&state.col_index);
     hta_external_map_free(&state.world_ext);
     for (uint32_t k = 0; k < HTA_MAX_IMPORTED; k++) { hta_oal_free(&state.imp_char[k]); hta_oal_free(&state.imp_weap[k]); }
     free(state.ivm_posed);

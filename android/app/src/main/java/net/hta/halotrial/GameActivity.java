@@ -380,6 +380,7 @@ public class GameActivity extends NativeActivity {
 
         private String mapName(String id) {
             if (id.equals("bloodgulch")) return "BLOOD GULCH";
+            if (id.equals("cinder_circuit")) return "CINDER CIRCUIT";
             if (id.equals("imported")) return "IMPORTED MAP";
             if (id.endsWith("_lit"))
                 return id.substring(0, id.length() - 4).toUpperCase(java.util.Locale.ROOT) + " LIT";
@@ -487,6 +488,24 @@ public class GameActivity extends NativeActivity {
                 row(word(11, "MAX PLAYERS") + ": " + maxPlayers, () -> maxPlayers = maxPlayers == 8 ? 2 : maxPlayers + 1);
             }
             row("MAP: " + mapName(maps.get(map)), this::cycleMap);
+            if (maps.get(map).equals("cinder_circuit")) {
+                row("GAME: RACING", () -> {});
+                row("DRIVER: " + up(charName(selected().character)), () -> {
+                    classReturn = screen;
+                    open(7);
+                });
+                row("DUPLICATE HEROES: " + (duplicateHeroes ? "ON" : "OFF"),
+                    () -> duplicateHeroes = !duplicateHeroes);
+                row("LAPS: SET BY TRACK", () -> {});
+                row("GRID: UP TO 8 RACERS", () -> {});
+                row("KART: HYPERKART", () -> {});
+                row(word(12, "START GAME"), () -> {
+                    if (host) start(1, "127.0.0.1", maps.get(map));
+                    else start(0, "", maps.get(map));
+                });
+                row(word(18, "BACK"), this::back);
+                return;
+            }
             row("GAME: " + GAMETYPES[gametype], () -> gametype = (gametype + 1) % GAMETYPES.length);
             row("DUPLICATE HEROES: " + (duplicateHeroes ? "ON" : "OFF"), () -> duplicateHeroes = !duplicateHeroes);
             row("BOTS: " + bots, () -> bots = (bots + 1) % 8);
@@ -591,6 +610,11 @@ public class GameActivity extends NativeActivity {
 
         void draw(Canvas c, int w, int h) {
             if (screen == 0) return;
+            if (screen == 7) {
+                c.drawColor(0xF00B0D13);
+                drawClassUi(c,w,h,0);
+                return;
+            }
             String[] r = rows();
             float scale = Math.min(w, h);
             ensureCover();
@@ -849,7 +873,10 @@ public class GameActivity extends NativeActivity {
 
         private void start(int mode, String host, String world) {
             pickerOpen = false;
-            nativeSetLoadout("", 1, mode != 2 ? 1 : 0, "assault rifle", "pistol");
+            if (world.equals("cinder_circuit")) {
+                Loadout driver=selected();
+                nativeSetLoadout(driver.character,0,0,driver.primary,driver.secondary);
+            } else nativeSetLoadout("", 1, mode != 2 ? 1 : 0, "assault rifle", "pistol");
             // A joiner plays whatever the host chose; the host's GAME says.
             int type = mode == 2 ? 0 : Math.min(gametype, 2);
             nativeStartMatch(new int[] { mode, bots, skill, type == 2 ? captures : kills, minutes, respawn,
@@ -1628,6 +1655,7 @@ public class GameActivity extends NativeActivity {
                 damage.setStyle(Paint.Style.FILL);
             }
             int seatMode = vehicleMode & 15;
+            boolean racing = seatMode == 6;
             if (vehicleMode != 0) {
                 String vt = null;
                 try { vt = nativeVehicleText(); } catch (Throwable ignored) { }
@@ -1648,23 +1676,26 @@ public class GameActivity extends NativeActivity {
             button(c, pauseCx, pauseCy, pauseR, IC_TEXT, "II", 0x66FFFFFF, false, 1f);
             boolean inAir = (hc & 2) != 0;
             if (!owner.exploreExternal)
-                button(c, fireCx, fireCy, fireR, IC_FIRE, (hc & 16) != 0 ? "SWING" : "FIRE", 0xFFFF7A1A, firePtr >= 0, 1f);
+                button(c, fireCx, fireCy, fireR, IC_FIRE, racing ? "GAS" :
+                        (hc & 16) != 0 ? "SWING" : "FIRE", 0xFFFF7A1A, firePtr >= 0, 1f);
             if (seatMode == 2) button(c, jumpCx, jumpCy, jumpR, IC_TEXT, "BRAKE", 0x88FFFFFF, jumpPtr >= 0, 1f);
-            else button(c, jumpCx, jumpCy, jumpR, IC_UP, inAir ? "UP" : "JUMP", 0x88FFFFFF, jumpPtr >= 0, 1f);
-            button(c, crouchCx, crouchCy, crouchR, IC_DOWN, inAir ? "DOWN" : "CROUCH", 0x88FFFFFF, crouchPtr >= 0, 1f);
-            if ((hc & 1) != 0)
+            else button(c, jumpCx, jumpCy, jumpR, IC_UP, racing ? "RESET" :
+                    inAir ? "UP" : "JUMP", 0x88FFFFFF, jumpPtr >= 0, 1f);
+            button(c, crouchCx, crouchCy, crouchR, IC_DOWN, racing ? "DRIFT" :
+                    inAir ? "DOWN" : "CROUCH", 0x88FFFFFF, crouchPtr >= 0, 1f);
+            if (!racing && (hc & 1) != 0)
                 button(c, flyCx, flyCy, flyR, IC_FLY, inAir ? "LAND" : "FLY", 0xFF7FD4FF, false, 1f);
-            if ((hc & 128) != 0) {
+            if (!racing && (hc & 128) != 0) {
                 float ch = GameActivity.nativeAbilityCharge();
                 String an = GameActivity.nativeAbilityName();
                 button(c, abilCx, abilCy, abilR, IC_ABILITY, an == null || an.isEmpty() ? "POWER" : an,
                         0xFFFFD23A, false, ch);
             }
 
-            if (!owner.exploreExternal) {
+            if (!owner.exploreExternal && !racing) {
                 if ((hc & 8) != 0) button(c, reloadCx, reloadCy, reloadR, IC_RELOAD, "RELOAD", 0x88FFFFFF, reloadPtr >= 0, 1f);
                 if ((hc & 16) == 0) button(c, meleeCx, meleeCy, meleeR, IC_MELEE, "MELEE", 0x88FFFFFF, meleePtr >= 0, 1f);
-                if (seatMode >= 1) button(c, swapCx, swapCy, swapR, IC_TEXT, seatMode >= 2 ? "EXIT" : "GET IN", 0xFF7FD4FF, swapPtr >= 0, 1f);
+                if (seatMode >= 1 && !racing) button(c, swapCx, swapCy, swapR, IC_TEXT, seatMode >= 2 ? "EXIT" : "GET IN", 0xFF7FD4FF, swapPtr >= 0, 1f);
                 else if (!scenarioPresentation || (hc & 256) != 0)
                     button(c, swapCx, swapCy, swapR, IC_SWAP,
                            (hc & 256) != 0 ? "USE" : "SWAP",
@@ -1685,8 +1716,8 @@ public class GameActivity extends NativeActivity {
                                getHeight() * (playerPresentation ? 0.22f : 0.30f), ammo);
                 }
 
-                drawGame(c);
             }
+            if (!owner.exploreExternal) drawGame(c);
 
             /* Position readout, so a bug report screenshot carries coordinates.
              * Keep it clear of the camera cutout: the status bar no longer
