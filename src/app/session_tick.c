@@ -245,7 +245,10 @@ void hta_session_tick(hta_session *s, float dt, double now, void (*unit_added)(h
     if (s->game_on && authority) {
         world_interact(s);
         if (s->game.mode==HTA_MODE_RACING) hta_racing_tick(s,dt);
-        else hta_game_update(&s->game, dt);
+        else {
+            hta_survival_guard(s);
+            hta_game_update(&s->game, dt);
+        }
         hta_game_event e;
         while (hta_game_pop(&s->game, &e)) {
             hta_survival_event(s,&e);

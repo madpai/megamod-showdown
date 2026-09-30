@@ -44,6 +44,37 @@ static void network_profiles(const char *dir) {
     hta_net_client_close(c);hta_net_server_close(&s->host_server);hta_survival_flush(s);free(c);free(other);free(s);
     char file[1024],key[33];uint8_t id[16];memset(id,42,16);mm_identity_hex(id,key);snprintf(file,sizeof(file),"%s/%s.mrp",dir,key);unlink(file);
 }
+static void loadout_and_escape(const char *dir) {
+    hta_session *s=fixture(dir);s->game_on=true;
+    s->game.weapon_count=2;s->game.start_weapon[0]=0;s->game.start_weapon[1]=1;
+    strcpy(s->game.weapons[0].display,"Authored sword");strcpy(s->game.weapons[1].display,"Unwanted rocket");
+    strcpy(s->world_ext.world_defs.survival.enemy[0].weapon,"Authored sword");
+    int player=hta_game_add(&s->game,HTA_UNIT_LOCAL,"Player",HTA_TEAM_RED);hta_game_spawn(&s->game,player);
+    assert(hta_survival_join(s,player,NULL,true));s->survival.timer=0;hta_survival_tick(s,.1f);
+    hta_unit *u=&s->game.units[player],*enemy=&s->game.units[1];
+    assert(enemy->carry[0].weapon==0 && enemy->carry[1].weapon==-1 && enemy->grenades==0);
+    mm_progression before=*u->progression;
+    s->mesh.vertex_count=1;for(unsigned c=0;c<3;c++){s->mesh.bounds_min[c]=-12;s->mesh.bounds_max[c]=12;}
+    s->mesh.bounds_min[2]=-.4f;
+    /* A jump above the wall is legal; an endless fall is not. Protection
+     * and armor must not defeat the environmental guard. */
+    u->body.pos[2]=4.75f;hta_survival_guard(s);assert(u->alive && u->vitals.health>0);
+    u->protect=10;u->armor=.85f;u->ward=10;u->body.pos[2]=-57.03f;
+    hta_survival_guard(s);assert(u->vitals.died && u->vitals.health==0);
+    hta_game_update(&s->game,.01f);assert(!u->alive);
+    hta_game_event event;while(hta_game_pop(&s->game,&event))hta_survival_event(s,&event);
+    hta_survival_tick(s,.1f);assert(s->survival.phase==MM_WIPE);
+    assert(!memcmp(&before,u->progression,sizeof(before)));
+    s->survival.timer=0;hta_survival_tick(s,.1f);assert(u->alive && u->body.pos[2]>-1 && s->survival.phase==MM_REST);
+    /* Escaped NPCs cannot stall a wave or mint a kill reward. */
+    s->survival.timer=0;hta_survival_tick(s,.1f);enemy=&s->game.units[1];uint64_t gold=u->progression->gold,kills=u->progression->kills;
+    enemy->body.pos[0]=15;hta_survival_guard(s);hta_game_update(&s->game,.01f);
+    while(hta_game_pop(&s->game,&event))hta_survival_event(s,&event);
+    assert(enemy->kind==HTA_UNIT_NONE && u->progression->gold==gold && u->progression->kills==kills);
+    /* A peer never decides environmental deaths itself. */
+    s->net_enabled=true;s->net_hosting=false;u->body.pos[2]=-100;hta_survival_guard(s);assert(u->alive && u->vitals.health>0);
+    s->net_enabled=false;hta_survival_flush(s);free(s);
+}
 int main(void) {
     char dir[]="/tmp/megamod-survival-XXXXXX",err[160],file[1024];assert(mkdtemp(dir));hta_session *s=fixture(dir);
     int human=hta_game_add(&s->game,HTA_UNIT_REMOTE,"Player",0);assert(human==0);hta_game_spawn(&s->game,human);assert(hta_survival_join(s,human,NULL,true));
@@ -73,7 +104,7 @@ int main(void) {
     hta_net_rpg r;hta_survival_snapshot(s,0,&r);uint8_t packet[HTA_NET_RPG_BYTES];assert(hta_net_rpg_pack(packet,sizeof(packet),&r));hta_net_rpg copy;assert(hta_net_rpg_unpack(packet,sizeof(packet),&copy));assert(copy.gold==saved.gold && copy.skill[MM_RESTORATION]==saved.skill[MM_RESTORATION]);packet[8]=255;assert(!hta_net_rpg_unpack(packet,sizeof(packet),&copy));
     s->survival.phase=MM_WAVE;u->alive=false;s->game.units[friend].alive=false;hta_survival_tick(s,.1f);assert(s->survival.phase==MM_WIPE && s->survival.wave==0 && p->gold==saved.gold);
     hta_survival_leave(s,0);free(s);snprintf(file,sizeof(file),"%s/solo.mrp",dir);unlink(file);(void)err;
-    network_profiles(dir);
+    network_profiles(dir);loadout_and_escape(dir);snprintf(file,sizeof(file),"%s/solo.mrp",dir);unlink(file);
     s=fixture(dir);snprintf(s->world_ext.world_defs.survival.enemy[0].character,sizeof(s->world_ext.world_defs.survival.enemy[0].character),"Missing donor");
     assert(!hta_survival_begin(s));assert(strstr(s->survival.error,"Missing enemy content"));free(s);
     rmdir(dir);

@@ -89,6 +89,9 @@ uint64_t hta_survival_price(const hta_session *s,int unit,unsigned item) {
     t*=t;
     return i->price && t>UINT64_MAX/i->price?UINT64_MAX:t*i->price;
 }
+bool hta_survival_can_shop(const hta_session *s,int unit) {
+    return s->survival.active && unit>=0 && unit<16 && s->game.units[unit].alive && s->survival.phase==MM_REST && distance(s->game.units[unit].body.pos,definition(s)->shop)<=4;
+}
 uint8_t hta_survival_request(hta_session *s,int unit,uint8_t action,unsigned item,uint16_t serial) {
     mm_survival *r=&s->survival;
     if(!authority(s)||!r->active||unit<0||unit>=16||!r->bound[unit])return MM_RESULT_UNAVAILABLE;
@@ -103,7 +106,7 @@ uint8_t hta_survival_request(hta_session *s,int unit,uint8_t action,unsigned ite
     else if(item<d->item_count && item<MM_SHOP_ITEMS) {
         const mm_shop_item *i=&d->item[item];
         char asset[64];memcpy(asset,i->asset,sizeof(asset));
-        if(action==MM_REQUEST_BUY && r->phase==MM_REST && distance(u->body.pos,d->shop)<=4) {
+        if(action==MM_REQUEST_BUY && hta_survival_can_shop(s,unit)) {
             uint64_t price=hta_survival_price(s,unit,item);
             if(i->kind==MM_ITEM_WEAPON && weapon(&s->game,asset)<0)result=MM_RESULT_UNAVAILABLE;
             else if(i->kind==MM_ITEM_UPGRADE && p->upgrade[i->upgrade]==UINT32_MAX)result=MM_RESULT_UNAVAILABLE;
@@ -184,6 +187,22 @@ static void rest(hta_session *s,bool wipe) {
     if(!wipe)for(unsigned i=0;i<16;i++)if(r->bound[i]){hta_game_spawn(&s->game,(int)i);equipment(s,(int)i,true);}
     hta_log("[survival] %s, wave %u",wipe?"party defeated":"wave clear",r->wave);
 }
+/* Environmental defeat uses the normal death/replication path. No practice
+ * or gold is awarded for escaping the playable world's bounds. */
+void hta_survival_guard(hta_session *s) {
+    if(!s->survival.active || !authority(s) || !s->mesh.vertex_count)return;
+    for(unsigned k=0;k<s->game.unit_count;k++) {
+        hta_unit *u=&s->game.units[k];if(!u->alive || u->kind==HTA_UNIT_NONE)continue;
+        bool escaped=false;
+        for(unsigned c=0;c<3;c++)if(!isfinite(u->body.pos[c]))escaped=true;
+        if(u->body.pos[2]<s->mesh.bounds_min[2]-2)escaped=true;
+        for(unsigned c=0;c<2;c++)if(u->body.pos[c]<s->mesh.bounds_min[c]-2 || u->body.pos[c]>s->mesh.bounds_max[c]+2)escaped=true;
+        if(!escaped)continue;
+        hta_log("[survival] unit %u escaped at (%.2f %.2f %.2f), velocity (%.2f %.2f %.2f)",k,u->body.pos[0],u->body.pos[1],u->body.pos[2],u->body.velocity[0],u->body.velocity[1],u->body.velocity[2]);
+        u->last_attacker=-1;u->vitals.health=u->vitals.shield=0;u->vitals.died=true;
+        memset(u->knock,0,sizeof(u->knock));
+    }
+}
 void hta_survival_tick(hta_session *s,float dt) {
     mm_survival *r=&s->survival;if(!r->active||!authority(s)||dt<=0)return;dt=fminf(dt,.1f);
     const mm_survival_def *d=definition(s);unsigned players=0,living=0,enemies=0;
@@ -223,7 +242,12 @@ void hta_survival_tick(hta_session *s,float dt) {
         if(unit>=0) {
             hta_unit *u=&s->game.units[unit];u->rpg_health=e->health*(1+.15f*sqrtf((float)r->wave));u->rpg_speed=e->speed;u->rpg_damage=e->damage*(1+.08f*sqrtf((float)r->wave));
             for(unsigned c=0;c<s->game.character_count;c++)if(!strcmp(s->game.characters[c]->display,e->character)){u->character=(int8_t)c;break;}
-            hta_game_spawn(&s->game,unit);u->protect=0;int w=weapon(&s->game,e->weapon);if(w>=0){u->carry[0].weapon=w;hta_ammo_init(&u->carry[0].ammo,&s->game.weapons[w].def);u->slot=0;}
+            hta_game_spawn(&s->game,unit);u->protect=0;
+            /* Generic bot spawning can roll a random two-gun class. Wave
+             * definitions own the entire loadout, including empty slots. */
+            for(unsigned slot=0;slot<2;slot++){u->carry[slot].weapon=-1;memset(&u->carry[slot].ammo,0,sizeof(u->carry[slot].ammo));}
+            u->grenades=0;u->slot=0;
+            int w=weapon(&s->game,e->weapon);if(w>=0){u->carry[0].weapon=w;hta_ammo_init(&u->carry[0].ammo,&s->game.weapons[w].def);}
             memcpy(u->body.pos,d->gates[r->spawned%d->gate_count],12);memcpy(u->eye.pos,u->body.pos,12);u->eye.pos[2]+=u->body.eye_height;
             r->enemy_type[unit]=(uint8_t)type;r->spawned++;r->queued--;r->spawn_timer=d->spawn_interval;
             hta_log("[survival] gate %u spawned %s",(r->spawned-1)%d->gate_count,e->name);

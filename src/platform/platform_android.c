@@ -2244,12 +2244,22 @@ static void survival_frame(hta_android *s)
     static const char *const result[]={"","Purchase complete","Unavailable here","Need more gold","Already owned","Save failed: purchase rolled back"};
     unsigned status=s->survival.result[s->me];used+=(size_t)snprintf(text+used,sizeof(text)-used,"\n%s\nShop opens between waves; stand near the blue counter.\x1e",status<6?result[status]:"");
     const mm_survival_def *d=&s->world_ext.world_defs.survival;
-    for(unsigned i=0;i<d->item_count && used<sizeof(text)-160;i++)used+=(size_t)snprintf(text+used,sizeof(text)-used,"%u\t%s\t%" PRIu64 "\t%u\t%u\t%s\n",i,d->item[i].name,hta_survival_price(&s->session,s->me,i),mm_item_quantity(p,d->item[i].id),d->item[i].kind,d->item[i].id);
+    for(unsigned i=0;i<d->item_count && used<sizeof(text)-512;i++) {
+        const mm_shop_item *it=&d->item[i];bool equipped=false;
+        for(unsigned slot=0;slot<4;slot++)if(!strcmp(p->equipment[slot],it->id))equipped=true;
+        char detail[96]="";
+        if(it->kind==MM_ITEM_SPELL)snprintf(detail,sizeof(detail),"%.0f magicka · %s",it->cost,it->effect==MM_EFFECT_HEAL?"Restoration":it->effect==MM_EFFECT_WARD?"Protective ward":"Destruction");
+        else if(it->kind==MM_ITEM_ARMOR)snprintf(detail,sizeof(detail),"%.0f%% damage reduction",it->power*100);
+        else if(it->kind==MM_ITEM_UPGRADE)snprintf(detail,sizeof(detail),"Upgrade tier %u",p->upgrade[it->upgrade]);
+        else if(it->kind==MM_ITEM_HEALTH)snprintf(detail,sizeof(detail),"Restore %.0f%% health",it->power*100);
+        else if(it->kind==MM_ITEM_MANA)snprintf(detail,sizeof(detail),"Restore %.0f magicka",it->power);
+        used+=(size_t)snprintf(text+used,sizeof(text)-used,"%u\t%s\t%" PRIu64 "\t%u\t%u\t%s\t%u\t%s\t%u\n",i,it->name,hta_survival_price(&s->session,s->me,i),mm_item_quantity(p,it->id),it->kind,it->id,equipped,detail,hta_survival_can_shop(&s->session,s->me));
+    }
     unsigned remaining=s->survival.queued;
     if(!s->net_enabled||s->net_hosting)for(unsigned i=0;i<s->game.unit_count;i++)if(s->game.units[i].kind==HTA_UNIT_BOT && s->game.units[i].alive)remaining++;
     int spell=-1;for(unsigned i=0;i<d->item_count;i++)if(!strcmp(p->equipment[3],d->item[i].id))spell=(int)i;
     float health=s->vit?hta_vitals_health_fraction(s->vit):hta_vitals_health_fraction(&u->vitals);
-    used+=(size_t)snprintf(text+used,sizeof(text)-used,"\x1e%u\t%u\t%u\t%.0f\t%" PRIu64 "\t%u\t%u\t%.4f\t%.4f\t%.4f\t%s",s->survival.wave,remaining,s->survival.phase,s->survival.timer,p->gold,mm_character_level(p),p->prestige,health,u->mana/(100+10*sqrtf((float)p->upgrade[MM_MAGICKA])+50*mm_skill_bonus(p,MM_DESTRUCTION)),u->stamina/(100+10*sqrtf((float)p->upgrade[MM_STAMINA])+50*mm_skill_bonus(p,MM_ATHLETICS)),spell>=0?d->item[spell].name:"No spell");
+    used+=(size_t)snprintf(text+used,sizeof(text)-used,"\x1e%u\t%u\t%u\t%.0f\t%" PRIu64 "\t%u\t%u\t%.4f\t%.4f\t%.4f\t%s\t%u",s->survival.wave,remaining,s->survival.phase,s->survival.timer,p->gold,mm_character_level(p),p->prestige,health,u->mana/(100+10*sqrtf((float)p->upgrade[MM_MAGICKA])+50*mm_skill_bonus(p,MM_DESTRUCTION)),u->stamina/(100+10*sqrtf((float)p->upgrade[MM_STAMINA])+50*mm_skill_bonus(p,MM_ATHLETICS)),spell>=0?d->item[spell].name:"No spell",hta_survival_can_shop(&s->session,s->me));
     pthread_mutex_lock(&g_rpg_lock);snprintf(g_rpg_text,sizeof(g_rpg_text),"%s",text);pthread_mutex_unlock(&g_rpg_lock);
 }
 JNIEXPORT jstring JNICALL Java_net_hta_halotrial_GameActivity_nativeRpgText(JNIEnv *env,jclass cls)
@@ -7548,7 +7558,9 @@ void android_main(struct android_app *app)
                 vmdraw.vertex_count = state.vm.mesh.vertex_count;
                 for (int k = 0; k < 3; k++) vmdraw.offset[k] = state.weap.fp_offset[k];
             }
-            if (vmdraw.mesh && state.world_loaded && state.world_ext.world_defs.has_environment)
+            /* OAL view geometry already has its authored camera placement.
+             * The compatibility HUD clearance offset crops its hands. */
+            if (!iw && vmdraw.mesh && state.world_loaded && state.world_ext.world_defs.has_environment)
                 vmdraw.offset[2] -= 0.06f;
             hta_gfx_dynamic dynlist[HTA_GFX_MAX_DYNAMIC];
             memset(dynlist, 0, sizeof(dynlist));   /* `lit` defaults off */
@@ -7579,7 +7591,7 @@ void android_main(struct android_app *app)
                 dynlist[dyncount].lit = true;     /* a body, not a spark */
                 dyncount++;
             }
-            if (state.game.mode!=HTA_MODE_RACING && state.gpu_items && dyncount < HTA_GFX_MAX_DYNAMIC) {
+            if (state.game.mode!=HTA_MODE_RACING && state.game.mode!=HTA_MODE_SURVIVAL && state.gpu_items && dyncount < HTA_GFX_MAX_DYNAMIC) {
                 dynlist[dyncount].mesh = state.gpu_items;
                 /* NULL skips the copy. The items do not move, so they are
                  * only written into the vertex slots after something is

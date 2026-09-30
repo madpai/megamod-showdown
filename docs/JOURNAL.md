@@ -1,3 +1,56 @@
+## 2026-09-30 — Gatebound phone escape and presentation repair
+
+Reviewed the S24+ reports/screenshots from build 2c62fc0. This run loaded the
+actual donor world a0dab19c, High, 1560x720, FOV 70 and MSAA 2. Before escape
+its log read about 120 FPS. It then rose over the wall and remained alive
+while falling to z=-1875.92; no crash was involved. The later empty-scene FPS
+is not a usable arena baseline.
+
+Found a concrete wave loadout defect: generic character bot spawning can
+choose two random guns, while the survival adapter replaced only slot zero.
+The second gun survived: a debugger inspection of the actual private roster
+found a TF2 rocket launcher on the first Daedroth and a Halo rocket launcher
+on the fourth enemy. Wave spawning
+now clears both slots/ammo/grenades before assigning its authored weapon.
+The exact attack in the phone incident is not logged, so that connection
+remains an inference. A host-only world-bounds guard triggers environmental
+defeat through the existing death/replication and wipe/break recovery paths;
+progression is kept, escaped NPCs give no kill reward, and jumps have no
+artificial upper ceiling. New regression cases reproduce an inherited extra
+gun, the reported below-map position, protected/armored escape, recovery,
+NPC removal and client non-authority.
+
+Android imported-world presentation lowered all first-person meshes .06 wu,
+even already normalized donor views. Restricting that compatibility offset to
+base tag weapons prevents the phone-only hand cropping. The original
+parchment texture's opaque bounds are 992x780 inside its 1024x1024 canvas;
+render its visible source rectangle across the menu background. Selected tabs,
+equipped/owned states, purchase availability, spell costs and upgrade/armor
+stats now appear explicitly. Resource fill fits the actual frame interior;
+the ribbons move below Inventory, away from the hands. Hide the base map
+pickups, which Survival does not permit taking. This does not add original Oblivion KF animation,
+finger grips or wearable armor. Those remain the full-lineup next goal.
+
+Release-gate X8 failure: the route pressed Use at (-7.91,1.62) for the
+D2 back button (-8.84,.82,.85). Horizontal distance alone is 1.227 wu,
+outside the authored 1.2-wu reach. The route's .12-wu arrival tolerance could
+stop before its (-8,1.6) waypoint; residual motion made previous passes
+sensitive to timing. Move that approach waypoint to (-8.2,1.6) in the shared
+X8/X9 harness. Keep the runtime reach, geometry and all assertions unchanged.
+The initial full gate passed 100 checks and failed this route check; rerun
+this corrected check separately and preserve both results. The X9 route
+passed in the initial full run.
+
+Repair verification: corrected X8 passed separately (74 objects, 23 movers,
+11 relays, 40 host-only; index-69 use and late join synced). The full run's
+other 100 checks passed, including X9, Android and real Trial rendering.
+New survival assertions passed under ASan/UBSan; the actual private roster ran
+90 seconds in native combat without escape. Final Android emulator captures
+at 1560x720 confirm Character, Weapons, Magic, Armor, Supplies and Upgrades,
+including bottom scrolling, selected/equipped states and the relocated HUD.
+Software-rendered captures establish appearance only. Original Oblivion KF,
+finger grips and the wearable/animated lineup remain the next goal.
+
 ## 2026-09-25 — local LAN v9 merge, publication and owner feedback
 
 Both clean worktrees fast-forwarded to the cloud branch: Megamod

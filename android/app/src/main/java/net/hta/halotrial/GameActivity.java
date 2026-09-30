@@ -1042,6 +1042,14 @@ public class GameActivity extends NativeActivity {
         private final android.graphics.RectF arc = new android.graphics.RectF();
 
         private final java.util.Map<String,android.graphics.Bitmap> rpgArt=new java.util.HashMap<>();
+        private final java.util.Map<android.graphics.Bitmap,android.graphics.Rect> rpgArtBounds=new java.util.HashMap<>();
+        private android.graphics.Rect rpgBounds(android.graphics.Bitmap art) {
+            android.graphics.Rect cached=rpgArtBounds.get(art);if(cached!=null)return cached;
+            int bw=art.getWidth(),bh=art.getHeight(),left=bw,top=bh,right=0,bottom=0;
+            int[] pixels=new int[bw*bh];art.getPixels(pixels,0,bw,0,0,bw,bh);
+            for(int y=0;y<bh;y++)for(int x=0;x<bw;x++)if((pixels[y*bw+x]>>>24)!=0){left=Math.min(left,x);top=Math.min(top,y);right=Math.max(right,x+1);bottom=Math.max(bottom,y+1);}
+            android.graphics.Rect source=right>left?new android.graphics.Rect(left,top,right,bottom):new android.graphics.Rect(0,0,bw,bh);rpgArtBounds.put(art,source);return source;
+        }
         private android.graphics.Bitmap rpgImage(String name) {
             if(!rpgArt.containsKey(name)) {
                 android.graphics.Bitmap b=null;
@@ -1065,41 +1073,59 @@ public class GameActivity extends NativeActivity {
             android.app.Dialog dialog=new android.app.Dialog(owner);dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
             android.widget.FrameLayout page=new android.widget.FrameLayout(owner);page.setBackgroundColor(0xFFF0DFC0);
             android.graphics.Bitmap paper=rpgImage("parchment");if(paper==null)paper=rpgImage("inventory");
-            if(paper!=null){android.widget.ImageView bg=new android.widget.ImageView(owner);bg.setImageBitmap(paper);bg.setScaleType(android.widget.ImageView.ScaleType.FIT_XY);page.addView(bg,new android.widget.FrameLayout.LayoutParams(-1,-1));}
-            android.widget.LinearLayout layout=new android.widget.LinearLayout(owner);layout.setOrientation(1);layout.setPadding((int)(getWidth()*.05f),(int)(getHeight()*.11f),(int)(getWidth()*.05f),(int)(getHeight()*.10f));page.addView(layout,new android.widget.FrameLayout.LayoutParams(-1,-1));
+            if(paper!=null){
+                // The original menu texture has unused transparent space.
+                // Fit its visible artwork to the page's background bounds.
+                final android.graphics.Bitmap art=paper;
+                final android.graphics.Rect source=rpgBounds(art);
+                android.view.View bg=new android.view.View(owner){@Override protected void onDraw(Canvas canvas){canvas.drawBitmap(art,source,new android.graphics.Rect(0,0,getWidth(),getHeight()),null);}};
+                page.addView(bg,new android.widget.FrameLayout.LayoutParams(-1,-1));
+            }
+            android.widget.LinearLayout layout=new android.widget.LinearLayout(owner);layout.setOrientation(1);layout.setPadding((int)(getWidth()*.075f),(int)(getHeight()*.10f),(int)(getWidth()*.06f),(int)(getHeight()*.09f));page.addView(layout,new android.widget.FrameLayout.LayoutParams(-1,-1));
             android.widget.LinearLayout heading=new android.widget.LinearLayout(owner);heading.addView(rpgText("Gatebound  ·  Character & Inventory",23),new android.widget.LinearLayout.LayoutParams(0,-2,1));heading.addView(rpgButton("Return",dialog::dismiss));layout.addView(heading);
             android.widget.TextView totals=rpgText("",16);layout.addView(totals);
             android.widget.LinearLayout tabs=new android.widget.LinearLayout(owner);layout.addView(tabs);
             android.widget.ScrollView scroll=new android.widget.ScrollView(owner);android.widget.LinearLayout entries=new android.widget.LinearLayout(owner);entries.setOrientation(1);scroll.addView(entries);layout.addView(scroll,new android.widget.LinearLayout.LayoutParams(-1,0,1));
-            final int[] category={-1};
+            layout.addView(rpgText("Buy near the counter between waves. Equip owned gear anytime.",14));
+            final int[] category={-1};final java.util.ArrayList<android.widget.Button> tabButtons=new java.util.ArrayList<>();
+            final int[] kinds={-1,1,3,2,4,0};
             Runnable refresh=()->{
                 String[] parts=nativeRpgText().split("\u001e",-1);if(parts.length<2)return;
                 String[] profile=parts[0].split("\n");String[] hf=parts.length>2?parts[2].split("\t"):new String[0];totals.setText(hf.length>6?"Level "+hf[5]+"  ·  "+hf[4]+" gold  ·  Prestige "+hf[6]:"");if(profile.length>1 && !profile[profile.length-2].isEmpty())totals.append("  ·  "+profile[profile.length-2]);int scrollY=scroll.getScrollY();entries.removeAllViews();
+                for(int i=0;i<tabButtons.size();i++){boolean selected=category[0]==kinds[i];tabButtons.get(i).setBackgroundColor(selected?0xFF705334:0x66D2BF94);tabButtons.get(i).setTextColor(selected?0xFFFFE6B6:0xFF382C18);}
                 if(category[0]<0){
-                    for(int i=1;i<profile.length;i++)entries.addView(rpgText(profile[i],17));
-                    entries.addView(rpgButton("Prestige — level 50, keep skills and equipment",()->nativeHudRpg(4,0)));
+                    if(profile.length>1)entries.addView(rpgText(profile[1],18));
+                    for(int i=2;i<Math.min(10,profile.length);i+=2){android.widget.LinearLayout pair=new android.widget.LinearLayout(owner);pair.addView(rpgText(profile[i],19),new android.widget.LinearLayout.LayoutParams(0,-2,1));if(i+1<profile.length)pair.addView(rpgText(profile[i+1],19),new android.widget.LinearLayout.LayoutParams(0,-2,1));entries.addView(pair);}
+                    android.widget.Button prestige=rpgButton("Prestige — level 50, keep skills and equipment",()->nativeHudRpg(4,0));prestige.setEnabled(hf.length>11&&Long.parseLong(hf[5])>=50&&hf[11].equals("1"));prestige.setAlpha(prestige.isEnabled()?1f:.4f);entries.addView(prestige);
                 }else for(String row:parts[1].trim().split("\n")){
-                    String[] f=row.split("\t");if(f.length<5)continue;int item=Integer.parseInt(f[0]),kind=Integer.parseInt(f[4]);
+                    String[] f=row.split("\t",-1);if(f.length<5)continue;int item=Integer.parseInt(f[0]),kind=Integer.parseInt(f[4]);
                     if(category[0]!=kind && !(category[0]==4 && kind==5))continue;
                     android.widget.LinearLayout line=new android.widget.LinearLayout(owner);line.setPadding(4,6,4,6);
                     if(f.length>5){android.graphics.Bitmap art=rpgImage("items/"+f[5].replace(':','_').replace('/','_'));if(art!=null){android.widget.ImageView itemArt=new android.widget.ImageView(owner);itemArt.setImageBitmap(art);line.addView(itemArt,new android.widget.LinearLayout.LayoutParams(70,70));}}
-                    line.addView(rpgText(f[1]+"\n"+f[2]+" gold · owned "+f[3],17),new android.widget.LinearLayout.LayoutParams(0,-2,1));
-                    line.addView(rpgButton(kind==0?"Upgrade":"Buy",()->nativeHudRpg(1,item)));
-                    if(kind!=0)line.addView(rpgButton(kind>=4?"Drink":"Equip",()->nativeHudRpg(kind>=4?3:2,item)));
+                    boolean owned=Integer.parseInt(f[3])>0,equipped=f.length>6&&f[6].equals("1"),consumable=kind>=4;
+                    String description=f[1]+(equipped?"  ·  Equipped":"")+"\n"+f[2]+" gold"+(kind==0?"":" · owned "+f[3]);if(f.length>7&&!f[7].isEmpty())description+="\n"+f[7];
+                    line.addView(rpgText(description,17),new android.widget.LinearLayout.LayoutParams(0,-2,1));
+                    android.widget.Button buy=rpgButton(owned&&kind!=0&&!consumable?"Owned":kind==0?"Upgrade":"Buy",()->nativeHudRpg(1,item));
+                    buy.setEnabled((!owned||kind==0||consumable)&&f.length>8&&f[8].equals("1")&&hf.length>4&&new java.math.BigInteger(f[2]).compareTo(new java.math.BigInteger(hf[4]))<=0);buy.setAlpha(buy.isEnabled()?1f:.4f);line.addView(buy);
+                    if(kind!=0){android.widget.Button equip=rpgButton(equipped?"Equipped":consumable?"Drink":"Equip",()->nativeHudRpg(consumable?3:2,item));equip.setEnabled(owned&&!equipped);equip.setAlpha(equip.isEnabled()?1f:.4f);line.addView(equip);}
                     entries.addView(line);
                 }
                 scroll.post(()->scroll.scrollTo(0,scrollY));
             };
-            String[] titles={"Character","Weapons","Magic","Armor","Supplies","Upgrades"};int[] kinds={-1,1,3,2,4,0};
-            for(int i=0;i<titles.length;i++){final int k=kinds[i];tabs.addView(rpgButton(titles[i],()->{category[0]=k;refresh.run();}),new android.widget.LinearLayout.LayoutParams(0,-2,1));}
+            String[] titles={"Character","Weapons","Magic","Armor","Supplies","Upgrades"};
+            for(int i=0;i<titles.length;i++){final int k=kinds[i];android.widget.Button tab=rpgButton(titles[i],()->{category[0]=k;scroll.scrollTo(0,0);refresh.run();});tabButtons.add(tab);tabs.addView(tab,new android.widget.LinearLayout.LayoutParams(0,-2,1));}
             refresh.run();dialog.setContentView(page);android.view.Window window=dialog.getWindow();if(window!=null){window.setBackgroundDrawableResource(android.R.color.transparent);window.setLayout((int)(getWidth()*.76f),(int)(getHeight()*.86f));}
             dialog.show();if(window!=null)window.setLayout((int)(getWidth()*.76f),(int)(getHeight()*.86f));
             android.os.Handler updater=new android.os.Handler(android.os.Looper.getMainLooper());Runnable poll=new Runnable(){public void run(){if(dialog.isShowing()){refresh.run();updater.postDelayed(this,1200);}}};updater.postDelayed(poll,1200);
         }
         private void drawRpgBar(Canvas c,String name,float fraction,float x,float y,float width,float height,int color) {
             android.graphics.RectF rect=new android.graphics.RectF(x,y,x+width,y+height);android.graphics.Bitmap empty=rpgImage(name+"_empty"),full=rpgImage(name+"_full");
-            Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);p.setColor(0xB0201710);c.drawRect(rect,p);if(empty!=null)c.drawBitmap(empty,null,rect,p);
-            c.save();c.clipRect(x,y,x+width*Math.max(0,Math.min(1,fraction)),y+height);p.setColor(color);if(full!=null)c.drawBitmap(full,null,rect,p);else c.drawRect(rect,p);c.restore();
+            Paint p=new Paint(Paint.ANTI_ALIAS_FLAG);p.setColor(0xB0201710);c.drawRect(rect,p);
+            android.graphics.Rect frame=empty!=null?rpgBounds(empty):null,fill=full!=null?rpgBounds(full):null;
+            if(empty!=null)c.drawBitmap(empty,frame,rect,p);
+            android.graphics.RectF content=new android.graphics.RectF(rect);
+            if(frame!=null&&fill!=null)content.inset(width*Math.max(0,frame.width()-fill.width())/(2f*frame.width()),height*Math.max(0,frame.height()-fill.height())/(2f*frame.height()));
+            c.save();c.clipRect(content.left,content.top,content.left+content.width()*Math.max(0,Math.min(1,fraction)),content.bottom);p.setColor(color);if(full!=null)c.drawBitmap(full,fill,content,p);else c.drawRect(content,p);c.restore();
         }
         private void drawRpg(Canvas c,String data) {
             String[] sections=data.split("\u001e",-1);if(sections.length<3)return;String[] f=sections[2].split("\t");if(f.length<11)return;
@@ -1108,7 +1134,7 @@ public class GameActivity extends NativeActivity {
                 int phase=Integer.parseInt(f[2]);String state=phase==1?"Wave "+f[0]+"  ·  "+f[1]+" enemies":phase==2?"Defeated  ·  regroup in "+f[3]+"s":"Wave "+f[0]+" complete  ·  shop "+f[3]+"s";
                 c.drawText(state,w*.5f,h*.052f,text);text.setTextSize(h*.024f);c.drawText("Level "+f[5]+"  ·  "+f[4]+" gold",w*.5f,h*.088f,text);
                 Paint panel=new Paint(Paint.ANTI_ALIAS_FLAG);panel.setColor(0xB0221A11);c.drawRoundRect(w*.025f,h*.028f,w*.17f,h*.106f,8,8,panel);text.setTextSize(h*.026f);c.drawText("Inventory",w*.0975f,h*.078f,text);
-                float x=w*.30f,width=w*.22f,y=h*.84f,bh=h*.018f;
+                float x=w*.025f,width=w*.145f,y=h*.205f,bh=h*.019f;
                 drawRpgBar(c,"health",Float.parseFloat(f[7]),x,y,width,bh,0xFFAD3024);drawRpgBar(c,"magic",Float.parseFloat(f[8]),x,y+bh*1.7f,width,bh,0xFF365CB5);drawRpgBar(c,"fatigue",Float.parseFloat(f[9]),x,y+bh*3.4f,width,bh,0xFF427238);
                 text.setTextSize(h*.021f);c.drawText(f[10],x+width*.5f,y-bh*.7f,text);
                 android.graphics.Bitmap reticle=rpgImage("reticle");if(reticle!=null)c.drawBitmap(reticle,null,new android.graphics.RectF(w*.5f-h*.018f,h*.482f,w*.5f+h*.018f,h*.518f),null);

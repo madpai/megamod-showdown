@@ -290,29 +290,68 @@ Personal APK stages Oblivion parchment, inventory icons and HUD ribbons from
 the private bundle UI directory. Gatebound setup exposes survival options.
 Daedroth is explicitly a frozen stored pose; armor changes stats, not worn art.
 
-**Phone testing order:** Install the personal APK. Choose Gatebound, survive
-wave one, tap Inventory near the counter, inspect Character/Weapons/Magic/
-Armor/Supplies/Upgrades, buy/equip a weapon and a spell, cast and jump.
-Check the actual gate art, readable floor, correctly held sword and hands,
-CAST button and three Oblivion resource ribbons; melee has no ammo overlay. Quit/relaunch: gold, skills and equipment must return.
-Host LAN using identical APK/content; reconnect a player and confirm their
-server progression returns. Late join/death waits for the next break.
-Failure symptoms: missing enemy art, free extra guns, shop charging twice,
-missing progression after restart, no spell effects, or dead players respawning
-mid-wave, wrapped tab labels, upside-down weapon or dark arena. Physical touch feel/performance and longer wave balance are unmeasured.
+**Latest owner evidence (2026-09-30, build 2c62fc0):** the S24+ now loaded
+actual donor world a0dab19c, at High/1560x720/FOV 70/MSAA 2, with about 120 FPS
+before escape. The log went from grounded (-6.98,-2.59,0) to airborne
+(-3.97,-12.13,4.75), then below the map; the final report still marked the
+player alive at z=-1875.92. Session p99 10.5 ms and five >50 ms hitches include
+loading/menu activity and the empty fallen scene; the 131.9 FPS last-minute
+reading is not an arena baseline. Screenshots show cropped knuckles, short
+rigid weapon/cast motion, unmarked equipment and inventory rows spilling below
+the parchment. No app crash was reported.
 
-**Verification (2026-09-30):** full Trial-data/Android/native/network gate
-101 passed, zero failed. Additional survival assertions and 400,000 protocol
-fuzz cases, including 2,112 RPG bit flips, passed under ASan/UBSan. Asset Lab
-226 tests passed with the optional decoder. Original/private repeat builds
-agree with native keys bc17ebe0/a0dab19c. The phone preview report showed
-119.7 FPS last-minute on S24+ but loaded the original placeholder map; it
-cannot establish performance of the corrected imports. Android emulator
-screenshots confirm the imported courtyard, CAST, hand/sword meshes, compact
-HUD, parchment and category tabs. Current device performance, touch feel and
-long-session balance remain owner tests. Actual Oblivion KF/particles and
-wearable armor geometry are not implemented. Named sword scabbard exclusion
-and camera pose are authored import decisions, recorded in private provenance.
+**Correction in this revision:** wave definitions now replace both bot weapon
+slots and clear grenades. Previously the generic bot spawn could supply a
+random second gun after assigning the intended claws or rifle. A debugger
+inspection of the actual private roster reproduced a TF2 rocket launcher on
+the first Daedroth and a Halo rocket launcher on the fourth spawned enemy.
+This is a reproduced loadout defect and a plausible launch source;
+the phone log does not identify the exact projectile. Host-owned escape defeat
+runs before simulation, below world minimum Z minus 2 wu or outside horizontal
+world bounds plus 2 wu. It uses the normal death/wipe/respawn path, preserves
+progression and gives no kill reward for an escaped NPC. Android's extra -.06 wu
+compatibility viewmodel offset no longer applies to normalized imported views.
+The menu fits the donor bitmap's visible alpha bounds, highlights selected tabs,
+marks equipped gear and disables unaffordable, owned or unavailable actions.
+Spell costs, armor protection and upgrade tiers are visible. Character skills
+fit in two columns; prestige disables before eligibility. Resource ribbons
+use visible frame/fill bounds and sit below Inventory instead of over the hands.
+Unusable base-map pickups are hidden in Survival. Original Oblivion
+skin/KF animation and real sword finger grips remain in the NEXT GOAL above.
+
+**Phone testing order:** Install the replacement personal APK. Survive wave one:
+Daedroth/zombies must use claws and Combine must use only its configured rifle.
+Try jumping and fighting near the wall; escape must produce defeat/recovery,
+never endless alive falling. Gold, skills and equipment must survive recovery.
+Inspect sword/hands at FOV 70, then every inventory tab and its bottom scroll
+rows: all content must stay on parchment, the selected tab and equipped gear
+must be obvious, and purchases must enable only near the counter between waves.
+Equip owned gear during a wave, buy/equip a spell during the break, cast, then
+quit/relaunch. Host LAN with matching APK/content and reconnect to verify the
+server character. Failure symptoms include extra NPC guns, alive void falls,
+cut-off hands/rows, double charges, lost progression or mid-wave respawns.
+Physical touch feel and the replacement build's device performance remain
+owner checks. The full wearable/animated lineup remains the next goal.
+
+**Verification (2026-09-30 repair):** the full Trial-data, Android, native,
+render and network gate passed 100 checks and failed the Night Shift X8 route.
+The route pressed Use outside its authored reach; the documented waypoint fix
+passed a separate X8 rerun with all existing assertions. All 101 checks are
+therefore covered, without claiming a single 101/0 run. Additional survival
+loadout/escape/recovery assertions passed normally and under ASan/UBSan; an
+actual private-roster debugger run proved the extra rocket loadouts, and a
+90-second native combat run completed without escape. NDK and Java compilation
+passed. Final 1560x720 Android emulator screenshots confirm the imported world,
+uncropped hands, resource ribbons, all inventory categories and scrollable
+bottom rows. Software rendering is visual evidence, not an S24+ FPS estimate.
+The owner's 2c62fc0 report loaded the actual donor world a0dab19c and logged
+about 120 FPS before escape; later falling-scene performance is not an arena
+baseline. Replacement-device performance, touch feel and long-session balance
+remain owner checks. Earlier-release protocol fuzz and Asset Lab results are
+not new runs for this repair. No protocol or package changes were made.
+Actual Oblivion KF/particles, finger grips and wearable armor geometry remain
+unimplemented. Named sword scabbard exclusion and camera pose are authored
+import decisions, recorded in private provenance.
 
 **Invented Gatebound tuning:** 100 starting gold; rank sqrt(XP/100), level
 1+sqrt(XP/1000); prestige level 50, only level XP reset, XP bonus
@@ -325,6 +364,8 @@ regen 5/15 per second, jump cost 10; cast delay .6 s. Shop radius 4 wu,
 break 30 s, wipe 8 s, spawn 1.5 s, 4+2*(wave-1) enemies, +50% per extra
 player, max 8 concurrent NPCs/16 total units. NPC health 1+.15*sqrt(wave),
 damage 1+.08*sqrt(wave); slow speed .6; armor cap .85, ward .35.
+Escape defeat margin 2 wu below minimum mesh Z and beyond horizontal bounds;
+no upper-Z ceiling so ordinary jumps remain legal.
 Kill fortune sqrt(tier) plus .25*Athletics bonus, clear gold 25+5*wave.
 Ten-second save checkpoints; catalogue tuning in the original OAL project.
 Spell aim cone .93; imported scale 1/128, Daedroth fit .85 wu, iron sword .4 wu.

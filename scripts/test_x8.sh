@@ -70,12 +70,15 @@ J=(./"$build"/megamod-join 127.0.0.1 "$dynport" --world "$world" --map "$trial/b
    --bundle "$out/bundle" --preset low)
 timeout 95 "${J[@]}" --auto 75 --route "3.2,-9.6;L4,-9.78;E;w1;0.5,-4.8;L0.78,-4.16;E;w1;B0,-3;-2,-10.4;-4.5,-10.4;-11.4,-10.4;-11.4,-6;-15.2,-4.2;L-16,-4.2;E;w2" > "$out/aux.log" 2>&1
 timeout 95 "${J[@]}" --auto 85 --route "0.5,-4.8;L0.78,-4.16;E;w2;0,-3;0,3;-4.8,3.5;-4.8,4.2;L-4.8,5.2;E;w2" > "$out/security.log" 2>&1
+# Arrival allows a .12-wu tolerance. At (-8,1.6), stopping short can
+# leave D2's back button outside its authored 1.2-wu reach. Move closer
+# before using it; preserve the runtime reach and the route's assertions.
 if [[ "$variant" == x9 ]]; then
-    timeout 110 "${J[@]}" --auto 100 --route "0,-3;0,3;-2,3;-8,1.6;L-8.84,0.82;E;w2;-10.5,1.6;-11.5,2.5;w1;-9.6,1.6;-9.6,6;-15.4,6;-15.4,3;L-16,3;E;w2;-15.4,6;-9.6,6;-9.6,1.6;-8,1.6;-2,3;0,3;0,8;w1;L0.8,8.22;E;w2" > "$out/coolant.log" 2>&1
+    timeout 110 "${J[@]}" --auto 100 --route "0,-3;0,3;-2,3;-8.2,1.6;L-8.84,0.82;E;w2;-10.5,1.6;-11.5,2.5;w1;-9.6,1.6;-9.6,6;-15.4,6;-15.4,3;L-16,3;E;w2;-15.4,6;-9.6,6;-9.6,1.6;-8,1.6;-2,3;0,3;0,8;w1;L0.8,8.22;E;w2" > "$out/coolant.log" 2>&1
     timeout 100 "${J[@]}" --auto 85 --route "0,-3;0,8.8;1.5,9;3.6,9;w1;4.8,12.3;8.5,12.3;11,15.5;L11.78,15.84;E;w2;11,19.8;L11,21;E;w5" \
         --shot "$out/lockdown.ppm" --shot-view 11,18,1.05,1.57,0 > "$out/lockdown.log" 2>&1
 else
-    timeout 95 "${J[@]}" --auto 85 --route "0,-3;0,3;-2,3;-8,1.6;L-8.84,0.82;E;w2;-10.5,1.6;-11.5,2.5;w1;-9.6,1.6;-9.6,6;-15.4,6;-15.4,3;L-16,3;E;w2" > "$out/coolant.log" 2>&1
+    timeout 95 "${J[@]}" --auto 85 --route "0,-3;0,3;-2,3;-8.2,1.6;L-8.84,0.82;E;w2;-10.5,1.6;-11.5,2.5;w1;-9.6,1.6;-9.6,6;-15.4,6;-15.4,3;L-16,3;E;w2" > "$out/coolant.log" 2>&1
 fi
 timeout 25 "${J[@]}" --auto 4 --shot "$out/late.ppm" --world-state > "$out/late.log" 2>&1
 wait "$dynhost"
