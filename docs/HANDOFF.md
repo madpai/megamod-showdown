@@ -199,6 +199,81 @@ the section below, and update it every time.
 
 ---
 
+## NEXT GOAL — Full Gatebound equipment and animated enemy lineup
+
+**Owner priority (2026-09-30):** build a full lineup of visibly wearable armor,
+equippable weapons and animated enemy types using the actual locally installed
+Oblivion assets, followed by compatible local-game and Workshop content.
+Use the donor art; put the originality into the gameplay combinations.
+This is the next implementation goal, not a claim that these capabilities
+already exist. The current testing objective below remains the published build.
+
+### Required scope
+
+- **Wearable armor:** inventory the complete available Oblivion armor families,
+  light/heavy sets, clothing/robes and shields. Import their actual skinned
+  meshes, materials and available body variants. Support visible equipment
+  slots for head, torso, legs, hands, feet and shield, with explicit coverage
+  rules for robes/full outfits. Include applicable accessories in the content
+  audit. Equipping must update appearance and gameplay stats; define fitting
+  and compatibility for Showdown's different character skeletons. Report
+  incompatible combinations explicitly. Armor cannot count as complete while
+  it only changes damage reduction or shows an inventory icon.
+- **Equippable weapons:** cover the locally available Oblivion families of
+  daggers, swords, axes, blunt weapons, bows/arrows and staves, alongside the
+  existing guns and selected Workshop weapons. Verify actual world/held and
+  first-person meshes, hand grips, draw/idle/attack/reload/cast states as
+  applicable, sounds, damage type and skill practice. Exclude scabbards while
+  wielding; preserve attachments where appropriate. Catalogue material/tier
+  variants from the real files rather than substituting renamed starter gear.
+- **Animated enemies and types:** replace the frozen Daedroth with imported
+  skin/skeleton and original KF animation. Audit the available Daedra, undead,
+  animals/monsters and humanoid opponents, plus compatible Source/Workshop
+  enemies. Map real idle, locomotion, attacks, casting, hit reactions and death
+  sequences where present; record missing states and any explicit fallback.
+  Define melee, ranged, caster, fast, armored, elite and boss behaviors through
+  generic capabilities and authored wave data, including their equipment,
+  rewards and skill interactions. Static poses cannot count as animated enemies.
+- **Casting and gates:** import the original Oblivion skeletal hand/casting
+  animations and gate particle/texture-controller effects. Replace the current
+  root-motion hand approximation and incomplete gate effects with supported,
+  normalized runtime animation/effects using actual donor textures.
+- **Inventory and progression:** expand the current 32-entry shop, 64-stack
+  inventory and four equipment fields to support the audited lineup with a
+  bounded, searchable/category-based catalogue. Keep stable item IDs, clear
+  equipped-state feedback, prices and upgrade/skill relationships. Migrate
+  existing saves without losing gold, skills, prestige or owned gear; prestige
+  still resets level XP only. Keep purchases and equipment host-authoritative,
+  persistent for solo/server characters and replicated to peers/late joiners.
+
+### Implementation order and completion checks
+
+1. Open Asset Lab audits the actual available assets, animation dependencies
+   and provenance, producing a private coverage manifest with supported,
+   missing and incompatible entries. Define a concrete complete catalogue
+   from that audit; record optional/DLC availability instead of inventing counts.
+2. Prove one fully skinned enemy with its real animations, one visibly equipped
+   armor set and one correctly held/animated weapon in the native runtime and
+   Android. Use those proofs to finish the reusable import/runtime capabilities,
+   then compile the complete audited lineup. Foreign decoding stays in Asset
+   Lab; the Engine consumes generic skeletons, equipment, animations and effects.
+3. Exercise buy/equip/unequip, outfit coverage, different roster characters,
+   skill practice, death/recovery, save migration and solo restart. A matching
+   LAN peer must see the same worn armor, held weapon and enemy actions; reconnect
+   must restore the server character. Preserve the original-content fixture.
+4. Inspect actual Android screenshots/video of every equipment family and enemy
+   archetype, including casting and gates. Run the full release gate and measure
+   frame time, memory and loading on the owner's S24+. Do not infer phone
+   performance from emulator or lavapipe timings. Publish the verified personal
+   APK with a coverage report and unresolved limitations; keep donor files,
+   packages and previews private.
+
+**Failures to catch:** invisible/stat-only armor, body clipping or broken skin
+weights, wrong grips/covered blades, bind-pose enemies, missing attacks/deaths,
+unreadable inventory, lost saves or equipment, client-granted purchases,
+different visuals on peers, missing gate effects and sustained frame-time spikes.
+Coordinate the importer work with Open Asset Lab's `docs/HANDOFF.md` next goal.
+
 ## CURRENT TESTING OBJECTIVE
 
 **Gatebound RPG survival (2026-09-30):** [Design and controls](gatebound/DESIGN.md).
