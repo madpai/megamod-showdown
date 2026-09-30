@@ -59,6 +59,12 @@ to any agent -- read the one that matches the task:
 | Run / extend the dedicated server | `docs/DEDICATED_SERVER.md` |
 | Desktop parity, headless runs, the agent harness (the plan) | `docs/DESKTOP_AGENT.md` |
 | Drive a desktop build: control channel, events, report, playtests | `.claude/skills/playtest/SKILL.md` |
+| Research or build a donor-inspired generic capability | `.agents/skills/megamod-capability/SKILL.md` |
+| Choose and preserve runtime/playtest evidence | `.agents/skills/megamod-playtest/SKILL.md` |
+
+These additional skills adapt Universal Modder's evidence workflow to our
+existing tools; the study is `docs/research/UNIVERSAL_MODDER.md`. Content
+preparation lives in Open Asset Lab's `.agents/skills/assetlab-content/`.
 
 Match state goes in `src/app/session.h` (`HTA_SESSION_FIELDS`), Android-only
 state in `hta_android` after the union (see merge-branch for conflicts).

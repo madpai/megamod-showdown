@@ -10,38 +10,39 @@ build=${BUILD:-build-host}
 cmake --build "$build" --target megamod-match megamod-resources htanet test_racing_core mkfixture >/dev/null
 "$build/test_racing_core"
 out=$(mktemp -d "$PWD/scratch/x10-racing.XXXXXX")
-(cd "$oal" && "$py" -m assetlab project build projects/megamod_racing --output "$out/a" --json) > "$out/a.json"
-(cd "$oal" && "$py" -m assetlab project build projects/megamod_racing --output "$out/b" --json) > "$out/b.json"
-"$build/megamod-resources" --bundle "$out/a" --world cinder_circuit > "$out/engine.json"
-"$py" - "$out/a.json" "$out/b.json" "$out/engine.json" <<'PY'
+engine=$(realpath "$build/megamod-resources")
+(cd "$oal" && "$py" -m assetlab project verify projects/megamod_racing \
+  --output "$out/verified" --engine "$engine")
+bundle="$out/verified/bundle"
+"$py" - "$out/verified/build.json" "$out/verified/verification.json" <<'PY'
 import json, sys
-a,b,e=(json.load(open(p)) for p in sys.argv[1:])
-assert a['worlds'][0]['world_key']==b['worlds'][0]['world_key']==e['world_key']
-assert a['worlds'][0]['package_sha256']==b['worlds'][0]['package_sha256']
+a,v=(json.load(open(p)) for p in sys.argv[1:])
+assert v['ok'], v['errors']
+e=v['worlds'][0]['engine']
 assert e['racing']=={'present':True,'laps':3,'grid':8,'gates':8,'pads':3,'max_speed':38.0,'boost_speed':52.0}
 assert a['worlds'][0]['budget']['total']==27
 print('race content key',e['world_key'],'and original prefabs/geometry agree')
 PY
 mkdir -p "$out/public/maps"
 "$build/mkfixture" "$out/public/maps/bloodgulch.map" 256 80 8 >/dev/null
-HTA_TRIAL_DIR="$out/public/maps" "$build/megamod-match" --bundle "$out/a" --world cinder_circuit \
+HTA_TRIAL_DIR="$out/public/maps" "$build/megamod-match" --bundle "$bundle" --world cinder_circuit \
   --bots 0 --seconds 18 --race-smoke > "$out/public.log" 2>&1
 grep -q 'original Racing world: no Trial weapons required' "$out/public.log"
 grep -q 'pad hits 1' "$out/public.log"
 if [ ! -f "$trial/bloodgulch.map" ]; then trial="$out/public/maps"; fi
-HTA_TRIAL_DIR="$trial" "$build/megamod-match" --bundle "$out/a" --world cinder_circuit \
+HTA_TRIAL_DIR="$trial" "$build/megamod-match" --bundle "$bundle" --world cinder_circuit \
   --bots 0 --seconds 18 --race-smoke > "$out/smoke.log" 2>&1
 grep -q 'race smoke phase 2' "$out/smoke.log"
 grep -q 'pad hits 1' "$out/smoke.log"
 PYTHONPATH="$oal/projects/megamod_racing" "$py" -c \
   'import race_track01 as r; [print(*p) for p,_,_,_ in r.stations()]' > "$out/route.txt"
-HTA_TRIAL_DIR="$trial" "$build/megamod-match" --bundle "$out/a" --world cinder_circuit \
+HTA_TRIAL_DIR="$trial" "$build/megamod-match" --bundle "$bundle" --world cinder_circuit \
   --bots 0 --seconds 205 --race-route "$out/route.txt" > "$out/drive.log" 2>&1
 grep -q 'race route result .*finished 1' "$out/drive.log"
 grep -q 'race route result .*round reset 1' "$out/drive.log"
 
 port=$((43000 + $$ % 1000))
-HTA_TRIAL_DIR="$trial" "$build/megamod-match" --bundle "$out/a" --world cinder_circuit \
+HTA_TRIAL_DIR="$trial" "$build/megamod-match" --bundle "$bundle" --world cinder_circuit \
   --bots 0 --seconds 21 --host "$port" > "$out/host.log" 2>&1 &
 host=$!
 trap 'kill "$host" 2>/dev/null || true' EXIT

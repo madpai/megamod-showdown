@@ -1,0 +1,4 @@
+interface:
+  display_name: "Megamod Capability"
+  short_description: "Research and build reusable Megamod mechanics"
+  default_prompt: "Use $megamod-capability to build one proven original-content slice for this mechanic."

@@ -201,6 +201,22 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**Reusable development workflow (2026-09-30):** The
+[Universal Modder study](research/UNIVERSAL_MODDER.md) produced three
+repository-owned skills (`megamod-capability`, `megamod-playtest`, and
+Open Asset Lab's `assetlab-content`). Asset Lab's new `project verify`
+checks repeat-build package hashes against the native loader's world
+identity, dependencies, bindings and replication budget. Racing's test
+uses it before its existing gameplay checks. Local package checks passed
+for Night Shift (`356266bd`, 62 entities) and Cinder Circuit (`87915509`,
+27 entities), three identical packages each. This tooling change adds no
+phone mechanic; the physical Racing objective below remains current.
+Validation: Open Asset Lab **215/215** tests (ten verification tests),
+its Python 3.11/3.12 CI green; Megamod's full local gate **99 passed,
+0 failed**, including the updated Racing route/peer test, X1–X9, Night
+Shift crew, real Trial/imported matches, rendering and Android. The
+optional archived-X6-engine comparison was skipped (binary absent).
+
 **X10 MegaMod Racing first playable build (2026-09-29):** Select
 **Cinder Circuit**, choose any existing character under DRIVER, then start
 with zero bots. Drive the original Hyperkart using the left stick to steer

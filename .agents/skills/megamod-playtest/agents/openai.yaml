@@ -1,0 +1,4 @@
+interface:
+  display_name: "Megamod Playtest"
+  short_description: "Prove gameplay with repeatable runtime evidence"
+  default_prompt: "Use $megamod-playtest to verify this feature and preserve the evidence."

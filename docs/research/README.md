@@ -21,6 +21,7 @@ Research date: **2026-09-26**. This corpus informs the [MegaMod Engine and Showd
 | [Content registration](CONTENT_REGISTRATION.md) | COMPLETE | Definition registry and conflicts |
 | [Package and mod format](PACKAGE_MOD_FORMAT.md) | COMPLETE | Manifest and dependency design |
 | [Cross-engine synthesis](CROSS_ENGINE_SYNTHESIS.md) | COMPLETE | Decisions by problem |
+| [Universal Modder workflows](UNIVERSAL_MODDER.md) | STUDIED; adapted skills and native project verification implemented | Source-of-truth research, reproducible asset preparation and runtime evidence |
 | [MegaMod recommendations](MEGAMOD_RECOMMENDATIONS.md) | COMPLETE as research; architecture decisions remain proposed | NOW / NEXT / LATER / EXPERIMENTAL / AVOID |
 | [Current boundary review](CURRENT_RUNTIME_CONTENT_BOUNDARY_REVIEW.md) | N1 SOURCE OBSERVATION; current code, not a replacement for Claude's inventory | Which fields and names currently cross OAL/MegaMod and LAN boundaries? |
 | [Content ID grammar](CONTENT_ID_GRAMMAR_RECOMMENDATION.md) | N2 READ-ONLY AUDIT LANDED; no format migration | OAL-audited package-owned syntax and migration rules |
