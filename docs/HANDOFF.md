@@ -201,6 +201,16 @@ the section below, and update it every time.
 
 ## CURRENT TESTING OBJECTIVE
 
+**Local donor scan (2026-09-30):** [Library mashups and Oblivion proof](research/LOCAL_LIBRARY_MASHUPS.md)
+records 15 distinct Steam games, 226 Workshop item folders and additional
+Trial/Bedrock/authored-map donors. The owner prioritized classic Oblivion.
+Three private static models became existing OAL resources; two repeated
+packages matched the native loader (`4e099307`). A separate 788-triangle
+textured preview passed the Engine render/collision tool with one usable
+spawn and no falls. This is a private research prototype, not a supported
+NIF/BSA importer, imported dungeon, new mode or phone build. No runtime or
+shipping bundle changed; the physical Racing objective below remains current.
+
 **Reusable development workflow (2026-09-30):** The
 [Universal Modder study](research/UNIVERSAL_MODDER.md) produced three
 repository-owned skills (`megamod-capability`, `megamod-playtest`, and
