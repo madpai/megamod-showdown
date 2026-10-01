@@ -1,3 +1,27 @@
+## 2026-09-30 — Gatebound repair publication and repository handoff
+
+Published and pushed engine build `f808e2a` to `madpai/megamod-showdown/main`.
+The personal and asset-free guest APKs are live on
+http://100.89.1.14:8733/. Both served and archived checksums passed; the archive
+is `/mnt/media/backups/megamod-showdown/apks-megamod/20260930-193839-f808e2a/`.
+Personal APK donor worlds and sixteen UI files match their private sources;
+the guest excludes all private content. All five
+[CI jobs passed](https://github.com/madpai/megamod-showdown/actions/runs/36792067092).
+
+The release gate passed 100 checks initially, with the documented X8 route
+failure below. The corrected X8 check passed separately, covering all 101
+checks across the two runs. Additional survival ASan/UBSan, actual roster
+loadout inspection, native combat and Android screenshots are preserved in
+`~/assetlab-private/gatebound/recovery-evidence/` and its local backup.
+No protocol or donor package changes were made. Open Asset Lab's implementation
+remains `14775b6`, with the coordinated next-goal handoff at `2bbfe2a`.
+
+At the owner's request, refresh both repository handoffs and the import/design
+documentation after publication. Keep the APK version distinct from subsequent
+documentation commits. Replacement S24+ performance and touch testing are
+pending. Original sword finger grips, Oblivion KF/casting and gate effects,
+wearable armor, and the complete animated enemy lineup remain the next goal.
+
 ## 2026-09-30 — Gatebound phone escape and presentation repair
 
 Reviewed the S24+ reports/screenshots from build 2c62fc0. This run loaded the

@@ -1,4 +1,11 @@
-# MEGAMOD SHOWDOWN (branch `halo-sandbox` of halo-trial-android)
+# MEGAMOD SHOWDOWN and MEGAMOD ENGINE
+
+**Current checkout (2026-09-30):** `/home/commander/projects/megamod-showdown`,
+branch `main`, remote `origin` = `https://github.com/madpai/megamod-showdown.git`.
+Inspect the remote before every push; here use `git push origin main`.
+Never push Megamod work to an Open Halo remote. Older `halo-sandbox`/`megamod`
+commands describe the previous checkout. The Open Halo-specific rules later
+in this file apply only to its separate checkout, not this `origin`.
 
 **This branch contains MEGAMOD SHOWDOWN and MEGAMOD ENGINE.** Showdown is
 the official reference game, playground and torture test **built on** the
@@ -7,16 +14,16 @@ content compiler. Future original games are independent Engine consumers.
 **Showdown can be ridiculous. The engine must remain clean.** The two
 currently share this repository; no split or source move is implied.
 
-The branch is the owner's fork of Open Halo that plays
+The repository is the owner's fork of Open Halo that plays
 imported content from other games (Source maps, characters, weapons via
 Open Asset Lab). Named 2026-09-24. Its GitHub home is the PUBLIC repo
-https://github.com/madpai/megamod-showdown (remote `megamod`; this branch
-tracks `megamod/main`), **public since 2026-09-25** -- anything committed
-is published. Push with `git push megamod halo-sandbox:main`. A cloud
+https://github.com/madpai/megamod-showdown, **public since 2026-09-25** --
+anything committed is published. Push after every commit using the verified
+current checkout's remote. A cloud
 session's branch reaches the phone through a local agent following
 `docs/LOCAL_AGENT.md`.
 
-- **Never push this branch to `origin`** (Open Halo, public, strictly
+- **Never push Megamod work to Open Halo** (public, strictly
   Halo) and never cut Open Halo releases from it. The Open Halo rules
   below about `origin`, `fp-animated-guns` and guest-APK releases apply to
   Open Halo work only.

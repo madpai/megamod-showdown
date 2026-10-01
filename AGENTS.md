@@ -9,9 +9,14 @@ of generic engine concepts. The two currently share this repository;
 do not split or rename it solely to express this model.
 
 Read `CLAUDE.md` (hard rules: public repository, no game data, author
-Phase2, never push to Open Halo's `origin`) and `docs/HANDOFF.md` (the
+Phase2, never push to an Open Halo remote) and `docs/HANDOFF.md` (the
 briefing, the testing objective, every invented constant) before changing
 anything. `docs/ENGINE_ARCHITECTURE.md` is the map of the engine.
+
+The current checkout is `main` with `origin` pointing to
+`https://github.com/madpai/megamod-showdown.git`; after inspecting the remote,
+push with `git push origin main`. Historical `halo-sandbox`/`megamod` commands
+in older skills and notes describe the previous checkout.
 
 **Before major architectural work, read `docs/MEGAMOD_VISION.md`.** MegaMod
 Engine is evolving from a Halo port into an independent content-driven runtime.

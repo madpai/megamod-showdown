@@ -1,16 +1,16 @@
-# Halo Trial Android — handoff
+# Megamod Engine and Showdown — handoff
 
-**Current checkout (2026-09-29):** `/home/commander/projects/megamod-showdown`
+**Current checkout (2026-09-30):** `/home/commander/projects/megamod-showdown`
 is on `main`; its `origin` currently points to
 `https://github.com/madpai/megamod-showdown.git`. The older `halo-sandbox`,
 `megamod`-remote and path references below describe the previous checkout.
 Always inspect `git branch -vv` and `git remote -v` before publishing, and
 never push MegaMod work to an Open Halo remote.
 
-> **On branch `halo-sandbox` this repository hosts MEGAMOD SHOWDOWN and
-> MEGAMOD ENGINE** (public repo
-> madpai/megamod-showdown, remote `megamod`). See CLAUDE.md's top section
-> for where it pushes and what never goes to Open Halo.
+> **This repository hosts MEGAMOD SHOWDOWN and MEGAMOD ENGINE** (public repo
+> `madpai/megamod-showdown`, current branch `main`, remote `origin`). The older
+> checkout used `halo-sandbox` and remote `megamod`. See CLAUDE.md's top section
+> for current push rules and the separate Open Halo checkout.
 >
 > **Product direction (2026-09-26):** MegaMod Engine is the reusable
 > runtime; MegaMod Showdown is its official reference game and stress
@@ -26,10 +26,21 @@ never push MegaMod work to an Open Halo remote.
 `docs/JOURNAL.md` is the session-by-session history — go there only when you
 want the *why* behind something, and search it by symptom.
 
-**Date of this revision:** 2026-09-29. X10 Racing is the active product
-slice; see [RACING.md](RACING.md) and CURRENT TESTING OBJECTIVE. The older
-branch/path and protocol notes immediately below are historical context
-from the 2026-09-25 cloud/LAN build `ac90e21`.
+**Date of this revision:** 2026-09-30. Gatebound RPG survival is the active
+phone testing slice; see [Gatebound design](gatebound/DESIGN.md) and CURRENT
+TESTING OBJECTIVE. The next implementation goal is the full wearable equipment,
+weapon and animated enemy lineup below. X10 Racing remains implemented; see
+[RACING.md](RACING.md).
+
+**Latest published APK:** `f808e2a`, personal and asset-free guest, at
+**http://100.89.1.14:8733/**. LAN protocol **14**, world schema **9**, private
+Gatebound key **a0dab19c**. The code is pushed and its five CI jobs passed.
+Both served and archived APK checksums passed. Release evidence and remaining
+limits are recorded in [the journal](JOURNAL.md) and CURRENT TESTING OBJECTIVE.
+This documentation update does not rebuild or change that APK.
+
+**Historical checkout notes (2026-09-25):** the branch/path and protocol notes
+below describe the cloud/LAN build `ac90e21`, not the current checkout.
 **Repo:** `/home/commander/projects/halo-trial-android`
 **Branches -- read this first:**
 - `halo-sandbox` is **MEGAMOD SHOWDOWN**. Push this branch only to public
@@ -47,19 +58,16 @@ from the 2026-09-25 cloud/LAN build `ac90e21`.
   there because Asset Lab validates packages with them. When returning
   to Halo work, `git switch fp-animated-guns` (its HANDOFF predates the
   sandbox).
-**Start of next session, in order:**
+**Start of next session (current checkout), in order:**
 1. `git branch --show-current` -- be on the right branch for the task.
-2. On `halo-sandbox`, inspect `scratch/serve-megamod/` and
-   `scratch/serve-megamod/uploads/` for the published build and new phone
-   screenshots. The current personal APK is at
-   **http://100.89.1.14:8733/**. Published build `ac90e21` uses protocol
-   **v9** (gibs and props replicated); an older APK
-   cannot join it. To build and publish a cloud branch, follow
-   `docs/LOCAL_AGENT.md`.
-3. Read the **CURRENT TESTING OBJECTIVE** below. The owner broadly reports
-   the v9 build working, without separate results for each checklist item.
-   Keep the targeted open checks there for the next relevant build.
-4. Keep game code on public `megamod/main` and importer code on public
+2. Inspect `scratch/serve-megamod/` for build `f808e2a`,
+   `scratch/serve-megamod/reports/` for phone reports, and `scratch/uploads/`
+   for screenshots. The personal APK is at **http://100.89.1.14:8733/**.
+   LAN peers need matching code and content. To build and publish a cloud
+   branch, follow `docs/LOCAL_AGENT.md`.
+3. Read **CURRENT TESTING OBJECTIVE** and **NEXT GOAL** below. The latest
+   owner report is from `2c62fc0`; replacement-build S24+ playtesting is pending.
+4. Keep game code on public Megamod `main` and importer code on public
    Open Asset Lab `main`. Source packages stay in `~/assetlab-private/`.
    For a Halo-only task, switch to `fp-animated-guns` and read that branch's
    handoff before applying its publication rules.
@@ -89,7 +97,7 @@ from a tag.
 - Project code is **GPLv3**.
 - Git author on this repo is **`Phase2 <schultz0@proton.me>`**.
 - **Push after every commit** (the owner's standing instruction since
-  2026-09-23). On this branch push only to public `megamod/main`; the
+  2026-09-23). In this checkout push `main` to the verified Megamod `origin`; the
   `origin`/Open Halo release rules below apply to `fp-animated-guns` only.
   On 2026-09-23 the history was
   rewritten to remove the Trial's decoded title theme (`in_p0-6.wav`,
@@ -105,11 +113,17 @@ This working rhythm is the owner's, it is good, and it should be kept.
 ### 1. Change something, then verify
 
 ```
-cd /home/commander/projects/halo-trial-android
-HTA_MAP=/home/commander/halo-trial-data/extract/maps/bloodgulch.map scripts/verify.sh
+cd /home/commander/projects/megamod-showdown
+HTA_MAP=/home/commander/halo-trial-data/extract/maps/bloodgulch.map \
+HTA_BUNDLE_DIR=/home/commander/assetlab-private/bundle \
+OAL_DIR=/home/commander/projects/open-asset-lab \
+VK_ICD_FILENAMES=/home/commander/projects/halo-trial-android/scratch/lvp/usr/share/vulkan/icd.d/lvp_icd.json \
+scripts/verify.sh
 ```
 
-The latest gate has 80 checks (2026-09-24, `f9ee859`): host build and
+The current gate has 101 checks (2026-09-30); see CURRENT TESTING OBJECTIVE
+for the full-run result and corrected X8 rerun. The earlier 80-check gate
+(2026-09-24, `f9ee859`) covered host build and
 tests, real Trial map tests, synthetic-fixture CLI, offscreen rendering,
 two desktop Blood Gulch clients, Android build, and the APK asset boundary.
 
@@ -275,6 +289,16 @@ different visuals on peers, missing gate effects and sustained frame-time spikes
 Coordinate the importer work with Open Asset Lab's `docs/HANDOFF.md` next goal.
 
 ## CURRENT TESTING OBJECTIVE
+
+**Published repair:** `f808e2a` (2026-09-30), pushed to public `main`;
+[CI passed](https://github.com/madpai/megamod-showdown/actions/runs/36792067092).
+Personal and guest APKs are live on **http://100.89.1.14:8733/**; both served
+and backup checksums passed. The personal APK's two donor worlds and sixteen
+UI files match their private sources byte-for-byte; the guest has no private
+maps, characters, weapons, sounds, packages or UI. The archive is
+`/mnt/media/backups/megamod-showdown/apks-megamod/20260930-193839-f808e2a/`.
+Private report/log/screenshot evidence is in
+`~/assetlab-private/gatebound/recovery-evidence/`, also backed up locally.
 
 **Gatebound RPG survival (2026-09-30):** [Design and controls](gatebound/DESIGN.md).
 Native survival mode 5, world schema 9 and LAN protocol 14. Eight practiced

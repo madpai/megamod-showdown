@@ -1,5 +1,35 @@
 # Gatebound: The Borrowed Apocalypse
 
+## Current release — 2026-09-30
+
+Build `f808e2a` is published at **http://100.89.1.14:8733/**. Personal and
+asset-free guest APK checksums and all five CI jobs passed. Protocol 14,
+world schema 9 and private world key a0dab19c are unchanged.
+
+Wave enemies receive their complete authored loadout, clearing random bot
+secondary guns and grenades. A host-owned escape guard triggers environmental
+defeat below the world's minimum Z minus 2 wu or outside its horizontal bounds
+plus 2 wu. Normal death/wipe/recovery preserves progression; escaped NPCs
+grant no kill reward. There is no upper jump ceiling. The 2-wu margins are
+authored recovery tuning, not Oblivion constants.
+
+Android imported views retain their normalized camera placement. Inventory
+fits the donor parchment's visible bounds, highlights selected tabs and equipped
+items, shows spell/armor/upgrade details and disables unavailable purchases.
+Resource ribbons sit below Inventory, clear of the hands. Unusable base-map
+pickups are hidden in survival. These presentation repairs do not import
+original skeletal hand grips or casting clips.
+
+The release gate passed 100 checks; its X8 route failure was traced to a Use
+waypoint outside button reach and passed after correcting that test waypoint.
+All 101 checks are covered across the full run and targeted rerun. New survival
+assertions passed under ASan/UBSan, actual private-roster loadouts were inspected,
+and final Android screenshots checked the inventory/HUD and equipped sword.
+Replacement S24+ performance and touch feel remain unmeasured. See
+[the handoff](../HANDOFF.md#current-testing-objective) for phone checks and
+[the next goal](../HANDOFF.md#next-goal--full-gatebound-equipment-and-animated-enemy-lineup)
+for the full wearable equipment, weapon, casting/gate and animated enemy scope.
+
 ## Player loop
 
 A cooperative wave survival mode for Showdown. Solo characters belong to the
